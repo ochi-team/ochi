@@ -7,6 +7,7 @@ const snappy = @import("snappy");
 const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;
 const Field = @import("process.zig").Field;
+const Params = @import("process.zig").Params;
 
 /// insertLokiJson defines a loki json insertion operation
 pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
@@ -64,18 +65,6 @@ const LokiParams = struct {
     // and broken down instead of storing is a plain text
     // TODO: implement its handling
     parseLoki: bool,
-};
-
-const Params = struct {
-    tenant: Tenant,
-};
-
-// Tenant defines a tenant id model
-// TODO: implement its usage, not it's a placeholder and ever empty
-// for Loki it's a header X-Scope-OrgID
-const Tenant = struct {
-    AccountID: u32,
-    ProjectID: u32,
 };
 
 fn collectParams(r: *httpz.Request) !Params {

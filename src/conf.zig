@@ -13,7 +13,7 @@ pub const Conf = struct {
             .port = 9012,
 
             .app = .{
-                .maxRequestSize = 1024 * 1024 * 64,
+                .maxRequestSize = 1024 * 1024 * 4,
             },
         };
     }
