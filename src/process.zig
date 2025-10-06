@@ -7,7 +7,8 @@ pub const Field = struct {
 
 pub const Params = struct {
     tenant: Tenant,
-    streamFields: std.StringHashMap(void),
+    // TODO: consider using []const u8
+    streamFields: ?std.StringHashMap(void),
     extraStreamFields: []const Field,
 };
 
@@ -25,32 +26,34 @@ const SID = struct {
 };
 
 pub const Processor = struct {
-    pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestamp: i128, fields: []const Field, params: []const Params) !void {
+    pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestamp: i128, fields: []const Field, params: Params) !void {
         // TODO: controll how many fields a single line may contain
         // add a config value and validate fields length
         // 1000 is a default limit
 
-        const streamFields = std.ArrayList(Field).initCapacity(allocator, fields.len + params.extraStreamFields.len);
-        errdefer streamFields.deinit();
+        var streamFields = try std.ArrayList(Field).initCapacity(allocator, fields.len + params.extraStreamFields.len);
+        errdefer streamFields.deinit(allocator);
 
         // TODO: consider storing stream fields in a flat buffer pre-encoded
-        for (fields) |f| {
-            if (params.streamFields.contains(f.name)) {
-                try streamFields.add(f.name, f.value);
+        if (params.streamFields != null) {
+            for (fields) |f| {
+                if (params.streamFields.?.contains(f.name)) {
+                    try streamFields.append(allocator, .{ .name = f.name, .value = f.value });
+                }
             }
         }
 
         for (params.extraStreamFields) |f| {
-            try streamFields.add(f.name, f.value);
+            try streamFields.append(allocator, .{ .name = f.name, .value = f.value });
         }
 
         // TODO: encode stream fields
         const encodedStreamFields: []const u8 = undefined;
         // TODO: create sid calculating hash
-        const sid = SID{};
-        // const sid = SID{.id = hash(encoded), .tenant = params.Tenant};
+        const sid = SID{ .id = 0, .tenant = params.tenant };
+        // const sid = SID{.id = hash(encoded), .tenant = params.tenant};
         // TODO: add sid using addStreamID
-        self.addStreamID(allocator, sid, timestamp, fields, encodedStreamFields);
+        try self.addStreamID(allocator, sid, timestamp, fields, encodedStreamFields);
     }
     fn addStreamID(_: *Processor, _: std.mem.Allocator, _: SID, _: i128, _: []const Field, _: []const u8) !void {}
     pub fn flush(_: *Processor) !void {}

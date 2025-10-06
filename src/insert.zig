@@ -71,7 +71,9 @@ fn collectParams(r: *httpz.Request) !Params {
     _ = r;
     // TODO: implemented me
     return .{
-        .tenant = .{ .AccountID = 0, .ProjectID = 0 },
+        .tenant = .{ .accountID = 0, .projectID = 0 },
+        .streamFields = null,
+        .extraStreamFields = &.{},
     };
 }
 
@@ -90,13 +92,12 @@ fn uncompress(allocator: std.mem.Allocator, body: []const u8, encoding: []const 
 }
 
 fn process(allocator: std.mem.Allocator, params: Params, data: []const u8, processor: *Processor) !void {
-    _ = params;
-    try parseJson(allocator, data, processor);
+    try parseJson(allocator, data, params, processor);
     try processor.flush();
 }
 
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
-fn parseJson(allocator: std.mem.Allocator, data: []const u8, processor: *Processor) !void {
+fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
     // TODO: consider implementing a zero allocation json parsing
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, data, .{});
     defer parsed.deinit();
@@ -179,7 +180,7 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, processor: *Process
             // TODO: support a flag to parse msg as json
             try labels.append(allocator, .{ .name = "_msg", .value = msg });
 
-            try processor.pushLine(timestamp, labels.items);
+            try processor.pushLine(allocator, timestamp, labels.items, params);
         }
     }
 }
