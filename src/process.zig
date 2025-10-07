@@ -66,6 +66,7 @@ pub const Processor = struct {
         try self.addStreamID(allocator, sid, timestamp, fields, encodedStreamFields);
     }
     fn addStreamID(self: *Processor, allocator: std.mem.Allocator, _: SID, _: i128, _: []const Field, encodedStreamFields: []const u8) !void {
+        // TODO: benchmark if we can copy only a pointer instead of the entire value
         if (std.mem.eql(u8, self.encodedFields.items[self.encodedFields.items.len], encodedStreamFields)) {
             try self.encodedFields.append(allocator, self.encodedFields.items[self.encodedFields.items.len]);
         } else {
