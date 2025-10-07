@@ -26,6 +26,16 @@ const SID = struct {
 };
 
 pub const Processor = struct {
+    encodedFields: std.ArrayList([]const u8),
+
+    pub fn init(allocator: std.mem.Allocator) *Processor {
+        const processor = allocator.create(*Processor);
+        processor.* = Processor{
+            .encodedFields = std.ArrayList([]u8).initCapacity(allocator, 0),
+        };
+        return processor;
+    }
+
     pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestamp: i128, fields: []const Field, params: Params) !void {
         // TODO: controll how many fields a single line may contain
         // add a config value and validate fields length
@@ -55,6 +65,17 @@ pub const Processor = struct {
         // TODO: add sid using addStreamID
         try self.addStreamID(allocator, sid, timestamp, fields, encodedStreamFields);
     }
-    fn addStreamID(_: *Processor, _: std.mem.Allocator, _: SID, _: i128, _: []const Field, _: []const u8) !void {}
+    fn addStreamID(self: *Processor, allocator: std.mem.Allocator, _: SID, _: i128, _: []const Field, encodedStreamFields: []const u8) !void {
+        if (std.mem.eql(u8, self.encodedFields.items[self.encodedFields.items.len], encodedStreamFields)) {
+            try self.encodedFields.append(allocator, self.encodedFields.items[self.encodedFields.items.len]);
+        } else {
+            try self.encodedFields.append(allocator, encodedStreamFields);
+        }
+        // TODO: append timestamp
+        // TODO: append sid
+        // TODO: append fields
+        // TODO: optionally append default _msg value if params.defaultMsgValue has it
+        // TODO: append []fields to eventual set of log lines, [][]Field}
+    }
     pub fn flush(_: *Processor) !void {}
 };

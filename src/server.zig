@@ -21,10 +21,16 @@ fn handleSigterm(_: c_int) callconv(.c) void {
 }
 
 pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
+    const processor = try allocator.create(Processor);
+    defer allocator.destroy(processor);
+
     const dispatcher = try allocator.create(Dispatcher);
     defer allocator.destroy(dispatcher);
-    dispatcher.conf = conf.app;
-    dispatcher.processor = try allocator.create(Processor);
+
+    dispatcher.* = Dispatcher{
+        .conf = conf.app,
+        .processor = processor,
+    };
     var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.port }, dispatcher);
     defer server.deinit();
 
