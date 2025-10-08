@@ -1,6 +1,8 @@
-# Seqor
+<p align=center>
+  <img src="logo.png" />
+</p>
 
-Seqor is a fast, cost-effective, Loki compatible database for logs.
+Seqor is a cost-effective, Loki compatible database for logs.
 
 ##### Internal notes
 

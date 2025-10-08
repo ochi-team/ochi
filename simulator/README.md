@@ -4,7 +4,7 @@
 
 You have to first install [xk6](https://grafana.com/docs/loki/latest/send-data/k6/). You can do that with brew:
 ```bash
-brew install xk6
+go install go.k6.io/xk6/cmd/xk6@latest OR brew install xk6
 ```
 Then generate the binary of k6 with the loki extension:
 ```bash
@@ -37,3 +37,20 @@ Delve debugger.
 ```
 
 ## Debugging with Victoria Metrics
+
+Run victoria logs with the following config:
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "go",
+            "name": "debug vl",
+            "mode": "debug",
+            "request": "launch",
+            "program": "${workspaceFolder}/app/victoria-logs",
+            "outputMode": "remote"
+        }
+    ]
+}
+```
