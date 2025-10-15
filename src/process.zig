@@ -40,6 +40,13 @@ pub const Processor = struct {
         // presetStream: list of fields to append to streamFields
         // const streamFields = fields[0 .. fields.len - 2]; // -1 is _msg, -2 cuts _msg off
 
+        // TODO: add an option to accep extra stream fields
+
+        // TODO: add an option to accep extra fields
+
+        // TODO: add an option to accept ignore fields
+        // doesn't impact stream fields, to narrow set of stream fields better to use stream fields option
+
         // const encodedStreamFields = encodeStream(streamFields);
         // const sid = hash(encodedStream);
         const encodedStreamFields: []const u8 = undefined;
