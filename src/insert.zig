@@ -90,6 +90,13 @@ fn process(allocator: std.mem.Allocator, data: []const u8, params: Params, proce
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
 fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
     // TODO: consider implementing a zero allocation json parsing
+
+    // FIXME: allocator there is a request arena, so the labels values disappear when the request is done
+    // it requires 2 things to fix it:
+    // 1. use another "globalish like" allocator(arena perhaps), so when request is done we don't clean the values in the unerlying json object
+    // 2. follow life time of labels, ArrayList(Fields), only when the collected fields are flushed
+    // we can return the memory back, or better put it back to a pool
+
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, data, .{});
     defer parsed.deinit();
 
@@ -100,6 +107,7 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
     if (streams != .array) return error.StreamsNotArray;
 
     // pre allocate labels list
+    // TODO: reuse for next requests, put back to the pool
     var labels: std.ArrayList(Field) = undefined;
     defer labels.deinit(allocator);
 
