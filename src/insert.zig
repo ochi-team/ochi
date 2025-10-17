@@ -8,7 +8,6 @@ const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;
 const Field = @import("process.zig").Field;
 const Params = @import("process.zig").Params;
-const Tenant = @import("process.zig").Tenant;
 
 /// insertLokiJson defines a loki json insertion operation
 pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
@@ -42,8 +41,11 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
     // TODO: consider if arena requires defer res.arena.free(uncompressed);
 
     const tenantStr = r.headers.get("X-Scope-OrgID") orelse "default";
-    const tenant = try parseTenantID(tenantStr);
-    const params = Params{ .tenant = tenant };
+    if (tenantStr.len > 16) {
+        return error.InvalidTenantID;
+    }
+
+    const params = Params{ .tenantID = tenantStr };
 
     process(res.arena, uncompressed, params, ctx.processor) catch {
         res.body = "failed to process logs";
@@ -52,14 +54,6 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
     };
 
     res.status = 200;
-}
-
-fn parseTenantID(tenantStr: []const u8) !Tenant {
-    if (tenantStr.len > 16) {
-        return error.InvalidTenantID;
-    }
-
-    return Tenant{ .id = tenantStr };
 }
 
 /// insertLokiReady defines a loki handler to signal its readiness
@@ -190,6 +184,9 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
             try labels.append(allocator, .{ .key = "_msg", .value = msg });
 
             try processor.pushLine(allocator, ts, labels.items, params);
+            if (processor.mustFlush()) {
+                try processor.flush();
+            }
         }
 
         // clean len of the labels len, but retain allocated memory
