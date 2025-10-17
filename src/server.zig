@@ -31,7 +31,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
         .conf = conf.app,
         .processor = processor,
     };
-    var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.port }, dispatcher);
+    var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.server.port }, dispatcher);
     defer server.deinit();
 
     global_server = &server;

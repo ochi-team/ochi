@@ -1,0 +1,4 @@
+server:
+  port: 9012
+app:
+  maxRequestSize: 4194304 # 4MB
