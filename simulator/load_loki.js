@@ -13,7 +13,7 @@ export const options = {
 };
 
 // victorialogs loki api
-const url = 'http://24.199.111.101:9428/insert/loki/api/v1/push';
+const url = 'http://localhost:9428/insert/loki/api/v1/push';
 const params = {
   headers: {
     'Content-Type': 'application/json',

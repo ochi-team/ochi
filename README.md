@@ -21,6 +21,7 @@ Specify a custom config file:
 TODO: For some reason this doesn't work.
 ```bash
 zig build run -- -c ./my-seqor.yaml
+```
 
 ### Configuration
 Example `seqor.yaml`:

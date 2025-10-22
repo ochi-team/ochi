@@ -78,7 +78,9 @@ fn uncompress(allocator: std.mem.Allocator, body: []const u8, encoding: []const 
 
 fn process(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
     try parseJson(allocator, data, params, processor);
-    try processor.flush();
+    if (processor.mustFlush()) {
+        try processor.flush(allocator);
+    }
 }
 
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
@@ -139,6 +141,8 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
             }
         }
 
+        const streamLabelsLen = labels.items.len;
+
         // Parse "values" array
         const values = stream.object.get("values") orelse return error.MissingValues;
         if (values != .array) return error.ValuesNotArray;
@@ -156,7 +160,7 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
                 .string => |s| s,
                 else => return error.TimestampNotString,
             };
-            const ts = try std.fmt.parseInt(i64, timestampStr, 10);
+            const tsNs = try std.fmt.parseInt(u64, timestampStr, 10);
 
             // Parse structured metadata (if present)
             if (lineArray.len > 2) {
@@ -183,10 +187,10 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
             // second is optional and defines what field in the given json is read as a _msg field
             try labels.append(allocator, .{ .key = "_msg", .value = msg });
 
-            try processor.pushLine(allocator, ts, labels.items, params);
-            if (processor.mustFlush()) {
-                try processor.flush();
-            }
+            try processor.pushLine(allocator, tsNs, labels.items, params);
+
+            // clean value labels, but retain stream labels
+            labels.items.len = streamLabelsLen;
         }
 
         // clean len of the labels len, but retain allocated memory
