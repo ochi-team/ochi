@@ -27,5 +27,4 @@ test "test http server with SIGTERM" {
 
     // Wait for the server thread to finish
     thread.join();
-    std.debug.print("hello\n", .{});
 }

@@ -51,9 +51,8 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
 
-    // test command
-    const test_step = b.step("test", "Run unit tests");
-    const test_filter = b.option([]const u8, "test-filter", "Test filter");
+    // prepare test
+    const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             // unit test is server module, not main,
@@ -64,10 +63,20 @@ pub fn build(b: *std.Build) void {
             .imports = &imports,
         }),
         // example to run: zig build test -Dtest-filter="SIGTERM"
-        .filters = if (test_filter) |filter| &[_][]const u8{filter} else &[_][]const u8{},
+        .filters = if (test_filter) |filter| filter else &[_][]const u8{},
     });
-    unit_tests.root_module.addImport("httpz", httpz.module("httpz"));
 
+    // build test
+    const install_tests = b.addInstallArtifact(unit_tests, .{});
+    const btest_step = b.step("btest", "Build unit tests (for debugging)");
+    btest_step.dependOn(&install_tests.step);
+
+    // test command
+    const test_step = b.step("test", "Run unit tests");
     const run_unit_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_unit_tests.step);
+
+    // check command
+    const check = b.step("check", "Check if compiles");
+    check.dependOn(&exe.step);
 }

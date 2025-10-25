@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const Line = @import("process.zig").Line;
 const Lines = @import("process.zig").Lines;
 const LinesToDay = @import("process.zig").LinesToDay;
 const SID = @import("process.zig").SID;

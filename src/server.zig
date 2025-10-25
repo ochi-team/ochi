@@ -56,7 +56,16 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
     router.get("/insert/loki/ready", insert.insertLokiReady, .{});
     router.post("/insert/loki/api/v1/push", insert.insertLokiJson, .{});
 
-    try server.listen();
+    server.listen() catch |err| switch (err) {
+        std.posix.BindError.AddressInUse => {
+            std.debug.print("can't start server, port={d} is in use\n", .{conf.server.port});
+            return err;
+        },
+        else => {
+            std.debug.print("can't start server, unexpected error {any}\n", .{err});
+            return err;
+        },
+    };
 }
 
 // TODO: this is not ok, I have to import every module I want to test???
