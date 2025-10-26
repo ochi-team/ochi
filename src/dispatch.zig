@@ -20,7 +20,7 @@ pub const Dispatcher = struct {
         action(&ctx, req, res) catch |err| switch (err) {
             std.mem.Allocator.Error.OutOfMemory => {
                 res.status = 500;
-                res.body = "server is otu of memory";
+                res.body = "server is out of memory";
             },
             else => {
                 res.status = 500;
