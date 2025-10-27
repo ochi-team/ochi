@@ -72,8 +72,9 @@ pub fn build(b: *std.Build) void {
     btest_step.dependOn(&install_tests.step);
 
     // test command
-    const test_step = b.step("test", "Run unit tests");
-    const run_unit_tests = b.addRunArtifact(unit_tests);
+    const test_step = b.step("test", "run unit tests");
+    const run_unit_tests = b.addSystemCommand(&[_][]const u8{"zig-out/bin/test"});
+    run_unit_tests.step.dependOn(&install_tests.step);
     test_step.dependOn(&run_unit_tests.step);
 
     // check command
