@@ -3,7 +3,7 @@ const std = @import("std");
 const server = @import("server.zig");
 const Conf = @import("conf.zig");
 
-test "test http server with SIGTERM" {
+test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
 
     // Start the server in a separate thread
