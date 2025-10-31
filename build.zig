@@ -53,7 +53,6 @@ pub fn build(b: *std.Build) void {
 
     // prepare test
     const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
-    const test_runner = b.option([]const u8, "test-runner", "Test runner");
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             // unit test is server module, not main,
@@ -65,7 +64,7 @@ pub fn build(b: *std.Build) void {
         }),
         // example to run: zig build test -Dtest-filter="SIGTERM"
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
-        .test_runner = if (test_runner) |runner| .{ .path = b.path(runner), .mode = .simple } else null,
+        .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
     });
 
     // build test
