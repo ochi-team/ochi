@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const Data = @import("data.zig").Data;
 const Lines = @import("process.zig").Lines;
 const LinesToDay = @import("process.zig").LinesToDay;
 const SID = @import("process.zig").SID;
@@ -42,36 +43,6 @@ pub const Index = struct {
         _ = self;
         _ = streamID;
         _ = encodedStream;
-    }
-};
-
-pub const DataShard = struct {};
-
-pub const Data = struct {
-    shards: []DataShard,
-
-    pub fn init(allocator: std.mem.Allocator) !*Data {
-        const i = try allocator.create(Data);
-        const cpus = std.Thread.getCpuCount() catch 4;
-        // TODO: log warning if can't get cpus
-        const shards = try allocator.alloc(DataShard, cpus);
-        i.* = Data{
-            // TODO: parts
-            // TODO: small parts
-            .shards = shards,
-        };
-        return i;
-    }
-
-    pub fn deinit(self: *Data, allocator: std.mem.Allocator) void {
-        allocator.free(self.shards);
-        allocator.destroy(self);
-    }
-
-    pub fn addLines(self: *Data, allocator: std.mem.Allocator, lines: Lines) !void {
-        _ = self;
-        _ = allocator;
-        _ = lines;
     }
 };
 
