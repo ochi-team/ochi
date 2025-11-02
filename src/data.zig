@@ -3,13 +3,14 @@ const std = @import("std");
 const Field = @import("process.zig").Field;
 const Lines = @import("process.zig").Lines;
 const Line = @import("process.zig").Line;
+const SID = @import("process.zig").SID;
 
 fn sortLines(_: void, one: *const Line, another: *const Line) bool {
     // TODO: sort by stream, tenant id, timestamp
     return one.timestampNs < another.timestampNs;
 }
 
-pub fn sortFields(_: void, one: Field, another: Field) bool {
+fn sortFields(_: void, one: Field, another: Field) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }
 
@@ -42,6 +43,15 @@ pub const DataShard = struct {
         std.mem.sortUnstable(*const Line, self.lines.items, {}, sortLines);
         for (self.lines.items) |line| {
             std.mem.sortUnstable(Field, @constCast(line.fields), {}, sortFields);
+        }
+
+        var blockSize: u32 = 0;
+        var prevSID: ?SID = null;
+        for (self.lines.items) |line| {
+            if (prevSID == null) {
+                prevSID = line.sid;
+                blockSize += line.fieldsLen();
+            }
         }
         _ = memPart;
     }

@@ -21,35 +21,45 @@ pub const SID = struct {
     high: u64,
 };
 
-pub const Line = struct {
-    timestampNs: u64,
-    tenantID: []const u8,
-    streamFields: []const Field,
-    fields: []const Field,
-
-    pub fn makeEncodedStream(self: *const Line, allocator: std.mem.Allocator) ![][]const u8 {
-        // TODO: the implementation is fake, fix it
-        // it also may required changing the structure in future, now it's a slice of slices,
-        // because it allows not to copy the underlying key/value
-        const encoded = try allocator.alloc([]const u8, self.streamFields.len * 2);
-        var i: u16 = 0;
-        for (self.streamFields) |f| {
-            encoded[i] = f.key;
-            i += 1;
-            encoded[i] = f.value;
-            i += 1;
-        }
-
-        return encoded;
+fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![][]const u8 {
+    // TODO: the implementation is fake, fix it
+    // it also may required changing the structure in future, now it's a slice of slices,
+    // because it allows not to copy the underlying key/value
+    const encoded = try allocator.alloc([]const u8, tags.len * 2);
+    var i: u16 = 0;
+    for (tags) |f| {
+        encoded[i] = f.key;
+        i += 1;
+        encoded[i] = f.value;
+        i += 1;
     }
 
-    pub fn makeStreamID(self: *const Line, encodedStream: [][]const u8) SID {
-        // TODO: implement, calculate the fastest hash from encodedStream
-        return SID{
-            .tenantID = self.tenantID,
-            .low = encodedStream.len,
-            .high = 1,
-        };
+    return encoded;
+}
+
+fn makeStreamID(tenantID: []const u8, encodedStream: [][]const u8) SID {
+    // TODO: implement, calculate the fastest hash from encodedStream
+    return SID{
+        .tenantID = tenantID,
+        .low = encodedStream.len,
+        .high = 1,
+    };
+}
+
+pub const Line = struct {
+    timestampNs: u64,
+    sid: SID,
+    fields: []const Field,
+    encodedTags: [][]const u8,
+
+    pub fn fieldsLen(self: *const Line) u32 {
+        // TODO: implement real calculation depending on the format we store data in
+        var res: u32 = 0;
+        for (self.fields) |field| {
+            res += @intCast(field.key.len);
+            res += @intCast(field.value.len);
+        }
+        return res;
     }
 };
 
@@ -80,15 +90,15 @@ pub const Processor = struct {
         allocator.destroy(self);
     }
 
-    pub fn pushLine(self: *Processor, _: std.mem.Allocator, timestampNs: u64, fields: []const Field, params: Params) !void {
+    pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestampNs: u64, fields: []const Field, params: Params) !void {
         // TODO: controll how many fields a single line may contain
         // add a config value and validate fields length
         // 1000 is a default limit
 
         // TODO: add an option  to accept stream fields, so as not to put to stream all the fields
         // it requires 2 fields:
-        // streamFields: list of keys to retrieve from fields to identify as a stream
-        // presetStream: list of fields to append to streamFields
+        // tags: list of keys to retrieve from fields to identify as a stream
+        // presetStream: list of fields to append to tags
 
         // TODO: add an option to accep extra stream fields
 
@@ -97,15 +107,17 @@ pub const Processor = struct {
         // TODO: add an option to accept ignore fields
         // doesn't impact stream fields, to narrow set of stream fields better to use stream fields option
 
-        const streamFields = fields[0 .. fields.len - 1]; // -1 cuts _msg off
+        const tags = fields[0 .. fields.len - 1]; // -1 cuts _msg off
         // use unstable sort because we don't expect duplicated keys
-        std.mem.sortUnstable(Field, @constCast(streamFields), {}, sortStreamFields);
+        std.mem.sortUnstable(Field, @constCast(tags), {}, sortStreamFields);
 
+        const encodedTags = try encodeTags(allocator, tags);
+        const streamID = makeStreamID(params.tenantID, encodedTags);
         const line = Line{
             .timestampNs = timestampNs,
-            .tenantID = params.tenantID,
-            .streamFields = streamFields,
+            .sid = streamID,
             .fields = fields[fields.len - 1 ..],
+            .encodedTags = encodedTags,
         };
         self.lines[0] = line;
     }

@@ -59,9 +59,7 @@ pub const Partition = struct {
 
             // TODO: if eq to previous line (by stream ID) then skip, must be in the cache
             // TODO: if index has the stream ID then skip
-            const encodedStream = try line.makeEncodedStream(allocator);
-            const streamID = line.makeStreamID(encodedStream);
-            try self.index.addLines(streamID, encodedStream);
+            try self.index.addLines(line.sid, line.encodedTags);
         }
 
         try self.data.addLines(allocator, lines);
