@@ -5,12 +5,18 @@ const Lines = @import("process.zig").Lines;
 const Line = @import("process.zig").Line;
 const SID = @import("process.zig").SID;
 
-fn sortLines(_: void, one: *const Line, another: *const Line) bool {
-    // TODO: sort by stream, tenant id, timestamp
-    return one.timestampNs < another.timestampNs;
+fn columnLessThan(_: void, one: Column, another: Column) bool {
+    return std.mem.lessThan(u8, one.key, another.key);
 }
 
-fn sortFields(_: void, one: Field, another: Field) bool {
+fn lineLessThan(_: void, one: *const Line, another: *const Line) bool {
+    // sid is less
+    return one.sid.lessThan(&another.sid) or
+        // or sid is eq, but timestamp is less
+        (one.sid.eql(&another.sid) and one.timestampNs < another.timestampNs);
+}
+
+fn fieldLessThan(_: void, one: Field, another: Field) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }
 
@@ -20,15 +26,165 @@ pub const BlockWriter = struct {
         w.* = BlockWriter{};
         return w;
     }
+
+    pub fn writeLines(self: *BlockWriter, allocator: std.mem.Allocator, _: SID, lines: []*const Line) !void {
+        const block = try Block.init(allocator, lines);
+        defer block.deinit(allocator);
+        self.writeBlock(allocator, block);
+    }
+
+    fn writeBlock(_: *BlockWriter, _: std.mem.Allocator, block: *Block) void {
+        if (block.len() == 0) {
+            return;
+        }
+        // TODO: implement
+        unreachable;
+    }
+
+    pub fn finish(_: *BlockWriter) void {
+        // TODO: implement
+        unreachable;
+    }
+};
+
+const maxColumns = 1000;
+
+pub const Block = struct {
+    columns: []Column,
+    determinedColumns: []Field,
+
+    pub fn init(allocator: std.mem.Allocator, lines: []*const Line) !*Block {
+        const b = try allocator.create(Block);
+        b.* = Block{
+            .columns = undefined,
+            .determinedColumns = undefined,
+        };
+
+        try b.put(allocator, lines);
+        b.sort();
+        return b;
+    }
+
+    pub fn deinit(self: *Block, allocator: std.mem.Allocator) void {
+        for (self.columns) |col| {
+            allocator.free(col.values);
+        }
+        allocator.free(self.columns);
+        allocator.free(self.determinedColumns);
+        allocator.destroy(self);
+    }
+
+    pub fn len(self: *Block) usize {
+        return self.columns.len + self.determinedColumns.len;
+    }
+
+    fn put(self: *Block, allocator: std.mem.Allocator, lines: []*const Line) !void {
+        // TODO: implement fast path when lines have same fields
+
+        var columnI = std.StringHashMap(usize).init(allocator);
+        for (lines) |line| {
+            // TODO: implement maxColumns limit
+
+            for (line.fields) |field| {
+                if (!columnI.contains(field.key)) {
+                    try columnI.put(field.key, columnI.count());
+                }
+            }
+        }
+
+        const columns = try allocator.alloc(Column, columnI.count());
+        const c = Column{ .key = "", .values = undefined };
+        @memset(columns, c);
+
+        var columnIter = columnI.iterator();
+        while (columnIter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const idx = entry.value_ptr.*;
+
+            var col = &columns[idx];
+            col.key = key;
+            col.values = try allocator.alloc([]const u8, lines.len);
+            @memset(col.values, "");
+        }
+
+        for (lines, 0..) |line, i| {
+            for (line.fields) |field| {
+                const idx = columnI.get(field.key).?;
+                const col = columns[idx];
+                col.values[i] = field.value;
+            }
+        }
+
+        // TODO: detect repeated columns having a single value across all the lines in the block,
+        // if it exists - define as "determined" and remove from columns
+
+        self.determinedColumns = try allocator.alloc(Field, 0);
+        self.columns = columns;
+    }
+
+    fn sort(self: *Block) void {
+        if (self.len() > maxColumns) @panic("columns and determinedColumns size exceeded maxColumns");
+
+        std.mem.sortUnstable(Column, self.columns, {}, columnLessThan);
+        std.mem.sortUnstable(Field, self.determinedColumns, {}, fieldLessThan);
+    }
+};
+
+pub const Column = struct {
+    key: []const u8,
+    values: [][]const u8,
 };
 
 pub const MemPart = struct {
     pub fn init(allocator: std.mem.Allocator) !*MemPart {
         const p = try allocator.create(MemPart);
         p.* = MemPart{};
+
+        return p;
+    }
+
+    pub fn addLines(_: *MemPart, allocator: std.mem.Allocator, lines: Lines) !void {
+        std.mem.sortUnstable(*const Line, lines.items, {}, lineLessThan);
+
+        const blockWriter = try BlockWriter.init(allocator);
+
+        var streamI: u32 = 0;
+        var blockSize: u32 = 0;
+        var prevSID: SID = lines.items[0].sid;
+
+        for (lines.items, 0..) |line, i| {
+            std.mem.sortUnstable(Field, @constCast(line.fields), {}, fieldLessThan);
+
+            if (blockSize >= maxBlockSize or !line.sid.eql(&prevSID)) {
+                try blockWriter.writeLines(allocator, prevSID, lines.items[streamI..i]);
+                prevSID = line.sid;
+                blockSize = 0;
+                streamI = @intCast(i);
+            }
+            blockSize += line.fieldsLen();
+        }
+        if (streamI != lines.items.len) {
+            try blockWriter.writeLines(allocator, prevSID, lines.items[streamI..]);
+        }
+        blockWriter.finish();
+    }
+
+    pub fn open(_: *MemPart, _: std.mem.Allocator) *Part {
+        // TODO: implement
+        unreachable;
+    }
+};
+
+pub const Part = struct {
+    pub fn init(allocator: std.mem.Allocator) !*Part {
+        const p = try allocator.create(Part);
+        p.* = Part{};
         return p;
     }
 };
+
+// 2mb block size, on merging it takes double amount up to 4mb
+const maxBlockSize = 2 * 1024 * 1024;
 
 pub const DataShard = struct {
     lines: Lines,
@@ -38,22 +194,13 @@ pub const DataShard = struct {
     }
 
     fn flush(self: *DataShard, allocator: std.mem.Allocator) !void {
-        // TODO: take it from a pool to reuse mem
+        if (self.lines.items.len == 0) {
+            return;
+        }
         const memPart = try MemPart.init(allocator);
-        std.mem.sortUnstable(*const Line, self.lines.items, {}, sortLines);
-        for (self.lines.items) |line| {
-            std.mem.sortUnstable(Field, @constCast(line.fields), {}, sortFields);
-        }
-
-        var blockSize: u32 = 0;
-        var prevSID: ?SID = null;
-        for (self.lines.items) |line| {
-            if (prevSID == null) {
-                prevSID = line.sid;
-                blockSize += line.fieldsLen();
-            }
-        }
-        _ = memPart;
+        try memPart.addLines(allocator, self.lines);
+        const p = memPart.open(allocator);
+        _ = p;
     }
 };
 

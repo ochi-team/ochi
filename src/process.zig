@@ -14,11 +14,20 @@ pub const Params = struct {
 // sid defines stream id,
 pub const SID = struct {
     tenantID: []const u8,
-    // low and high describe a stream id itself,
-    // a hash from encoded stream fields
-    // split to 2 u64 to align data layout to 8
-    low: u64,
-    high: u64,
+    id: u128,
+
+    pub fn eql(self: *const SID, another: *const SID) bool {
+        return std.mem.eql(u8, self.tenantID, another.tenantID) and
+            self.id == another.id;
+    }
+
+    pub fn lessThan(self: *const SID, another: *const SID) bool {
+        // tenant is less
+        return std.mem.lessThan(u8, self.tenantID, another.tenantID) or
+            // or if tenant is eq than id is less
+            (std.mem.eql(u8, self.tenantID, another.tenantID) and
+                self.id < another.id);
+    }
 };
 
 fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![][]const u8 {
@@ -41,8 +50,7 @@ fn makeStreamID(tenantID: []const u8, encodedStream: [][]const u8) SID {
     // TODO: implement, calculate the fastest hash from encodedStream
     return SID{
         .tenantID = tenantID,
-        .low = encodedStream.len,
-        .high = 1,
+        .id = encodedStream.len,
     };
 }
 
