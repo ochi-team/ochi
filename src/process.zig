@@ -57,7 +57,7 @@ fn makeStreamID(tenantID: []const u8, encodedStream: [][]const u8) SID {
 pub const Line = struct {
     timestampNs: u64,
     sid: SID,
-    fields: []const Field,
+    fields: []Field,
     encodedTags: [][]const u8,
 
     pub fn fieldsLen(self: *const Line) u32 {
@@ -98,7 +98,7 @@ pub const Processor = struct {
         allocator.destroy(self);
     }
 
-    pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestampNs: u64, fields: []const Field, params: Params) !void {
+    pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestampNs: u64, fields: []Field, params: Params) !void {
         // TODO: controll how many fields a single line may contain
         // add a config value and validate fields length
         // 1000 is a default limit

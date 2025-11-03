@@ -20,25 +20,115 @@ fn fieldLessThan(_: void, one: Field, another: Field) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }
 
-pub const BlockWriter = struct {
-    pub fn init(allocator: std.mem.Allocator) !*BlockWriter {
-        const w = try allocator.create(BlockWriter);
-        w.* = BlockWriter{};
+pub const BlockHeader = struct {
+    pub fn encode(self: *const BlockHeader, buf: []u8) void {
+        _ = self;
+        _ = buf;
+        // TODO: implement
+        unreachable;
+    }
+};
+
+pub const IndexBlockHeader = struct {
+    pub fn init(allocator: std.mem.Allocator) !*IndexBlockHeader {
+        const h = try allocator.create(IndexBlockHeader);
+        h.* = IndexBlockHeader{};
+        return h;
+    }
+    pub fn write(self: *const IndexBlockHeader, buf: []u8) void {
+        _ = self;
+        _ = buf;
+        // TODO: implement
+        unreachable;
+    }
+};
+
+pub const StreamWriter = struct {
+    pub fn init(allocator: std.mem.Allocator) !*StreamWriter {
+        const w = try allocator.create(StreamWriter);
+        w.* = StreamWriter{};
         return w;
     }
 
-    pub fn writeLines(self: *BlockWriter, allocator: std.mem.Allocator, _: SID, lines: []*const Line) !void {
-        const block = try Block.init(allocator, lines);
-        defer block.deinit(allocator);
-        self.writeBlock(allocator, block);
+    pub fn deinit(self: *StreamWriter, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
     }
 
-    fn writeBlock(_: *BlockWriter, _: std.mem.Allocator, block: *Block) void {
+    pub fn write(self: *StreamWriter, allocator: std.mem.Allocator, block: *Block, sid: SID) BlockHeader {
+        _ = self;
+        _ = allocator;
+        _ = block;
+        _ = sid;
+        // TODO implement
+        unreachable;
+    }
+};
+
+pub const BlockWriter = struct {
+    streamWriter: *StreamWriter,
+    indexBlockHeader: *IndexBlockHeader,
+
+    // state
+    sidFirst: ?SID,
+
+    indexBlock: []u8,
+
+    pub fn init(allocator: std.mem.Allocator) !*BlockWriter {
+        const w = try allocator.create(BlockWriter);
+        const streamWriter = try StreamWriter.init(allocator);
+        const indexBlockHeader = try IndexBlockHeader.init(allocator);
+        const indexBlock = try allocator.alloc(u8, 20 * 1024);
+        w.* = BlockWriter{
+            .streamWriter = streamWriter,
+            .indexBlockHeader = indexBlockHeader,
+            .sidFirst = null,
+            .indexBlock = indexBlock,
+        };
+        return w;
+    }
+
+    pub fn deinint(self: *BlockWriter, allocator: std.mem.Allocator) void {
+        allocator.free(self.indexBlock);
+        self.streamWriter.deinit(allocator);
+        allocator.destroy(self);
+    }
+
+    pub fn writeLines(self: *BlockWriter, allocator: std.mem.Allocator, sid: SID, lines: []*const Line) !void {
+        const block = try Block.init(allocator, lines);
+        defer block.deinit(allocator);
+        try self.writeBlock(allocator, block, sid);
+    }
+
+    fn writeBlock(self: *BlockWriter, allocator: std.mem.Allocator, block: *Block, sid: SID) !void {
         if (block.len() == 0) {
             return;
         }
+
+        const hasState = self.sidFirst == null;
+        if (hasState) {
+            self.sidFirst = sid;
+        }
+
+        const blockHeader = self.streamWriter.write(allocator, block, sid);
+
+        // TODO: update block header and timestamp header stats
+
+        blockHeader.encode(self.indexBlock);
+
+        // TODO: implement growing buffer of blockIndex and flush only if it reached ~128kb
+        if (true) {
+            self.flushIndexBlock();
+            self.indexBlock.len = 0;
+        }
+
         // TODO: implement
         unreachable;
+    }
+
+    fn flushIndexBlock(self: *BlockWriter) void {
+        self.indexBlockHeader.write(self.indexBlock);
+        // TODO: write meta index block
+        self.sidFirst = null;
     }
 
     pub fn finish(_: *BlockWriter) void {
@@ -147,13 +237,14 @@ pub const MemPart = struct {
         std.mem.sortUnstable(*const Line, lines.items, {}, lineLessThan);
 
         const blockWriter = try BlockWriter.init(allocator);
+        defer blockWriter.deinint(allocator);
 
         var streamI: u32 = 0;
         var blockSize: u32 = 0;
         var prevSID: SID = lines.items[0].sid;
 
         for (lines.items, 0..) |line, i| {
-            std.mem.sortUnstable(Field, @constCast(line.fields), {}, fieldLessThan);
+            std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
 
             if (blockSize >= maxBlockSize or !line.sid.eql(&prevSID)) {
                 try blockWriter.writeLines(allocator, prevSID, lines.items[streamI..i]);
