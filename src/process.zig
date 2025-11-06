@@ -1,33 +1,13 @@
 const std = @import("std");
 
 const Store = @import("store.zig").Store;
-
-pub const Field = struct {
-    key: []const u8,
-    value: []const u8,
-};
+const Field = @import("store/lines.zig").Field;
+const Lines = @import("store/lines.zig").Lines;
+const Line = @import("store/lines.zig").Line;
+const SID = @import("store/lines.zig").SID;
 
 pub const Params = struct {
     tenantID: []const u8,
-};
-
-// sid defines stream id,
-pub const SID = struct {
-    tenantID: []const u8,
-    id: u128,
-
-    pub fn eql(self: *const SID, another: *const SID) bool {
-        return std.mem.eql(u8, self.tenantID, another.tenantID) and
-            self.id == another.id;
-    }
-
-    pub fn lessThan(self: *const SID, another: *const SID) bool {
-        // tenant is less
-        return std.mem.lessThan(u8, self.tenantID, another.tenantID) or
-            // or if tenant is eq than id is less
-            (std.mem.eql(u8, self.tenantID, another.tenantID) and
-                self.id < another.id);
-    }
 };
 
 fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![][]const u8 {
@@ -53,27 +33,6 @@ fn makeStreamID(tenantID: []const u8, encodedStream: [][]const u8) SID {
         .id = encodedStream.len,
     };
 }
-
-pub const Line = struct {
-    timestampNs: u64,
-    sid: SID,
-    fields: []Field,
-    encodedTags: [][]const u8,
-
-    pub fn fieldsLen(self: *const Line) u32 {
-        // TODO: implement real calculation depending on the format we store data in
-        var res: u32 = 0;
-        for (self.fields) |field| {
-            res += @intCast(field.key.len);
-            res += @intCast(field.value.len);
-        }
-        return res;
-    }
-};
-
-pub const Lines = std.ArrayList(*const Line);
-
-pub const LinesToDay = std.AutoHashMap(u64, Lines);
 
 const dayNs: u64 = std.time.ns_per_day;
 
@@ -138,7 +97,7 @@ pub const Processor = struct {
         const now: u64 = @intCast(std.time.nanoTimestamp());
         const minDay = (now - retention) / dayNs;
 
-        var linesByInterval = LinesToDay.init(allocator);
+        var linesByInterval = std.AutoHashMap(u64, Lines).init(allocator);
         for (self.lines) |line| {
             const day = line.timestampNs / dayNs;
             if (day < minDay) {

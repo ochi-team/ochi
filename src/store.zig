@@ -1,9 +1,8 @@
 const std = @import("std");
 
 const Data = @import("data.zig").Data;
-const Lines = @import("process.zig").Lines;
-const LinesToDay = @import("process.zig").LinesToDay;
-const SID = @import("process.zig").SID;
+const Lines = @import("store/lines.zig").Lines;
+const SID = @import("store/lines.zig").SID;
 
 const partitionsFolderName = "partitions";
 const dataFolderName = "data";
@@ -87,7 +86,7 @@ pub const Store = struct {
         allocator.destroy(self);
     }
 
-    pub fn addLines(self: *Store, allocator: std.mem.Allocator, lines: LinesToDay) !void {
+    pub fn addLines(self: *Store, allocator: std.mem.Allocator, lines: std.AutoHashMap(u64, Lines)) !void {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
             const partition = try self.getPartition(allocator, it.key_ptr.*);

@@ -6,7 +6,7 @@ const snappy = @import("snappy");
 
 const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;
-const Field = @import("process.zig").Field;
+const Field = @import("store/lines.zig").Field;
 const Params = @import("process.zig").Params;
 
 /// insertLokiJson defines a loki json insertion operation

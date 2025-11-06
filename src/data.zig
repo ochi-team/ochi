@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const Lines = @import("process.zig").Lines;
-const MemPart = @import("inmem.zig").MemPart;
+const Lines = @import("store/lines.zig").Lines;
+const MemPart = @import("store/inmem/inmempart.zig").MemPart;
 
 pub const DataShard = struct {
     lines: Lines,
@@ -16,8 +16,8 @@ pub const DataShard = struct {
         }
         const memPart = try MemPart.init(allocator);
         try memPart.addLines(allocator, self.lines);
-        const p = memPart.open(allocator);
-        _ = p;
+        // const p = memPart.open(allocator);
+        // _ = p;
     }
 };
 
