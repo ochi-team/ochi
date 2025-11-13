@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Data = @import("data.zig").Data;
-const Lines = @import("store/lines.zig").Lines;
+const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 
 const partitionsFolderName = "partitions";
@@ -51,7 +51,7 @@ pub const Partition = struct {
     index: *Index,
     data: *Data,
 
-    pub fn addLines(self: *Partition, allocator: std.mem.Allocator, lines: Lines) !void {
+    pub fn addLines(self: *Partition, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) !void {
         for (lines.items) |line| {
             // TODO: calculate stream ID and validate cache, if cached then skip the step,
             // put to cache in the end of the loop
@@ -86,7 +86,7 @@ pub const Store = struct {
         allocator.destroy(self);
     }
 
-    pub fn addLines(self: *Store, allocator: std.mem.Allocator, lines: std.AutoHashMap(u64, Lines)) !void {
+    pub fn addLines(self: *Store, allocator: std.mem.Allocator, lines: std.AutoHashMap(u64, std.ArrayList(*const Line))) !void {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
             const partition = try self.getPartition(allocator, it.key_ptr.*);

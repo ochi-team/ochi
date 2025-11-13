@@ -40,8 +40,6 @@ pub const Line = struct {
     }
 };
 
-pub const Lines = std.ArrayList(*const Line);
-
 pub fn lineLessThan(_: void, one: *const Line, another: *const Line) bool {
     // sid is less
     return one.sid.lessThan(&another.sid) or

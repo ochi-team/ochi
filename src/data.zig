@@ -1,10 +1,11 @@
 const std = @import("std");
 
-const Lines = @import("store/lines.zig").Lines;
+const Line = @import("store/lines.zig").Line;
+
 const MemPart = @import("store/inmem/inmempart.zig").MemPart;
 
 pub const DataShard = struct {
-    lines: Lines,
+    lines: std.ArrayList(*const Line),
 
     fn mustFlush(_: *DataShard) bool {
         return true;
@@ -15,7 +16,7 @@ pub const DataShard = struct {
             return;
         }
         const memPart = try MemPart.init(allocator);
-        try memPart.addLines(allocator, self.lines);
+        try memPart.addLines(allocator, self.lines.items);
         // const p = memPart.open(allocator);
         // _ = p;
     }
@@ -44,7 +45,7 @@ pub const Data = struct {
         allocator.destroy(self);
     }
 
-    pub fn addLines(self: *Data, allocator: std.mem.Allocator, lines: Lines) !void {
+    pub fn addLines(self: *Data, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) !void {
         // TODO: remove this garbage,
         // add an atomic counter and scroll shards like ring buffer, every shard has its own mutex to data
         self.mutex.lock();

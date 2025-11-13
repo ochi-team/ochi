@@ -6,9 +6,11 @@ const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 
 const Block = @import("block.zig").Block;
+const BlockHeader = @import("block_header.zig").BlockHeader;
+
+const StreamWriter = @import("stream_writer.zig").StreamWriter;
 
 pub const BlockWriter = struct {
-    // streamWriter: *StreamWriter,
     // indexBlockHeader: *IndexBlockHeader,
     //
     // // state
@@ -18,11 +20,9 @@ pub const BlockWriter = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*BlockWriter {
         const w = try allocator.create(BlockWriter);
-        // const streamWriter = try StreamWriter.init(allocator);
         // const indexBlockHeader = try IndexBlockHeader.init(allocator);
         // const indexBlockBuf = try allocator.alloc(u8, 20 * 1024);
         w.* = BlockWriter{
-            // .streamWriter = streamWriter,
             // .indexBlockHeader = indexBlockHeader,
             .sid = null,
             // .indexBlockBuf = indexBlockBuf,
@@ -32,30 +32,28 @@ pub const BlockWriter = struct {
 
     pub fn deinint(self: *BlockWriter, allocator: std.mem.Allocator) void {
         // allocator.free(self.indexBlockBuf);
-        // self.streamWriter.deinit(allocator);
         allocator.destroy(self);
     }
 
-    pub fn writeLines(self: *BlockWriter, allocator: std.mem.Allocator, sid: SID, lines: []*const Line) !void {
+    pub fn writeLines(self: *BlockWriter, allocator: std.mem.Allocator, sid: SID, lines: []*const Line, streamWriter: *StreamWriter) !void {
         const block = try Block.init(allocator, lines);
         defer block.deinit(allocator);
-        try self.writeBlock(allocator, block, sid);
+        try self.writeBlock(allocator, block, sid, streamWriter);
     }
 
-    fn writeBlock(self: *BlockWriter, allocator: std.mem.Allocator, block: *Block, sid: SID) !void {
-        _ = allocator;
+    fn writeBlock(self: *BlockWriter, allocator: std.mem.Allocator, block: *Block, sid: SID, streamWriter: *StreamWriter) !void {
         if (block.len() == 0) {
             return;
         }
 
-        const hasState = self.sid == null;
-        if (hasState) {
+        const hasState = self.sid != null;
+        if (!hasState) {
             self.sid = sid;
         }
 
         // TODO: write block headers (block header, timestampt header, column header) and update its stats to block writer
-        // const blockHeader = BlockHeader.init(block, sid);
-        // self.streamWriter.write(allocator, block, &blockHeader, sid);
+        var blockHeader = BlockHeader.init(block, sid);
+        try streamWriter.writeBlockallocator, block, &blockHeader);
 
         // TODO: update block header and timestamp header stats
 

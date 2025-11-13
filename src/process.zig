@@ -2,7 +2,6 @@ const std = @import("std");
 
 const Store = @import("store.zig").Store;
 const Field = @import("store/lines.zig").Field;
-const Lines = @import("store/lines.zig").Lines;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 
@@ -97,7 +96,7 @@ pub const Processor = struct {
         const now: u64 = @intCast(std.time.nanoTimestamp());
         const minDay = (now - retention) / dayNs;
 
-        var linesByInterval = std.AutoHashMap(u64, Lines).init(allocator);
+        var linesByInterval = std.AutoHashMap(u64, std.ArrayList(*const Line)).init(allocator);
         for (self.lines) |line| {
             const day = line.timestampNs / dayNs;
             if (day < minDay) {
@@ -111,7 +110,7 @@ pub const Processor = struct {
                 try list.append(allocator, &line);
                 continue;
             }
-            var list = try Lines.initCapacity(allocator, self.lines.len);
+            var list = try std.ArrayList(*const Line).initCapacity(allocator, self.lines.len);
             try linesByInterval.put(day, list);
             try list.append(allocator, &line);
         }

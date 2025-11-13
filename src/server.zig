@@ -70,5 +70,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
 
 // TODO: this is not ok, I have to import every module I want to test???
 test {
+    std.testing.refAllDecls(@This());
+
     _ = @import("server_test.zig");
 }
