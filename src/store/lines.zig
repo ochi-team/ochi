@@ -16,6 +16,17 @@ pub const SID = struct {
             (std.mem.eql(u8, self.tenantID, another.tenantID) and
                 self.id < another.id);
     }
+
+    pub fn encode(self: *SID, buf: *std.ArrayList(u8)) !void {
+        if (self.tenantID.len > 16) {
+            @panic("tenant id can't be larger than 16 bytes");
+        }
+
+        try buf.appendSliceBounded(self.tenantID);
+        var intBuf: [16]u8 = undefined;
+        std.mem.writeInt(u128, &intBuf, self.id, .big);
+        try buf.appendSliceBounded(&intBuf);
+    }
 };
 
 pub const Field = struct {

@@ -33,8 +33,10 @@ test "addLines" {
     const memPart = try MemPart.init(std.testing.allocator);
     defer memPart.deinit(std.testing.allocator);
     try memPart.addLines(std.testing.allocator, lines[0..]);
-    const content = memPart.streamWriter.timestampsBuffer.content();
+    const content = memPart.streamWriter.timestampsBuffer.items;
+    const header = memPart.;
     try std.testing.expectEqualStrings("{ 1, 2 }", content);
+    try std.testing.expectEqualStrings("", mem)
     // test empty fields
     // test empty keys
     // test no celles

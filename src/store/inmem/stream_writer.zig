@@ -3,15 +3,24 @@ const std = @import("std");
 const encoding = @import("encoding.zig");
 
 const Block = @import("block.zig").Block;
-const Buffer = @import("buffer.zig").Buffer;
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 
 pub const StreamWriter = struct {
-    timestampsBuffer: *Buffer,
+    const tsBufferSize = 164 * 1024;
+
+    timestampsBuffer: std.ArrayList(u8),
+
+    // pub fn init(buf: [tsBufferSize]u8) StreamWriter {
+    //     const allocator = std.heap.FixedBufferAllocator.init(buf);
+    //     const timestampsBuffer = std.ArrayList(u8).initCapacity(allocator.allocator(), tsBufferSize);
+    //     return BlockWriter{
+    //         .timestampsBuffer = timestampsBuffer,
+    //     };
+    // }
 
     pub fn init(allocator: std.mem.Allocator) !*StreamWriter {
-        const tsBuffer = try Buffer.init(allocator);
+        const tsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
 
         const w = try allocator.create(StreamWriter);
         w.* = StreamWriter{
@@ -39,9 +48,9 @@ pub const StreamWriter = struct {
 
         tsHeader.min = timestamps[0];
         tsHeader.max = timestamps[timestamps.len - 1];
-        tsHeader.offset = self.timestampsBuffer.len;
+        tsHeader.offset = self.timestampsBuffer.items.len;
         tsHeader.size = encodedTimestamps.len;
 
-        self.timestampsBuffer.write(encodedTimestamps);
+        try self.timestampsBuffer.appendSliceBounded(encodedTimestamps);
     }
 };

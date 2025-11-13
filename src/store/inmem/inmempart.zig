@@ -51,8 +51,8 @@ pub const MemPart = struct {
             return Error.EmptyLines;
         }
 
-        const blockWriter = try BlockWriter.init(allocator);
-        defer blockWriter.deinint(allocator);
+        var indexBlockBuf: [BlockWriter.indexBlockSize]u8 = undefined;
+        var blockWriter = BlockWriter.init(&indexBlockBuf);
 
         var streamI: u32 = 0;
         var blockSize: u32 = 0;
