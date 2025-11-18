@@ -38,10 +38,8 @@ pub const Column = struct {
 };
 
 pub const Block = struct {
-    columnsCap: u32,
+    firstCelled: u32,
     columns: []Column,
-    // celledColumns hold columns with a single value
-    celledColumns: std.ArrayList(Field),
     timestamps: []u64,
 
     pub fn init(allocator: std.mem.Allocator, lines: []*const Line) !*Block {
@@ -50,9 +48,8 @@ pub const Block = struct {
         const timestamps = try allocator.alloc(u64, lines.len);
         errdefer allocator.free(timestamps);
         b.* = Block{
-            .columnsCap = 0,
+            .firstCelled = undefined,
             .columns = undefined,
-            .celledColumns = undefined,
             .timestamps = timestamps,
         };
 
@@ -62,14 +59,20 @@ pub const Block = struct {
     }
 
     pub fn deinit(self: *Block, allocator: std.mem.Allocator) void {
-        self.columns.len = self.columnsCap;
         for (self.columns) |col| {
             allocator.free(col.values);
         }
-        self.celledColumns.deinit(allocator);
         allocator.free(self.columns);
         allocator.free(self.timestamps);
         allocator.destroy(self);
+    }
+
+    pub fn getColumns(self: *Block) []Column {
+        return self.columns[0..self.firstCelled];
+    }
+    // celledColumns hold columns with a single value
+    pub fn getCelledColumns(self: *Block) []Column {
+        return self.columns[self.firstCelled..];
     }
 
     pub fn len(self: *Block) usize {
@@ -90,11 +93,12 @@ pub const Block = struct {
         // timestamp key value reserved
         var res = lineTsSize * self.timestamps.len;
 
-        for (self.celledColumns.items) |col| {
-            res += (lineSurroundSize + col.key.len + col.value.len) * self.timestamps.len;
+        for (self.getCelledColumns()) |col| {
+            const colValueLen = if (col.values.len > 0) col.values[0].len else 0;
+            res += (lineSurroundSize + col.key.len + colValueLen) * self.timestamps.len;
         }
 
-        for (self.columns) |col| {
+        for (self.getColumns()) |col| {
             for (col.values) |val| {
                 if (val.len == 0) {
                     continue;
@@ -124,12 +128,8 @@ pub const Block = struct {
             self.timestamps[i] = line.timestampNs;
         }
 
-        self.columnsCap = columnI.count();
-        var columns = try allocator.alloc(Column, self.columnsCap);
-        errdefer {
-            columns.len = self.columnsCap;
-            allocator.free(columns);
-        }
+        var columns = try allocator.alloc(Column, columnI.count());
+        errdefer allocator.free(columns);
 
         {
             var fallback = std.heap.stackFallback(2048, allocator);
@@ -166,35 +166,24 @@ pub const Block = struct {
             }
         }
 
-        var celledColumns = try std.ArrayList(Field).initCapacity(allocator, 4);
-        errdefer celledColumns.deinit(allocator);
-
-        var firstCelled: usize = columns.len;
+        self.firstCelled = @intCast(columns.len);
         var i: usize = 0;
-        while (i < firstCelled) {
+        while (i < self.firstCelled) {
             if (columns[i].isCelled()) {
-                firstCelled -= 1;
-                std.mem.swap(Column, &columns[i], &columns[firstCelled]);
+                self.firstCelled -= 1;
+                std.mem.swap(Column, &columns[i], &columns[self.firstCelled]);
             } else {
                 i += 1;
             }
         }
 
-        for (columns[firstCelled..]) |col| {
-            try celledColumns.append(allocator, .{
-                .key = col.key,
-                .value = col.values[0],
-            });
-        }
-
-        self.celledColumns = celledColumns;
-        self.columns = columns[0..firstCelled];
+        self.columns = columns;
     }
 
     fn sort(self: *Block) void {
         if (self.len() > maxColumns) @panic("block size exceeded maxColumns");
 
-        std.mem.sortUnstable(Column, self.columns, {}, columnLessThan);
-        std.mem.sortUnstable(Field, self.celledColumns.items, {}, fieldLessThan);
+        std.mem.sortUnstable(Column, self.getColumns(), {}, columnLessThan);
+        std.mem.sortUnstable(Column, self.getCelledColumns(), {}, columnLessThan);
     }
 };
