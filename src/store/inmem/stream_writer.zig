@@ -7,30 +7,30 @@ const BlockHeader = @import("block_header.zig").BlockHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 
 pub const StreamWriter = struct {
-    const tsBufferSize = 164 * 1024;
+    const tsBufferSize = 120 * 1024;
+    const indexBufferSize = 120 * 1024;
 
+    // TODO: expose metrics on len/cap relations
     timestampsBuffer: std.ArrayList(u8),
-
-    // pub fn init(buf: [tsBufferSize]u8) StreamWriter {
-    //     const allocator = std.heap.FixedBufferAllocator.init(buf);
-    //     const timestampsBuffer = std.ArrayList(u8).initCapacity(allocator.allocator(), tsBufferSize);
-    //     return BlockWriter{
-    //         .timestampsBuffer = timestampsBuffer,
-    //     };
-    // }
+    indexBuffer: std.ArrayList(u8),
 
     pub fn init(allocator: std.mem.Allocator) !*StreamWriter {
-        const tsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
+        var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
+        errdefer timestampsBuffer.deinit(allocator);
+        var indexBuffer = try std.ArrayList(u8).initCapacity(allocator, indexBufferSize);
+        errdefer indexBuffer.deinit(allocator);
 
         const w = try allocator.create(StreamWriter);
         w.* = StreamWriter{
-            .timestampsBuffer = tsBuffer,
+            .timestampsBuffer = timestampsBuffer,
+            .indexBuffer = indexBuffer,
         };
         return w;
     }
 
     pub fn deinit(self: *StreamWriter, allocator: std.mem.Allocator) void {
         self.timestampsBuffer.deinit(allocator);
+        self.indexBuffer.deinit(allocator);
         allocator.destroy(self);
     }
 
@@ -42,6 +42,7 @@ pub const StreamWriter = struct {
         if (timestamps.len == 0) {
             @panic("writer: given empty timestamps slice");
         }
+        // TODO: pass static buffer instead of allocator
         const encodedTimestamps = try encoding.encodeTimestamps(allocator, timestamps);
         defer allocator.free(encodedTimestamps);
         // TODO: write tsHeader data from encodedTimestamps

@@ -34,6 +34,7 @@ pub const MemPart = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*MemPart {
         const p = try allocator.create(MemPart);
+        errdefer allocator.destroy(p);
         const streamWriter = try StreamWriter.init(allocator);
         p.* = MemPart{
             .streamWriter = streamWriter,
@@ -51,8 +52,8 @@ pub const MemPart = struct {
             return Error.EmptyLines;
         }
 
-        var indexBlockBuf: [BlockWriter.indexBlockSize]u8 = undefined;
-        var blockWriter = BlockWriter.init(&indexBlockBuf);
+        var blockWriter = try BlockWriter.init(allocator);
+        defer blockWriter.deinit(allocator);
 
         var streamI: u32 = 0;
         var blockSize: u32 = 0;
@@ -73,7 +74,7 @@ pub const MemPart = struct {
         if (streamI != lines.len) {
             try blockWriter.writeLines(allocator, prevSID, lines[streamI..], self.streamWriter);
         }
-        blockWriter.finish();
+        blockWriter.finish(self.streamWriter);
     }
 };
 

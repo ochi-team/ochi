@@ -23,22 +23,16 @@ pub const BlockHeader = struct {
         };
     }
 
-    // 24 sid, 8 size, 4 len, 32 timestampsHeader
-    const blockHeaderEncodedLen = 24 + 8 + 4 + 32;
-    pub fn encode(self: *BlockHeader, buf: *std.ArrayList(u8)) !void {
-        if (buf.capacity - buf.items.len < blockHeaderEncodedLen) {
-            return std.mem.Allocator.Error.OutOfMemory;
-        }
+    const blockHeaderSize = @sizeOf(BlockHeader);
 
+    pub fn encode(self: *BlockHeader, buf: *std.ArrayList(u8)) !void {
         try self.sid.encode(buf);
 
-        var intBuf: [8]u8 = undefined;
+        const u64Buf: [8]u8 = @bitCast(self.size);
+        try buf.appendSliceBounded(&u64Buf);
 
-        std.mem.writeInt(u64, &intBuf, self.size, .big);
-        try buf.appendSliceBounded(&intBuf);
-
-        std.mem.writeInt(u32, intBuf[0..4], self.len, .big);
-        try buf.appendSliceBounded(intBuf[0..4]);
+        const u32Buf: [4]u8 = @bitCast(self.len);
+        try buf.appendSliceBounded(&u32Buf);
 
         try self.timestampsHeader.encode(buf);
     }
@@ -51,14 +45,16 @@ pub const TimestampsHeader = struct {
     max: u64,
 
     pub fn encode(self: *TimestampsHeader, buf: *std.ArrayList(u8)) !void {
-        var intBuf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &intBuf, self.offset, .big);
-        try buf.appendSliceBounded(&intBuf);
-        std.mem.writeInt(u64, &intBuf, self.size, .big);
-        try buf.appendSliceBounded(&intBuf);
-        std.mem.writeInt(u64, &intBuf, self.min, .big);
-        try buf.appendSliceBounded(&intBuf);
-        std.mem.writeInt(u64, &intBuf, self.max, .big);
-        try buf.appendSliceBounded(&intBuf);
+        var u64Buf: [8]u8 = @bitCast(self.offset);
+        try buf.appendSliceBounded(&u64Buf);
+
+        u64Buf = @bitCast(self.size);
+        try buf.appendSliceBounded(&u64Buf);
+
+        u64Buf = @bitCast(self.min);
+        try buf.appendSliceBounded(&u64Buf);
+
+        u64Buf = @bitCast(self.max);
+        try buf.appendSliceBounded(&u64Buf);
     }
 };

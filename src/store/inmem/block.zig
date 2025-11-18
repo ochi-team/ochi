@@ -38,7 +38,7 @@ pub const Column = struct {
 };
 
 pub const Block = struct {
-    columnsInitLen: u32,
+    columnsCap: u32,
     columns: []Column,
     // celledColumns hold columns with a single value
     celledColumns: std.ArrayList(Field),
@@ -50,7 +50,7 @@ pub const Block = struct {
         const timestamps = try allocator.alloc(u64, lines.len);
         errdefer allocator.free(timestamps);
         b.* = Block{
-            .columnsInitLen = 0,
+            .columnsCap = 0,
             .columns = undefined,
             .celledColumns = undefined,
             .timestamps = timestamps,
@@ -62,7 +62,7 @@ pub const Block = struct {
     }
 
     pub fn deinit(self: *Block, allocator: std.mem.Allocator) void {
-        self.columns.len = self.columnsInitLen;
+        self.columns.len = self.columnsCap;
         for (self.columns) |col| {
             allocator.free(col.values);
         }
@@ -124,19 +124,39 @@ pub const Block = struct {
             self.timestamps[i] = line.timestampNs;
         }
 
-        self.columnsInitLen = columnI.count();
-        var columns = try allocator.alloc(Column, self.columnsInitLen);
-        errdefer allocator.free(columns);
+        self.columnsCap = columnI.count();
+        var columns = try allocator.alloc(Column, self.columnsCap);
+        errdefer {
+            columns.len = self.columnsCap;
+            allocator.free(columns);
+        }
 
-        var columnIter = columnI.iterator();
-        while (columnIter.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const idx = entry.value_ptr.*;
+        {
+            var fallback = std.heap.stackFallback(2048, allocator);
+            const fba = fallback.get();
+            var allocated = try fba.alloc(bool, columns.len);
+            defer fba.free(allocated);
 
-            var col = &columns[idx];
-            col.key = key;
-            col.values = try allocator.alloc([]const u8, lines.len);
-            errdefer allocator.free(col.values);
+            var columnIter = columnI.iterator();
+            while (columnIter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const idx = entry.value_ptr.*;
+
+                errdefer {
+                    for (0..columns.len) |i| {
+                        if (allocated[i]) allocator.free(columns[i].values);
+                    }
+                }
+                var col = &columns[idx];
+                col.key = key;
+                col.values = try allocator.alloc([]const u8, lines.len);
+                allocated[idx] = true;
+            }
+        }
+        errdefer {
+            for (0..columns.len) |i| {
+                allocator.free(columns[i].values);
+            }
         }
 
         for (lines, 0..) |line, i| {

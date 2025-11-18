@@ -22,9 +22,13 @@ pub const SID = struct {
             @panic("tenant id can't be larger than 16 bytes");
         }
 
-        try buf.appendSliceBounded(self.tenantID);
-        var intBuf: [16]u8 = undefined;
-        std.mem.writeInt(u128, &intBuf, self.id, .big);
+        if (buf.capacity - buf.items.len < 16) unreachable;
+        const tenantBuf = buf.unusedCapacitySlice()[0..16];
+        @memset(tenantBuf, 0x00);
+        @memcpy(tenantBuf[0..self.tenantID.len], self.tenantID);
+        buf.items.len += 16;
+
+        var intBuf: [16]u8 = @bitCast(self.id);
         try buf.appendSliceBounded(&intBuf);
     }
 };

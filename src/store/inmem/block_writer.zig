@@ -1,35 +1,59 @@
 const std = @import("std");
 
-const Field = @import("../lines.zig").Field;
-const Lines = @import("../lines.zig").Lines;
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 
 const Block = @import("block.zig").Block;
 const BlockHeader = @import("block_header.zig").BlockHeader;
+const IndexBlockHeader = @import("index_block_header.zig").IndexBlockHeader;
 
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 
 pub const BlockWriter = struct {
-    pub const indexBlockSize = (256) * 1024;
-    pub const indexBlockFlushThreshold = (256 - 32) * 1024;
+    pub const indexBlockSize = 164 * 1024;
+    pub const indexBlockFlushThreshold = indexBlockSize - 32 * 1024;
 
-    // state
+    // state to the latestBlocks til not flushed
     sid: ?SID,
+    minTimestamp: u64,
+    maxTimestamp: u64,
+    // state to the all written blocks
+    len: u32,
+    size: u64,
+    globalMinTimestamp: u64,
+    globalMaxTimestamp: u64,
+    blocksCount: u32,
     //
-    allocator: std.heap.FixedBufferAllocator,
     indexBlockBuf: std.ArrayList(u8),
     indexBlockHeader: *IndexBlockHeader,
 
-    pub fn init(buf: *[indexBlockSize]u8) BlockWriter {
-        var allocator = std.heap.FixedBufferAllocator.init(buf);
-        const indexBlockBuf = std.ArrayList(u8).initCapacity(allocator.allocator(), indexBlockSize) catch unreachable;
-        return BlockWriter{
-            .allocator = allocator,
+    pub fn init(allocator: std.mem.Allocator) !*BlockWriter {
+        var indexBlockBuf = try std.ArrayList(u8).initCapacity(allocator, indexBlockSize);
+        errdefer indexBlockBuf.deinit(allocator);
+        var indexBlockHeader = try IndexBlockHeader.init(allocator);
+        errdefer indexBlockHeader.deinit(allocator);
+        const bw = try allocator.create(BlockWriter);
+        bw.* = BlockWriter{
             .indexBlockBuf = indexBlockBuf,
+            .indexBlockHeader = indexBlockHeader,
 
             .sid = null,
+            .minTimestamp = 0,
+            .maxTimestamp = 0,
+
+            .len = 0,
+            .size = 0,
+            .globalMinTimestamp = 0,
+            .globalMaxTimestamp = 0,
+            .blocksCount = 0,
         };
+        return bw;
+    }
+
+    pub fn deinit(self: *BlockWriter, allocator: std.mem.Allocator) void {
+        self.indexBlockBuf.deinit(allocator);
+        self.indexBlockHeader.deinit(allocator);
+        allocator.destroy(self);
     }
 
     pub fn writeLines(self: *BlockWriter, allocator: std.mem.Allocator, sid: SID, lines: []*const Line, streamWriter: *StreamWriter) !void {
@@ -51,33 +75,44 @@ pub const BlockWriter = struct {
         // TODO: write block headers (block header, timestampt header, column header) and update its stats to block writer
         var blockHeader = BlockHeader.init(block, sid);
         try streamWriter.writeBlock(allocator, block, &blockHeader);
-        try blockHeader.encode(&self.indexBlockBuf);
-        if (self.indexBlockBuf.capacity - self.indexBlockBuf.items.len > indexBlockFlushThreshold) {
-            self.flushIndexBlock();
+
+        if (self.len == 0 or blockHeader.timestampsHeader.min < self.globalMinTimestamp) {
+            self.globalMinTimestamp = blockHeader.timestampsHeader.min;
+        }
+        if (self.len == 0 or blockHeader.timestampsHeader.max > self.globalMaxTimestamp) {
+            self.globalMaxTimestamp = blockHeader.timestampsHeader.max;
+        }
+        if (!hasState or blockHeader.timestampsHeader.min < self.minTimestamp) {
+            self.minTimestamp = blockHeader.timestampsHeader.min;
+        }
+        if (!hasState or blockHeader.timestampsHeader.max > self.maxTimestamp) {
+            self.maxTimestamp = blockHeader.timestampsHeader.max;
         }
 
-        // TODO: update block header and timestamp header stats
+        self.size += blockHeader.size;
+        self.len += blockHeader.len;
+        self.blocksCount += 1;
 
-        //     blockHeader.encode(self.indexBlockBuf);
-        //
-        //     // TODO: implement growing buffer of blockIndex and flush only if it reached ~128kb
-        //     if (true) {
-        //         self.flushIndexBlock();
-        //         self.indexBlockBuf.len = 0;
-        //     }
+        try blockHeader.encode(&self.indexBlockBuf);
+        if (self.indexBlockBuf.capacity - self.indexBlockBuf.items.len < indexBlockFlushThreshold) {
+            self.flushIndexBlock(streamWriter);
+        }
     }
 
-    fn flushIndexBlock(self: *BlockWriter) void {
+    pub fn finish(self: *BlockWriter, streamWriter: *StreamWriter) void {
+        self.flushIndexBlock(streamWriter);
+        // TODO write column names, column indexes, meta indexes
+    }
+
+    fn flushIndexBlock(self: *BlockWriter, streamWriter: *StreamWriter) void {
         defer self.indexBlockBuf.clearRetainingCapacity();
-        if (self.indexBlockBuf.len > 0) {
-            self.indexBlockHeader.writeIndexBlock(self.indexBlockBuf, self.streamWriter.indexBuffer);
+        if (self.indexBlockBuf.items.len > 0) {
+            // if it fails then stream writers buffers sizes are configured wrong, critical bug
+            self.indexBlockHeader.writeIndexBlock(&self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter) catch unreachable;
             // TODO: write meta index block
         }
-        self.sidFirst = null;
-    }
-
-    pub fn finish(self: *BlockWriter) void {
-        self.flushIndexBlock();
-        // TODO write column names, column indexes, meta indexes
+        self.sid = null;
+        self.minTimestamp = 0;
+        self.maxTimestamp = 0;
     }
 };
