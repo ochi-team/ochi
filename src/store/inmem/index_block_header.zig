@@ -2,6 +2,7 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
+const Encoder = @import("encoder.zig").Encoder;
 
 pub const IndexBlockHeader = struct {
     sid: ?SID,
@@ -41,5 +42,14 @@ pub const IndexBlockHeader = struct {
         self.size = indexBlockBuf.items.len;
 
         try streamWriter.indexBuffer.appendSliceBounded(indexBlockBuf.items);
+    }
+
+    pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) !void {
+        var enc = Encoder.init(buf);
+        try self.sid.?.encode(buf);
+        try enc.writeInt(u64, self.minTs);
+        try enc.writeInt(u64, self.maxTs);
+        try enc.writeInt(u64, self.offset);
+        try enc.writeInt(u64, self.size);
     }
 };

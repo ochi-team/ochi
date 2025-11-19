@@ -24,9 +24,9 @@ pub const SID = struct {
             @panic("tenant id can't be larger than 16 bytes");
         }
 
-        var ser = Encoder.init(buf);
-        try ser.writePadded(self.tenantID, 16);
-        try ser.writeInt(u128, self.id);
+        var enc = Encoder.init(buf);
+        try enc.writePadded(self.tenantID, 16);
+        try enc.writeInt(u128, self.id);
     }
 };
 

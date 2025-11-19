@@ -12,6 +12,7 @@ const StreamWriter = @import("stream_writer.zig").StreamWriter;
 pub const BlockWriter = struct {
     pub const indexBlockSize = 164 * 1024;
     pub const indexBlockFlushThreshold = indexBlockSize - 32 * 1024;
+    pub const metaIndexSize = 128 * 1024;
 
     // state to the latestBlocks til not flushed
     sid: ?SID,
@@ -26,17 +27,18 @@ pub const BlockWriter = struct {
     //
     indexBlockBuf: std.ArrayList(u8),
     indexBlockHeader: *IndexBlockHeader,
+    metaIndexBuf: std.ArrayList(u8),
 
     pub fn init(allocator: std.mem.Allocator) !*BlockWriter {
         var indexBlockBuf = try std.ArrayList(u8).initCapacity(allocator, indexBlockSize);
         errdefer indexBlockBuf.deinit(allocator);
         var indexBlockHeader = try IndexBlockHeader.init(allocator);
         errdefer indexBlockHeader.deinit(allocator);
+        var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexSize);
+        errdefer metaIndexBuf.deinit(allocator);
+
         const bw = try allocator.create(BlockWriter);
         bw.* = BlockWriter{
-            .indexBlockBuf = indexBlockBuf,
-            .indexBlockHeader = indexBlockHeader,
-
             .sid = null,
             .minTimestamp = 0,
             .maxTimestamp = 0,
@@ -46,6 +48,10 @@ pub const BlockWriter = struct {
             .globalMinTimestamp = 0,
             .globalMaxTimestamp = 0,
             .blocksCount = 0,
+
+            .indexBlockBuf = indexBlockBuf,
+            .indexBlockHeader = indexBlockHeader,
+            .metaIndexBuf = metaIndexBuf,
         };
         return bw;
     }
@@ -53,6 +59,7 @@ pub const BlockWriter = struct {
     pub fn deinit(self: *BlockWriter, allocator: std.mem.Allocator) void {
         self.indexBlockBuf.deinit(allocator);
         self.indexBlockHeader.deinit(allocator);
+        self.metaIndexBuf.deinit(allocator);
         allocator.destroy(self);
     }
 
@@ -109,6 +116,7 @@ pub const BlockWriter = struct {
         if (self.indexBlockBuf.items.len > 0) {
             // if it fails then stream writers buffers sizes are configured wrong, critical bug
             self.indexBlockHeader.writeIndexBlock(&self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter) catch unreachable;
+            self.indexBlockHeader.encode(&self.metaIndexBuf) catch unreachable;
             // TODO: write meta index block
         }
         self.sid = null;
