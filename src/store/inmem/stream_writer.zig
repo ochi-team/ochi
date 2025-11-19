@@ -1,9 +1,12 @@
 const std = @import("std");
 
-const encoding = @import("encoding.zig");
+const encode = @import("encode.zig");
 
 const Block = @import("block.zig").Block;
+const Column = @import("block.zig").Column;
 const BlockHeader = @import("block_header.zig").BlockHeader;
+const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
+const ColumnHeader = @import("block_header.zig").ColumnHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 
 pub const StreamWriter = struct {
@@ -36,6 +39,10 @@ pub const StreamWriter = struct {
 
     pub fn writeBlock(self: *StreamWriter, allocator: std.mem.Allocator, block: *Block, blockHeader: *BlockHeader) !void {
         try self.writeTimestamps(allocator, &blockHeader.timestampsHeader, block.timestamps);
+
+        const columnsHeader = try ColumnsHeader.init(allocator, block);
+        defer columnsHeader.deinit(allocator);
+        self.writeColumns(columnsHeader, block.getColumns());
     }
 
     fn writeTimestamps(self: *StreamWriter, allocator: std.mem.Allocator, tsHeader: *TimestampsHeader, timestamps: []u64) !void {
@@ -43,7 +50,7 @@ pub const StreamWriter = struct {
             @panic("writer: given empty timestamps slice");
         }
         // TODO: pass static buffer instead of allocator
-        const encodedTimestamps = try encoding.encodeTimestamps(allocator, timestamps);
+        const encodedTimestamps = try encode.encodeTimestamps(allocator, timestamps);
         defer allocator.free(encodedTimestamps);
         // TODO: write tsHeader data from encodedTimestamps
 
@@ -53,5 +60,18 @@ pub const StreamWriter = struct {
         tsHeader.size = encodedTimestamps.len;
 
         try self.timestampsBuffer.appendSliceBounded(encodedTimestamps);
+    }
+
+    fn writeColumns(self: *StreamWriter, columnsHeader: *ColumnsHeader, cols: []const Column) void {
+        for (cols, 0..) |col, i| {
+            var header = columnsHeader.headers[i];
+            self.writeColumnHeader(col, &header);
+        }
+    }
+
+    fn writeColumnHeader(_: *StreamWriter, col: Column, ch: *ColumnHeader) void {
+        ch.key = col.key;
+
+        // TODO: get bloom column values
     }
 };

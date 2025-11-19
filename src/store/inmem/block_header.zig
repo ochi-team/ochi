@@ -1,7 +1,9 @@
 const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
+const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const Block = @import("block.zig").Block;
+const Column = @import("block.zig").Column;
 const Encoder = @import("encode.zig").Encoder;
 const Decoder = @import("encode.zig").Decoder;
 
@@ -83,4 +85,34 @@ pub const TimestampsHeader = struct {
             .max = max,
         };
     }
+};
+
+pub const ColumnsHeader = struct {
+    headers: []ColumnHeader,
+    celledColumns: []Column,
+
+    pub fn init(allocator: std.mem.Allocator, block: *Block) !*ColumnsHeader {
+        const cols = block.getColumns();
+        const headers = try allocator.alloc(ColumnHeader, cols.len);
+        errdefer allocator.free(headers);
+
+        const celledCols = block.getCelledColumns();
+
+        const ch = try allocator.create(ColumnsHeader);
+        ch.* = .{
+            .headers = headers,
+            .celledColumns = celledCols,
+        };
+
+        return ch;
+    }
+
+    pub fn deinit(self: *ColumnsHeader, allocator: std.mem.Allocator) void {
+        allocator.free(self.headers);
+        allocator.destroy(self);
+    }
+};
+
+pub const ColumnHeader = struct {
+    key: []const u8,
 };
