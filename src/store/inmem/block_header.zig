@@ -30,11 +30,11 @@ pub const BlockHeader = struct {
     const blockHeaderSize = @sizeOf(BlockHeader);
 
     pub fn encode(self: *BlockHeader, buf: *std.ArrayList(u8)) !void {
-        try self.sid.encode(buf);
+        self.sid.encode(buf);
 
         var enc = Encoder.init(buf);
-        try enc.writeInt(u64, self.size);
-        try enc.writeInt(u32, self.len);
+        enc.writeInt(u64, self.size);
+        enc.writeInt(u32, self.len);
 
         try self.timestampsHeader.encode(buf);
     }
@@ -66,10 +66,10 @@ pub const TimestampsHeader = struct {
 
     pub fn encode(self: *TimestampsHeader, buf: *std.ArrayList(u8)) !void {
         var enc = Encoder.init(buf);
-        try enc.writeInt(u64, self.offset);
-        try enc.writeInt(u64, self.size);
-        try enc.writeInt(u64, self.min);
-        try enc.writeInt(u64, self.max);
+        enc.writeInt(u64, self.offset);
+        enc.writeInt(u64, self.size);
+        enc.writeInt(u64, self.min);
+        enc.writeInt(u64, self.max);
     }
 
     pub fn decode(decoder: *Decoder) !TimestampsHeader {

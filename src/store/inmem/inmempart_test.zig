@@ -7,6 +7,7 @@ const MemPart = @import("inmempart.zig").MemPart;
 const Error = @import("inmempart.zig").Error;
 
 const BlockHeader = @import("block_header.zig").BlockHeader;
+const IndexBlockHeader = @import("index_block_header.zig").IndexBlockHeader;
 const encode = @import("encode.zig");
 
 test "addLines" {
@@ -65,6 +66,21 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         try std.testing.expectEqual(8, blockHeader.timestampsHeader.size);
         try std.testing.expectEqual(1, blockHeader.timestampsHeader.min);
         try std.testing.expectEqual(2, blockHeader.timestampsHeader.max);
+    }
+
+    // validate meta index
+    {
+        const metaIndexContent = memPart.streamWriter.metaIndexBuf.items;
+        try std.testing.expect(metaIndexContent.len > 0);
+
+        const decodedIndexBlockHeader = try IndexBlockHeader.decode(metaIndexContent);
+
+        try std.testing.expectEqualStrings("1234", decodedIndexBlockHeader.sid.?.tenantID);
+        try std.testing.expectEqual(1, decodedIndexBlockHeader.sid.?.id);
+        try std.testing.expectEqual(1, decodedIndexBlockHeader.minTs);
+        try std.testing.expectEqual(2, decodedIndexBlockHeader.maxTs);
+        try std.testing.expectEqual(0, decodedIndexBlockHeader.offset);
+        try std.testing.expectEqual(@as(u64, @intCast(indexContent.len)), decodedIndexBlockHeader.size);
     }
 }
 

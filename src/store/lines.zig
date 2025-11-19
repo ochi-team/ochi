@@ -20,14 +20,14 @@ pub const SID = struct {
                 self.id < another.id);
     }
 
-    pub fn encode(self: *SID, buf: *std.ArrayList(u8)) !void {
+    pub fn encode(self: *SID, buf: *std.ArrayList(u8)) void {
         if (self.tenantID.len > 16) {
             @panic("tenant id can't be larger than 16 bytes");
         }
 
         var enc = Encoder.init(buf);
-        try enc.writePadded(self.tenantID, 16);
-        try enc.writeInt(u128, self.id);
+        enc.writePadded(self.tenantID, 16);
+        enc.writeInt(u128, self.id);
     }
 
     pub fn decode(buf: []const u8) !SID {

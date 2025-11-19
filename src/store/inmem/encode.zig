@@ -33,10 +33,6 @@ pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) ![]u6
     return timestamps.toOwnedSlice(allocator);
 }
 
-const EncodeError = error{
-    NegativePaddingNotAllowed,
-};
-
 /// Serializer provides a single point for encoding values into byte buffers.
 pub const Encoder = struct {
     buf: *std.ArrayList(u8),
@@ -46,20 +42,20 @@ pub const Encoder = struct {
     }
 
     /// Write a typed integer value to the buffer using bitcast
-    pub fn writeInt(self: Encoder, comptime T: type, value: T) !void {
+    pub fn writeInt(self: Encoder, comptime T: type, value: T) void {
         const bytes: [@sizeOf(T)]u8 = @bitCast(value);
-        try self.buf.appendSliceBounded(&bytes);
+        self.buf.appendSliceAssumeCapacity(&bytes);
     }
 
     /// Write raw bytes to the buffer
-    pub fn writeBytes(self: Encoder, bytes: []const u8) !void {
-        try self.buf.appendSliceBounded(bytes);
+    pub fn writeBytes(self: Encoder, bytes: []const u8) void {
+        self.buf.appendSliceAssumeCapacity(bytes);
     }
 
     /// Write bytes padded to a fixed size (padding with zeros)
-    pub fn writePadded(self: Encoder, bytes: []const u8, totalSize: usize) !void {
+    pub fn writePadded(self: Encoder, bytes: []const u8, totalSize: usize) void {
         if (self.buf.capacity - self.buf.items.len < totalSize) unreachable;
-        if (bytes.len > totalSize) return EncodeError.NegativePaddingNotAllowed;
+        if (bytes.len > totalSize) @panic("negative padding now allowed");
 
         const slice = self.buf.unusedCapacitySlice()[0..totalSize];
         @memset(slice, 0x00);

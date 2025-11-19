@@ -108,16 +108,16 @@ pub const BlockWriter = struct {
 
     pub fn finish(self: *BlockWriter, streamWriter: *StreamWriter) void {
         self.flushIndexBlock(streamWriter);
-        // TODO write column names, column indexes, meta indexes
+
+        // TODO: compress metaindexbuf before writing
+        streamWriter.metaIndexBuf.appendSliceAssumeCapacity(self.metaIndexBuf.items);
     }
 
     fn flushIndexBlock(self: *BlockWriter, streamWriter: *StreamWriter) void {
         defer self.indexBlockBuf.clearRetainingCapacity();
         if (self.indexBlockBuf.items.len > 0) {
-            // if it fails then stream writers buffers sizes are configured wrong, critical bug
-            self.indexBlockHeader.writeIndexBlock(&self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter) catch unreachable;
-            self.indexBlockHeader.encode(&self.metaIndexBuf) catch unreachable;
-            // TODO: write meta index block
+            self.indexBlockHeader.writeIndexBlock(&self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter);
+            self.indexBlockHeader.encode(&self.metaIndexBuf);
         }
         self.sid = null;
         self.minTimestamp = 0;

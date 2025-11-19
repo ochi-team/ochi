@@ -3,6 +3,7 @@ const std = @import("std");
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const Encoder = @import("encode.zig").Encoder;
+const Decoder = @import("encode.zig").Decoder;
 
 pub const IndexBlockHeader = struct {
     sid: ?SID,
@@ -28,7 +29,7 @@ pub const IndexBlockHeader = struct {
         allocator.destroy(self);
     }
 
-    pub fn writeIndexBlock(self: *IndexBlockHeader, indexBlockBuf: *std.ArrayList(u8), sid: SID, minTs: u64, maxTs: u64, streamWriter: *StreamWriter) !void {
+    pub fn writeIndexBlock(self: *IndexBlockHeader, indexBlockBuf: *std.ArrayList(u8), sid: SID, minTs: u64, maxTs: u64, streamWriter: *StreamWriter) void {
         if (indexBlockBuf.items.len == 0) {
             return;
         }
@@ -41,15 +42,39 @@ pub const IndexBlockHeader = struct {
         self.offset = streamWriter.indexBuffer.items.len;
         self.size = indexBlockBuf.items.len;
 
-        try streamWriter.indexBuffer.appendSliceBounded(indexBlockBuf.items);
+        streamWriter.indexBuffer.appendSliceAssumeCapacity(indexBlockBuf.items);
     }
 
-    pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) !void {
+    pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) void {
         var enc = Encoder.init(buf);
-        try self.sid.?.encode(buf);
-        try enc.writeInt(u64, self.minTs);
-        try enc.writeInt(u64, self.maxTs);
-        try enc.writeInt(u64, self.offset);
-        try enc.writeInt(u64, self.size);
+        if (self.sid) |*sid| {
+            sid.encode(buf);
+        } else {
+            enc.writePadded("", 32);
+        }
+        enc.writeInt(u64, self.minTs);
+        enc.writeInt(u64, self.maxTs);
+        enc.writeInt(u64, self.offset);
+        enc.writeInt(u64, self.size);
+    }
+
+    pub fn decode(buf: []const u8) !IndexBlockHeader {
+        if (buf.len < 64) {
+            return error.InsufficientBuffer;
+        }
+        var decoder = Decoder.init(buf);
+        const sid = try SID.decode(buf);
+        decoder.offset = 32; // SID is 32 bytes
+        const minTs = try decoder.readInt(u64);
+        const maxTs = try decoder.readInt(u64);
+        const offset = try decoder.readInt(u64);
+        const size = try decoder.readInt(u64);
+        return .{
+            .sid = sid,
+            .minTs = minTs,
+            .maxTs = maxTs,
+            .offset = offset,
+            .size = size,
+        };
     }
 };

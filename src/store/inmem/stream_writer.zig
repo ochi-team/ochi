@@ -12,21 +12,26 @@ const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 pub const StreamWriter = struct {
     const tsBufferSize = 120 * 1024;
     const indexBufferSize = 120 * 1024;
+    const metaIndexBufferSize = 120 * 1024;
 
     // TODO: expose metrics on len/cap relations
     timestampsBuffer: std.ArrayList(u8),
     indexBuffer: std.ArrayList(u8),
+    metaIndexBuf: std.ArrayList(u8),
 
     pub fn init(allocator: std.mem.Allocator) !*StreamWriter {
         var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
         errdefer timestampsBuffer.deinit(allocator);
         var indexBuffer = try std.ArrayList(u8).initCapacity(allocator, indexBufferSize);
         errdefer indexBuffer.deinit(allocator);
+        var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexBufferSize);
+        errdefer metaIndexBuf.deinit(allocator);
 
         const w = try allocator.create(StreamWriter);
         w.* = StreamWriter{
             .timestampsBuffer = timestampsBuffer,
             .indexBuffer = indexBuffer,
+            .metaIndexBuf = metaIndexBuf,
         };
         return w;
     }
@@ -34,6 +39,7 @@ pub const StreamWriter = struct {
     pub fn deinit(self: *StreamWriter, allocator: std.mem.Allocator) void {
         self.timestampsBuffer.deinit(allocator);
         self.indexBuffer.deinit(allocator);
+        self.metaIndexBuf.deinit(allocator);
         allocator.destroy(self);
     }
 
