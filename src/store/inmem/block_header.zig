@@ -2,6 +2,7 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const Block = @import("block.zig").Block;
+const Encoder = @import("encoder.zig").Encoder;
 
 pub const BlockHeader = struct {
     sid: SID,
@@ -28,11 +29,9 @@ pub const BlockHeader = struct {
     pub fn encode(self: *BlockHeader, buf: *std.ArrayList(u8)) !void {
         try self.sid.encode(buf);
 
-        const u64Buf: [8]u8 = @bitCast(self.size);
-        try buf.appendSliceBounded(&u64Buf);
-
-        const u32Buf: [4]u8 = @bitCast(self.len);
-        try buf.appendSliceBounded(&u32Buf);
+        var ser = Encoder.init(buf);
+        try ser.writeInt(u64, self.size);
+        try ser.writeInt(u32, self.len);
 
         try self.timestampsHeader.encode(buf);
     }
@@ -45,16 +44,10 @@ pub const TimestampsHeader = struct {
     max: u64,
 
     pub fn encode(self: *TimestampsHeader, buf: *std.ArrayList(u8)) !void {
-        var u64Buf: [8]u8 = @bitCast(self.offset);
-        try buf.appendSliceBounded(&u64Buf);
-
-        u64Buf = @bitCast(self.size);
-        try buf.appendSliceBounded(&u64Buf);
-
-        u64Buf = @bitCast(self.min);
-        try buf.appendSliceBounded(&u64Buf);
-
-        u64Buf = @bitCast(self.max);
-        try buf.appendSliceBounded(&u64Buf);
+        var ser = Encoder.init(buf);
+        try ser.writeInt(u64, self.offset);
+        try ser.writeInt(u64, self.size);
+        try ser.writeInt(u64, self.min);
+        try ser.writeInt(u64, self.max);
     }
 };

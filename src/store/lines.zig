@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const Encoder = @import("inmem/encoder.zig").Encoder;
+
 pub const SID = struct {
     tenantID: []const u8,
     id: u128,
@@ -22,14 +24,9 @@ pub const SID = struct {
             @panic("tenant id can't be larger than 16 bytes");
         }
 
-        if (buf.capacity - buf.items.len < 16) unreachable;
-        const tenantBuf = buf.unusedCapacitySlice()[0..16];
-        @memset(tenantBuf, 0x00);
-        @memcpy(tenantBuf[0..self.tenantID.len], self.tenantID);
-        buf.items.len += 16;
-
-        var intBuf: [16]u8 = @bitCast(self.id);
-        try buf.appendSliceBounded(&intBuf);
+        var ser = Encoder.init(buf);
+        try ser.writePadded(self.tenantID, 16);
+        try ser.writeInt(u128, self.id);
     }
 };
 
