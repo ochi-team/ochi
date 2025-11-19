@@ -2,7 +2,8 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const Block = @import("block.zig").Block;
-const Encoder = @import("encoder.zig").Encoder;
+const Encoder = @import("encode.zig").Encoder;
+const Decoder = @import("encode.zig").Decoder;
 
 pub const BlockHeader = struct {
     sid: SID,
@@ -35,6 +36,24 @@ pub const BlockHeader = struct {
 
         try self.timestampsHeader.encode(buf);
     }
+
+    pub fn decode(buf: []const u8) !BlockHeader {
+        var decoder = Decoder.init(buf);
+
+        const sid = try SID.decode(try decoder.peek(32));
+
+        const size = try decoder.readInt(u64);
+        const len = try decoder.readInt(u32);
+
+        const timestampsHeader = try TimestampsHeader.decode(&decoder);
+
+        return .{
+            .sid = sid,
+            .size = size,
+            .len = len,
+            .timestampsHeader = timestampsHeader,
+        };
+    }
 };
 
 pub const TimestampsHeader = struct {
@@ -49,5 +68,19 @@ pub const TimestampsHeader = struct {
         try enc.writeInt(u64, self.size);
         try enc.writeInt(u64, self.min);
         try enc.writeInt(u64, self.max);
+    }
+
+    pub fn decode(decoder: *Decoder) !TimestampsHeader {
+        const offset = try decoder.readInt(u64);
+        const size = try decoder.readInt(u64);
+        const min = try decoder.readInt(u64);
+        const max = try decoder.readInt(u64);
+
+        return .{
+            .offset = offset,
+            .size = size,
+            .min = min,
+            .max = max,
+        };
     }
 };

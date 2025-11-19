@@ -2,7 +2,7 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
-const Encoder = @import("encoder.zig").Encoder;
+const Encoder = @import("encode.zig").Encoder;
 
 pub const IndexBlockHeader = struct {
     sid: ?SID,

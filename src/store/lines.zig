@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const Encoder = @import("inmem/encoder.zig").Encoder;
+const Encoder = @import("inmem/encode.zig").Encoder;
+const Decoder = @import("inmem/encode.zig").Decoder;
 
 pub const SID = struct {
     tenantID: []const u8,
@@ -27,6 +28,19 @@ pub const SID = struct {
         var enc = Encoder.init(buf);
         try enc.writePadded(self.tenantID, 16);
         try enc.writeInt(u128, self.id);
+    }
+
+    pub fn decode(buf: []const u8) !SID {
+        if (buf.len < 32) {
+            return error.InsufficientBuffer;
+        }
+        var decoder = Decoder.init(buf);
+        const tenantID = try decoder.readPadded(16);
+        const id = try decoder.readInt(u128);
+        return .{
+            .tenantID = tenantID,
+            .id = id,
+        };
     }
 };
 
