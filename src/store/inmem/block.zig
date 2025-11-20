@@ -131,32 +131,22 @@ pub const Block = struct {
         var columns = try allocator.alloc(Column, columnI.count());
         errdefer allocator.free(columns);
 
-        {
-            var fallback = std.heap.stackFallback(2048, allocator);
-            const fba = fallback.get();
-            var allocated = try fba.alloc(bool, columns.len);
-            defer fba.free(allocated);
-
-            var columnIter = columnI.iterator();
-            while (columnIter.next()) |entry| {
-                const key = entry.key_ptr.*;
-                const idx = entry.value_ptr.*;
-
-                errdefer {
-                    for (0..columns.len) |i| {
-                        if (allocated[i]) allocator.free(columns[i].values);
-                    }
+        @memset(columns, .{ .key = "", .values = &[_][]u8{} });
+        errdefer {
+            for (columns) |col| {
+                if (col.values.len != 0) {
+                    allocator.free(col.values);
                 }
-                var col = &columns[idx];
-                col.key = key;
-                col.values = try allocator.alloc([]const u8, lines.len);
-                allocated[idx] = true;
             }
         }
-        errdefer {
-            for (0..columns.len) |i| {
-                allocator.free(columns[i].values);
-            }
+        var columnIter = columnI.iterator();
+        while (columnIter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const idx = entry.value_ptr.*;
+
+            var col = &columns[idx];
+            col.key = key;
+            col.values = try allocator.alloc([]const u8, lines.len);
         }
 
         for (lines, 0..) |line, i| {
