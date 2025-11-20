@@ -95,6 +95,18 @@ pub const ColumnsHeader = struct {
         const cols = block.getColumns();
         const headers = try allocator.alloc(ColumnHeader, cols.len);
         errdefer allocator.free(headers);
+        var inited: u16 = 0;
+        errdefer {
+            for (0..inited) |i| {
+                headers[i].values.deinit(allocator);
+            }
+        }
+        {
+            for (0..headers.len) |i| {
+                headers[i].values = try ColumnValues.init(allocator);
+                inited += 1;
+            }
+        }
 
         const celledCols = block.getCelledColumns();
 
@@ -108,11 +120,48 @@ pub const ColumnsHeader = struct {
     }
 
     pub fn deinit(self: *ColumnsHeader, allocator: std.mem.Allocator) void {
+        for (0..self.headers.len) |i| {
+            self.headers[i].values.deinit(allocator);
+        }
         allocator.free(self.headers);
         allocator.destroy(self);
     }
 };
 
+const maxColumnValueSize = 256;
+const maxColumnValuesLen = 8;
+pub const ColumnValues = struct {
+    values: std.ArrayList([]const u8),
+
+    pub fn init(allocator: std.mem.Allocator) !ColumnValues {
+        const values = try std.ArrayList([]const u8).initCapacity(allocator, maxColumnValuesLen);
+        return .{
+            .values = values,
+        };
+    }
+    pub fn deinit(self: *ColumnValues, allocator: std.mem.Allocator) void {
+        self.values.deinit(allocator);
+    }
+
+    pub fn set(self: *const ColumnValues, v: []const u8) ?u8 {
+        if (v.len > maxColumnValueSize) return null;
+
+        var valSize = 0;
+        for (self.values, 0..) |value, i| {
+            if (std.mem.eql(u8, v, value)) {
+                return @intCast(i);
+            }
+
+            valSize += value.len;
+        }
+        if (self.values.len > maxColumnValuesLen or valSize + v.len > maxColumnValueSize) return null;
+
+        self.values.appendAssumeCapacity(v);
+        return @intCast(self.values.items.len - 1);
+    }
+};
+
 pub const ColumnHeader = struct {
     key: []const u8,
+    values: ColumnValues,
 };
