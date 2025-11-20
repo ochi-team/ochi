@@ -128,8 +128,8 @@ pub const ColumnsHeader = struct {
     }
 };
 
-const maxColumnValueSize = 256;
-const maxColumnValuesLen = 8;
+pub const maxColumnValueSize = 256;
+pub const maxColumnValuesLen = 8;
 pub const ColumnValues = struct {
     values: std.ArrayList([]const u8),
 
@@ -143,18 +143,19 @@ pub const ColumnValues = struct {
         self.values.deinit(allocator);
     }
 
-    pub fn set(self: *const ColumnValues, v: []const u8) ?u8 {
+    pub fn set(self: *ColumnValues, v: []const u8) ?u8 {
         if (v.len > maxColumnValueSize) return null;
+        if (self.values.items.len >= maxColumnValuesLen) return null;
 
-        var valSize = 0;
-        for (self.values, 0..) |value, i| {
-            if (std.mem.eql(u8, v, value)) {
+        var valSize: u16 = 0;
+        for (0..self.values.items.len) |i| {
+            if (std.mem.eql(u8, v, self.values.items[i])) {
                 return @intCast(i);
             }
 
-            valSize += value.len;
+            valSize += @intCast(self.values.items[i].len);
         }
-        if (self.values.len > maxColumnValuesLen or valSize + v.len > maxColumnValueSize) return null;
+        if (valSize + v.len > maxColumnValueSize) return null;
 
         self.values.appendAssumeCapacity(v);
         return @intCast(self.values.items.len - 1);
@@ -165,3 +166,7 @@ pub const ColumnHeader = struct {
     key: []const u8,
     values: ColumnValues,
 };
+
+test {
+    _ = @import("block_header_test.zig");
+}
