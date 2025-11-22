@@ -45,7 +45,12 @@ pub const IndexBlockHeader = struct {
         try streamWriter.indexBuffer.appendSlice(allocator, indexBlockBuf.items);
     }
 
-    pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) void {
+    // sid 32 + self 32 = 64
+    pub const encodeExpectedSize = 64;
+    pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) !void {
+        if (buf.capacity - buf.items.len < encodeExpectedSize) {
+            return std.mem.Allocator.Error.OutOfMemory;
+        }
         var enc = Encoder.init(buf);
         if (self.sid) |*sid| {
             sid.encode(buf);
