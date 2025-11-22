@@ -78,7 +78,9 @@ pub const StreamWriter = struct {
 
         const valuesEncoder = try encode.ValuesEncoder.init(allocator);
         defer valuesEncoder.deinit();
-        const valueType = try valuesEncoder.encode(col.values, &ch.values);
-        _ = valueType;
+        const valueType = try valuesEncoder.encode(col.values, &ch.dict);
+        ch.type = valueType.type;
+        ch.min = valueType.min;
+        ch.max = valueType.max;
     }
 };

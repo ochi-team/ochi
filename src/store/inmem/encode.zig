@@ -2,22 +2,8 @@ const std = @import("std");
 
 const zeit = @import("zeit");
 
-const ColumnValues = @import("block_header.zig").ColumnValues;
-
-// valueType represents the encoding type of values stored in every column block
-pub const valueType = enum(u8) {
-    unknown = 0,
-    string = 1,
-    dict = 2,
-    uint8 = 3,
-    uint16 = 4,
-    uint32 = 5,
-    uint64 = 6,
-    int64 = 10,
-    float64 = 7,
-    ipv4 = 8,
-    timestampIso8601 = 9,
-};
+const ColumnValues = @import("block_header.zig").ColumnDict;
+const ColumnType = @import("block_header.zig").ColumnType;
 
 pub fn encodeTimestamps(allocator: std.mem.Allocator, tss: []u64) ![]u8 {
     return std.fmt.allocPrint(allocator, "{any}", .{tss});
@@ -143,7 +129,7 @@ pub const Decoder = struct {
 };
 
 pub const EncodeValueType = struct {
-    vt: valueType,
+    type: ColumnType,
     min: u64,
     max: u64,
 };
@@ -180,7 +166,7 @@ pub const ValuesEncoder = struct {
 
     pub fn encode(self: *ValuesEncoder, values: []const []const u8, columnValues: *ColumnValues) !EncodeValueType {
         if (values.len == 0) {
-            return .{ .vt = .string, .min = 0, .max = 0 };
+            return .{ .type = .string, .min = 0, .max = 0 };
         }
 
         if (try self.tryDictEncoding(values, columnValues)) |result| {
@@ -211,7 +197,7 @@ pub const ValuesEncoder = struct {
         for (values) |v| {
             try self.values.append(self.allocator, v);
         }
-        return .{ .vt = .string, .min = 0, .max = 0 };
+        return .{ .type = .string, .min = 0, .max = 0 };
     }
 
     fn tryDictEncoding(self: *ValuesEncoder, values: []const []const u8, columnValues: *ColumnValues) !?EncodeValueType {
@@ -223,7 +209,7 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .vt = .dict, .min = 0, .max = 0 };
+        return .{ .type = .dict, .min = 0, .max = 0 };
     }
 
     // TODO: make most of the encoding methods generic
@@ -242,7 +228,7 @@ pub const ValuesEncoder = struct {
         }
 
         const bits = if (maxVal == 0) 1 else (64 - @clz(maxVal));
-        const vt: valueType = switch (bits) {
+        const vt: ColumnType = switch (bits) {
             0...8 => .uint8,
             9...16 => .uint16,
             17...32 => .uint32,
@@ -263,7 +249,7 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, slice);
         }
 
-        return .{ .vt = vt, .min = minVal, .max = maxVal };
+        return .{ .type = vt, .min = minVal, .max = maxVal };
     }
 
     fn tryIntEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
@@ -293,7 +279,7 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .vt = .int64, .min = @bitCast(minVal), .max = @bitCast(maxVal) };
+        return .{ .type = .int64, .min = @bitCast(minVal), .max = @bitCast(maxVal) };
     }
 
     fn tryFloat64Encoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
@@ -319,7 +305,7 @@ pub const ValuesEncoder = struct {
             minVal = @min(minVal, n);
             maxVal = @max(maxVal, n);
 
-            const bits = @as(u64, @bitCast(n));
+            const bits: u64 = @bitCast(n);
 
             const start = self.buf.items.len;
             try self.buf.appendSlice(self.allocator, &std.mem.toBytes(bits));
@@ -327,7 +313,7 @@ pub const ValuesEncoder = struct {
         }
 
         return .{
-            .vt = .float64,
+            .type = .float64,
             .min = @bitCast(minVal),
             .max = @bitCast(maxVal),
         };
@@ -361,7 +347,7 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .vt = .ipv4, .min = minVal, .max = maxVal };
+        return .{ .type = .ipv4, .min = minVal, .max = maxVal };
     }
 
     fn tryTimestampISO8601Encoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
@@ -393,7 +379,7 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .vt = .timestampIso8601, .min = @bitCast(minVal), .max = @bitCast(maxVal) };
+        return .{ .type = .timestampIso8601, .min = @bitCast(minVal), .max = @bitCast(maxVal) };
     }
 };
 

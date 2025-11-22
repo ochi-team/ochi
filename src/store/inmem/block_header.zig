@@ -104,12 +104,12 @@ pub const ColumnsHeader = struct {
         var inited: u16 = 0;
         errdefer {
             for (0..inited) |i| {
-                headers[i].values.deinit(allocator);
+                headers[i].dict.deinit(allocator);
             }
         }
         {
             for (0..headers.len) |i| {
-                headers[i].values = try ColumnValues.init(allocator);
+                headers[i].dict = try ColumnDict.init(allocator);
                 inited += 1;
             }
         }
@@ -127,7 +127,7 @@ pub const ColumnsHeader = struct {
 
     pub fn deinit(self: *ColumnsHeader, allocator: std.mem.Allocator) void {
         for (0..self.headers.len) |i| {
-            self.headers[i].values.deinit(allocator);
+            self.headers[i].dict.deinit(allocator);
         }
         allocator.free(self.headers);
         allocator.destroy(self);
@@ -136,20 +136,20 @@ pub const ColumnsHeader = struct {
 
 pub const maxColumnValueSize = 256;
 pub const maxColumnValuesLen = 8;
-pub const ColumnValues = struct {
+pub const ColumnDict = struct {
     values: std.ArrayList([]const u8),
 
-    pub fn init(allocator: std.mem.Allocator) !ColumnValues {
+    pub fn init(allocator: std.mem.Allocator) !ColumnDict {
         const values = try std.ArrayList([]const u8).initCapacity(allocator, maxColumnValuesLen);
         return .{
             .values = values,
         };
     }
-    pub fn deinit(self: *ColumnValues, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *ColumnDict, allocator: std.mem.Allocator) void {
         self.values.deinit(allocator);
     }
 
-    pub fn set(self: *ColumnValues, v: []const u8) ?u8 {
+    pub fn set(self: *ColumnDict, v: []const u8) ?u8 {
         if (v.len > maxColumnValueSize) return null;
 
         var valSize: u16 = 0;
@@ -169,9 +169,26 @@ pub const ColumnValues = struct {
     }
 };
 
+pub const ColumnType = enum(u8) {
+    unknown = 0,
+    string = 1,
+    dict = 2,
+    uint8 = 3,
+    uint16 = 4,
+    uint32 = 5,
+    uint64 = 6,
+    int64 = 10,
+    float64 = 7,
+    ipv4 = 8,
+    timestampIso8601 = 9,
+};
+
 pub const ColumnHeader = struct {
     key: []const u8,
-    values: ColumnValues,
+    dict: ColumnDict,
+    type: ColumnType,
+    min: u64,
+    max: u64,
 };
 
 test {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const block_header = @import("block_header.zig");
-const ColumnValues = block_header.ColumnValues;
+const ColumnValues = block_header.ColumnDict;
 
 test "setReturnsNullOnExceedingMaxColumnValueSize" {
     var cv = try ColumnValues.init(testing.allocator);
