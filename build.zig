@@ -7,6 +7,9 @@ pub fn build(b: *std.Build) void {
     const datetime = b.dependency("datetime", .{
         .target = target,
     });
+    const zeit = b.dependency("zeit", .{
+        .target = target,
+    });
     const httpz = b.dependency("httpz", .{
         .target = target,
     });
@@ -21,6 +24,7 @@ pub fn build(b: *std.Build) void {
 
     const imports = [_]std.Build.Module.Import{
         std.Build.Module.Import{ .name = "datetime", .module = datetime.module("datetime") },
+        std.Build.Module.Import{ .name = "zeit", .module = zeit.module("zeit") },
         std.Build.Module.Import{ .name = "httpz", .module = httpz.module("httpz") },
         std.Build.Module.Import{ .name = "snappy", .module = snappy.module("snappy") },
         std.Build.Module.Import{ .name = "ymlz", .module = ymlz.module("root") },

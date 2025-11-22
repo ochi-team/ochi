@@ -102,21 +102,21 @@ pub const BlockWriter = struct {
 
         try blockHeader.encode(&self.indexBlockBuf);
         if (self.indexBlockBuf.capacity - self.indexBlockBuf.items.len < indexBlockFlushThreshold) {
-            self.flushIndexBlock(streamWriter);
+            try self.flushIndexBlock(allocator, streamWriter);
         }
     }
 
-    pub fn finish(self: *BlockWriter, streamWriter: *StreamWriter) void {
-        self.flushIndexBlock(streamWriter);
+    pub fn finish(self: *BlockWriter, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
+        try self.flushIndexBlock(allocator, streamWriter);
 
         // TODO: compress metaindexbuf before writing
-        streamWriter.metaIndexBuf.appendSliceAssumeCapacity(self.metaIndexBuf.items);
+        try streamWriter.metaIndexBuf.appendSlice(allocator, self.metaIndexBuf.items);
     }
 
-    fn flushIndexBlock(self: *BlockWriter, streamWriter: *StreamWriter) void {
+    fn flushIndexBlock(self: *BlockWriter, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
         defer self.indexBlockBuf.clearRetainingCapacity();
         if (self.indexBlockBuf.items.len > 0) {
-            self.indexBlockHeader.writeIndexBlock(&self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter);
+            try self.indexBlockHeader.writeIndexBlock(allocator, &self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter);
             self.indexBlockHeader.encode(&self.metaIndexBuf);
         }
         self.sid = null;

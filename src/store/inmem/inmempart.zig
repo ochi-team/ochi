@@ -74,7 +74,7 @@ pub const MemPart = struct {
         if (streamI != lines.len) {
             try blockWriter.writeLines(allocator, prevSID, lines[streamI..], self.streamWriter);
         }
-        blockWriter.finish(self.streamWriter);
+        try blockWriter.finish(allocator, self.streamWriter);
     }
 };
 

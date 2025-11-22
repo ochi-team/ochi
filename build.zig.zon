@@ -52,6 +52,10 @@
             .url = "git+https://github.com/sam701/zig-cli?ref=zig-0.15#cb44aade25a3c1eddd8b6f990b50c2189442c1e2",
             .hash = "cli-0.10.0-2eKe_5kEAQBeHqKxUHNTGnETzu81rqKWwT1WPt1jXBt0",
         },
+        .zeit = .{
+            .url = "git+https://github.com/rockorager/zeit?ref=main#74be5a2afb346b2a6a6349abbb609e89ec7e65a6",
+            .hash = "zeit-0.6.0-5I6bk4t8AgCP0UGGHVF_khlmWZkAF5XtfQWEKCyLoptU",
+        },
     },
     .paths = .{
         "build.zig",

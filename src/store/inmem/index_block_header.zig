@@ -29,7 +29,7 @@ pub const IndexBlockHeader = struct {
         allocator.destroy(self);
     }
 
-    pub fn writeIndexBlock(self: *IndexBlockHeader, indexBlockBuf: *std.ArrayList(u8), sid: SID, minTs: u64, maxTs: u64, streamWriter: *StreamWriter) void {
+    pub fn writeIndexBlock(self: *IndexBlockHeader, allocator: std.mem.Allocator, indexBlockBuf: *std.ArrayList(u8), sid: SID, minTs: u64, maxTs: u64, streamWriter: *StreamWriter) !void {
         if (indexBlockBuf.items.len == 0) {
             return;
         }
@@ -42,7 +42,7 @@ pub const IndexBlockHeader = struct {
         self.offset = streamWriter.indexBuffer.items.len;
         self.size = indexBlockBuf.items.len;
 
-        streamWriter.indexBuffer.appendSliceAssumeCapacity(indexBlockBuf.items);
+        try streamWriter.indexBuffer.appendSlice(allocator, indexBlockBuf.items);
     }
 
     pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) void {

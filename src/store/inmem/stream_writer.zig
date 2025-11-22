@@ -50,7 +50,7 @@ pub const StreamWriter = struct {
         defer columnsHeader.deinit(allocator);
         for (block.getColumns(), 0..) |col, i| {
             var header = columnsHeader.headers[i];
-            self.writeColumnHeader(col, &header);
+            try self.writeColumnHeader(allocator, col, &header);
         }
     }
 
@@ -68,15 +68,17 @@ pub const StreamWriter = struct {
         tsHeader.offset = self.timestampsBuffer.items.len;
         tsHeader.size = encodedTimestamps.len;
 
-        try self.timestampsBuffer.appendSliceBounded(encodedTimestamps);
+        try self.timestampsBuffer.appendSlice(allocator, encodedTimestamps);
     }
 
-    fn writeColumnHeader(_: *StreamWriter, col: Column, ch: *ColumnHeader) void {
+    fn writeColumnHeader(_: *StreamWriter, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {
         ch.key = col.key;
 
         // TODO: get bloom column values
 
-        // const valuesEncoder = encode.ValuesEncoder.init(allocator);
-        // valuesEncoder.encode(col.values, &ch.values);
+        const valuesEncoder = try encode.ValuesEncoder.init(allocator);
+        defer valuesEncoder.deinit();
+        const valueType = try valuesEncoder.encode(col.values, &ch.values);
+        _ = valueType;
     }
 };

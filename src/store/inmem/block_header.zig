@@ -145,7 +145,6 @@ pub const ColumnValues = struct {
 
     pub fn set(self: *ColumnValues, v: []const u8) ?u8 {
         if (v.len > maxColumnValueSize) return null;
-        if (self.values.items.len >= maxColumnValuesLen) return null;
 
         var valSize: u16 = 0;
         for (0..self.values.items.len) |i| {
@@ -155,8 +154,10 @@ pub const ColumnValues = struct {
 
             valSize += @intCast(self.values.items[i].len);
         }
+        if (self.values.items.len >= maxColumnValuesLen) return null;
         if (valSize + v.len > maxColumnValueSize) return null;
 
+        // we don't allocate more than 8 elements
         self.values.appendAssumeCapacity(v);
         return @intCast(self.values.items.len - 1);
     }
