@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const datetime = @import("datetime").datetime;
+const zeit = @import("zeit");
 
 const build = @import("build");
 const Conf = @import("conf.zig").Conf;
@@ -43,10 +43,12 @@ fn run_server() !void {
     std.debug.print("Seqor version {s}", .{build.version});
 
     const config = try Conf.init(std.heap.page_allocator, cli_config.config);
-    const now_str = try datetime.Datetime.now().formatISO8601(std.heap.page_allocator, false);
+    const now = try zeit.instant(.{ .source = .now });
+    var nowBuf: [32]u8 = undefined;
+    const nowStr = try now.time().bufPrint(&nowBuf, .rfc3339);
 
     // TODO: introduce structured logger
-    std.debug.print("Seqor in mono mode starting at port={d}, time={s}\n", .{ config.server.port, now_str });
+    std.debug.print("Seqor in mono mode starting at port={d}, time={s}\n", .{ config.server.port, nowStr });
 
     try server.startServer(std.heap.page_allocator, config);
 }

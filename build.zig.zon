@@ -32,10 +32,6 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
-        .datetime = .{
-            .url = "git+https://github.com/frmdstryr/zig-datetime#3a39a21e6e34dcb0ade0ff828d0914d40ba535f3",
-            .hash = "datetime-0.8.0-cJNXzP_YAQBxQ5hkNNP6ScnG5XsqciJmeP5RVV4xwCBA",
-        },
         .httpz = .{
             .url = "git+https://github.com/karlseguin/http.zig?ref=master#86e86b2e6e34706bd13c740e86eabae401eba61d",
             .hash = "httpz-0.0.0-PNVzrFbdBgA85BO0oQipge8UnhoadtXM37GZQaLkEqCr",
