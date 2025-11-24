@@ -3,8 +3,8 @@ const std = @import("std");
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 
-const MemPart = @import("inmempart.zig").MemPart;
-const Error = @import("inmempart.zig").Error;
+const MemTable = @import("memtable.zig").MemTable;
+const Error = @import("memtable.zig").Error;
 
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("index_block_header.zig").IndexBlockHeader;
@@ -38,19 +38,19 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         },
     };
 
-    const memPart = try MemPart.init(allocator);
-    defer memPart.deinit(allocator);
-    try memPart.addLines(allocator, lines[0..]);
+    const memTable = try MemTable.init(allocator);
+    defer memTable.deinit(allocator);
+    try memTable.addLines(allocator, lines[0..]);
 
-    const timestampsContent = memPart.streamWriter.timestampsBuffer.items;
-    const indexContent = memPart.streamWriter.indexBuffer.items;
+    const timestampsContent = memTable.streamWriter.timestampsBuffer.items;
+    const indexContent = memTable.streamWriter.indexBuffer.items;
 
     // Validate timestamps
     {
-        const decodedTimestamps = try encode.decodeTimestamps(allocator, timestampsContent);
-        defer allocator.free(decodedTimestamps);
+        var decodedTimestamps = try encode.decodeTimestamps(allocator, timestampsContent);
+        defer decodedTimestamps.deinit(allocator);
 
-        try std.testing.expectEqualDeep(&[_]u64{ 1, 2 }, decodedTimestamps);
+        try std.testing.expectEqualDeep(&[_]u64{ 1, 2 }, decodedTimestamps.items);
     }
 
     // Validate block header
@@ -70,7 +70,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
     // validate meta index
     {
-        const metaIndexContent = memPart.streamWriter.metaIndexBuf.items;
+        const metaIndexContent = memTable.streamWriter.metaIndexBuf.items;
         try std.testing.expect(metaIndexContent.len > 0);
 
         const decodedIndexBlockHeader = try IndexBlockHeader.decode(metaIndexContent);
@@ -86,8 +86,8 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
 test "addLinesErrorOnEmpty" {
     var lines = [_]*const Line{};
-    const memPart = try MemPart.init(std.testing.allocator);
-    defer memPart.deinit(std.testing.allocator);
-    const err = memPart.addLines(std.testing.allocator, lines[0..]);
+    const memTable = try MemTable.init(std.testing.allocator);
+    defer memTable.deinit(std.testing.allocator);
+    const err = memTable.addLines(std.testing.allocator, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
 }

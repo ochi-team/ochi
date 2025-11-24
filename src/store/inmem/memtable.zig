@@ -16,7 +16,7 @@ pub const Error = error{
     EmptyLines,
 };
 
-pub const MemPart = struct {
+pub const MemTable = struct {
 
     // TODO: write a header
 
@@ -32,22 +32,22 @@ pub const MemPart = struct {
 
     // TODO: write bloom filter
 
-    pub fn init(allocator: std.mem.Allocator) !*MemPart {
-        const p = try allocator.create(MemPart);
+    pub fn init(allocator: std.mem.Allocator) !*MemTable {
+        const p = try allocator.create(MemTable);
         errdefer allocator.destroy(p);
         const streamWriter = try StreamWriter.init(allocator);
-        p.* = MemPart{
+        p.* = MemTable{
             .streamWriter = streamWriter,
         };
 
         return p;
     }
-    pub fn deinit(self: *MemPart, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *MemTable, allocator: std.mem.Allocator) void {
         self.streamWriter.deinit(allocator);
         allocator.destroy(self);
     }
 
-    pub fn addLines(self: *MemPart, allocator: std.mem.Allocator, lines: []*const Line) !void {
+    pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []*const Line) !void {
         if (lines.len == 0) {
             return Error.EmptyLines;
         }
@@ -79,5 +79,5 @@ pub const MemPart = struct {
 };
 
 test {
-    _ = @import("inmempart_test.zig");
+    _ = @import("memtable_test.zig");
 }

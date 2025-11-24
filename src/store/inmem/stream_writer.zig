@@ -10,9 +10,9 @@ const ColumnHeader = @import("block_header.zig").ColumnHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 
 pub const StreamWriter = struct {
-    const tsBufferSize = 120 * 1024;
-    const indexBufferSize = 120 * 1024;
-    const metaIndexBufferSize = 120 * 1024;
+    const tsBufferSize = 2 * 1024;
+    const indexBufferSize = 2 * 1024;
+    const metaIndexBufferSize = 2 * 1024;
 
     // TODO: expose metrics on len/cap relations
     timestampsBuffer: std.ArrayList(u8),
@@ -82,5 +82,7 @@ pub const StreamWriter = struct {
         ch.type = valueType.type;
         ch.min = valueType.min;
         ch.max = valueType.max;
+        const values = try valuesEncoder.encodeValues();
+        defer allocator.free(values);
     }
 };

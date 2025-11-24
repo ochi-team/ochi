@@ -10,9 +10,9 @@ const IndexBlockHeader = @import("index_block_header.zig").IndexBlockHeader;
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 
 pub const BlockWriter = struct {
-    pub const indexBlockSize = 164 * 1024;
-    pub const indexBlockFlushThreshold = indexBlockSize - 32 * 1024;
-    pub const metaIndexSize = 128 * 1024;
+    pub const indexBlockSize = 16 * 1024;
+    pub const indexBlockFlushThreshold = 128 * 1024;
+    pub const metaIndexSize = 4 * 1024;
 
     // state to the latestBlocks til not flushed
     sid: ?SID,

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Line = @import("store/lines.zig").Line;
 
-const MemPart = @import("store/inmem/inmempart.zig").MemPart;
+const MemTable = @import("store/inmem/memtable.zig").MemTable;
 
 pub const DataShard = struct {
     lines: std.ArrayList(*const Line),
@@ -15,8 +15,8 @@ pub const DataShard = struct {
         if (self.lines.items.len == 0) {
             return;
         }
-        const memPart = try MemPart.init(allocator);
-        try memPart.addLines(allocator, self.lines.items);
+        const memTable = try MemTable.init(allocator);
+        try memTable.addLines(allocator, self.lines.items);
         // const p = memPart.open(allocator);
         // _ = p;
     }

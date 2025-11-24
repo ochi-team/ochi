@@ -10,7 +10,7 @@ pub fn encodeTimestamps(allocator: std.mem.Allocator, tss: []u64) ![]u8 {
 }
 
 /// Decode timestamps from the encoded format (debug print format: "{ 1, 2, 3 }")
-pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) ![]u64 {
+pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) !std.ArrayList(u64) {
     var timestamps = try std.ArrayList(u64).initCapacity(allocator, 10);
     errdefer timestamps.deinit(allocator);
 
@@ -35,7 +35,7 @@ pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) ![]u6
         try timestamps.append(allocator, num);
     }
 
-    return timestamps.toOwnedSlice(allocator);
+    return timestamps;
 }
 
 /// Serializer provides a single point for encoding values into byte buffers.
@@ -67,7 +67,43 @@ pub const Encoder = struct {
         @memcpy(slice[0..bytes.len], bytes);
         self.buf.items.len += totalSize;
     }
+
+    fn writeIntBytes(self: *Encoder, size: usize, value: u64) void {
+        const buf: [8]u8 = @bitCast(value);
+        self.writeBytes(buf[0..size]);
+    }
 };
+
+test "Encoder.writeIntBytes" {
+    const Case = struct {
+        type: type,
+        value: u64,
+    };
+    inline for ([_]Case{
+        .{
+            .type = u8,
+            .value = 42,
+        },
+        .{
+            .type = u16,
+            .value = 501,
+        },
+        .{
+            .type = u32,
+            .value = 123456,
+        },
+    }) |case| {
+        var buf1 = try std.ArrayList(u8).initCapacity(std.testing.allocator, @sizeOf(case.type));
+        var buf2 = try std.ArrayList(u8).initCapacity(std.testing.allocator, @sizeOf(case.type));
+        defer buf1.deinit(std.testing.allocator);
+        defer buf2.deinit(std.testing.allocator);
+        var enc1 = Encoder.init(&buf1);
+        var enc2 = Encoder.init(&buf2);
+        enc1.writeInt(case.type, case.value);
+        enc2.writeIntBytes(@sizeOf(case.type), case.value);
+        try std.testing.expectEqualSlices(u8, buf1.items, buf2.items);
+    }
+}
 
 const DecodeError = error{
     InsufficientBuffer,
@@ -162,6 +198,77 @@ pub const ValuesEncoder = struct {
         self.buf.deinit(self.allocator);
         self.parsed.deinit(self.allocator);
         self.allocator.destroy(self);
+    }
+    const Width = struct {
+        max: u64,
+        size: usize,
+        block: u8,
+        blockCell: u8,
+    };
+    const uintBlockType8: u8 = 0;
+    const uintBlockType16: u8 = 1;
+    const uintBlockType32: u8 = 2;
+    const uintBlockType64: u8 = 3;
+    const uintBlockTypeCell8: u8 = 4;
+    const uintBlockTypeCell16: u8 = 5;
+    const uintBlockTypeCell32: u8 = 6;
+    const uintBlockTypeCell64: u8 = 7;
+
+    const widths = [_]Width{
+        .{ .max = (1 << 8), .block = uintBlockType8, .blockCell = uintBlockTypeCell8, .size = @sizeOf(u8) },
+        .{ .max = (1 << 16), .block = uintBlockType16, .blockCell = uintBlockTypeCell16, .size = @sizeOf(u16) },
+        .{ .max = (1 << 32), .block = uintBlockType32, .blockCell = uintBlockTypeCell32, .size = @sizeOf(u32) },
+        .{ .max = ~@as(u64, 0), .block = uintBlockType64, .blockCell = uintBlockTypeCell64, .size = @sizeOf(u64) },
+    };
+    fn pickWidth(maxLen: u64) Width {
+        for (widths) |w| {
+            if (maxLen < w.max) return w;
+        }
+        unreachable;
+    }
+
+    const compressionKindPlain: u8 = 0;
+    const compressionKindZstd: u8 = 1;
+
+    pub fn encodeValues(self: *ValuesEncoder) ![]u8 {
+        defer self.parsed.clearRetainingCapacity();
+        try self.parsed.ensureUnusedCapacity(self.allocator, self.values.items.len);
+        var lenSum: usize = 0;
+        for (self.values.items) |v| {
+            self.parsed.appendAssumeCapacity(@intCast(v.len));
+            lenSum += v.len;
+        }
+
+        var maxLen: u64 = 0;
+        for (self.parsed.items) |n| {
+            if (n > maxLen) maxLen = n;
+        }
+
+        var interBuf = try std.ArrayList(u8).initCapacity(self.allocator, 0);
+        defer interBuf.deinit(self.allocator);
+        var enc = Encoder.init(&interBuf);
+        const areCells = (self.parsed.items.len >= 2) and numbersAreSame(self.parsed.items[0..]);
+        const w = pickWidth(maxLen);
+        if (areCells) {
+            try interBuf.ensureUnusedCapacity(self.allocator, 1 + w.size);
+            enc.writeInt(u8, w.blockCell);
+            enc.writeIntBytes(w.size, self.parsed.items[0]);
+        } else {
+            try interBuf.ensureUnusedCapacity(self.allocator, 1 + w.size * self.parsed.items.len);
+            enc.writeInt(u8, w.block);
+            for (self.parsed.items) |n| enc.writeIntBytes(w.size, n);
+        }
+
+        // TODO: apply compression to interBuf
+
+        // 1 compression kind, 8 len, len of the buf
+        const res = try self.allocator.alloc(u8, 9 + interBuf.items.len);
+        var list = std.ArrayList(u8).initBuffer(res);
+        enc = Encoder.init(&list);
+        enc.writeInt(u8, compressionKindPlain);
+        enc.writeInt(u64, interBuf.items.len);
+        enc.writeBytes(interBuf.items[0..]);
+        return res;
     }
 
     pub fn encode(self: *ValuesEncoder, values: []const []const u8, columnValues: *ColumnValues) !EncodeValueType {
@@ -419,4 +526,10 @@ fn parseIPv4(s: []const u8) !u32 {
         (@as(u32, octets[1]) << 16) |
         (@as(u32, octets[2]) << 8) |
         @as(u32, octets[3]);
+}
+fn numbersAreSame(a: []const u64) bool {
+    if (a.len == 0) return false;
+    const v = a[0];
+    for (a[1..]) |x| if (x != v) return false;
+    return true;
 }
