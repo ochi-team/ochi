@@ -47,13 +47,14 @@ pub const IndexBlockHeader = struct {
 
     // sid 32 + self 32 = 64
     pub const encodeExpectedSize = 64;
-    pub fn encode(self: *IndexBlockHeader, buf: *std.ArrayList(u8)) !void {
-        if (buf.capacity - buf.items.len < encodeExpectedSize) {
+    pub fn encode(self: *IndexBlockHeader, buf: []u8) !usize {
+        if (buf.len < encodeExpectedSize) {
             return std.mem.Allocator.Error.OutOfMemory;
         }
+
         var enc = Encoder.init(buf);
         if (self.sid) |*sid| {
-            sid.encode(buf);
+            sid.encode(&enc);
         } else {
             enc.writePadded("", 32);
         }
@@ -61,6 +62,7 @@ pub const IndexBlockHeader = struct {
         enc.writeInt(u64, self.maxTs);
         enc.writeInt(u64, self.offset);
         enc.writeInt(u64, self.size);
+        return enc.offset;
     }
 
     pub fn decode(buf: []const u8) !IndexBlockHeader {

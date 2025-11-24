@@ -31,24 +31,23 @@ pub const BlockHeader = struct {
 
     // 32 sid 8 size 4 len 32 timestamps = 76
     pub const encodeExpectedSize = 76;
-    pub fn encode(self: *BlockHeader, buf: *std.ArrayList(u8)) !void {
-        if (buf.capacity - buf.items.len < encodeExpectedSize) {
-            return std.mem.Allocator.Error.OutOfMemory;
-        }
-
-        self.sid.encode(buf);
+    pub fn encode(self: *BlockHeader, buf: []u8) !usize {
+        if (buf.len < encodeExpectedSize) return std.mem.Allocator.Error.OutOfMemory;
 
         var enc = Encoder.init(buf);
+        self.sid.encode(&enc);
+
         enc.writeInt(u64, self.size);
         enc.writeInt(u32, self.len);
 
-        self.timestampsHeader.encode(buf);
+        self.timestampsHeader.encode(&enc);
+        return enc.offset;
     }
 
     pub fn decode(buf: []const u8) !BlockHeader {
         var decoder = Decoder.init(buf);
 
-        const sid = try SID.decode(try decoder.peek(32));
+        const sid = try SID.decode(try decoder.readBytes(32));
 
         const size = try decoder.readInt(u64);
         const len = try decoder.readInt(u32);
@@ -70,8 +69,7 @@ pub const TimestampsHeader = struct {
     min: u64,
     max: u64,
 
-    pub fn encode(self: *TimestampsHeader, buf: *std.ArrayList(u8)) void {
-        var enc = Encoder.init(buf);
+    pub fn encode(self: *TimestampsHeader, enc: *Encoder) void {
         enc.writeInt(u64, self.offset);
         enc.writeInt(u64, self.size);
         enc.writeInt(u64, self.min);

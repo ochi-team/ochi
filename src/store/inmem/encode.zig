@@ -40,32 +40,62 @@ pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) !std.
 
 /// Serializer provides a single point for encoding values into byte buffers.
 pub const Encoder = struct {
-    buf: *std.ArrayList(u8),
+    buf: []u8,
+    offset: usize = 0,
 
-    pub fn init(buf: *std.ArrayList(u8)) Encoder {
+    pub fn init(buf: []u8) Encoder {
         return .{ .buf = buf };
     }
 
     /// Write a typed integer value to the buffer using bitcast
-    pub fn writeInt(self: Encoder, comptime T: type, value: T) void {
+    pub fn writeInt(self: *Encoder, comptime T: type, value: T) void {
+        const slice = self.buf[self.offset .. self.offset + @sizeOf(T)];
+        if (slice.len < @sizeOf(T)) unreachable;
+        self.offset += @sizeOf(T);
         const bytes: [@sizeOf(T)]u8 = @bitCast(value);
-        self.buf.appendSliceAssumeCapacity(&bytes);
+        @memcpy(slice, bytes[0..]);
     }
 
     /// Write raw bytes to the buffer
-    pub fn writeBytes(self: Encoder, bytes: []const u8) void {
-        self.buf.appendSliceAssumeCapacity(bytes);
+    pub fn writeBytes(self: *Encoder, bytes: []const u8) void {
+        const slice = self.buf[self.offset .. self.offset + bytes.len];
+        if (slice.len < bytes.len) unreachable;
+        self.offset += bytes.len;
+        @memcpy(slice, bytes[0..]);
     }
 
     /// Write bytes padded to a fixed size (padding with zeros)
-    pub fn writePadded(self: Encoder, bytes: []const u8, totalSize: usize) void {
-        if (self.buf.capacity - self.buf.items.len < totalSize) unreachable;
+    pub fn writePadded(self: *Encoder, bytes: []const u8, totalSize: usize) void {
         if (bytes.len > totalSize) @panic("negative padding now allowed");
 
-        const slice = self.buf.unusedCapacitySlice()[0..totalSize];
+        const slice = self.buf[self.offset .. self.offset + totalSize];
+        if (slice.len < totalSize) unreachable;
+        self.offset += totalSize;
+
         @memset(slice, 0x00);
         @memcpy(slice[0..bytes.len], bytes);
-        self.buf.items.len += totalSize;
+    }
+
+    /// The maximum number of bytes a varint-encoded 64-bit integer can occupy.
+    pub const maxVarUint64Len = 10;
+
+    /// writeLeb128 encodes a u64 into a variable-length byte sequence.
+    /// Returns error.OutOfMemory if the buffer has not enough capacity.
+    pub fn writeLeb128(self: *Encoder, value: u64) std.mem.Allocator.Error!void {
+        if (self.buf[self.offset..].len < 10) return std.mem.Allocator.Error.OutOfMemory;
+
+        const slice = self.buf[self.offset .. self.offset + 10];
+
+        var i: u8 = 0;
+        var v = value;
+        while (v >= 0x80) {
+            slice[i] = @as(u8, @truncate(v)) | 0x80;
+            v >>= 7;
+            i += 1;
+        }
+        slice[i] = @as(u8, @truncate(v));
+
+        self.offset = i + 1;
     }
 
     fn writeIntBytes(self: *Encoder, size: usize, value: u64) void {
@@ -75,6 +105,7 @@ pub const Encoder = struct {
 };
 
 test "Encoder.writeIntBytes" {
+    var allocator = std.testing.allocator;
     const Case = struct {
         type: type,
         value: u64,
@@ -93,16 +124,50 @@ test "Encoder.writeIntBytes" {
             .value = 123456,
         },
     }) |case| {
-        var buf1 = try std.ArrayList(u8).initCapacity(std.testing.allocator, @sizeOf(case.type));
-        var buf2 = try std.ArrayList(u8).initCapacity(std.testing.allocator, @sizeOf(case.type));
-        defer buf1.deinit(std.testing.allocator);
-        defer buf2.deinit(std.testing.allocator);
-        var enc1 = Encoder.init(&buf1);
-        var enc2 = Encoder.init(&buf2);
+        const buf1 = try allocator.alloc(u8, @sizeOf(case.type));
+        const buf2 = try allocator.alloc(u8, @sizeOf(case.type));
+        defer allocator.free(buf1);
+        defer allocator.free(buf2);
+        var enc1 = Encoder.init(buf1);
+        var enc2 = Encoder.init(buf2);
         enc1.writeInt(case.type, case.value);
         enc2.writeIntBytes(@sizeOf(case.type), case.value);
-        try std.testing.expectEqualSlices(u8, buf1.items, buf2.items);
+        try std.testing.expectEqualSlices(u8, buf1, buf2);
     }
+}
+
+test "Encoder.writeVarUint64" {
+    const allocator = std.testing.allocator;
+    const buf = try allocator.alloc(u8, 20);
+    defer allocator.free(buf);
+
+    const Case = struct {
+        value: u64,
+        expected: []const u8,
+    };
+
+    const cases = [_]Case{
+        .{ .value = 0, .expected = &[_]u8{0x00} },
+        .{ .value = 1, .expected = &[_]u8{0x01} },
+        .{ .value = 127, .expected = &[_]u8{0x7f} },
+        .{ .value = 128, .expected = &[_]u8{ 0x80, 0x01 } },
+        .{ .value = 255, .expected = &[_]u8{ 0xff, 0x01 } },
+        .{ .value = 16383, .expected = &[_]u8{ 0xff, 0x7f } },
+        .{ .value = 16384, .expected = &[_]u8{ 0x80, 0x80, 0x01 } },
+        .{ .value = std.math.maxInt(u64), .expected = &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 } },
+    };
+
+    for (cases) |case| {
+        var enc = Encoder.init(buf);
+        try enc.writeLeb128(case.value);
+        try std.testing.expectEqualSlices(u8, case.expected, buf[0..enc.offset]);
+    }
+
+    // Test OutOfMemory
+    const small_buf = try allocator.alloc(u8, 1);
+    defer allocator.free(small_buf);
+    var enc = Encoder.init(small_buf);
+    try std.testing.expectError(std.mem.Allocator.Error.OutOfMemory, enc.writeLeb128(std.math.maxInt(u64)));
 }
 
 const DecodeError = error{
@@ -115,7 +180,7 @@ pub const Decoder = struct {
     offset: usize = 0,
 
     pub fn init(buf: []const u8) Decoder {
-        return .{ .buf = buf, .offset = 0 };
+        return .{ .buf = buf };
     }
 
     /// Read a typed integer value from the buffer using bitcast
@@ -145,22 +210,6 @@ pub const Decoder = struct {
         // Find the length of actual content (before padding zeros)
         const len = std.mem.indexOfScalar(u8, bytes, 0) orelse totalSize;
         return bytes[0..len];
-    }
-
-    /// Peek at the current position without advancing offset
-    pub fn peek(self: *Decoder, len: usize) ![]const u8 {
-        if (self.offset + len > self.buf.len) {
-            return DecodeError.InsufficientBuffer;
-        }
-        defer {
-            self.offset += len;
-        }
-        return self.buf[self.offset .. self.offset + len];
-    }
-
-    /// Get remaining bytes from current offset
-    pub fn remaining(self: Decoder) []const u8 {
-        return self.buf[self.offset..];
     }
 };
 
@@ -244,30 +293,34 @@ pub const ValuesEncoder = struct {
             if (n > maxLen) maxLen = n;
         }
 
-        var interBuf = try std.ArrayList(u8).initCapacity(self.allocator, 0);
-        defer interBuf.deinit(self.allocator);
-        var enc = Encoder.init(&interBuf);
+        var stackFba = std.heap.stackFallback(2048, self.allocator);
+        const fba = stackFba.get();
+        var interBuf: []u8 = &[_]u8{};
+        defer {
+            if (interBuf.len > 0) fba.free(interBuf);
+        }
         const areCells = (self.parsed.items.len >= 2) and numbersAreSame(self.parsed.items[0..]);
         const w = pickWidth(maxLen);
         if (areCells) {
-            try interBuf.ensureUnusedCapacity(self.allocator, 1 + w.size);
+            interBuf = try fba.alloc(u8, 1 + w.size);
+            var enc = Encoder.init(interBuf);
             enc.writeInt(u8, w.blockCell);
             enc.writeIntBytes(w.size, self.parsed.items[0]);
         } else {
-            try interBuf.ensureUnusedCapacity(self.allocator, 1 + w.size * self.parsed.items.len);
-            enc.writeInt(u8, w.block);
-            for (self.parsed.items) |n| enc.writeIntBytes(w.size, n);
+            interBuf = try fba.alloc(u8, 1 + w.size * self.parsed.items.len);
+            var enc = Encoder.init(interBuf);
+            _ = enc.writeInt(u8, w.block);
+            for (self.parsed.items) |n| _ = enc.writeIntBytes(w.size, n);
         }
 
         // TODO: apply compression to interBuf
 
         // 1 compression kind, 8 len, len of the buf
-        const res = try self.allocator.alloc(u8, 9 + interBuf.items.len);
-        var list = std.ArrayList(u8).initBuffer(res);
-        enc = Encoder.init(&list);
+        const res = try self.allocator.alloc(u8, 9 + interBuf.len);
+        var enc = Encoder.init(res);
         enc.writeInt(u8, compressionKindPlain);
-        enc.writeInt(u64, interBuf.items.len);
-        enc.writeBytes(interBuf.items[0..]);
+        enc.writeInt(u64, interBuf.len);
+        enc.writeBytes(interBuf);
         return res;
     }
 

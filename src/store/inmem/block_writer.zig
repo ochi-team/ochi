@@ -101,7 +101,9 @@ pub const BlockWriter = struct {
         self.blocksCount += 1;
 
         try self.indexBlockBuf.ensureUnusedCapacity(allocator, BlockHeader.encodeExpectedSize);
-        try blockHeader.encode(&self.indexBlockBuf);
+        const slice = self.indexBlockBuf.unusedCapacitySlice()[0..BlockHeader.encodeExpectedSize];
+        const offset = try blockHeader.encode(slice);
+        self.indexBlockBuf.items.len += offset;
         if (self.indexBlockBuf.capacity - self.indexBlockBuf.items.len < indexBlockFlushThreshold) {
             try self.flushIndexBlock(allocator, streamWriter);
         }
@@ -119,7 +121,10 @@ pub const BlockWriter = struct {
         if (self.indexBlockBuf.items.len > 0) {
             try self.indexBlockHeader.writeIndexBlock(allocator, &self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter);
             try self.metaIndexBuf.ensureUnusedCapacity(allocator, IndexBlockHeader.encodeExpectedSize);
-            try self.indexBlockHeader.encode(&self.metaIndexBuf);
+
+            const slice = self.metaIndexBuf.unusedCapacitySlice()[0..IndexBlockHeader.encodeExpectedSize];
+            const offset = try self.indexBlockHeader.encode(slice);
+            self.metaIndexBuf.items.len += offset;
         }
         self.sid = null;
         self.minTimestamp = 0;
