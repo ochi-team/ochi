@@ -403,6 +403,13 @@ pub const ValuesEncoder = struct {
     }
 
     fn tryDictEncoding(self: *ValuesEncoder, values: []const []const u8, columnValues: *ColumnValues) !?EncodeValueType {
+        const startBufLen = self.buf.items.len;
+        const startValuesLen = self.values.items.len;
+        errdefer {
+            self.buf.items.len = startBufLen;
+            self.values.items.len = startValuesLen;
+        }
+
         for (values) |v| {
             const idx = columnValues.set(v) orelse return null;
 
