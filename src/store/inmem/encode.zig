@@ -2,6 +2,8 @@ const std = @import("std");
 
 const zeit = @import("zeit");
 
+const compress = @import("../../compress/compress.zig");
+
 const ColumnValues = @import("block_header.zig").ColumnDict;
 const ColumnType = @import("block_header.zig").ColumnType;
 
@@ -219,6 +221,11 @@ pub const EncodeValueType = struct {
     max: u64,
 };
 
+pub const EncodedValue = struct {
+    buf: []u8,
+    len: usize,
+};
+
 pub const ValuesEncoder = struct {
     buf: std.ArrayList(u8),
     values: std.ArrayList([]const u8),
@@ -313,15 +320,50 @@ pub const ValuesEncoder = struct {
             for (self.parsed.items) |n| _ = enc.writeIntBytes(w.size, n);
         }
 
-        // TODO: apply compression to interBuf
+        const encodedLens = try self.encodeCompressed(fba, interBuf);
+        defer fba.free(encodedLens.buf);
 
-        // 1 compression kind, 8 len, len of the buf
-        const res = try self.allocator.alloc(u8, 9 + interBuf.len);
+        // TODO: implement short path when column values are celled, but outgrow 256 bytes
+        const buf = try self.allocator.alloc(u8, lenSum);
+        defer self.allocator.free(buf);
+        var bufOffset: usize = 0;
+        for (self.values.items) |value| {
+            @memcpy(buf[bufOffset .. bufOffset + value.len], value);
+            bufOffset += value.len;
+        }
+        const encodedValues = try self.encodeCompressed(self.allocator, buf);
+        defer fba.free(encodedValues.buf);
+
+        return std.mem.concat(self.allocator, u8, &[_][]const u8{
+            encodedLens.buf[0..encodedLens.len],
+            encodedValues.buf[0..encodedValues.len],
+        });
+    }
+
+    fn encodeCompressed(self: *ValuesEncoder, fba: std.mem.Allocator, src: []u8) !EncodedValue {
+        if (src.len < 128) {
+            // skip compression, up to 127 can be in a single byte to be compatible with leb128
+            // 1 compression kind, 1 len, len of the buf
+            const res = try self.allocator.alloc(u8, 2 + src.len);
+            var enc = Encoder.init(res);
+            enc.writeInt(u8, compressionKindPlain);
+            enc.writeInt(u8, @intCast(src.len));
+            enc.writeBytes(src);
+            return .{ .buf = res, .len = enc.offset };
+        }
+
+        const compressSize = try compress.bound(src.len);
+        const compressed = try fba.alloc(u8, compressSize);
+        defer fba.free(compressed);
+        const compressedSize = try compress.compressAuto(compressed, src);
+
+        // 1 compression kind, 10 compressed len via leb128, len of the compressed
+        const res = try self.allocator.alloc(u8, 11 + compressedSize);
         var enc = Encoder.init(res);
-        enc.writeInt(u8, compressionKindPlain);
-        enc.writeInt(u64, interBuf.len);
-        enc.writeBytes(interBuf);
-        return res;
+        enc.writeInt(u8, compressionKindZstd);
+        try enc.writeLeb128(compressedSize);
+        enc.writeBytes(compressed[0..compressedSize]);
+        return .{ .buf = res, .len = enc.offset };
     }
 
     pub fn encode(self: *ValuesEncoder, values: []const []const u8, columnValues: *ColumnValues) !EncodeValueType {

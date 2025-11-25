@@ -18,7 +18,6 @@ pub fn build(b: *std.Build) void {
     const cli = b.dependency("cli", .{
         .target = target,
     });
-
     const imports = [_]std.Build.Module.Import{
         std.Build.Module.Import{ .name = "zeit", .module = zeit.module("zeit") },
         std.Build.Module.Import{ .name = "httpz", .module = httpz.module("httpz") },
@@ -26,6 +25,10 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "ymlz", .module = ymlz.module("root") },
         std.Build.Module.Import{ .name = "cli", .module = cli.module("cli") },
     };
+    // C dependencies
+    const zstd_dependency = b.dependency("zstd", .{
+        .target = target,
+    });
 
     const exe = b.addExecutable(.{
         .name = "Seqor",
@@ -35,6 +38,7 @@ pub fn build(b: *std.Build) void {
             .imports = &imports,
         }),
     });
+    exe.root_module.linkLibrary(zstd_dependency.artifact("zstd"));
     b.installArtifact(exe);
 
     // add build options to runtime
@@ -66,6 +70,7 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
     });
+    unit_tests.root_module.linkLibrary(zstd_dependency.artifact("zstd"));
 
     // build test
     const install_tests = b.addInstallArtifact(unit_tests, .{});

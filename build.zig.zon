@@ -52,6 +52,10 @@
             .url = "git+https://github.com/rockorager/zeit?ref=main#74be5a2afb346b2a6a6349abbb609e89ec7e65a6",
             .hash = "zeit-0.6.0-5I6bk4t8AgCP0UGGHVF_khlmWZkAF5XtfQWEKCyLoptU",
         },
+        .zstd = .{
+            .url = "git+https://github.com/allyourcodebase/zstd.git?ref=1.5.7#01327d49cbc56dc24c20a167bb0055d7fc23de84",
+            .hash = "zstd-1.5.7-KEItkJ8vAAC5_rRlKmLflYQ-eKXbAIQBWZNmmJtS18q0",
+        },
     },
     .paths = .{
         "build.zig",
