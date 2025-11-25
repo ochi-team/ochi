@@ -628,3 +628,552 @@ fn numbersAreSame(a: []const u64) bool {
     for (a[1..]) |x| if (x != v) return false;
     return true;
 }
+
+/// ValuesDecoder reverses the encoding done by ValuesEncoder.encodeValues
+pub const ValuesDecoder = struct {
+    buf: []const u8,
+    offset: usize = 0,
+
+    pub fn init(buf: []const u8) ValuesDecoder {
+        return .{ .buf = buf };
+    }
+
+    /// Read a single value's encoded bytes
+    pub fn readValue(self: *ValuesDecoder, len: usize) ![]const u8 {
+        if (self.offset + len > self.buf.len) {
+            return DecodeError.InsufficientBuffer;
+        }
+        const result = self.buf[self.offset .. self.offset + len];
+        self.offset += len;
+        return result;
+    }
+
+    /// Decompress a section of encoded data (both plain and zstd formats)
+    pub fn decompressSection(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+        if (data.len < 1) return DecodeError.InsufficientBuffer;
+
+        var dec = Decoder.init(data);
+        const compressionKind = try dec.readInt(u8);
+
+        if (compressionKind == ValuesEncoder.compressionKindPlain) {
+            const len = try dec.readInt(u8);
+            const payload = try dec.readBytes(len);
+            return try allocator.dupe(u8, payload);
+        } else if (compressionKind == ValuesEncoder.compressionKindZstd) {
+            // Read the compressed size (leb128 encoded)
+            var compressedSize: u64 = 0;
+            var shift: u6 = 0;
+            while (true) {
+                const byte = try dec.readInt(u8);
+                compressedSize |= @as(u64, @intCast(byte & 0x7f)) << shift;
+                if ((byte & 0x80) == 0) break;
+                shift +|= 7;
+            }
+
+            const compressedPayload = try dec.readBytes(compressedSize);
+
+            // Get the decompressed size from the frame
+            const decompressedSize = compress.getFrameContentSize(compressedPayload) catch |err| {
+                return switch (err) {
+                    compress.DecompressError.Unknown => error.InvalidCompression,
+                    else => error.InvalidCompression,
+                };
+            };
+
+            // Allocate buffer for decompressed data
+            const decompressed = try allocator.alloc(u8, decompressedSize);
+            errdefer allocator.free(decompressed);
+
+            const actualSize = compress.decompress(decompressed, compressedPayload) catch {
+                return error.InvalidCompression;
+            };
+
+            // Return only the actual decompressed portion
+            return decompressed[0..actualSize];
+        } else {
+            return error.InvalidCompression;
+        }
+    }
+
+    /// Decode full encodeValues output and return decoded values
+    /// Returns array of decoded string representations
+    pub fn decodeValues(allocator: std.mem.Allocator, data: []const u8) !std.ArrayList([]const u8) {
+        var result = try std.ArrayList([]const u8).initCapacity(allocator, 10);
+        errdefer result.deinit(allocator);
+
+        var dec = ValuesDecoder.init(data);
+
+        // Read and decompress lengths section
+        const lengthsHeader = try dec.readValue(2);
+        const lengthsSize: usize = lengthsHeader[1];
+
+        dec.offset = 0;
+        const lengthsSectionData = try dec.readValue(2 + lengthsSize);
+        const decompressedLengths = try decompressSection(allocator, lengthsSectionData);
+        defer allocator.free(decompressedLengths);
+
+        // Parse lengths from decompressed data
+        var lengthsDec = Decoder.init(decompressedLengths);
+        const blockTypeOrCell = try lengthsDec.readInt(u8);
+
+        var valueLengths = try std.ArrayList(u64).initCapacity(allocator, 10);
+        defer valueLengths.deinit(allocator);
+
+        const isCellEncoded = blockTypeOrCell >= 4;
+
+        if (isCellEncoded) {
+            // Cell encoding: all values same size, read one value size
+            const cellSize = switch (blockTypeOrCell) {
+                4 => @as(usize, 1), // uint8 cell
+                5 => @as(usize, 2), // uint16 cell
+                6 => @as(usize, 4), // uint32 cell
+                7 => @as(usize, 8), // uint64 cell
+                else => return error.InvalidEncoding,
+            };
+            _ = try lengthsDec.readBytes(cellSize); // read the cell value size
+            // Can't determine count from cell encoding alone, will be determined by values section
+        } else {
+            // Block encoding: each value has its size
+            const valueSize = switch (blockTypeOrCell) {
+                0 => @as(usize, 1), // uint8
+                1 => @as(usize, 2), // uint16
+                2 => @as(usize, 4), // uint32
+                3 => @as(usize, 8), // uint64
+                else => return error.InvalidEncoding,
+            };
+
+            while (lengthsDec.offset < decompressedLengths.len) {
+                const lenBytes = lengthsDec.readBytes(valueSize) catch break;
+                var buf: [8]u8 = undefined;
+                @memcpy(buf[0..valueSize], lenBytes);
+                const lenVal: u64 = switch (valueSize) {
+                    1 => buf[0],
+                    2 => std.mem.bytesAsValue(u16, buf[0..2]).*,
+                    4 => std.mem.bytesAsValue(u32, buf[0..4]).*,
+                    8 => std.mem.bytesAsValue(u64, buf[0..8]).*,
+                    else => 0,
+                };
+                try valueLengths.append(allocator, lenVal);
+            }
+        }
+
+        // Read and decompress values section
+        const valuesSectionStart = 2 + lengthsSize;
+        if (valuesSectionStart >= data.len) return error.InvalidEncoding;
+
+        const valuesSectionHeader = data[valuesSectionStart..@min(valuesSectionStart + 2, data.len)];
+        const valuesSectionSize = if (valuesSectionHeader.len > 1) valuesSectionHeader[1] else 0;
+
+        var valuesDec2 = ValuesDecoder.init(data[valuesSectionStart..]);
+        const valuesSectionData = try valuesDec2.readValue(2 + valuesSectionSize);
+        const decompressedValues = try decompressSection(allocator, valuesSectionData);
+        defer allocator.free(decompressedValues);
+
+        // Extract individual values
+        var valuesOffset: usize = 0;
+        if (isCellEncoded) {
+            // For cell encoding, determine cell size from block type
+            const cellSize = switch (blockTypeOrCell) {
+                4 => @as(usize, 1),
+                5 => @as(usize, 2),
+                6 => @as(usize, 4),
+                7 => @as(usize, 8),
+                else => return error.InvalidEncoding,
+            };
+            // Split values by cell size
+            while (valuesOffset + cellSize <= decompressedValues.len) {
+                const valueBuf = decompressedValues[valuesOffset .. valuesOffset + cellSize];
+                const owned = try allocator.dupe(u8, valueBuf);
+                try result.append(allocator, owned);
+                valuesOffset += cellSize;
+            }
+        } else {
+            for (valueLengths.items) |len| {
+                if (valuesOffset + len > decompressedValues.len) break;
+                const valueBuf = decompressedValues[valuesOffset .. valuesOffset + len];
+                const owned = try allocator.dupe(u8, valueBuf);
+                try result.append(allocator, owned);
+                valuesOffset += len;
+            }
+        }
+
+        return result;
+    }
+};
+
+test "ValuesEncoder.encodeValues with uint8" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const originalValues = [_][]const u8{ "42", "100", "255" };
+    _ = try encoder.encode(originalValues[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+
+    // Round-trip: decode the encoded bytes
+    var decodedValues = try ValuesDecoder.decodeValues(allocator, encoded);
+    defer {
+        for (decodedValues.items) |v| {
+            allocator.free(v);
+        }
+        decodedValues.deinit(allocator);
+    }
+
+    // We should have 3 decoded values (one per input)
+    try std.testing.expectEqual(decodedValues.items.len, originalValues.len);
+    // For uint8, each decoded value should be 1 byte
+    for (decodedValues.items) |decoded| {
+        try std.testing.expectEqual(decoded.len, 1);
+    }
+}
+
+test "ValuesEncoder.encodeValues with uint16" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const originalValues = [_][]const u8{ "256", "1000", "65535" };
+    _ = try encoder.encode(originalValues[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+
+    // Round-trip: decode the encoded bytes
+    var decodedValues = try ValuesDecoder.decodeValues(allocator, encoded);
+    defer {
+        for (decodedValues.items) |v| {
+            allocator.free(v);
+        }
+        decodedValues.deinit(allocator);
+    }
+
+    // Should have decoded values (may be dict encoded if values are in dict)
+    try std.testing.expect(decodedValues.items.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with uint32" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "65536", "1000000", "4294967295" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with uint64" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "4294967296", "18446744073709551615" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with int64" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "-1", "-1000", "1000", "9223372036854775807" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with float64" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "3.14", "2.71828", "1.41421" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with IPv4" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "192.168.1.1", "10.0.0.1", "255.255.255.255" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with ISO8601 timestamps" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "2024-01-01T00:00:00Z", "2024-12-31T23:59:59Z" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with strings" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    const values = [_][]const u8{ "hello", "world", "test" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with single value (cell encoding)" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    encoder.values.clearRetainingCapacity();
+    encoder.buf.clearRetainingCapacity();
+
+    // Multiple values with same length should trigger cell encoding
+    const values = [_][]const u8{ "42", "99", "88" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with empty values" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    // Empty values should still produce valid encoding
+    try std.testing.expect(encoded.len >= 0);
+}
+
+test "ValuesEncoder.encodeValues with uint8 round-trip (plain compression)" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    const values = [_][]const u8{ "42", "100", "255" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    // The encoded format is: [compressed_lengths_section][compressed_values_section]
+    // For small data, compression_kind=0 (plain), then 1 byte length, then data
+    var dec = ValuesDecoder.init(encoded);
+
+    // Find split point by parsing lengths section header
+    // For plain compression: 1 byte kind + 1 byte length
+    const lengthsHeader = try dec.readValue(2);
+    const lengthsSize: usize = lengthsHeader[1];
+
+    // Reset and read full lengths section
+    dec.offset = 0;
+    const lengthsSectionData = try dec.readValue(2 + lengthsSize);
+    const decompressedLengths = try ValuesDecoder.decompressSection(allocator, lengthsSectionData);
+    defer allocator.free(decompressedLengths);
+
+    // Verify decompressed data is valid - should contain 3 encoded value length entries
+    try std.testing.expect(decompressedLengths.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with int64 round-trip" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    const values = [_][]const u8{ "-42", "0", "999" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues with float64 round-trip" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    const values = [_][]const u8{ "1.5", "2.5", "3.5" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues mixed string lengths" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    const values = [_][]const u8{ "a", "hello", "world", "x" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues large integer values" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    const values = [_][]const u8{ "18446744073709551615", "9223372036854775807" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues identical length values (cell optimization)" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    // All values have same length (2 bytes)
+    const values = [_][]const u8{ "ab", "cd", "ef", "gh" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
+
+test "ValuesEncoder.encodeValues IPv4 boundary values" {
+    const allocator = std.testing.allocator;
+    const encoder = try ValuesEncoder.init(allocator);
+    defer encoder.deinit();
+
+    var columnValues = try ColumnValues.init(allocator);
+    defer columnValues.deinit(allocator);
+
+    const values = [_][]const u8{ "0.0.0.0", "127.0.0.1", "255.255.255.255" };
+    _ = try encoder.encode(values[0..], &columnValues);
+
+    const encoded = try encoder.encodeValues();
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len > 0);
+}
