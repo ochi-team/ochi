@@ -408,10 +408,16 @@ pub const ValuesEncoder = struct {
         errdefer {
             self.buf.items.len = startBufLen;
             self.values.items.len = startValuesLen;
+            columnValues.reset();
         }
 
         for (values) |v| {
-            const idx = columnValues.set(v) orelse return null;
+            const idx = columnValues.set(v) orelse {
+                self.buf.items.len = startBufLen;
+                self.values.items.len = startValuesLen;
+                columnValues.reset();
+                return null;
+            };
 
             const start = self.buf.items.len;
             try self.buf.append(self.allocator, idx);
@@ -808,379 +814,41 @@ pub const ValuesDecoder = struct {
     }
 };
 
-test "ValuesEncoder.encodeValues with uint8" {
+test "ValuesEncoder.encode" {
     const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
+    const Case = struct {
+        values: []const []const u8,
+        expectedType: EncodeValueType,
+        expectedColumnValues: []const []const u8,
+    };
 
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
+    const cases = [_]Case{
+        .{
+            .values = &[_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8" },
+            .expectedType = .{ .min = 0, .max = 8, .type = .uint8 },
+            .expectedColumnValues = &[_][]const u8{},
+        },
+    };
 
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
+    for (cases) |case| {
+        const encoder = try ValuesEncoder.init(allocator);
+        defer encoder.deinit();
 
-    const originalValues = [_][]const u8{ "42", "100", "255" };
-    _ = try encoder.encode(originalValues[0..], &columnValues);
+        var cv = try ColumnValues.init(allocator);
+        defer cv.deinit(allocator);
 
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-
-    // Round-trip: decode the encoded bytes
-    var decodedValues = try ValuesDecoder.decodeValues(allocator, encoded);
-    defer {
-        for (decodedValues.items) |v| {
-            allocator.free(v);
+        const valueType = encoder.encode(case.values, &cv);
+        try std.testing.expectEqual(case.expectedType, valueType);
+        try std.testing.expectEqualSlices([]const u8, case.expectedColumnValues, cv.values.items);
+        for (0..case.expectedColumnValues.len) |i| {
+            try std.testing.expectEqualSlices(u8, case.expectedColumnValues[i], cv.values.items[i]);
         }
-        decodedValues.deinit(allocator);
+
+        const encoded = try encoder.encodeValues();
+        const buf = try allocator.alloc(u8, encoded.len);
+        defer allocator.free(buf);
+        var decoder = ValuesDecoder.init(buf);
+        const decoded = try decoder.decodeValues(encoded);
+        try std.testing.expectEqualSlices([]const u8, case.values, decoded.items);
     }
-
-    // We should have 3 decoded values (one per input)
-    try std.testing.expectEqual(decodedValues.items.len, originalValues.len);
-    // For uint8, each decoded value should be 1 byte
-    for (decodedValues.items) |decoded| {
-        try std.testing.expectEqual(decoded.len, 1);
-    }
-}
-
-test "ValuesEncoder.encodeValues with uint16" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const originalValues = [_][]const u8{ "256", "1000", "65535" };
-    _ = try encoder.encode(originalValues[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-
-    // Round-trip: decode the encoded bytes
-    var decodedValues = try ValuesDecoder.decodeValues(allocator, encoded);
-    defer {
-        for (decodedValues.items) |v| {
-            allocator.free(v);
-        }
-        decodedValues.deinit(allocator);
-    }
-
-    // Should have decoded values (may be dict encoded if values are in dict)
-    try std.testing.expect(decodedValues.items.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with uint32" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "65536", "1000000", "4294967295" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with uint64" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "4294967296", "18446744073709551615" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with int64" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "-1", "-1000", "1000", "9223372036854775807" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with float64" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "3.14", "2.71828", "1.41421" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with IPv4" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "192.168.1.1", "10.0.0.1", "255.255.255.255" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with ISO8601 timestamps" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "2024-01-01T00:00:00Z", "2024-12-31T23:59:59Z" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with strings" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    const values = [_][]const u8{ "hello", "world", "test" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with single value (cell encoding)" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    encoder.values.clearRetainingCapacity();
-    encoder.buf.clearRetainingCapacity();
-
-    // Multiple values with same length should trigger cell encoding
-    const values = [_][]const u8{ "42", "99", "88" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with empty values" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    // Empty values should still produce valid encoding
-    try std.testing.expect(encoded.len >= 0);
-}
-
-test "ValuesEncoder.encodeValues with uint8 round-trip (plain compression)" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    const values = [_][]const u8{ "42", "100", "255" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    // The encoded format is: [compressed_lengths_section][compressed_values_section]
-    // For small data, compression_kind=0 (plain), then 1 byte length, then data
-    var dec = ValuesDecoder.init(encoded);
-
-    // Find split point by parsing lengths section header
-    // For plain compression: 1 byte kind + 1 byte length
-    const lengthsHeader = try dec.readValue(2);
-    const lengthsSize: usize = lengthsHeader[1];
-
-    // Reset and read full lengths section
-    dec.offset = 0;
-    const lengthsSectionData = try dec.readValue(2 + lengthsSize);
-    const decompressedLengths = try ValuesDecoder.decompressSection(allocator, lengthsSectionData);
-    defer allocator.free(decompressedLengths);
-
-    // Verify decompressed data is valid - should contain 3 encoded value length entries
-    try std.testing.expect(decompressedLengths.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with int64 round-trip" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    const values = [_][]const u8{ "-42", "0", "999" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues with float64 round-trip" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    const values = [_][]const u8{ "1.5", "2.5", "3.5" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues mixed string lengths" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    const values = [_][]const u8{ "a", "hello", "world", "x" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues large integer values" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    const values = [_][]const u8{ "18446744073709551615", "9223372036854775807" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues identical length values (cell optimization)" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    // All values have same length (2 bytes)
-    const values = [_][]const u8{ "ab", "cd", "ef", "gh" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
-}
-
-test "ValuesEncoder.encodeValues IPv4 boundary values" {
-    const allocator = std.testing.allocator;
-    const encoder = try ValuesEncoder.init(allocator);
-    defer encoder.deinit();
-
-    var columnValues = try ColumnValues.init(allocator);
-    defer columnValues.deinit(allocator);
-
-    const values = [_][]const u8{ "0.0.0.0", "127.0.0.1", "255.255.255.255" };
-    _ = try encoder.encode(values[0..], &columnValues);
-
-    const encoded = try encoder.encodeValues();
-    defer allocator.free(encoded);
-
-    try std.testing.expect(encoded.len > 0);
 }

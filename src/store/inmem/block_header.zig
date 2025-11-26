@@ -147,6 +147,10 @@ pub const ColumnDict = struct {
         self.values.deinit(allocator);
     }
 
+    pub fn reset(self: *ColumnDict) void {
+        self.values.clearRetainingCapacity();
+    }
+
     pub fn set(self: *ColumnDict, v: []const u8) ?u8 {
         if (v.len > maxColumnValueSize) return null;
 
