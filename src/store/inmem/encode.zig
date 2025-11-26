@@ -227,6 +227,8 @@ pub const EncodedValue = struct {
 };
 
 pub const ValuesEncoder = struct {
+    // Buffer is for memory ownership,
+    // TODO: find a way to get rid of it and reuse the memory of values directly
     buf: std.ArrayList(u8),
     values: std.ArrayList([]const u8),
     parsed: std.ArrayList(u64),
