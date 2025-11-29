@@ -14,7 +14,52 @@
 - **Comments**: TODO comments for future work, doc comments (///) for public API
 - **Memory**: Use passed allocator, defer cleanup with deinit/destroy/free
 
-### docs discovery
+### Current zig version
+
+@intCast, @bitCast take a single argument:
+
+```zig
+test "integer cast panic" {
+    var a: u16 = 0xabcd; // runtime-known
+    _ = &a;
+    const b: u8 = @intCast(a);
+    _ = b;
+}
+```
+
+std.ArrayList:
+
+```zig
+const std = @import("std");
+test "initCapacity" {
+    const a = testing.allocator;
+    {
+        var list = try ArrayList(i8).initCapacity(a, 200);
+        defer list.deinit(a);
+        try testing.expect(list.items.len == 0);
+        try testing.expect(list.capacity >= 200);
+    }
+}
+```
+
+Use slices indexing and length properties instead of pointer arithmetic:
+
+```zig
+test "slice indexing" {
+    const arr: [5]u8 = [_]u8{1, 2, 3, 4, 5};
+    // GOOD
+    for (arr) |value, i| {
+        try testing.expect(value == arr[index]);
+        arr[i] += 1;
+    }
+    // BAD
+    for (arr) |*ptr, index| {
+        try testing.expect(*ptr == arr[index]);
+        ptr.* += 1;
+    }
+}
+```
+
 Use zigdoc to validate the API of the used Zig version, e.g.:
 - zigdoc std.ArrayList
 - zigdoc std.mem.Allocator
