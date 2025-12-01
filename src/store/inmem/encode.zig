@@ -336,6 +336,10 @@ pub const ValuesEncoder = struct {
         const encodedValues = try self.encodeCompressed(self.allocator, buf);
         defer fba.free(encodedValues.buf);
 
+        // TODO: review implementation of encode, it is not optimal at all
+
+        // TODO: get rid of concat, append to a buffer shared between lens and values
+
         return std.mem.concat(self.allocator, u8, &[_][]const u8{
             encodedLens.buf[0..encodedLens.len],
             encodedValues.buf[0..encodedValues.len],
@@ -637,6 +641,7 @@ fn parseIPv4(s: []const u8) !u32 {
         (@as(u32, octets[2]) << 8) |
         @as(u32, octets[3]);
 }
+
 fn numbersAreSame(a: []const u64) bool {
     if (a.len == 0) return false;
     const v = a[0];

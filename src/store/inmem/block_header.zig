@@ -191,6 +191,8 @@ pub const ColumnHeader = struct {
     type: ColumnType,
     min: u64,
     max: u64,
+    size: usize,
+    offset: usize,
 };
 
 test {

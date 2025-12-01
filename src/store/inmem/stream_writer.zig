@@ -13,11 +13,14 @@ pub const StreamWriter = struct {
     const tsBufferSize = 2 * 1024;
     const indexBufferSize = 2 * 1024;
     const metaIndexBufferSize = 2 * 1024;
+    const messageBloomValuesSize = 2 * 1024;
 
     // TODO: expose metrics on len/cap relations
     timestampsBuffer: std.ArrayList(u8),
     indexBuffer: std.ArrayList(u8),
     metaIndexBuf: std.ArrayList(u8),
+
+    messageBloomValuesBuf: std.ArrayList(u8),
 
     pub fn init(allocator: std.mem.Allocator) !*StreamWriter {
         var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
@@ -26,12 +29,15 @@ pub const StreamWriter = struct {
         errdefer indexBuffer.deinit(allocator);
         var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexBufferSize);
         errdefer metaIndexBuf.deinit(allocator);
+        var msgBloomValuesBuf = try std.ArrayList(u8).initCapacity(allocator, messageBloomValuesSize);
+        errdefer msgBloomValuesBuf.deinit(allocator);
 
         const w = try allocator.create(StreamWriter);
         w.* = StreamWriter{
             .timestampsBuffer = timestampsBuffer,
             .indexBuffer = indexBuffer,
             .metaIndexBuf = metaIndexBuf,
+            .messageBloomValuesBuf = msgBloomValuesBuf,
         };
         return w;
     }
@@ -40,6 +46,7 @@ pub const StreamWriter = struct {
         self.timestampsBuffer.deinit(allocator);
         self.indexBuffer.deinit(allocator);
         self.metaIndexBuf.deinit(allocator);
+        self.messageBloomValuesBuf.deinit(allocator);
         allocator.destroy(self);
     }
 
@@ -71,10 +78,10 @@ pub const StreamWriter = struct {
         try self.timestampsBuffer.appendSlice(allocator, encodedTimestamps);
     }
 
-    fn writeColumnHeader(_: *StreamWriter, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {
+    fn writeColumnHeader(self: *StreamWriter, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {
         ch.key = col.key;
 
-        // TODO: get bloom column values
+        const bloomValuesBuf = self.getBloomValuesBuf(ch.key);
 
         const valuesEncoder = try encode.ValuesEncoder.init(allocator);
         defer valuesEncoder.deinit();
@@ -84,5 +91,16 @@ pub const StreamWriter = struct {
         ch.max = valueType.max;
         const values = try valuesEncoder.encodeValues();
         defer allocator.free(values);
+        ch.size = values.len;
+        ch.offset = bloomValuesBuf.items.len;
+
+        try bloomValuesBuf.appendSlice(allocator, values);
+    }
+
+    fn getBloomValuesBuf(self: *StreamWriter, colKey: []const u8) *std.ArrayList(u8) {
+        if (colKey.len == 0 or std.mem.eql(u8, colKey, "_msg")) {
+            return &self.messageBloomValuesBuf;
+        }
+        return &self.messageBloomValuesBuf;
     }
 };
