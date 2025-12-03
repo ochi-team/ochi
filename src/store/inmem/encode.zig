@@ -3,6 +3,7 @@ const std = @import("std");
 const zeit = @import("zeit");
 
 const compress = @import("../../compress/compress.zig");
+const unpack = @import("unpack.zig");
 
 const ColumnDict = @import("block_header.zig").ColumnDict;
 const ColumnType = @import("block_header.zig").ColumnType;
@@ -97,7 +98,7 @@ pub const Encoder = struct {
         }
         slice[i] = @as(u8, @truncate(v));
 
-        self.offset = i + 1;
+        self.offset += i + 1;
     }
 
     fn writeIntBytes(self: *Encoder, size: usize, value: u64) void {
@@ -325,11 +326,15 @@ pub const ValuesEncoder = struct {
         const encodedLens = try self.packBytes(fba, interBuf);
         defer fba.free(encodedLens.buf);
 
-        // TODO: implement short path when column values are celled, but outgrow 256 bytes
-        const buf = try self.allocator.alloc(u8, lenSum);
+        // Optimize: if all values are the same, only pack the first one
+        const areValuesConstant = (values.len >= 2) and valuesAreSame(values);
+        const valuesToPack = if (areValuesConstant) values[0..1] else values;
+        const packSum = if (areValuesConstant) values[0].len else lenSum;
+
+        const buf = try self.allocator.alloc(u8, packSum);
         defer self.allocator.free(buf);
         var bufOffset: usize = 0;
-        for (values) |value| {
+        for (valuesToPack) |value| {
             @memcpy(buf[bufOffset .. bufOffset + value.len], value);
             bufOffset += value.len;
         }
@@ -649,38 +654,34 @@ fn numbersAreSame(a: []const u64) bool {
     return true;
 }
 
+fn valuesAreSame(values: []const []const u8) bool {
+    if (values.len == 0) return false;
+    const first = values[0];
+    for (values[1..]) |v| {
+        if (!std.mem.eql(u8, v, first)) return false;
+    }
+    return true;
+}
+
 test "ValuesEncoder.packValues roundtrip" {
     const allocator = std.testing.allocator;
 
-    const makeStrings = struct {
-        fn call(alloc: std.mem.Allocator, lengths: []const u64) ![][]const u8 {
-            const strings = try alloc.alloc([]const u8, lengths.len);
-            for (lengths, 0..) |len, i| {
-                const str = try alloc.alloc(u8, len);
-                @memset(str, 'a');
-                strings[i] = str;
-            }
-            return strings;
-        }
-    }.call;
-
     const Case = struct {
-        strings: []const []const u8 = null,
+        strings: []const []const u8,
     };
 
     const veryLongString = try allocator.alloc(u8, 2 << 15);
     defer allocator.free(veryLongString);
-    const manyStrings: [1000][]const u8 = undefined;
+    @memset(veryLongString, 'x');
+    var manyStrings: [1000][]const u8 = undefined;
     for (0..manyStrings.len) |i| {
-        manyStrings[i] = std.fmt.allocPrint(allocator, "log {d}", 1000 + i);
+        manyStrings[i] = try std.fmt.allocPrint(allocator, "log {d}", .{1000 + i});
     }
     defer {
         for (manyStrings) |str| {
             allocator.free(str);
         }
-        allocator.free(manyStrings);
     }
-    @memset(veryLongString, 'x');
     const cases = [_]Case{
         .{
             .strings = &[_][]const u8{
@@ -710,35 +711,31 @@ test "ValuesEncoder.packValues roundtrip" {
         .{
             .strings = manyStrings[0..],
         },
+        // Test case: many identical values (should use valuesAreSame optimization)
+        .{
+            .strings = &[_][]const u8{
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+                "identical_value",
+            },
+        },
     };
 
     for (cases) |case| {
         const encoder = try ValuesEncoder.init(allocator);
         defer encoder.deinit();
 
-        // Use either pre-provided strings or generate from lengths
-        const strings = if (case.strings) |s|
-            s
-        else blk: {
-            // Skip very large allocations for now
-            if (case.lengths.len > 0 and case.lengths[0] > 100000) {
-                continue;
-            }
-            break :blk try makeStrings(allocator, case.lengths);
-        };
-
-        // Only free if we generated the strings
-        defer if (case.strings == null) {
-            for (strings) |str| {
-                allocator.free(str);
-            }
-            allocator.free(strings);
-        };
-
-        const packedValues = try encoder.packValues(strings);
+        const packedValues = try encoder.packValues(@constCast(case.strings));
         defer allocator.free(packedValues);
 
-        const unpacked = try unpackValues(allocator, packedValues);
+        var unpacked = try unpack.unpackValues(allocator, packedValues, case.strings.len);
         defer {
             for (unpacked.items) |str| {
                 allocator.free(str);
@@ -746,8 +743,8 @@ test "ValuesEncoder.packValues roundtrip" {
             unpacked.deinit(allocator);
         }
 
-        try std.testing.expectEqual(strings.len, unpacked.items.len);
-        for (strings, unpacked.items) |original, decoded| {
+        try std.testing.expectEqual(case.strings.len, unpacked.items.len);
+        for (case.strings, unpacked.items) |original, decoded| {
             try std.testing.expectEqualStrings(original, decoded);
         }
     }

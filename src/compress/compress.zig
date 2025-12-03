@@ -37,33 +37,21 @@ pub fn bound(size: usize) BoundError!usize {
     return res;
 }
 
-pub inline fn inlineBound(comptime size: usize) usize {
-    const res = c.ZSTD_COMPRESSBOUND(size);
-    if (c.ZSTD_isError(res)) {
-        // TODO: log an error to understand the exact error code
-        // const errCode = c.ZSTD_getErrorCode(res);
-        // const msg = c.ZSTD_getErrorName(res);
-        return BoundError.Unknown;
-    }
-    return res;
-}
-
 pub const DecompressError = error{
     Unknown,
     InsufficientCapacity,
 };
 
 pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
-    const frameHeaderSizeMax = 18;
-    if (src.len < frameHeaderSizeMax) {
-        return DecompressError.Unknown;
-    }
+    // ZSTD frames have a minimum size of 4 bytes (magic number)
+    // but ZSTD_getFrameContentSize can determine the size with fewer bytes
+    // in practice. Let ZSTD tell us if the data is invalid.
     const res = c.ZSTD_getFrameContentSize(src.ptr, src.len);
     // ZSTD_CONTENTSIZE_UNKNOWN = 0xffffffffffffffff
     // ZSTD_CONTENTSIZE_ERROR = 0xfffffffffffffffe
     const unknownSize = @as(c_ulonglong, 0xffffffffffffffff);
     const errorSize = @as(c_ulonglong, 0xfffffffffffffffe);
-    
+
     if (res == unknownSize) {
         return DecompressError.Unknown;
     }
