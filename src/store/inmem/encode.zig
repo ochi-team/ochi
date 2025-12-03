@@ -379,7 +379,11 @@ pub const ValuesEncoder = struct {
 
     pub fn encode(self: *ValuesEncoder, values: []const []const u8, columnValues: *ColumnDict) !EncodeValueType {
         if (values.len == 0) {
-            return .{ .type = .string, .min = 0, .max = 0 };
+            return .{
+                .type = .string,
+                .min = 0,
+                .max = 0,
+            };
         }
 
         if (try self.tryDictEncoding(values, columnValues)) |result| {
@@ -435,7 +439,11 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .type = .dict, .min = 0, .max = 0 };
+        return .{
+            .type = .dict,
+            .min = 0,
+            .max = 0,
+        };
     }
 
     // TODO: make most of the encoding methods generic
@@ -475,7 +483,11 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, slice);
         }
 
-        return .{ .type = vt, .min = minVal, .max = maxVal };
+        return .{
+            .type = vt,
+            .min = minVal,
+            .max = maxVal,
+        };
     }
 
     fn tryIntEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
@@ -505,7 +517,11 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .type = .int64, .min = @bitCast(minVal), .max = @bitCast(maxVal) };
+        return .{
+            .type = .int64,
+            .min = @bitCast(minVal),
+            .max = @bitCast(maxVal),
+        };
     }
 
     fn tryFloat64Encoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
@@ -573,7 +589,11 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .type = .ipv4, .min = minVal, .max = maxVal };
+        return .{
+            .type = .ipv4,
+            .min = minVal,
+            .max = maxVal,
+        };
     }
 
     fn tryTimestampISO8601Encoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
@@ -605,7 +625,11 @@ pub const ValuesEncoder = struct {
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
-        return .{ .type = .timestampIso8601, .min = @bitCast(minVal), .max = @bitCast(maxVal) };
+        return .{
+            .type = .timestampIso8601,
+            .min = @bitCast(minVal),
+            .max = @bitCast(maxVal),
+        };
     }
 };
 
@@ -663,7 +687,7 @@ fn valuesAreSame(values: []const []const u8) bool {
     return true;
 }
 
-test "ValuesEncoder.packValues roundtrip" {
+test "ValuesEncoder.packValuesRoundtrip" {
     const allocator = std.testing.allocator;
 
     const Case = struct {
@@ -732,7 +756,7 @@ test "ValuesEncoder.packValues roundtrip" {
     }
 }
 
-test "ValuesEncoder.encode and decode roundtrip" {
+test "ValuesEncoder.encodeAndDecodeRoundtrip" {
     const allocator = std.testing.allocator;
     const decode = @import("decode.zig");
     var dictValues = try std.ArrayList([]const u8).initCapacity(allocator, 8);
