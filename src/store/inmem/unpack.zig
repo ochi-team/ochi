@@ -1,219 +1,229 @@
 const std = @import("std");
 const compress = @import("../../compress/compress.zig");
 const Decoder = @import("encode.zig").Decoder;
+const ValuesEncoder = @import("encode.zig").ValuesEncoder;
+const numbersAreSame = @import("encode.zig").numbersAreSame;
 
 const UnpackError = error{
-    InvalidFormat,
+    InvalidCompressionKind,
     InvalidBlockType,
     InsufficientData,
+    InsufficientDataLen,
+    InvalidLeb128,
     DecompressionFailed,
 };
 
-const compressionKindPlain: u8 = 0;
-const compressionKindZstd: u8 = 1;
+pub fn CompressedValue(comptime T: type) type {
+    return struct {
+        offset: usize,
+        value: T,
+    };
+}
 
-const uintBlockType8: u8 = 0;
-const uintBlockType16: u8 = 1;
-const uintBlockType32: u8 = 2;
-const uintBlockType64: u8 = 3;
-const uintBlockTypeCell8: u8 = 4;
-const uintBlockTypeCell16: u8 = 5;
-const uintBlockTypeCell32: u8 = 6;
-const uintBlockTypeCell64: u8 = 7;
-
-/// Unpacks values that were encoded by ValuesEncoder.packValues
-/// If count > 0, the packed data contains only one value which should be duplicated count times
-pub fn unpackValues(allocator: std.mem.Allocator, encoded: []const u8, count: usize) !std.ArrayList([]const u8) {
-    var offset: usize = 0;
-
-    // Unpack lengths section
-    const lengths = try unpackLengths(allocator, encoded, &offset);
-    defer allocator.free(lengths);
-
-    // Unpack values section
-    var localOffset: usize = 0;
-    const valuesData = try unpackBytes(allocator, encoded[offset..], &localOffset);
-    defer allocator.free(valuesData);
-
-    // Handle cell types (single length value repeated for all strings)
-    const actualLengths = if (lengths.len == 1 and valuesData.len > 0) blk: {
-        const cellLen = lengths[0];
-        if (cellLen == 0) {
-            // Empty strings case - shouldn't happen in practice
-            break :blk lengths;
+pub const Unpacker = struct {
+    buf: []u8,
+    pub fn init(allocator: std.mem.Allocator) !*Unpacker {
+        const s = try allocator.create(Unpacker);
+        s.* = Unpacker{
+            .buf = undefined,
+        };
+        return s;
+    }
+    pub fn deinit(self: *Unpacker, allocator: std.mem.Allocator) void {
+        if (self.buf.len > 0) {
+            allocator.free(self.buf);
         }
-        const expandedLengths = try allocator.alloc(u64, valuesData.len / cellLen);
-        for (expandedLengths) |*len| {
-            len.* = cellLen;
-        }
-        break :blk expandedLengths;
-    } else lengths;
-
-    const shouldFreeLengths = (actualLengths.ptr != lengths.ptr);
-    defer if (shouldFreeLengths) allocator.free(actualLengths);
-
-    // Split values according to lengths
-    var result = try std.ArrayList([]const u8).initCapacity(allocator, actualLengths.len);
-    errdefer {
-        for (result.items) |item| {
-            allocator.free(item);
-        }
-        result.deinit(allocator);
+        allocator.destroy(self);
     }
 
-    var valueOffset: usize = 0;
-    for (actualLengths) |len| {
-        if (valueOffset + len > valuesData.len) {
+    pub fn unpackValues(self: *Unpacker, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
+        var offset: usize = 0;
+        const lengths = try unpackU64(allocator, encoded, count, &offset);
+        defer allocator.free(lengths);
+
+        const tail = encoded[offset..];
+        self.buf = try unpackBytes(allocator, tail, &offset);
+        std.debug.assert(offset == encoded.len);
+
+        var res = try allocator.alloc([]const u8, lengths.len);
+        // same values first
+        if (lengths.len >= 2 and self.buf.len == lengths[0] and numbersAreSame(lengths)) {
+            for (0..res.len) |i| {
+                res[i] = self.buf;
+            }
+            return res;
+        }
+
+        offset = 0;
+        for (0..res.len) |i| {
+            const len = lengths[i];
+            std.debug.assert(self.buf[offset..].len >= len);
+            res[i] = self.buf[offset .. offset + len];
+            offset += len;
+        }
+        return res;
+    }
+
+    pub fn unpackU64(allocator: std.mem.Allocator, encoded: []const u8, count: usize, offset: *usize) ![]u64 {
+        const buf = try unpackBytes(allocator, encoded, offset);
+        defer allocator.free(buf);
+        return try unpackU64s(allocator, buf, count);
+    }
+
+    fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u64 {
+        if (data.len < 1) {
             return UnpackError.InsufficientData;
         }
-        const value = try allocator.dupe(u8, valuesData[valueOffset .. valueOffset + len]);
-        result.appendAssumeCapacity(value);
-        valueOffset += len;
+        const vType = data[0];
+        var res = try allocator.alloc(u64, count);
+
+        switch (vType) {
+            ValuesEncoder.uintBlockTypeCell8 => {
+                if (data[1..].len != 1) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                for (0..count) |i| {
+                    res[i] = @intCast(data[1]);
+                }
+            },
+            ValuesEncoder.uintBlockTypeCell16 => {
+                if (data[1..].len != 2) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                var decoder = Decoder.init(data[1..]);
+                const v = try decoder.readInt(u16);
+                for (0..count) |i| {
+                    res[i] = @intCast(v);
+                }
+            },
+            ValuesEncoder.uintBlockTypeCell32 => {
+                if (data[1..].len != 4) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                var decoder = Decoder.init(data[1..]);
+                const v = try decoder.readInt(u32);
+                for (0..count) |i| {
+                    res[i] = @intCast(v);
+                }
+            },
+            ValuesEncoder.uintBlockTypeCell64 => {
+                if (data[1..].len != 8) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                var decoder = Decoder.init(data[1..]);
+                const v = try decoder.readInt(u64);
+                for (0..count) |i| {
+                    res[i] = @intCast(v);
+                }
+            },
+            ValuesEncoder.uintBlockType8 => {
+                if (data[1..].len != count) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                for (0..count) |i| {
+                    const v = data[1 + i];
+                    res[i] = @intCast(v);
+                }
+            },
+            ValuesEncoder.uintBlockType16 => {
+                if (data[1..].len != count * 2) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                var decoder = Decoder.init(data[1..]);
+                for (0..count) |i| {
+                    const v = try decoder.readInt(u16);
+                    res[i] = @intCast(v);
+                }
+            },
+            ValuesEncoder.uintBlockType32 => {
+                if (data[1..].len != count * 4) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                var decoder = Decoder.init(data[1..]);
+                for (0..count) |i| {
+                    const v = try decoder.readInt(u32);
+                    res[i] = @intCast(v);
+                }
+            },
+            ValuesEncoder.uintBlockType64 => {
+                if (data[1..].len != count * 8) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                var decoder = Decoder.init(data[1..]);
+                for (0..count) |i| {
+                    const v = try decoder.readInt(u64);
+                    res[i] = @intCast(v);
+                }
+            },
+            else => return UnpackError.InvalidBlockType,
+        }
+        return res;
     }
 
-    // If we unpacked only 1 value but expected more (count > 1),
-    // all values are the same - duplicate the single value
-    if (result.items.len == 1 and count > 1) {
-        const firstValue = result.items[0];
-        try result.ensureTotalCapacity(allocator, count);
-        for (1..count) |_| {
-            const duplicatedValue = try allocator.dupe(u8, firstValue);
-            result.appendAssumeCapacity(duplicatedValue);
+    fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u8 {
+        if (data.len < 1) {
+            return UnpackError.InsufficientData;
+        }
+
+        const compressionKind = data[0];
+
+        switch (compressionKind) {
+            ValuesEncoder.compressionKindPlain => {
+                // plain format: [kind:u8][len:u8][data]
+                const len = data[1];
+                const bytes = data[2..];
+                if (bytes.len < len) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                offset.* += 2 + len;
+                return try allocator.dupe(u8, bytes[0..len]);
+            },
+            ValuesEncoder.compressionKindZstd => {
+                // compressed format: [kind:u8][len:leb128][compressed_data]
+                const compressedLen = try readLeb128(data[1..]);
+                offset.* += 1 + compressedLen.offset + compressedLen.value;
+                var rest = data[1 + compressedLen.offset ..];
+                if (rest.len < compressedLen.value) {
+                    return UnpackError.InsufficientDataLen;
+                }
+                const compressedData = rest[0..compressedLen.value];
+
+                const decompressedSize = try compress.getFrameContentSize(compressedData);
+
+                const decompressed = try allocator.alloc(u8, decompressedSize);
+                errdefer allocator.free(decompressed);
+
+                const actualSize = try compress.decompress(decompressed, compressedData);
+
+                if (actualSize != decompressedSize) {
+                    allocator.free(decompressed);
+                    return UnpackError.DecompressionFailed;
+                }
+
+                return decompressed;
+            },
+            else => return UnpackError.InvalidCompressionKind,
         }
     }
 
-    return result;
-}
+    fn readLeb128(data: []const u8) !CompressedValue(usize) {
+        var result: u64 = 0;
+        var shift: u6 = 0;
 
-fn unpackLengths(allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u64 {
-    // Unpack the compressed/plain lengths data
-    var localOffset: usize = 0;
-    const lengthsData = try unpackBytes(allocator, data, &localOffset);
-    defer allocator.free(lengthsData);
-    offset.* += localOffset;
+        for (0..10) |i| {
+            const byte = data[i];
+            result |= @as(u64, byte & 0x7f) << shift;
 
-    // Decode the block type and lengths
-    if (lengthsData.len < 1) {
-        return UnpackError.InsufficientData;
-    }
-
-    var decoder = Decoder.init(lengthsData);
-    const blockType = try decoder.readInt(u8);
-
-    switch (blockType) {
-        uintBlockTypeCell8 => {
-            const cellLen = try decoder.readInt(u8);
-            // We don't know the count yet, so we'll return an empty array
-            // and handle this in the caller
-            return try allocator.dupe(u64, &[_]u64{cellLen});
-        },
-        uintBlockTypeCell16 => {
-            const cellLen = try decoder.readInt(u16);
-            return try allocator.dupe(u64, &[_]u64{cellLen});
-        },
-        uintBlockTypeCell32 => {
-            const cellLen = try decoder.readInt(u32);
-            return try allocator.dupe(u64, &[_]u64{cellLen});
-        },
-        uintBlockTypeCell64 => {
-            const cellLen = try decoder.readInt(u64);
-            return try allocator.dupe(u64, &[_]u64{cellLen});
-        },
-        uintBlockType8 => {
-            const count = (lengthsData.len - 1) / @sizeOf(u8);
-            const lengths = try allocator.alloc(u64, count);
-            for (0..count) |i| {
-                lengths[i] = try decoder.readInt(u8);
-            }
-            return lengths;
-        },
-        uintBlockType16 => {
-            const count = (lengthsData.len - 1) / @sizeOf(u16);
-            const lengths = try allocator.alloc(u64, count);
-            for (0..count) |i| {
-                lengths[i] = try decoder.readInt(u16);
-            }
-            return lengths;
-        },
-        uintBlockType32 => {
-            const count = (lengthsData.len - 1) / @sizeOf(u32);
-            const lengths = try allocator.alloc(u64, count);
-            for (0..count) |i| {
-                lengths[i] = try decoder.readInt(u32);
-            }
-            return lengths;
-        },
-        uintBlockType64 => {
-            const count = (lengthsData.len - 1) / @sizeOf(u64);
-            const lengths = try allocator.alloc(u64, count);
-            for (0..count) |i| {
-                lengths[i] = try decoder.readInt(u64);
-            }
-            return lengths;
-        },
-        else => return UnpackError.InvalidBlockType,
-    }
-}
-
-fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u8 {
-    if (data.len < 1) {
-        return UnpackError.InsufficientData;
-    }
-
-    var decoder = Decoder.init(data);
-    const compressionKind = try decoder.readInt(u8);
-
-    switch (compressionKind) {
-        compressionKindPlain => {
-            // Plain format: [kind:u8][len:u8][data]
-            const len = try decoder.readInt(u8);
-            const bytes = try decoder.readBytes(len);
-            offset.* += decoder.offset;
-            return try allocator.dupe(u8, bytes);
-        },
-        compressionKindZstd => {
-            // ZSTD format: [kind:u8][len:leb128][compressed_data]
-            const compressedLen = try readLeb128(&decoder);
-            const compressedData = try decoder.readBytes(compressedLen);
-            offset.* += decoder.offset;
-
-            // Get decompressed size
-            const decompressedSize = try compress.getFrameContentSize(compressedData);
-
-            // Decompress
-            const decompressed = try allocator.alloc(u8, decompressedSize);
-            errdefer allocator.free(decompressed);
-
-            const actualSize = compress.decompress(decompressed, compressedData) catch {
-                return UnpackError.DecompressionFailed;
-            };
-
-            if (actualSize != decompressedSize) {
-                allocator.free(decompressed);
-                return UnpackError.DecompressionFailed;
+            if ((byte & 0x80) == 0) {
+                return .{
+                    .offset = i + 1,
+                    .value = @intCast(result),
+                };
             }
 
-            return decompressed;
-        },
-        else => return UnpackError.InvalidFormat,
-    }
-}
-
-fn readLeb128(decoder: *Decoder) !usize {
-    var result: u64 = 0;
-    var shift: u6 = 0;
-    var i: usize = 0;
-
-    while (i < 10) : (i += 1) {
-        const byte = try decoder.readInt(u8);
-        result |= @as(u64, byte & 0x7f) << shift;
-
-        if ((byte & 0x80) == 0) {
-            return @intCast(result);
+            shift += 7;
         }
 
-        shift += 7;
+        return UnpackError.InvalidLeb128;
     }
-
-    return UnpackError.InvalidFormat;
-}
+};

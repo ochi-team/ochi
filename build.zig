@@ -86,4 +86,5 @@ pub fn build(b: *std.Build) void {
     // check command
     const check = b.step("check", "Check if compiles");
     check.dependOn(&exe.step);
+    check.dependOn(&unit_tests.step);
 }

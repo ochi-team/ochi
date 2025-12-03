@@ -42,6 +42,7 @@ pub const DecompressError = error{
     InsufficientCapacity,
 };
 
+// TODO: handle ZSTD_CONTENTSIZE_UNKNOWN and ZSTD_CONTENTSIZE_ERROR properly
 pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
     // ZSTD frames have a minimum size of 4 bytes (magic number)
     // but ZSTD_getFrameContentSize can determine the size with fewer bytes

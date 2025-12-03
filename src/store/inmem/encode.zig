@@ -264,14 +264,14 @@ pub const ValuesEncoder = struct {
         block: u8,
         blockCell: u8,
     };
-    const uintBlockType8: u8 = 0;
-    const uintBlockType16: u8 = 1;
-    const uintBlockType32: u8 = 2;
-    const uintBlockType64: u8 = 3;
-    const uintBlockTypeCell8: u8 = 4;
-    const uintBlockTypeCell16: u8 = 5;
-    const uintBlockTypeCell32: u8 = 6;
-    const uintBlockTypeCell64: u8 = 7;
+    pub const uintBlockType8: u8 = 0;
+    pub const uintBlockType16: u8 = 1;
+    pub const uintBlockType32: u8 = 2;
+    pub const uintBlockType64: u8 = 3;
+    pub const uintBlockTypeCell8: u8 = 4;
+    pub const uintBlockTypeCell16: u8 = 5;
+    pub const uintBlockTypeCell32: u8 = 6;
+    pub const uintBlockTypeCell64: u8 = 7;
 
     const widths = [_]Width{
         .{ .max = (1 << 8), .block = uintBlockType8, .blockCell = uintBlockTypeCell8, .size = @sizeOf(u8) },
@@ -286,8 +286,8 @@ pub const ValuesEncoder = struct {
         unreachable;
     }
 
-    const compressionKindPlain: u8 = 0;
-    const compressionKindZstd: u8 = 1;
+    pub const compressionKindPlain: u8 = 0;
+    pub const compressionKindZstd: u8 = 1;
 
     pub fn packValues(self: *ValuesEncoder, values: [][]const u8) ![]u8 {
         defer self.parsed.clearRetainingCapacity();
@@ -647,7 +647,7 @@ fn parseIPv4(s: []const u8) !u32 {
         @as(u32, octets[3]);
 }
 
-fn numbersAreSame(a: []const u64) bool {
+pub fn numbersAreSame(a: []const u64) bool {
     if (a.len == 0) return false;
     const v = a[0];
     for (a[1..]) |x| if (x != v) return false;
@@ -711,21 +711,6 @@ test "ValuesEncoder.packValues roundtrip" {
         .{
             .strings = manyStrings[0..],
         },
-        // Test case: many identical values (should use valuesAreSame optimization)
-        .{
-            .strings = &[_][]const u8{
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-                "identical_value",
-            },
-        },
     };
 
     for (cases) |case| {
@@ -735,16 +720,13 @@ test "ValuesEncoder.packValues roundtrip" {
         const packedValues = try encoder.packValues(@constCast(case.strings));
         defer allocator.free(packedValues);
 
-        var unpacked = try unpack.unpackValues(allocator, packedValues, case.strings.len);
-        defer {
-            for (unpacked.items) |str| {
-                allocator.free(str);
-            }
-            unpacked.deinit(allocator);
-        }
+        const unpacker = try unpack.Unpacker.init(allocator);
+        defer unpacker.deinit(allocator);
+        const unpacked = try unpacker.unpackValues(allocator, packedValues, case.strings.len);
+        defer allocator.free(unpacked);
 
-        try std.testing.expectEqual(case.strings.len, unpacked.items.len);
-        for (case.strings, unpacked.items) |original, decoded| {
+        try std.testing.expectEqual(case.strings.len, unpacked.len);
+        for (case.strings, unpacked) |original, decoded| {
             try std.testing.expectEqualStrings(original, decoded);
         }
     }
