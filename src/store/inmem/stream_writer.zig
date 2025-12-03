@@ -89,7 +89,7 @@ pub const StreamWriter = struct {
         ch.type = valueType.type;
         ch.min = valueType.min;
         ch.max = valueType.max;
-        const values = try valuesEncoder.encodeValues();
+        const values = try valuesEncoder.packValues(valuesEncoder.values.items);
         defer allocator.free(values);
         ch.size = values.len;
         ch.offset = bloomValuesBuf.items.len;

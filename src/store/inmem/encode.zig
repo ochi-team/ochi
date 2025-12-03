@@ -288,11 +288,11 @@ pub const ValuesEncoder = struct {
     const compressionKindPlain: u8 = 0;
     const compressionKindZstd: u8 = 1;
 
-    pub fn encodeValues(self: *ValuesEncoder) ![]u8 {
+    pub fn packValues(self: *ValuesEncoder, values: [][]const u8) ![]u8 {
         defer self.parsed.clearRetainingCapacity();
-        try self.parsed.ensureUnusedCapacity(self.allocator, self.values.items.len);
+        try self.parsed.ensureUnusedCapacity(self.allocator, values.len);
         var lenSum: usize = 0;
-        for (self.values.items) |v| {
+        for (values) |v| {
             self.parsed.appendAssumeCapacity(@intCast(v.len));
             lenSum += v.len;
         }
@@ -322,18 +322,18 @@ pub const ValuesEncoder = struct {
             for (self.parsed.items) |n| _ = enc.writeIntBytes(w.size, n);
         }
 
-        const encodedLens = try self.encodeCompressed(fba, interBuf);
+        const encodedLens = try self.packBytes(fba, interBuf);
         defer fba.free(encodedLens.buf);
 
         // TODO: implement short path when column values are celled, but outgrow 256 bytes
         const buf = try self.allocator.alloc(u8, lenSum);
         defer self.allocator.free(buf);
         var bufOffset: usize = 0;
-        for (self.values.items) |value| {
+        for (values) |value| {
             @memcpy(buf[bufOffset .. bufOffset + value.len], value);
             bufOffset += value.len;
         }
-        const encodedValues = try self.encodeCompressed(self.allocator, buf);
+        const encodedValues = try self.packBytes(self.allocator, buf);
         defer fba.free(encodedValues.buf);
 
         // TODO: review implementation of encode, it is not optimal at all
@@ -346,7 +346,7 @@ pub const ValuesEncoder = struct {
         });
     }
 
-    fn encodeCompressed(self: *ValuesEncoder, fba: std.mem.Allocator, src: []u8) !EncodedValue {
+    fn packBytes(self: *ValuesEncoder, fba: std.mem.Allocator, src: []u8) !EncodedValue {
         if (src.len < 128) {
             // skip compression, up to 127 can be in a single byte to be compatible with leb128
             // 1 compression kind, 1 len, len of the buf
@@ -647,6 +647,110 @@ fn numbersAreSame(a: []const u64) bool {
     const v = a[0];
     for (a[1..]) |x| if (x != v) return false;
     return true;
+}
+
+test "ValuesEncoder.packValues roundtrip" {
+    const allocator = std.testing.allocator;
+
+    const makeStrings = struct {
+        fn call(alloc: std.mem.Allocator, lengths: []const u64) ![][]const u8 {
+            const strings = try alloc.alloc([]const u8, lengths.len);
+            for (lengths, 0..) |len, i| {
+                const str = try alloc.alloc(u8, len);
+                @memset(str, 'a');
+                strings[i] = str;
+            }
+            return strings;
+        }
+    }.call;
+
+    const Case = struct {
+        strings: []const []const u8 = null,
+    };
+
+    const veryLongString = try allocator.alloc(u8, 2 << 15);
+    defer allocator.free(veryLongString);
+    const manyStrings: [1000][]const u8 = undefined;
+    for (0..manyStrings.len) |i| {
+        manyStrings[i] = std.fmt.allocPrint(allocator, "log {d}", 1000 + i);
+    }
+    defer {
+        for (manyStrings) |str| {
+            allocator.free(str);
+        }
+        allocator.free(manyStrings);
+    }
+    @memset(veryLongString, 'x');
+    const cases = [_]Case{
+        .{
+            .strings = &[_][]const u8{
+                "192.168.0.1 - - [10/May/2025:13:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
+                "192.168.0.1 - - [10/May/2025:13:00:01 +0000] \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
+                "192.168.0.1 - - [10/May/2025:13:00:02 +0000] \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
+            },
+        },
+        .{
+            .strings = &[_][]const u8{
+                "foo",
+                "bar",
+            },
+        },
+        .{
+            .strings = &[_][]const u8{
+                "foo",
+                "foo",
+                "foo",
+            },
+        },
+        .{
+            .strings = &[_][]const u8{
+                veryLongString,
+            },
+        },
+        .{
+            .strings = manyStrings[0..],
+        },
+    };
+
+    for (cases) |case| {
+        const encoder = try ValuesEncoder.init(allocator);
+        defer encoder.deinit();
+
+        // Use either pre-provided strings or generate from lengths
+        const strings = if (case.strings) |s|
+            s
+        else blk: {
+            // Skip very large allocations for now
+            if (case.lengths.len > 0 and case.lengths[0] > 100000) {
+                continue;
+            }
+            break :blk try makeStrings(allocator, case.lengths);
+        };
+
+        // Only free if we generated the strings
+        defer if (case.strings == null) {
+            for (strings) |str| {
+                allocator.free(str);
+            }
+            allocator.free(strings);
+        };
+
+        const packedValues = try encoder.packValues(strings);
+        defer allocator.free(packedValues);
+
+        const unpacked = try unpackValues(allocator, packedValues);
+        defer {
+            for (unpacked.items) |str| {
+                allocator.free(str);
+            }
+            unpacked.deinit(allocator);
+        }
+
+        try std.testing.expectEqual(strings.len, unpacked.items.len);
+        for (strings, unpacked.items) |original, decoded| {
+            try std.testing.expectEqualStrings(original, decoded);
+        }
+    }
 }
 
 test "ValuesEncoder.encode and decode roundtrip" {
