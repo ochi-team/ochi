@@ -2,7 +2,7 @@ const std = @import("std");
 const compress = @import("../../compress/compress.zig");
 const Decoder = @import("encode.zig").Decoder;
 const ValuesEncoder = @import("encode.zig").ValuesEncoder;
-const numbersAreSame = @import("encode.zig").numbersAreSame;
+const areNumbersSame = @import("encode.zig").areNumbersSame;
 
 const UnpackError = error{
     InvalidCompressionKind,
@@ -47,7 +47,7 @@ pub const Unpacker = struct {
 
         var res = try allocator.alloc([]const u8, lengths.len);
         // same values first
-        if (lengths.len >= 2 and self.buf.len == lengths[0] and numbersAreSame(lengths)) {
+        if (lengths.len >= 2 and self.buf.len == lengths[0] and areNumbersSame(lengths)) {
             for (0..res.len) |i| {
                 res[i] = self.buf;
             }

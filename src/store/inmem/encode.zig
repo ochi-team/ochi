@@ -312,7 +312,7 @@ pub const ValuesEncoder = struct {
         defer {
             if (interBuf.len > 0) fba.free(interBuf);
         }
-        const areCells = (self.parsed.items.len >= 2) and numbersAreSame(self.parsed.items[0..]);
+        const areCells = (self.parsed.items.len >= 2) and areNumbersSame(self.parsed.items[0..]);
         const w = pickWidth(maxLen);
         if (areCells) {
             interBuf = try fba.alloc(u8, 1 + w.size);
@@ -330,9 +330,9 @@ pub const ValuesEncoder = struct {
         defer fba.free(encodedLens.buf);
 
         // Optimize: if all values are the same, only pack the first one
-        const areValuesConstant = (values.len >= 2) and valuesAreSame(values);
-        const valuesToPack = if (areValuesConstant) values[0..1] else values;
-        const packSum = if (areValuesConstant) values[0].len else lenSum;
+        const valuesAreSame = (values.len >= 2) and areValuesSame(values);
+        const valuesToPack = if (valuesAreSame) values[0..1] else values;
+        const packSum = if (valuesAreSame) values[0].len else lenSum;
 
         const buf = try self.allocator.alloc(u8, packSum);
         defer self.allocator.free(buf);
@@ -674,14 +674,14 @@ fn parseIPv4(s: []const u8) !u32 {
         @as(u32, octets[3]);
 }
 
-pub fn numbersAreSame(a: []const u64) bool {
+pub fn areNumbersSame(a: []const u64) bool {
     if (a.len == 0) return false;
     const v = a[0];
     for (a[1..]) |x| if (x != v) return false;
     return true;
 }
 
-fn valuesAreSame(values: []const []const u8) bool {
+fn areValuesSame(values: []const []const u8) bool {
     if (values.len == 0) return false;
     const first = values[0];
     for (values[1..]) |v| {
