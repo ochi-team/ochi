@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "avoid-as": "warn",
+    "case-convention": "warn",
+    "homeless-try": "error",
+    "line-length": ["warn", {"max_length": 120}],
+    "must-return-ref": "error",
+    "no-catch-return": "warn",
+    "no-return-try": "warn",
+    "no-unresolved": "error",
+    "returned-stack-reference": "error",
+    "suppressed-errors": "warn",
+    "unused-decls": "warn",
+    "useless-error-return": "warn"
+  }
+}

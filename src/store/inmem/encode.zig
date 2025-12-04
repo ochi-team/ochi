@@ -157,7 +157,10 @@ test "Encoder.writeVarUint64" {
         .{ .value = 255, .expected = &[_]u8{ 0xff, 0x01 } },
         .{ .value = 16383, .expected = &[_]u8{ 0xff, 0x7f } },
         .{ .value = 16384, .expected = &[_]u8{ 0x80, 0x80, 0x01 } },
-        .{ .value = std.math.maxInt(u64), .expected = &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 } },
+        .{
+            .value = std.math.maxInt(u64),
+            .expected = &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+        },
     };
 
     for (cases) |case| {
@@ -709,9 +712,12 @@ test "ValuesEncoder.packValuesRoundtrip" {
     const cases = [_]Case{
         .{
             .strings = &[_][]const u8{
-                "192.168.0.1 - - [10/May/2025:13:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
-                "192.168.0.1 - - [10/May/2025:13:00:01 +0000] \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
-                "192.168.0.1 - - [10/May/2025:13:00:02 +0000] \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
+                "192.168.0.1 - - [10/May/2025:13:00:00 +0000]" ++
+                    " \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
+                "192.168.0.1 - - [10/May/2025:13:00:01 +0000]" ++
+                    " \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
+                "192.168.0.1 - - [10/May/2025:13:00:02 +0000]" ++
+                    " \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
             },
         },
         .{
@@ -816,21 +822,51 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         },
         // uint32 values
         .{
-            .values = &[_][]const u8{ "65536", "131072", "196608", "262144", "327680", "393216", "458752", "524288", "589824" },
+            .values = &[_][]const u8{
+                "65536",
+                "131072",
+                "196608",
+                "262144",
+                "327680",
+                "393216",
+                "458752",
+                "524288",
+                "589824",
+            },
             .expectedType = .uint32,
             .expectedMin = 65536,
             .expectedMax = 589824,
         },
         // uint64 values
         .{
-            .values = &[_][]const u8{ "4294967296", "8589934592", "12884901888", "17179869184", "21474836480", "25769803776", "30064771072", "34359738368", "38654705664" },
+            .values = &[_][]const u8{
+                "4294967296",
+                "8589934592",
+                "12884901888",
+                "17179869184",
+                "21474836480",
+                "25769803776",
+                "30064771072",
+                "34359738368",
+                "38654705664",
+            },
             .expectedType = .uint64,
             .expectedMin = 4294967296,
             .expectedMax = 38654705664,
         },
         // ipv4 values
         .{
-            .values = &[_][]const u8{ "1.2.3.0", "1.2.3.1", "1.2.3.2", "1.2.3.3", "1.2.3.4", "1.2.3.5", "1.2.3.6", "1.2.3.7", "1.2.3.8" },
+            .values = &[_][]const u8{
+                "1.2.3.0",
+                "1.2.3.1",
+                "1.2.3.2",
+                "1.2.3.3",
+                "1.2.3.4",
+                "1.2.3.5",
+                "1.2.3.6",
+                "1.2.3.7",
+                "1.2.3.8",
+            },
             .expectedType = .ipv4,
             .expectedMin = 16909056,
             .expectedMax = 16909064,
