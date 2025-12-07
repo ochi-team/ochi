@@ -17,25 +17,12 @@ pub const Error = error{
 };
 
 pub const MemTable = struct {
-
-    // TODO: write a header
-
     streamWriter: *StreamWriter,
-
-    // columnNames: *Buffer,
-    // columnIdxs: *Buffer,
-    // metaindex: *Buffer,
-    // index: *Buffer,
-    // columnsHeaderIndex: *Buffer,
-    // columnsHeader: *Buffer,
-    // timestamps: *Buffer,
-
-    // TODO: write bloom filter
 
     pub fn init(allocator: std.mem.Allocator) !*MemTable {
         const p = try allocator.create(MemTable);
         errdefer allocator.destroy(p);
-        const streamWriter = try StreamWriter.init(allocator);
+        const streamWriter = try StreamWriter.init(allocator, 1);
         p.* = MemTable{
             .streamWriter = streamWriter,
         };

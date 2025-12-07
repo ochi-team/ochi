@@ -50,6 +50,8 @@ pub const Encoder = struct {
         return .{ .buf = buf };
     }
 
+    // TODO: valdiate we really need it, value encoder uses std.mem.toBytes
+
     /// Write a typed integer value to the buffer using bitcast
     pub fn writeInt(self: *Encoder, comptime T: type, value: T) void {
         const slice = self.buf[self.offset .. self.offset + @sizeOf(T)];
