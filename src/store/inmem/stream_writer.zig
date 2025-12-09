@@ -495,7 +495,8 @@ fn encodeBloomHashes(allocator: std.mem.Allocator, hashes: []u64) ![]u8 {
     var bf = try BloomFilter.initHashes(allocator, hashes);
     defer bf.deinit(allocator);
 
-    const dst = try allocator.alloc(u8, @sizeOf(u64) * bf.bits.len);
+    const dstSize = bf.bound();
+    const dst = try allocator.alloc(u8, dstSize);
     bf.encode(dst);
     return dst;
 }
@@ -512,6 +513,7 @@ pub const BloomFilter = struct {
 
         const bits = try allocator.alloc(u64, len);
         errdefer allocator.free(bits);
+        @memset(bits, 0);
 
         const hashCount = hashes.len * hashRounds;
         const hashedHashes = try allocator.alloc(u64, hashCount);
@@ -563,7 +565,11 @@ pub const BloomFilter = struct {
         }
     }
 
-    pub fn encode(self: *BloomFilter, dst: []u8) void {
+    pub fn bound(self: *const BloomFilter) usize {
+        return @sizeOf(u64) * self.bits.len;
+    }
+
+    pub fn encode(self: *const BloomFilter, dst: []u8) void {
         var enc = Encoder.init(dst);
         for (self.bits) |word| {
             enc.writeInt(u64, word);
@@ -592,6 +598,7 @@ test "BloomFilter" {
     const allocator = std.testing.allocator;
     const Case = struct {
         tokens: []const []const u8,
+        expectedEncoded: ?[]const u8,
     };
 
     const thousandTokens = try allocator.alloc([]u8, 1000);
@@ -607,12 +614,19 @@ test "BloomFilter" {
     const cases = [_]Case{
         .{
             .tokens = &[_][]const u8{"foo"},
+            .expectedEncoded = "\x00\x00\x00\x82\x40\x18\x00\x04",
         },
         .{
-            .tokens = &[_][]const u8{ "foo", "bar", "bak" },
+            .tokens = &[_][]const u8{ "foo", "bar", "baz" },
+            .expectedEncoded = "\x00\x00\x81\xA3\x48\x5C\x10\x26",
+        },
+        .{
+            .tokens = &[_][]const u8{ "foo", "bar", "baz", "foo" },
+            .expectedEncoded = "\x00\x00\x81\xA3\x48\x5C\x10\x26",
         },
         .{
             .tokens = thousandTokens,
+            .expectedEncoded = null,
         },
     };
 
@@ -633,5 +647,13 @@ test "BloomFilter" {
 
         // validate
         try std.testing.expect(bf.contains(hashedHashes));
+        if (case.expectedEncoded) |expected| {
+            const bufSize = bf.bound();
+            const buf = try allocator.alloc(u8, bufSize);
+            defer allocator.free(buf);
+            bf.encode(buf);
+
+            try std.testing.expectEqualStrings(expected, buf);
+        }
     }
 }
