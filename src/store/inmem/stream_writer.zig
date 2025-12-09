@@ -8,6 +8,7 @@ const BlockHeader = @import("block_header.zig").BlockHeader;
 const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
 const ColumnHeader = @import("block_header.zig").ColumnHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
+const Encoder = @import("encode.zig").Encoder;
 
 const maxPackedValuesSize = 8 * 1024 * 1024;
 
@@ -27,14 +28,16 @@ pub const StreamWriter = struct {
     metaIndexBuf: std.ArrayList(u8),
 
     messageBloomValuesBuf: std.ArrayList(u8),
+    messageBloomTokensBuf: std.ArrayList(u8),
     bloomValuesList: std.ArrayList(std.ArrayList(u8)),
+    bloomTokensList: std.ArrayList(std.ArrayList(u8)),
 
     columnIDGen: *ColumnIDGen,
-    colIdx: std.AutoHashMap(u64, u64),
-    nextColI: u64,
-    maxColI: u64,
+    colIdx: std.AutoHashMap(u16, u16),
+    nextColI: u16,
+    maxColI: u16,
 
-    pub fn init(allocator: std.mem.Allocator, maxColI: u64) !*StreamWriter {
+    pub fn init(allocator: std.mem.Allocator, maxColI: u16) !*StreamWriter {
         var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
         errdefer timestampsBuffer.deinit(allocator);
         var indexBuffer = try std.ArrayList(u8).initCapacity(allocator, indexBufferSize);
@@ -44,12 +47,16 @@ pub const StreamWriter = struct {
 
         var msgBloomValuesBuf = try std.ArrayList(u8).initCapacity(allocator, messageBloomValuesSize);
         errdefer msgBloomValuesBuf.deinit(allocator);
+        var msgBloomTokensBuf = try std.ArrayList(u8).initCapacity(allocator, messageBloomValuesSize);
+        errdefer msgBloomTokensBuf.deinit(allocator);
         var bloomValuesList = try std.ArrayList(std.ArrayList(u8)).initCapacity(allocator, maxColI);
         errdefer bloomValuesList.deinit(allocator);
+        var bloomTokensList = try std.ArrayList(std.ArrayList(u8)).initCapacity(allocator, maxColI);
+        errdefer bloomTokensList.deinit(allocator);
 
         const columnIDGen = try ColumnIDGen.init(allocator);
         errdefer columnIDGen.deinit(allocator);
-        const colIdx = std.AutoHashMap(u64, u64).init(allocator);
+        const colIdx = std.AutoHashMap(u16, u16).init(allocator);
 
         const w = try allocator.create(StreamWriter);
         w.* = StreamWriter{
@@ -58,7 +65,9 @@ pub const StreamWriter = struct {
             .metaIndexBuf = metaIndexBuf,
 
             .messageBloomValuesBuf = msgBloomValuesBuf,
+            .messageBloomTokensBuf = msgBloomTokensBuf,
             .bloomValuesList = bloomValuesList,
+            .bloomTokensList = bloomTokensList,
 
             .columnIDGen = columnIDGen,
             .colIdx = colIdx,
@@ -73,10 +82,15 @@ pub const StreamWriter = struct {
         self.indexBuffer.deinit(allocator);
         self.metaIndexBuf.deinit(allocator);
         self.messageBloomValuesBuf.deinit(allocator);
+        self.messageBloomTokensBuf.deinit(allocator);
         for (self.bloomValuesList.items) |*bv| {
             bv.deinit(allocator);
         }
         self.bloomValuesList.deinit(allocator);
+        for (self.bloomTokensList.items) |*bv| {
+            bv.deinit(allocator);
+        }
+        self.bloomTokensList.deinit(allocator);
         self.columnIDGen.deinit(allocator);
         self.colIdx.deinit();
         allocator.destroy(self);
@@ -133,32 +147,49 @@ pub const StreamWriter = struct {
         defer allocator.free(packedValues);
         std.debug.assert(packedValues.len <= maxPackedValuesSize);
 
-        const bloomValuesBuf = try self.getBloomValuesBuf(allocator, ch.key);
+        const bloomBufI = self.getBloomBufferIndex(allocator, ch.key);
+        const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
+            error.MessageBloomMustBeUsed => &self.messageBloomValuesBuf,
+            else => return err,
+        };
+        const bloomTokensBuf = if (bloomBufI) |i| &self.bloomTokensList.items[i] else |err| switch (err) {
+            error.MessageBloomMustBeUsed => &self.messageBloomTokensBuf,
+            else => return err,
+        };
+
         ch.size = packedValues.len;
         ch.offset = bloomValuesBuf.items.len;
         try bloomValuesBuf.appendSlice(allocator, packedValues);
 
         const bloomHash = if (valueType.type == .dict) &[_]u8{} else blk: {
-            const tokenizer = try Tokenizer.init(allocator);
+            const tokenizer = try HashTokenizer.init(allocator);
             defer tokenizer.deinit(allocator);
-            var tokens = try tokenizer.tokenizeValues(allocator, col.values);
-            defer tokens.deinit(allocator);
-            // const hashed = encodeBloomHash(allocator, tokens);
-            // break :blk hashed;
-            break :blk &[_]u8{};
+
+            var hashes = try tokenizer.tokenizeValues(allocator, col.values);
+            defer hashes.deinit(allocator);
+
+            const hashed = try encodeBloomHashes(allocator, hashes.items);
+            break :blk hashed;
         };
-        _ = bloomHash;
+        defer {
+            if (valueType.type != .dict) {
+                allocator.free(bloomHash);
+            }
+        }
+        ch.bloomFilterSize = bloomHash.len;
+        ch.bloomFilterOffset = bloomTokensBuf.items.len;
+        try bloomTokensBuf.appendSlice(allocator, bloomHash);
     }
 
-    fn getBloomValuesBuf(self: *StreamWriter, allocator: std.mem.Allocator, key: []const u8) !*std.ArrayList(u8) {
+    fn getBloomBufferIndex(self: *StreamWriter, allocator: std.mem.Allocator, key: []const u8) !u16 {
         if (key.len == 0) {
-            return &self.messageBloomValuesBuf;
+            return error.MessageBloomMustBeUsed;
         }
 
         const colID = try self.columnIDGen.genID(key);
         const maybeColI = self.colIdx.get(colID);
         if (maybeColI) |colI| {
-            return &self.bloomValuesList.items[colI];
+            return colI;
         }
 
         // at the moment implemented only for an in mem table, so we assume max col i is ever 1
@@ -166,22 +197,20 @@ pub const StreamWriter = struct {
         self.nextColI += 1;
         try self.colIdx.put(colID, colI);
 
-        // TODO: for disk resident table implement:
-        // 1. different bloom values buffer creation
-
         if (colI >= self.bloomValuesList.items.len) {
             try self.bloomValuesList.append(allocator, std.ArrayList(u8).empty);
+            try self.bloomTokensList.append(allocator, std.ArrayList(u8).empty);
         }
 
-        return &self.bloomValuesList.items[colI];
+        return colI;
     }
 };
 
 pub const ColumnIDGen = struct {
-    keyIDs: std.StringArrayHashMap(u64),
+    keyIDs: std.StringArrayHashMap(u16),
 
     pub fn init(allocator: std.mem.Allocator) !*ColumnIDGen {
-        const nameIDs = std.StringArrayHashMap(u64).init(allocator);
+        const nameIDs = std.StringArrayHashMap(u16).init(allocator);
         const s = try allocator.create(ColumnIDGen);
         s.* = ColumnIDGen{
             .keyIDs = nameIDs,
@@ -194,19 +223,19 @@ pub const ColumnIDGen = struct {
         allocator.destroy(self);
     }
 
-    pub fn genID(self: *ColumnIDGen, key: []const u8) !u64 {
+    pub fn genID(self: *ColumnIDGen, key: []const u8) !u16 {
         const maybeID = self.keyIDs.get(key);
         if (maybeID) |id| {
             return id;
         }
 
-        const id: u64 = @intCast(self.keyIDs.count());
+        const id: u16 = @intCast(self.keyIDs.count());
         try self.keyIDs.put(key, id);
         return id;
     }
 };
 
-pub const Tokenizer = struct {
+pub const HashTokenizer = struct {
     const Bucket = struct {
         value: usize,
         overflows: std.ArrayList(usize),
@@ -215,8 +244,8 @@ pub const Tokenizer = struct {
     buckets: [1024]Bucket,
     bitset: std.bit_set.DynamicBitSet,
 
-    pub fn init(allocator: std.mem.Allocator) !*Tokenizer {
-        const s = try allocator.create(Tokenizer);
+    pub fn init(allocator: std.mem.Allocator) !*HashTokenizer {
+        const s = try allocator.create(HashTokenizer);
         var buckets: [1024]Bucket = undefined;
         for (0..buckets.len) |i| {
             buckets[i] = Bucket{
@@ -224,14 +253,14 @@ pub const Tokenizer = struct {
                 .overflows = std.ArrayList(usize).empty,
             };
         }
-        s.* = Tokenizer{
+        s.* = HashTokenizer{
             .buckets = buckets,
             .bitset = try std.bit_set.DynamicBitSet.initEmpty(allocator, buckets.len),
         };
         return s;
     }
 
-    pub fn deinit(self: *Tokenizer, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *HashTokenizer, allocator: std.mem.Allocator) void {
         for (0..self.buckets.len) |i| {
             self.buckets[i].overflows.deinit(allocator);
         }
@@ -239,7 +268,11 @@ pub const Tokenizer = struct {
         allocator.destroy(self);
     }
 
-    pub fn tokenizeValues(self: *Tokenizer, allocator: std.mem.Allocator, values: [][]const u8) !std.ArrayList(u64) {
+    pub fn tokenizeValues(
+        self: *HashTokenizer,
+        allocator: std.mem.Allocator,
+        values: [][]const u8,
+    ) !std.ArrayList(u64) {
         var dst: std.ArrayList(u64) = try std.ArrayList(u64).initCapacity(allocator, 2);
         errdefer dst.deinit(allocator);
         for (values, 0..) |val, i| {
@@ -253,7 +286,12 @@ pub const Tokenizer = struct {
         return dst;
     }
 
-    fn appendToken(self: *Tokenizer, allocator: std.mem.Allocator, dst: *std.ArrayList(u64), value: []const u8) !void {
+    fn appendToken(
+        self: *HashTokenizer,
+        allocator: std.mem.Allocator,
+        dst: *std.ArrayList(u64),
+        value: []const u8,
+    ) !void {
         if (isASCII(value)) {
             try self.appendAsciiToken(allocator, dst, value);
         }
@@ -263,7 +301,7 @@ pub const Tokenizer = struct {
     }
 
     fn appendAsciiToken(
-        self: *Tokenizer,
+        self: *HashTokenizer,
         allocator: std.mem.Allocator,
         dst: *std.ArrayList(u64),
         value: []const u8,
@@ -305,7 +343,7 @@ pub const Tokenizer = struct {
     }
 
     fn appendUnicodeToken(
-        self: *Tokenizer,
+        self: *HashTokenizer,
         allocator: std.mem.Allocator,
         dst: *std.ArrayList(u64),
         value: []const u8,
@@ -351,7 +389,7 @@ pub const Tokenizer = struct {
         }
     }
 
-    fn addToken(self: *Tokenizer, allocator: std.mem.Allocator, token: []const u8) !?u64 {
+    fn addToken(self: *HashTokenizer, allocator: std.mem.Allocator, token: []const u8) !?u64 {
         const h = std.hash.XxHash64.hash(0, token);
         const idx = h % @as(u64, self.buckets.len);
 
@@ -402,7 +440,7 @@ test "tokenizeValues" {
 
     for (cases) |c| {
         const allocator = std.testing.allocator;
-        const tokenizer = try Tokenizer.init(allocator);
+        const tokenizer = try HashTokenizer.init(allocator);
         defer tokenizer.deinit(allocator);
 
         var tokens = try tokenizer.tokenizeValues(allocator, @constCast(c.input));
@@ -451,4 +489,149 @@ fn isUnicodeLetter(c: u8) bool {
 
 fn isUnicodeNumber(c: u8) bool {
     return c == 0;
+}
+
+fn encodeBloomHashes(allocator: std.mem.Allocator, hashes: []u64) ![]u8 {
+    var bf = try BloomFilter.initHashes(allocator, hashes);
+    defer bf.deinit(allocator);
+
+    const dst = try allocator.alloc(u8, @sizeOf(u64) * bf.bits.len);
+    bf.encode(dst);
+    return dst;
+}
+
+pub const BloomFilter = struct {
+    bits: []u64,
+
+    const bitsPerEntry = 16;
+    const hashRounds = 6;
+
+    pub fn initHashes(allocator: std.mem.Allocator, hashes: []u64) !*BloomFilter {
+        // +63 to have a gap rounding to upper value
+        const len = (hashes.len * bitsPerEntry + 63) / 64;
+
+        const bits = try allocator.alloc(u64, len);
+        errdefer allocator.free(bits);
+
+        const hashCount = hashes.len * hashRounds;
+        const hashedHashes = try allocator.alloc(u64, hashCount);
+        defer allocator.free(hashedHashes);
+        putHashes(hashedHashes, hashes);
+
+        setupBits(bits, hashedHashes);
+
+        const s = try allocator.create(BloomFilter);
+        s.* = BloomFilter{
+            .bits = bits,
+        };
+        return s;
+    }
+
+    pub fn deinit(self: *BloomFilter, allocator: std.mem.Allocator) void {
+        allocator.free(self.bits);
+        allocator.destroy(self);
+    }
+
+    fn putHashes(dst: []u64, src: []u64) void {
+        var buf: [8]u8 align(@alignOf(u64)) = undefined;
+        const p: *u64 = @ptrCast(&buf);
+        var i: usize = 0;
+
+        for (src) |hash| {
+            p.* = hash;
+
+            inline for (0..hashRounds) |_| {
+                const h = std.hash.XxHash64.hash(0, &buf);
+                dst[i] = h;
+                i += 1;
+                p.* += 1;
+            }
+        }
+    }
+
+    fn setupBits(bits: []u64, hashes: []u64) void {
+        const maxBits = bits.len * 64;
+        for (hashes) |hash| {
+            const idx = hash % maxBits;
+            const i = idx / 64;
+            const bitOrder: u6 = @intCast(idx % 64);
+            const mask: u64 = @as(u64, 1) << bitOrder;
+            const word = bits[i];
+            if (word & mask == 0) {
+                bits[i] = word | mask;
+            }
+        }
+    }
+
+    pub fn encode(self: *BloomFilter, dst: []u8) void {
+        var enc = Encoder.init(dst);
+        for (self.bits) |word| {
+            enc.writeInt(u64, word);
+        }
+    }
+
+    pub fn contains(self: *BloomFilter, hashes: []u64) bool {
+        if (self.bits.len == 0) return true;
+
+        const maxBits = self.bits.len * 64;
+        for (hashes) |hash| {
+            const idx = hash % maxBits;
+            const i = idx / 64;
+            const bitOrder: u6 = @intCast(idx % 64);
+            const mask = @as(u64, 1) << bitOrder;
+            const word = self.bits[i];
+            if (word & mask == 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+test "BloomFilter" {
+    const allocator = std.testing.allocator;
+    const Case = struct {
+        tokens: []const []const u8,
+    };
+
+    const thousandTokens = try allocator.alloc([]u8, 1000);
+    defer allocator.free(thousandTokens);
+    for (0..1000) |i| {
+        thousandTokens[i] = try std.fmt.allocPrint(allocator, "{d}", .{i + 1000});
+    }
+    defer {
+        for (0..1000) |i| {
+            allocator.free(thousandTokens[i]);
+        }
+    }
+    const cases = [_]Case{
+        .{
+            .tokens = &[_][]const u8{"foo"},
+        },
+        .{
+            .tokens = &[_][]const u8{ "foo", "bar", "bak" },
+        },
+        .{
+            .tokens = thousandTokens,
+        },
+    };
+
+    for (cases) |case| {
+        // init
+        var tokenizer = try HashTokenizer.init(allocator);
+        defer tokenizer.deinit(allocator);
+        var hashes = try tokenizer.tokenizeValues(allocator, @constCast(case.tokens));
+        defer hashes.deinit(allocator);
+
+        const bf = try BloomFilter.initHashes(allocator, hashes.items);
+        defer bf.deinit(allocator);
+
+        // make expected hashes
+        const hashedHashes = try allocator.alloc(u64, BloomFilter.hashRounds * hashes.items.len);
+        defer allocator.free(hashedHashes);
+        BloomFilter.putHashes(hashedHashes, hashes.items);
+
+        // validate
+        try std.testing.expect(bf.contains(hashedHashes));
+    }
 }

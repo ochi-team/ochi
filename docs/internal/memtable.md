@@ -180,9 +180,13 @@ Zstd (>= 128 bytes):
 +---------------------------------+
 | min/max: u64                    |  Value range
 +---------------------------------+
-| offset: usize                   |  Position in bloom buffer
+| offset: usize                   |  Position in bloom values buffer
 +---------------------------------+
 | size: usize                     |  Encoded data length
++---------------------------------+
+| bloomFilterOffset: usize        |  Position in bloom tokens buffer
++---------------------------------+
+| bloomFilterSize: usize           |  Bloom filter byte length
 +---------------------------------+
 | dict: ColumnDict                |  Dictionary values (if dict type)
 +---------------------------------+
@@ -255,14 +259,26 @@ BlockHeader (complete)
 +------------------------------------+
 
 +------------------------------------+
-| messageBloomValuesBuf              |  Message field values
+| messageBloomValuesBuf              |  Message field encoded values
 | [packed column data]               |
 +------------------------------------+
 
 +------------------------------------+
-| bloomValuesList[colID]             |  Per-column values
+| messageBloomTokensBuf              |  Message field bloom filters
+| [bloom filter bit arrays]          |
++------------------------------------+
+
++------------------------------------+
+| bloomValuesList[colID]             |  Per-column encoded values
 | [packed column data for col0]      |
 | [packed column data for col1]      |
+| ...                                |
++------------------------------------+
+
++------------------------------------+
+| bloomTokensList[colID]             |  Per-column bloom filters
+| [bloom filter for col0]            |
+| [bloom filter for col1]            |
 | ...                                |
 +------------------------------------+
 
@@ -276,17 +292,73 @@ BlockHeader (complete)
 ```
 
 **Column ID Generation**:
-- Assigns unique u64 ID to each column name
+- Assigns unique u16 ID to each column name (max 65,535 columns)
 - Maps column ID to bloom buffer index
 - Supports modulo wrapping for bounded memory
 
-**Tokenization** (for full-text search):
+**Hash Tokenization & Bloom Filters** (for full-text search):
 - Extracts tokens from ASCII text: `[a-zA-Z0-9_]+`
 - Hashes tokens using XxHash64
 - Deduplicates using bitset + overflow buckets
-- Prepares data for bloom filter construction
+- Generates bloom filter bit arrays for fast membership testing
+- Bloom filter parameters:
+  - 16 bits per unique token
+  - 6 hash rounds per token
+  - Encoded as u64 word array
 
-### 7. Decoding (decode.zig, unpack.zig)
+### 7. Bloom Filter Construction (stream_writer.zig)
+
+**BloomFilter** - Probabilistic data structure for fast membership testing
+
+**Purpose**: Enable efficient full-text search by quickly determining if a token might exist in a column
+
+**Construction Process**:
+```
+Input: [hash1, hash2, hash3, ...]  (unique token hashes)
+  |
+  v
+Calculate bit array size: (hashes.len * 16 bits + 63) / 64 words
+  |
+  v
+Generate 6 hashes per input hash:
+  for each hash:
+    buf = hash as bytes
+    for 6 rounds:
+      h = XxHash64(buf)
+      store h
+      buf += 1
+  |
+  v
+Set bits in array:
+  for each generated hash:
+    idx = hash % totalBits
+    wordIdx = idx / 64
+    bitIdx = idx % 64
+    bits[wordIdx] |= (1 << bitIdx)
+  |
+  v
+Output: []u64 bit array (encoded as bytes)
+```
+
+**Integration with Column Encoding**:
+```
+StreamWriter.writeColumn():
+  1. Encode column values (ValuesEncoder.packValues)
+     -> Write to bloomValuesBuf at ch.offset
+
+  2. Skip bloom filter for dict columns (already indexed)
+
+  3. For string columns:
+     - HashTokenizer.tokenizeValues() -> deduplicated hashes
+     - encodeBloomHashes() -> bloom filter bytes
+     - Write to bloomTokensBuf at ch.bloomFilterOffset
+
+  4. Update ColumnHeader:
+     - ch.size, ch.offset (values)
+     - ch.bloomFilterSize, ch.bloomFilterOffset (bloom filter)
+```
+
+### 8. Decoding (decode.zig, unpack.zig)
 
 **ValuesDecoder**: Reverse transformation from encoded bytes to strings
 
@@ -360,11 +432,24 @@ BlockWriter.writeBlock(Block A):
       ValuesEncoder.encode() -> Dict type, min=0, max=1
       ValuesEncoder.packValues([0, 1]) -> compressed bytes
       bloomValuesBuf["level"] += packed bytes
+      (skip bloom filter for dict columns)
 
     For column "msg":
       ValuesEncoder.encode() -> String type
       ValuesEncoder.packValues(["start", "retry"]) -> compressed bytes
       bloomValuesBuf["msg"] += packed bytes
+
+      HashTokenizer.tokenizeValues(["start", "retry"]):
+        -> Extract tokens: "start", "retry"
+        -> Hash & deduplicate: [hash("start"), hash("retry")]
+
+      encodeBloomHashes([hash("start"), hash("retry")]):
+        -> BloomFilter.initHashes() creates bit array
+        -> 6 hash rounds per token = 12 hashes total
+        -> Set corresponding bits in u64 array
+        -> Encode as bytes
+
+      bloomTokensBuf["msg"] += bloom filter bytes
 
   indexBlockBuf += BlockHeader A (76 bytes)
 
