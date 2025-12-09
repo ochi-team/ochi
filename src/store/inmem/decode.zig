@@ -62,7 +62,7 @@ pub const ValuesDecoder = struct {
                     if (v.len < 1) {
                         return error.InvalidValueLength;
                     }
-                    const n = decodeUint8(v);
+                    const n = decodeInt(u8, v);
                     const start = self.buf.items.len;
                     self.decodeUint8String(n);
                     values[i] = self.buf.items[start..];
@@ -73,7 +73,7 @@ pub const ValuesDecoder = struct {
                     if (v.len < 2) {
                         return error.InvalidValueLength;
                     }
-                    const n = decodeUint16(v);
+                    const n = decodeInt(u16, v);
                     const start = self.buf.items.len;
                     try self.decodeUint64String(n);
                     values[i] = self.buf.items[start..];
@@ -84,7 +84,7 @@ pub const ValuesDecoder = struct {
                     if (v.len < 4) {
                         return error.InvalidValueLength;
                     }
-                    const n = decodeUint32(v);
+                    const n = decodeInt(u32, v);
                     const start = self.buf.items.len;
                     try self.decodeUint64String(n);
                     values[i] = self.buf.items[start..];
@@ -95,7 +95,7 @@ pub const ValuesDecoder = struct {
                     if (v.len < 8) {
                         return error.InvalidValueLength;
                     }
-                    const n = decodeUint64(v);
+                    const n = decodeInt(u64, v);
                     const start = self.buf.items.len;
                     try self.decodeUint64String(n);
                     values[i] = self.buf.items[start..];
@@ -106,7 +106,7 @@ pub const ValuesDecoder = struct {
                     if (v.len < 8) {
                         return error.InvalidValueLength;
                     }
-                    const n = decodeInt64(v);
+                    const n = decodeInt(i64, v);
                     const start = self.buf.items.len;
                     try self.decodeInt64String(n);
                     values[i] = self.buf.items[start..];
@@ -239,37 +239,21 @@ pub const ValuesDecoder = struct {
     }
 };
 
-fn decodeUint8(v: []const u8) u8 {
-    return v[0];
-}
-
-fn decodeUint16(v: []const u8) u16 {
-    return std.mem.bytesToValue(u16, v[0..2]);
-}
-
-fn decodeUint32(v: []const u8) u32 {
-    return std.mem.bytesToValue(u32, v[0..4]);
-}
-
-fn decodeUint64(v: []const u8) u64 {
-    return std.mem.bytesToValue(u64, v[0..8]);
-}
-
-fn decodeInt64(v: []const u8) i64 {
-    return std.mem.bytesToValue(i64, v[0..8]);
+fn decodeInt(comptime T: type, v: []const u8) T {
+    return std.mem.readInt(T, v[0..@sizeOf(T)], .big);
 }
 
 fn decodeFloat64(v: []const u8) f64 {
-    const n = decodeUint64(v);
+    const n = decodeInt(u64, v);
     return @bitCast(n);
 }
 
 fn decodeIPv4(v: []const u8) u32 {
-    return decodeUint32(v);
+    return decodeInt(u32, v);
 }
 
 fn decodeTimestampISO8601(v: []const u8) i64 {
-    const n = decodeUint64(v);
+    const n = decodeInt(u64, v);
     return @bitCast(n);
 }
 

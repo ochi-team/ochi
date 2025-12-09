@@ -50,14 +50,13 @@ pub const Encoder = struct {
         return .{ .buf = buf };
     }
 
-    // TODO: valdiate we really need it, value encoder uses std.mem.toBytes
-
-    /// Write a typed integer value to the buffer using bitcast
+    /// Write a typed integer value to the buffer using big-endian encoding
     pub fn writeInt(self: *Encoder, comptime T: type, value: T) void {
         const slice = self.buf[self.offset .. self.offset + @sizeOf(T)];
         if (slice.len < @sizeOf(T)) unreachable;
         self.offset += @sizeOf(T);
-        const bytes: [@sizeOf(T)]u8 = @bitCast(value);
+        var bytes: [@sizeOf(T)]u8 = undefined;
+        std.mem.writeInt(T, &bytes, value, .big);
         @memcpy(slice, bytes[0..]);
     }
 
@@ -84,9 +83,9 @@ pub const Encoder = struct {
     /// The maximum number of bytes a varint-encoded 64-bit integer can occupy.
     pub const maxVarUint64Len = 10;
 
-    /// writeLeb128 encodes a u64 into a variable-length byte sequence.
+    /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
     /// Returns error.OutOfMemory if the buffer has not enough capacity.
-    pub fn writeLeb128(self: *Encoder, value: u64) std.mem.Allocator.Error!void {
+    pub fn writeVarInt(self: *Encoder, value: u64) std.mem.Allocator.Error!void {
         if (self.buf[self.offset..].len < 10) return std.mem.Allocator.Error.OutOfMemory;
 
         const slice = self.buf[self.offset .. self.offset + 10];
@@ -104,8 +103,18 @@ pub const Encoder = struct {
     }
 
     fn writeIntBytes(self: *Encoder, size: usize, value: u64) void {
-        const buf: [8]u8 = @bitCast(value);
-        self.writeBytes(buf[0..size]);
+        var buf: [8]u8 = undefined;
+        std.mem.writeInt(u64, &buf, value, .big);
+        // For big-endian, the least significant bytes are at the end
+        const start = 8 - size;
+        self.writeBytes(buf[start..8]);
+    }
+
+    /// Static helper: Encode an integer to bytes using big-endian (one-shot, no state)
+    pub inline fn toBytes(comptime T: type, value: T) [@sizeOf(T)]u8 {
+        var bytes: [@sizeOf(T)]u8 = undefined;
+        std.mem.writeInt(T, &bytes, value, .big);
+        return bytes;
     }
 };
 
@@ -167,7 +176,7 @@ test "Encoder.writeVarUint64" {
 
     for (cases) |case| {
         var enc = Encoder.init(buf);
-        try enc.writeLeb128(case.value);
+        try enc.writeVarInt(case.value);
         try std.testing.expectEqualSlices(u8, case.expected, buf[0..enc.offset]);
     }
 
@@ -175,7 +184,7 @@ test "Encoder.writeVarUint64" {
     const small_buf = try allocator.alloc(u8, 1);
     defer allocator.free(small_buf);
     var enc = Encoder.init(small_buf);
-    try std.testing.expectError(std.mem.Allocator.Error.OutOfMemory, enc.writeLeb128(std.math.maxInt(u64)));
+    try std.testing.expectError(std.mem.Allocator.Error.OutOfMemory, enc.writeVarInt(std.math.maxInt(u64)));
 }
 
 const DecodeError = error{
@@ -191,7 +200,7 @@ pub const Decoder = struct {
         return .{ .buf = buf };
     }
 
-    /// Read a typed integer value from the buffer using bitcast
+    /// Read a typed integer value from the buffer using big-endian decoding
     pub fn readInt(self: *Decoder, comptime T: type) !T {
         const size = @sizeOf(T);
         if (self.offset + size > self.buf.len) {
@@ -199,7 +208,7 @@ pub const Decoder = struct {
         }
         const bytes: [size]u8 = self.buf[self.offset..][0..size].*;
         self.offset += size;
-        return @bitCast(bytes);
+        return std.mem.readInt(T, &bytes, .big);
     }
 
     /// Read raw bytes from the buffer
@@ -377,7 +386,7 @@ pub const ValuesEncoder = struct {
         const res = try self.allocator.alloc(u8, 11 + compressedSize);
         var enc = Encoder.init(res);
         enc.writeInt(u8, compressionKindZstd);
-        try enc.writeLeb128(compressedSize);
+        try enc.writeVarInt(compressedSize);
         enc.writeBytes(compressed[0..compressedSize]);
         return .{ .buf = res, .len = enc.offset };
     }
@@ -479,9 +488,9 @@ pub const ValuesEncoder = struct {
             const start = self.buf.items.len;
             switch (vt) {
                 .uint8 => try self.buf.append(self.allocator, @as(u8, @intCast(n))),
-                .uint16 => try self.buf.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, @intCast(n)))),
-                .uint32 => try self.buf.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, @intCast(n)))),
-                .uint64 => try self.buf.appendSlice(self.allocator, &std.mem.toBytes(n)),
+                .uint16 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u16, @as(u16, @intCast(n)))),
+                .uint32 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u32, @as(u32, @intCast(n)))),
+                .uint64 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u64, n)),
                 else => unreachable,
             }
             const slice = self.buf.items[start..];
@@ -518,7 +527,7 @@ pub const ValuesEncoder = struct {
             maxVal = @max(maxVal, n);
 
             const start = self.buf.items.len;
-            try self.buf.appendSlice(self.allocator, &std.mem.toBytes(n));
+            try self.buf.appendSlice(self.allocator, &Encoder.toBytes(i64, n));
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
@@ -555,7 +564,7 @@ pub const ValuesEncoder = struct {
             const bits: u64 = @bitCast(n);
 
             const start = self.buf.items.len;
-            try self.buf.appendSlice(self.allocator, &std.mem.toBytes(bits));
+            try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u64, bits));
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
@@ -590,7 +599,7 @@ pub const ValuesEncoder = struct {
             const bits: u32 = @bitCast(n);
 
             const start = self.buf.items.len;
-            try self.buf.appendSlice(self.allocator, &std.mem.toBytes(bits));
+            try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u32, bits));
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 
@@ -626,7 +635,7 @@ pub const ValuesEncoder = struct {
             const bits: i64 = @bitCast(n);
 
             const start = self.buf.items.len;
-            try self.buf.appendSlice(self.allocator, &std.mem.toBytes(bits));
+            try self.buf.appendSlice(self.allocator, &Encoder.toBytes(i64, bits));
             try self.values.append(self.allocator, self.buf.items[start..]);
         }
 

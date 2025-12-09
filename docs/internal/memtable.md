@@ -95,7 +95,7 @@ Row format (Lines):                Columnar format (Block):
 
 ### 3. Encoding System (encode.zig)
 
-**Purpose**: Type detection and efficient encoding
+**Purpose**: Type detection and efficient encoding with cross-platform big-endian byte order
 
 #### ValuesEncoder Strategy
 
@@ -149,7 +149,7 @@ Plain (< 128 bytes):
   [kind:0x00][len:u8][data...]
 
 Zstd (>= 128 bytes):
-  [kind:0x01][len:leb128][compressed_data...]
+  [kind:0x01][len:varint][compressed_data...]
 ```
 
 ### 4. Block Headers (block_header.zig)
