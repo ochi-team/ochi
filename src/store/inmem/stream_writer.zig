@@ -128,7 +128,13 @@ pub const StreamWriter = struct {
 
         const columnsHeader = try ColumnsHeader.init(allocator, block);
         defer columnsHeader.deinit(allocator);
-        for (block.getColumns(), 0..) |col, i| {
+        const columns = block.getColumns();
+        try self.columnIDGen.keyIDs.ensureUnusedCapacity(columns.len);
+        try self.colIdx.ensureUnusedCapacity(@intCast(columns.len));
+        try self.bloomValuesList.ensureUnusedCapacity(allocator, columns.len);
+        try self.bloomTokensList.ensureUnusedCapacity(allocator, columns.len);
+
+        for (columns, 0..) |col, i| {
             try self.writeColumnHeader(allocator, col, &columnsHeader.headers[i]);
         }
 
@@ -146,15 +152,15 @@ pub const StreamWriter = struct {
         }
         // TODO: pass static buffer instead of allocator
         const encodedTimestamps = try ValuesEncoder.encodeTimestamps(allocator, timestamps);
-        defer allocator.free(encodedTimestamps);
-        // TODO: write tsHeader data from encodedTimestamps
+        defer allocator.free(encodedTimestamps.buf);
 
         tsHeader.min = timestamps[0];
         tsHeader.max = timestamps[timestamps.len - 1];
         tsHeader.offset = self.timestampsBuf.items.len;
-        tsHeader.size = encodedTimestamps.len;
+        tsHeader.size = encodedTimestamps.buf.len;
+        tsHeader.encodingType = encodedTimestamps.encodingType;
 
-        try self.timestampsBuf.appendSlice(allocator, encodedTimestamps);
+        try self.timestampsBuf.appendSlice(allocator, encodedTimestamps.buf);
     }
 
     fn writeColumnHeader(self: *StreamWriter, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {
@@ -172,7 +178,7 @@ pub const StreamWriter = struct {
         defer allocator.free(packedValues);
         std.debug.assert(packedValues.len <= maxPackedValuesSize);
 
-        const bloomBufI = self.getBloomBufferIndex(allocator, ch.key);
+        const bloomBufI = self.getBloomBufferIndex(ch.key);
         const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
             error.MessageBloomMustBeUsed => &self.messageBloomValuesBuf,
             else => return err,
@@ -206,12 +212,12 @@ pub const StreamWriter = struct {
         try bloomTokensBuf.appendSlice(allocator, bloomHash);
     }
 
-    fn getBloomBufferIndex(self: *StreamWriter, allocator: std.mem.Allocator, key: []const u8) !u16 {
+    fn getBloomBufferIndex(self: *StreamWriter, key: []const u8) error{MessageBloomMustBeUsed}!u16 {
         if (key.len == 0) {
             return error.MessageBloomMustBeUsed;
         }
 
-        const colID = try self.columnIDGen.genID(key);
+        const colID = self.columnIDGen.genIDAssumeCapacity(key);
         const maybeColI = self.colIdx.get(colID);
         if (maybeColI) |colI| {
             return colI;
@@ -220,11 +226,11 @@ pub const StreamWriter = struct {
         // at the moment implemented only for an in mem table, so we assume max col i is ever 1
         const colI = self.nextColI % self.maxColI;
         self.nextColI += 1;
-        try self.colIdx.put(colID, colI);
+        self.colIdx.putAssumeCapacity(colID, colI);
 
         if (colI >= self.bloomValuesList.items.len) {
-            try self.bloomValuesList.append(allocator, std.ArrayList(u8).empty);
-            try self.bloomTokensList.append(allocator, std.ArrayList(u8).empty);
+            self.bloomValuesList.appendAssumeCapacity(std.ArrayList(u8).empty);
+            self.bloomTokensList.appendAssumeCapacity(std.ArrayList(u8).empty);
         }
 
         return colI;
@@ -246,7 +252,8 @@ pub const StreamWriter = struct {
 
         try cshIdx.columns.ensureUnusedCapacity(allocator, csh.headers.len);
         try cshIdx.celledColumns.ensureUnusedCapacity(allocator, csh.celledColumns.len);
-        const cshOffset = try csh.encode(dst, cshIdx, self.columnIDGen);
+        try self.columnIDGen.keyIDs.ensureUnusedCapacity(csh.celledColumns.len);
+        const cshOffset = csh.encode(dst, cshIdx, self.columnIDGen);
         const cshIdxOffset = cshIdx.encode(dst[cshOffset..]);
 
         bh.columnsHeaderOffset = self.columnsHeaderBuf.items.len;

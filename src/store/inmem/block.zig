@@ -3,6 +3,8 @@ const std = @import("std");
 const Line = @import("../lines.zig").Line;
 const Encoder = @import("encoding").Encoder;
 
+const sizing = @import("sizing.zig");
+
 const maxColumns = 1000;
 
 fn columnLessThan(_: void, one: Column, another: Column) bool {
@@ -85,36 +87,8 @@ pub const Block = struct {
         return self.timestamps.len;
     }
 
-    const tsRfc3339Nano = "2006-01-02T15:04:05.999999999Z07:00";
-    const tsLineJsonSurrounding = "{\"_time\":\"\"},\n";
-    const lineTsSize = tsRfc3339Nano.len + tsLineJsonSurrounding.len;
-    const lineSurroundSize = "\"\":\"\"},".len;
-
-    // gives size in resulted json object
-    // TODO: test against real resulted log record
     pub fn size(self: *Block) u64 {
-        if (self.timestamps.len == 0) {
-            return 0;
-        }
-        // timestamp key value reserved
-        var res = lineTsSize * self.timestamps.len;
-
-        for (self.getCelledColumns()) |col| {
-            const colValueLen = if (col.values.len > 0) col.values[0].len else 0;
-            res += (lineSurroundSize + col.key.len + colValueLen) * self.timestamps.len;
-        }
-
-        for (self.getColumns()) |col| {
-            for (col.values) |val| {
-                if (val.len == 0) {
-                    continue;
-                }
-
-                res += (lineSurroundSize + col.key.len + val.len) * self.timestamps.len;
-            }
-        }
-
-        return res;
+        return sizing.blockSize(self);
     }
 
     fn put(self: *Block, allocator: std.mem.Allocator, lines: []*const Line) !void {

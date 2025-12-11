@@ -3,6 +3,8 @@ const std = @import("std");
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 
+const sizing = @import("inmem/sizing.zig");
+
 pub const SID = struct {
     // TODO: make it [16]const u8
     tenantID: []const u8,
@@ -56,13 +58,7 @@ pub const Line = struct {
     encodedTags: [][]const u8,
 
     pub fn fieldsSize(self: *const Line) u32 {
-        // TODO: implement real calculation depending on the format we store data in
-        var res: u32 = 0;
-        for (self.fields) |field| {
-            res += @intCast(field.key.len);
-            res += @intCast(field.value.len);
-        }
-        return res;
+        return sizing.fieldsSize(self);
     }
 };
 

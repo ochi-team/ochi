@@ -114,7 +114,7 @@ fn writeBlock(
 
     try self.indexBlockBuf.ensureUnusedCapacity(allocator, BlockHeader.encodeExpectedSize);
     const slice = self.indexBlockBuf.unusedCapacitySlice()[0..BlockHeader.encodeExpectedSize];
-    const offset = try blockHeader.encode(slice);
+    const offset = blockHeader.encode(slice);
     self.indexBlockBuf.items.len += offset;
     if (self.indexBlockBuf.items.len > indexBlockFlushThreshold) {
         try self.flushIndexBlock(allocator, streamWriter);

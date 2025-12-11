@@ -120,7 +120,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
         try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);
         try std.testing.expectEqual(1, blockHeader.sid.id);
-        try std.testing.expectEqual(188, blockHeader.size);
+        try std.testing.expectEqual(150, blockHeader.size);
         try std.testing.expectEqual(2, blockHeader.len);
 
         try std.testing.expectEqual(0, blockHeader.timestampsHeader.offset);

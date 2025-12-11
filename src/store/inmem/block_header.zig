@@ -7,6 +7,7 @@ const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
+const EncodingType = @import("ValuesEncoder.zig").EncodingType;
 
 pub const BlockHeader = struct {
     sid: SID,
@@ -29,6 +30,7 @@ pub const BlockHeader = struct {
                 .size = 0,
                 .min = 0,
                 .max = 0,
+                .encodingType = EncodingType.Undefined,
             },
             .columnsHeaderOffset = 0,
             .columnsHeaderSize = 0,
@@ -37,20 +39,25 @@ pub const BlockHeader = struct {
         };
     }
 
-    const blockHeaderSize = @sizeOf(BlockHeader);
-
     // 32 sid 8 size 4 len 32 timestamps = 76
-    pub const encodeExpectedSize = 76;
-    pub fn encode(self: *BlockHeader, buf: []u8) !usize {
-        if (buf.len < encodeExpectedSize) return std.mem.Allocator.Error.OutOfMemory;
+    // [32:sid][8:size][4:len][33:timestamps, 32 values and 1 encoding type][40:columns header]
+    pub const encodeExpectedSize = 32 + 8 + 4 + 32 + 1 + 40;
 
+    pub fn encode(self: *BlockHeader, buf: []u8) usize {
         var enc = Encoder.init(buf);
+
         self.sid.encode(&enc);
 
         enc.writeInt(u64, self.size);
         enc.writeInt(u32, self.len);
 
         self.timestampsHeader.encode(&enc);
+
+        enc.writeVarInt(self.columnsHeaderIndexOffset);
+        enc.writeVarInt(self.columnsHeaderIndexSize);
+        enc.writeVarInt(self.columnsHeaderOffset);
+        enc.writeVarInt(self.columnsHeaderSize);
+
         return enc.offset;
     }
 
@@ -83,11 +90,14 @@ pub const TimestampsHeader = struct {
     min: u64,
     max: u64,
 
+    encodingType: EncodingType,
+
     pub fn encode(self: *TimestampsHeader, enc: *Encoder) void {
         enc.writeInt(u64, self.offset);
         enc.writeInt(u64, self.size);
         enc.writeInt(u64, self.min);
         enc.writeInt(u64, self.max);
+        enc.writeInt(u8, @intFromEnum(self.encodingType));
     }
 
     pub fn decode(decoder: *Decoder) !TimestampsHeader {
@@ -95,12 +105,14 @@ pub const TimestampsHeader = struct {
         const size = try decoder.readInt(u64);
         const min = try decoder.readInt(u64);
         const max = try decoder.readInt(u64);
+        const encodingType = try decoder.readInt(u8);
 
         return .{
             .offset = offset,
             .size = size,
             .min = min,
             .max = max,
+            .encodingType = @enumFromInt(encodingType),
         };
     }
 };
@@ -155,13 +167,13 @@ pub const ColumnsHeader = struct {
         dst: []u8,
         cshIdx: *ColumnsHeaderIndex,
         columnIDGen: *ColumnIDGen,
-    ) !usize {
+    ) usize {
         var enc = Encoder.init(dst);
         enc.writeVarInt(@intCast(self.headers.len));
         var offset = enc.offset;
 
         for (self.headers) |*header| {
-            const colID = try columnIDGen.genID(header.key);
+            const colID = columnIDGen.keyIDs.get(header.key).?;
             header.encode(&enc);
             cshIdx.columns.appendAssumeCapacity(.{
                 .columndID = colID,
@@ -174,7 +186,7 @@ pub const ColumnsHeader = struct {
         offset = enc.offset;
 
         for (self.celledColumns) |*celledCol| {
-            const colID = try columnIDGen.genID(celledCol.key);
+            const colID = columnIDGen.genIDAssumeCapacity(celledCol.key);
             celledCol.encodeAsCelled(&enc, false);
             cshIdx.celledColumns.appendAssumeCapacity(.{
                 .columndID = colID,

@@ -8,8 +8,21 @@ const Encoder = encoding.Encoder;
 const ColumnDict = @import("block_header.zig").ColumnDict;
 const ColumnType = @import("block_header.zig").ColumnType;
 
-pub fn encodeTimestamps(allocator: std.mem.Allocator, tss: []u64) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{any}", .{tss});
+pub const EncodingType = enum(u8) {
+    Undefined = 0,
+};
+
+pub const EncodedTimestamps = struct {
+    encodingType: EncodingType,
+    buf: []u8,
+};
+
+pub fn encodeTimestamps(allocator: std.mem.Allocator, tss: []u64) !EncodedTimestamps {
+    const buf = try std.fmt.allocPrint(allocator, "{any}", .{tss});
+    return .{
+        .buf = buf,
+        .encodingType = .Undefined,
+    };
 }
 
 pub const EncodeValueType = struct {
