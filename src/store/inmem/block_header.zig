@@ -1,17 +1,23 @@
 const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
-const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const Block = @import("block.zig").Block;
 const Column = @import("block.zig").Column;
 const Encoder = @import("encode.zig").Encoder;
 const Decoder = @import("encode.zig").Decoder;
+const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
+const ColumnIDGen = @import("ColumnIDGen.zig");
 
 pub const BlockHeader = struct {
     sid: SID,
     size: u64,
     len: u32,
     timestampsHeader: TimestampsHeader,
+
+    columnsHeaderOffset: usize,
+    columnsHeaderSize: usize,
+    columnsHeaderIndexOffset: usize,
+    columnsHeaderIndexSize: usize,
 
     pub fn init(block: *Block, sid: SID) BlockHeader {
         return .{
@@ -24,6 +30,10 @@ pub const BlockHeader = struct {
                 .min = 0,
                 .max = 0,
             },
+            .columnsHeaderOffset = 0,
+            .columnsHeaderSize = 0,
+            .columnsHeaderIndexOffset = 0,
+            .columnsHeaderIndexSize = 0,
         };
     }
 
@@ -59,6 +69,10 @@ pub const BlockHeader = struct {
             .size = size,
             .len = len,
             .timestampsHeader = timestampsHeader,
+            .columnsHeaderOffset = 0,
+            .columnsHeaderSize = 0,
+            .columnsHeaderIndexOffset = 0,
+            .columnsHeaderIndexSize = 0,
         };
     }
 };
@@ -130,15 +144,56 @@ pub const ColumnsHeader = struct {
         allocator.free(self.headers);
         allocator.destroy(self);
     }
+
+    pub fn encodeBound(self: *const ColumnsHeader) usize {
+        // [10:len][256 * headers.len:dict{dict is max here}][20:len,offset][10:celledLen][256 * celledCols]
+        return 10 + maxDictColumnValueSize * self.headers.len + 20 + 10 +
+            self.celledColumns.len * Column.maxCelledColumnValueSize;
+    }
+    pub fn encode(
+        self: *ColumnsHeader,
+        dst: []u8,
+        cshIdx: *ColumnsHeaderIndex,
+        columnIDGen: *ColumnIDGen,
+    ) !usize {
+        var enc = Encoder.init(dst);
+        enc.writeVarInt(@intCast(self.headers.len));
+        var offset = enc.offset;
+
+        for (self.headers) |*header| {
+            const colID = try columnIDGen.genID(header.key);
+            header.encode(&enc);
+            cshIdx.columns.appendAssumeCapacity(.{
+                .columndID = colID,
+                .offset = offset,
+            });
+            offset = enc.offset;
+        }
+
+        enc.writeVarInt(@intCast(self.celledColumns.len));
+        offset = enc.offset;
+
+        for (self.celledColumns) |*celledCol| {
+            const colID = try columnIDGen.genID(celledCol.key);
+            celledCol.encodeAsCelled(&enc, false);
+            cshIdx.celledColumns.appendAssumeCapacity(.{
+                .columndID = colID,
+                .offset = offset,
+            });
+            offset = enc.offset;
+        }
+
+        return enc.offset;
+    }
 };
 
-pub const maxColumnValueSize = 256;
-pub const maxColumnValuesLen = 8;
+pub const maxDictColumnValueSize = 256;
+pub const maxDictColumnValuesLen = 8;
 pub const ColumnDict = struct {
     values: std.ArrayList([]const u8),
 
     pub fn init(allocator: std.mem.Allocator) !ColumnDict {
-        const values = try std.ArrayList([]const u8).initCapacity(allocator, maxColumnValuesLen);
+        const values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
         return .{
             .values = values,
         };
@@ -152,7 +207,7 @@ pub const ColumnDict = struct {
     }
 
     pub fn set(self: *ColumnDict, v: []const u8) ?u8 {
-        if (v.len > maxColumnValueSize) return null;
+        if (v.len > maxDictColumnValueSize) return null;
 
         var valSize: u16 = 0;
         for (0..self.values.items.len) |i| {
@@ -162,12 +217,19 @@ pub const ColumnDict = struct {
 
             valSize += @intCast(self.values.items[i].len);
         }
-        if (self.values.items.len >= maxColumnValuesLen) return null;
-        if (valSize + v.len > maxColumnValueSize) return null;
+        if (self.values.items.len >= maxDictColumnValuesLen) return null;
+        if (valSize + v.len > maxDictColumnValueSize) return null;
 
         // we don't allocate more than 8 elements
         self.values.appendAssumeCapacity(v);
         return @intCast(self.values.items.len - 1);
+    }
+
+    pub fn encode(self: *ColumnDict, enc: *Encoder) void {
+        enc.writeInt(u8, @intCast(self.values.items.len));
+        for (self.values.items) |str| {
+            enc.writeBytes(str);
+        }
     }
 };
 
@@ -195,16 +257,80 @@ pub const ColumnHeader = struct {
     offset: usize,
     bloomFilterSize: usize,
     bloomFilterOffset: usize,
+
+    pub fn encode(self: *ColumnHeader, enc: *Encoder) void {
+        enc.writeInt(u8, @intFromEnum(self.type));
+
+        switch (self.type) {
+            .string => self.encodeValuesAndBloom(enc),
+            .dict => {
+                self.dict.encode(enc);
+                self.encodeValues(enc);
+            },
+            .uint8 => {
+                enc.writeInt(u8, @intCast(self.min));
+                enc.writeInt(u8, @intCast(self.max));
+                self.encodeValuesAndBloom(enc);
+            },
+            .uint16 => {
+                enc.writeInt(u16, @intCast(self.min));
+                enc.writeInt(u16, @intCast(self.max));
+                self.encodeValuesAndBloom(enc);
+            },
+            .uint32 => {
+                enc.writeInt(u32, @intCast(self.min));
+                enc.writeInt(u32, @intCast(self.max));
+                self.encodeValuesAndBloom(enc);
+            },
+            .uint64 => {
+                enc.writeInt(u64, self.min);
+                enc.writeInt(u64, self.max);
+                self.encodeValuesAndBloom(enc);
+            },
+            .int64 => {
+                enc.writeInt(u64, self.min);
+                enc.writeInt(u64, self.max);
+                self.encodeValuesAndBloom(enc);
+            },
+            .float64 => {
+                enc.writeInt(u64, self.min);
+                enc.writeInt(u64, self.max);
+                self.encodeValuesAndBloom(enc);
+            },
+            .ipv4 => {
+                enc.writeInt(u32, @intCast(self.min));
+                enc.writeInt(u32, @intCast(self.max));
+                self.encodeValuesAndBloom(enc);
+            },
+            .timestampIso8601 => {
+                enc.writeInt(u64, self.min);
+                enc.writeInt(u64, self.max);
+                self.encodeValuesAndBloom(enc);
+            },
+            .unknown => self.encodeValuesAndBloom(enc),
+        }
+    }
+
+    inline fn encodeValuesAndBloom(self: *ColumnHeader, enc: *Encoder) void {
+        self.encodeValues(enc);
+        self.encodeBloom(enc);
+    }
+
+    inline fn encodeValues(self: *ColumnHeader, enc: *Encoder) void {
+        enc.writeVarInt(self.offset);
+        enc.writeVarInt(self.size);
+    }
+    inline fn encodeBloom(self: *ColumnHeader, enc: *Encoder) void {
+        enc.writeVarInt(self.bloomFilterOffset);
+        enc.writeVarInt(self.bloomFilterSize);
+    }
 };
 
-const block_header = @import("block_header.zig");
-const ColumnValues = block_header.ColumnDict;
-
 test "setReturnsNullOnExceedingMaxColumnValueSize" {
-    var cv = try ColumnValues.init(std.testing.allocator);
+    var cv = try ColumnDict.init(std.testing.allocator);
     defer cv.deinit(std.testing.allocator);
 
-    const oversized_value = try std.testing.allocator.alloc(u8, block_header.maxColumnValueSize + 1);
+    const oversized_value = try std.testing.allocator.alloc(u8, maxDictColumnValueSize + 1);
     defer std.testing.allocator.free(oversized_value);
 
     const result = cv.set(oversized_value);
@@ -212,12 +338,12 @@ test "setReturnsNullOnExceedingMaxColumnValueSize" {
 }
 
 test "setReturnsNullOnExceedingTotalValueSize" {
-    var cv = try ColumnValues.init(std.testing.allocator);
+    var cv = try ColumnDict.init(std.testing.allocator);
     defer cv.deinit(std.testing.allocator);
 
-    const v1 = try std.testing.allocator.alloc(u8, block_header.maxColumnValueSize / 2);
-    const v2 = try std.testing.allocator.alloc(u8, block_header.maxColumnValueSize / 2);
-    const v3 = try std.testing.allocator.alloc(u8, block_header.maxColumnValueSize / 2);
+    const v1 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
+    const v2 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
+    const v3 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
     defer std.testing.allocator.free(v1);
     defer std.testing.allocator.free(v2);
     defer std.testing.allocator.free(v3);
@@ -238,7 +364,7 @@ test "setReturnsNullOnExceedingTotalValueSize" {
 }
 
 test "setReturnsNullOnExceedingTotalValuesLen" {
-    var cv = try ColumnValues.init(std.testing.allocator);
+    var cv = try ColumnDict.init(std.testing.allocator);
     defer cv.deinit(std.testing.allocator);
 
     var testValues: [8][]const u8 = undefined;

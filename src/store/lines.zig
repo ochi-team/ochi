@@ -54,7 +54,7 @@ pub const Line = struct {
     fields: []Field,
     encodedTags: [][]const u8,
 
-    pub fn fieldsLen(self: *const Line) u32 {
+    pub fn fieldsSize(self: *const Line) u32 {
         // TODO: implement real calculation depending on the format we store data in
         var res: u32 = 0;
         for (self.fields) |field| {

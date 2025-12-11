@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Line = @import("store/lines.zig").Line;
 
-const MemTable = @import("store/inmem/memtable.zig").MemTable;
+const MemTable = @import("store/inmem/Memtable.zig");
 
 pub const DataShard = struct {
     lines: std.ArrayList(*const Line),
@@ -28,7 +28,8 @@ pub const Data = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*Data {
         const i = try allocator.create(Data);
-        // TODO: log warning if can't get cpus, no clue why getCpuCount may fail, perhaps due to a weird CPU architecture
+        // TODO: log warning if can't get cpus, no clue why getCpuCount may fail,
+        // perhaps due to a weird CPU architecture
         const cpus = std.Thread.getCpuCount() catch 4;
         const shards = try allocator.alloc(DataShard, cpus);
         i.* = Data{

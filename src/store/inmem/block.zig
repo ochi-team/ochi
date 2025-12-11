@@ -3,6 +3,7 @@ const std = @import("std");
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
 const fieldLessThan = @import("../lines.zig").fieldLessThan;
+const Encoder = @import("encode.zig").Encoder;
 
 const maxColumns = 1000;
 
@@ -10,11 +11,11 @@ fn columnLessThan(_: void, one: Column, another: Column) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }
 
-// makes no sense to keep large values in celled columns,
-// it won't help to improve performance
-const maxCelledColumnValueSize = 256;
-
 pub const Column = struct {
+    // makes no sense to keep large values in celled columns,
+    // it won't help to improve performance
+    pub const maxCelledColumnValueSize = 256;
+
     key: []const u8,
     values: [][]const u8,
 
@@ -34,6 +35,13 @@ pub const Column = struct {
         }
 
         return true;
+    }
+
+    pub fn encodeAsCelled(self: *Column, enc: *Encoder, encodeKey: bool) void {
+        if (encodeKey) {
+            enc.writeBytes(self.key);
+        }
+        enc.writeBytes(self.values[0]);
     }
 };
 

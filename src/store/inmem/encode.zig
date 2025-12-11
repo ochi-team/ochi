@@ -85,9 +85,7 @@ pub const Encoder = struct {
 
     /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
     /// Returns error.OutOfMemory if the buffer has not enough capacity.
-    pub fn writeVarInt(self: *Encoder, value: u64) std.mem.Allocator.Error!void {
-        if (self.buf[self.offset..].len < 10) return std.mem.Allocator.Error.OutOfMemory;
-
+    pub fn writeVarInt(self: *Encoder, value: u64) void {
         const slice = self.buf[self.offset .. self.offset + 10];
 
         var i: u8 = 0;
@@ -176,15 +174,9 @@ test "Encoder.writeVarUint64" {
 
     for (cases) |case| {
         var enc = Encoder.init(buf);
-        try enc.writeVarInt(case.value);
+        enc.writeVarInt(case.value);
         try std.testing.expectEqualSlices(u8, case.expected, buf[0..enc.offset]);
     }
-
-    // Test OutOfMemory
-    const small_buf = try allocator.alloc(u8, 1);
-    defer allocator.free(small_buf);
-    var enc = Encoder.init(small_buf);
-    try std.testing.expectError(std.mem.Allocator.Error.OutOfMemory, enc.writeVarInt(std.math.maxInt(u64)));
 }
 
 const DecodeError = error{
@@ -386,7 +378,7 @@ pub const ValuesEncoder = struct {
         const res = try self.allocator.alloc(u8, 11 + compressedSize);
         var enc = Encoder.init(res);
         enc.writeInt(u8, compressionKindZstd);
-        try enc.writeVarInt(compressedSize);
+        enc.writeVarInt(compressedSize);
         enc.writeBytes(compressed[0..compressedSize]);
         return .{ .buf = res, .len = enc.offset };
     }

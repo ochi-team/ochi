@@ -39,10 +39,10 @@ pub const IndexBlockHeader = struct {
         self.maxTs = maxTs;
 
         // TODO: compress zstd or openzl
-        self.offset = streamWriter.indexBuffer.items.len;
+        self.offset = streamWriter.indexBuf.items.len;
         self.size = indexBlockBuf.items.len;
 
-        try streamWriter.indexBuffer.appendSlice(allocator, indexBlockBuf.items);
+        try streamWriter.indexBuf.appendSlice(allocator, indexBlockBuf.items);
     }
 
     // sid 32 + self 32 = 64
