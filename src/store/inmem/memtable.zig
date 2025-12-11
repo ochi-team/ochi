@@ -8,6 +8,7 @@ const SID = @import("../lines.zig").SID;
 
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const BlockWriter = @import("BlockWriter.zig");
+const ValuesDecoder = @import("ValuesDecoder.zig");
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better
@@ -66,7 +67,6 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
     try blockWriter.finish(allocator, self.streamWriter);
 }
 
-const encode = @import("encode.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 
@@ -108,7 +108,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
     // Validate timestamps
     {
-        var decodedTimestamps = try encode.decodeTimestamps(allocator, timestampsContent);
+        var decodedTimestamps = try ValuesDecoder.decodeTimestamps(allocator, timestampsContent);
         defer decodedTimestamps.deinit(allocator);
 
         try std.testing.expectEqualDeep(&[_]u64{ 1, 2 }, decodedTimestamps.items);

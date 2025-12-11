@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const encode = @import("encode.zig");
+const ValuesEncoder = @import("ValuesEncoder.zig");
 
 const Block = @import("block.zig").Block;
 const Column = @import("block.zig").Column;
@@ -144,7 +144,7 @@ pub const StreamWriter = struct {
             return Error.EmptyTimestamps;
         }
         // TODO: pass static buffer instead of allocator
-        const encodedTimestamps = try encode.encodeTimestamps(allocator, timestamps);
+        const encodedTimestamps = try ValuesEncoder.encodeTimestamps(allocator, timestamps);
         defer allocator.free(encodedTimestamps);
         // TODO: write tsHeader data from encodedTimestamps
 
@@ -159,7 +159,7 @@ pub const StreamWriter = struct {
     fn writeColumnHeader(self: *StreamWriter, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {
         ch.key = col.key;
 
-        const valuesEncoder = try encode.ValuesEncoder.init(allocator);
+        const valuesEncoder = try ValuesEncoder.init(allocator);
         defer valuesEncoder.deinit();
         const valueType = try valuesEncoder.encode(col.values, &ch.dict);
         ch.type = valueType.type;
