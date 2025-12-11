@@ -1,5 +1,5 @@
 const std = @import("std");
-const compress = @import("../../compress/compress.zig");
+const encoding = @import("encoding");
 const Decoder = @import("encode.zig").Decoder;
 const ValuesEncoder = @import("encode.zig").ValuesEncoder;
 const areNumbersSame = @import("encode.zig").areNumbersSame;
@@ -188,12 +188,12 @@ pub const Unpacker = struct {
                 }
                 const compressedData = rest[0..compressedLen.value];
 
-                const decompressedSize = try compress.getFrameContentSize(compressedData);
+                const decompressedSize = try encoding.getFrameContentSize(compressedData);
 
                 const decompressed = try allocator.alloc(u8, decompressedSize);
                 errdefer allocator.free(decompressed);
 
-                const actualSize = try compress.decompress(decompressed, compressedData);
+                const actualSize = try encoding.decompress(decompressed, compressedData);
 
                 if (actualSize != decompressedSize) {
                     allocator.free(decompressed);

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const zeit = @import("zeit");
 
-const compress = @import("../../compress/compress.zig");
+const encoding = @import("encoding");
 const unpack = @import("unpack.zig");
 
 const ColumnDict = @import("block_header.zig").ColumnDict;
@@ -369,10 +369,10 @@ pub const ValuesEncoder = struct {
             return .{ .buf = res, .len = enc.offset };
         }
 
-        const compressSize = try compress.bound(src.len);
+        const compressSize = try encoding.compressBound(src.len);
         const compressed = try fba.alloc(u8, compressSize);
         defer fba.free(compressed);
-        const compressedSize = try compress.compressAuto(compressed, src);
+        const compressedSize = try encoding.compressAuto(compressed, src);
 
         // 1 compression kind, 10 compressed len via leb128, len of the compressed
         const res = try self.allocator.alloc(u8, 11 + compressedSize);
