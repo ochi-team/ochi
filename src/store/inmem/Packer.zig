@@ -48,6 +48,8 @@ pub fn init(allocator: std.mem.Allocator) !*Self {
     const e = try allocator.create(Self);
     e.* = .{
         .allocator = allocator,
+        // TODO: reuse a buffer from values encoder,
+        // parsed holds same amount of data in case of u64 parsing
         .lengths = std.ArrayList(u64).empty,
     };
     return e;
