@@ -9,6 +9,7 @@ const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
 const ColumnHeader = @import("block_header.zig").ColumnHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 const Encoder = @import("encoding").Encoder;
+const Packer = @import("Packer.zig");
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
 
@@ -165,7 +166,9 @@ pub const StreamWriter = struct {
         ch.type = valueType.type;
         ch.min = valueType.min;
         ch.max = valueType.max;
-        const packedValues = try valuesEncoder.packValues(valuesEncoder.values.items);
+        const packer = try Packer.init(allocator);
+        defer packer.deinit();
+        const packedValues = try packer.packValues(valuesEncoder.values.items);
         defer allocator.free(packedValues);
         std.debug.assert(packedValues.len <= maxPackedValuesSize);
 

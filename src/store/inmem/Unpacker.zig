@@ -1,8 +1,8 @@
 const std = @import("std");
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
-const ValuesEncoder = @import("ValuesEncoder.zig");
-const areNumbersSame = ValuesEncoder.areNumbersSame;
+const Packer = @import("Packer.zig");
+const areNumbersSame = Packer.areNumbersSame;
 
 const UnpackError = error{
     InvalidCompressionKind,
@@ -79,7 +79,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
     var res = try allocator.alloc(u64, count);
 
     switch (vType) {
-        ValuesEncoder.uintBlockTypeCell8 => {
+        Packer.uintBlockTypeCell8 => {
             if (data[1..].len != 1) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -87,7 +87,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(data[1]);
             }
         },
-        ValuesEncoder.uintBlockTypeCell16 => {
+        Packer.uintBlockTypeCell16 => {
             if (data[1..].len != 2) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -97,7 +97,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        ValuesEncoder.uintBlockTypeCell32 => {
+        Packer.uintBlockTypeCell32 => {
             if (data[1..].len != 4) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -107,7 +107,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        ValuesEncoder.uintBlockTypeCell64 => {
+        Packer.uintBlockTypeCell64 => {
             if (data[1..].len != 8) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -117,7 +117,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        ValuesEncoder.uintBlockType8 => {
+        Packer.uintBlockType8 => {
             if (data[1..].len != count) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -126,7 +126,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        ValuesEncoder.uintBlockType16 => {
+        Packer.uintBlockType16 => {
             if (data[1..].len != count * 2) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -136,7 +136,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        ValuesEncoder.uintBlockType32 => {
+        Packer.uintBlockType32 => {
             if (data[1..].len != count * 4) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -146,7 +146,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        ValuesEncoder.uintBlockType64 => {
+        Packer.uintBlockType64 => {
             if (data[1..].len != count * 8) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -169,7 +169,7 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
     const compressionKind = data[0];
 
     switch (compressionKind) {
-        ValuesEncoder.compressionKindPlain => {
+        Packer.compressionKindPlain => {
             // plain format: [kind:u8][len:u8][data]
             const len = data[1];
             const bytes = data[2..];
@@ -179,7 +179,7 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
             offset.* += 2 + len;
             return allocator.dupe(u8, bytes[0..len]);
         },
-        ValuesEncoder.compressionKindZstd => {
+        Packer.compressionKindZstd => {
             // compressed format: [kind:u8][len:leb128][compressed_data]
             const compressedLen = try readLeb128(data[1..]);
             offset.* += 1 + compressedLen.offset + compressedLen.value;
