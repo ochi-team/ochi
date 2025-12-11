@@ -68,7 +68,7 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
 
 const encode = @import("encode.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
-const IndexBlockHeader = @import("index_block_header.zig").IndexBlockHeader;
+const IndexBlockHeader = @import("IndexBlockHeader.zig");
 
 test "addLines" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{});
@@ -83,6 +83,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         .{ .key = "level", .value = "warn" },
         .{ .key = "app", .value = "seq" },
     };
+    // unordered timestamps in lines so that it tests its sorting
     var lines = [_]*const Line{
         &.{
             .timestampNs = 2,

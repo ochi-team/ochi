@@ -5,7 +5,7 @@ const SID = @import("../lines.zig").SID;
 
 const Block = @import("block.zig").Block;
 const BlockHeader = @import("block_header.zig").BlockHeader;
-const IndexBlockHeader = @import("index_block_header.zig").IndexBlockHeader;
+const IndexBlockHeader = @import("IndexBlockHeader.zig");
 
 const Self = @This();
 
