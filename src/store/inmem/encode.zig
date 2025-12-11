@@ -3,6 +3,7 @@ const std = @import("std");
 const zeit = @import("zeit");
 
 const encoding = @import("encoding");
+const Encoder = encoding.Encoder;
 const unpack = @import("unpack.zig");
 
 const ColumnDict = @import("block_header.zig").ColumnDict;
@@ -40,187 +41,6 @@ pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) !std.
 
     return timestamps;
 }
-
-/// Serializer provides a single point for encoding values into byte buffers.
-pub const Encoder = struct {
-    buf: []u8,
-    offset: usize = 0,
-
-    pub fn init(buf: []u8) Encoder {
-        return .{ .buf = buf };
-    }
-
-    /// Write a typed integer value to the buffer using big-endian encoding
-    pub fn writeInt(self: *Encoder, comptime T: type, value: T) void {
-        const slice = self.buf[self.offset .. self.offset + @sizeOf(T)];
-        if (slice.len < @sizeOf(T)) unreachable;
-        self.offset += @sizeOf(T);
-        var bytes: [@sizeOf(T)]u8 = undefined;
-        std.mem.writeInt(T, &bytes, value, .big);
-        @memcpy(slice, bytes[0..]);
-    }
-
-    /// Write raw bytes to the buffer
-    pub fn writeBytes(self: *Encoder, bytes: []const u8) void {
-        const slice = self.buf[self.offset .. self.offset + bytes.len];
-        if (slice.len < bytes.len) unreachable;
-        self.offset += bytes.len;
-        @memcpy(slice, bytes[0..]);
-    }
-
-    /// Write bytes padded to a fixed size (padding with zeros)
-    pub fn writePadded(self: *Encoder, bytes: []const u8, totalSize: usize) void {
-        if (bytes.len > totalSize) @panic("negative padding now allowed");
-
-        const slice = self.buf[self.offset .. self.offset + totalSize];
-        if (slice.len < totalSize) unreachable;
-        self.offset += totalSize;
-
-        @memset(slice, 0x00);
-        @memcpy(slice[0..bytes.len], bytes);
-    }
-
-    /// The maximum number of bytes a varint-encoded 64-bit integer can occupy.
-    pub const maxVarUint64Len = 10;
-
-    /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
-    /// Returns error.OutOfMemory if the buffer has not enough capacity.
-    pub fn writeVarInt(self: *Encoder, value: u64) void {
-        const slice = self.buf[self.offset .. self.offset + 10];
-
-        var i: u8 = 0;
-        var v = value;
-        while (v >= 0x80) {
-            slice[i] = @as(u8, @truncate(v)) | 0x80;
-            v >>= 7;
-            i += 1;
-        }
-        slice[i] = @as(u8, @truncate(v));
-
-        self.offset += i + 1;
-    }
-
-    fn writeIntBytes(self: *Encoder, size: usize, value: u64) void {
-        var buf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &buf, value, .big);
-        // For big-endian, the least significant bytes are at the end
-        const start = 8 - size;
-        self.writeBytes(buf[start..8]);
-    }
-
-    /// Static helper: Encode an integer to bytes using big-endian (one-shot, no state)
-    pub inline fn toBytes(comptime T: type, value: T) [@sizeOf(T)]u8 {
-        var bytes: [@sizeOf(T)]u8 = undefined;
-        std.mem.writeInt(T, &bytes, value, .big);
-        return bytes;
-    }
-};
-
-test "Encoder.writeIntBytes" {
-    var allocator = std.testing.allocator;
-    const Case = struct {
-        type: type,
-        value: u64,
-    };
-    inline for ([_]Case{
-        .{
-            .type = u8,
-            .value = 42,
-        },
-        .{
-            .type = u16,
-            .value = 501,
-        },
-        .{
-            .type = u32,
-            .value = 123456,
-        },
-    }) |case| {
-        const buf1 = try allocator.alloc(u8, @sizeOf(case.type));
-        const buf2 = try allocator.alloc(u8, @sizeOf(case.type));
-        defer allocator.free(buf1);
-        defer allocator.free(buf2);
-        var enc1 = Encoder.init(buf1);
-        var enc2 = Encoder.init(buf2);
-        enc1.writeInt(case.type, case.value);
-        enc2.writeIntBytes(@sizeOf(case.type), case.value);
-        try std.testing.expectEqualSlices(u8, buf1, buf2);
-    }
-}
-
-test "Encoder.writeVarUint64" {
-    const allocator = std.testing.allocator;
-    const buf = try allocator.alloc(u8, 20);
-    defer allocator.free(buf);
-
-    const Case = struct {
-        value: u64,
-        expected: []const u8,
-    };
-
-    const cases = [_]Case{
-        .{ .value = 0, .expected = &[_]u8{0x00} },
-        .{ .value = 1, .expected = &[_]u8{0x01} },
-        .{ .value = 127, .expected = &[_]u8{0x7f} },
-        .{ .value = 128, .expected = &[_]u8{ 0x80, 0x01 } },
-        .{ .value = 255, .expected = &[_]u8{ 0xff, 0x01 } },
-        .{ .value = 16383, .expected = &[_]u8{ 0xff, 0x7f } },
-        .{ .value = 16384, .expected = &[_]u8{ 0x80, 0x80, 0x01 } },
-        .{
-            .value = std.math.maxInt(u64),
-            .expected = &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
-        },
-    };
-
-    for (cases) |case| {
-        var enc = Encoder.init(buf);
-        enc.writeVarInt(case.value);
-        try std.testing.expectEqualSlices(u8, case.expected, buf[0..enc.offset]);
-    }
-}
-
-const DecodeError = error{
-    InsufficientBuffer,
-};
-
-/// Decoder provides a single point for reading values from byte buffers.
-pub const Decoder = struct {
-    buf: []const u8,
-    offset: usize = 0,
-
-    pub fn init(buf: []const u8) Decoder {
-        return .{ .buf = buf };
-    }
-
-    /// Read a typed integer value from the buffer using big-endian decoding
-    pub fn readInt(self: *Decoder, comptime T: type) !T {
-        const size = @sizeOf(T);
-        if (self.offset + size > self.buf.len) {
-            return DecodeError.InsufficientBuffer;
-        }
-        const bytes: [size]u8 = self.buf[self.offset..][0..size].*;
-        self.offset += size;
-        return std.mem.readInt(T, &bytes, .big);
-    }
-
-    /// Read raw bytes from the buffer
-    pub fn readBytes(self: *Decoder, len: usize) ![]const u8 {
-        if (self.offset + len > self.buf.len) {
-            return DecodeError.InsufficientBuffer;
-        }
-        const result = self.buf[self.offset .. self.offset + len];
-        self.offset += len;
-        return result;
-    }
-
-    /// Read padded bytes (fixed size with zero padding), return the actual content without padding
-    pub fn readPadded(self: *Decoder, totalSize: usize) ![]const u8 {
-        const bytes = try self.readBytes(totalSize);
-        // Find the length of actual content (before padding zeros)
-        const len = std.mem.indexOfScalar(u8, bytes, 0) orelse totalSize;
-        return bytes[0..len];
-    }
-};
 
 pub const EncodeValueType = struct {
     type: ColumnType,
@@ -766,8 +586,8 @@ test "ValuesEncoder.packValuesRoundtrip" {
 }
 
 test "ValuesEncoder.encodeAndDecodeRoundtrip" {
-    const allocator = std.testing.allocator;
     const decode = @import("decode.zig");
+    const allocator = std.testing.allocator;
     var dictValues = try std.ArrayList([]const u8).initCapacity(allocator, 8);
     defer dictValues.deinit(allocator);
     const dictV = [_][]const u8{ "1111", "2222" };

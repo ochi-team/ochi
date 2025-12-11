@@ -8,7 +8,7 @@ const BlockHeader = @import("block_header.zig").BlockHeader;
 const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
 const ColumnHeader = @import("block_header.zig").ColumnHeader;
 const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
-const Encoder = @import("encode.zig").Encoder;
+const Encoder = @import("encoding").Encoder;
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
 

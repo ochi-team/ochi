@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Encoder = @import("encode.zig").Encoder;
+const Encoder = @import("encoding").Encoder;
 
 const Self = @This();
 

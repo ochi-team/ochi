@@ -1,9 +1,7 @@
 const std = @import("std");
 
-const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
-const fieldLessThan = @import("../lines.zig").fieldLessThan;
-const Encoder = @import("encode.zig").Encoder;
+const Encoder = @import("encoding").Encoder;
 
 const maxColumns = 1000;
 

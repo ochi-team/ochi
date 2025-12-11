@@ -2,8 +2,8 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
-const Encoder = @import("encode.zig").Encoder;
-const Decoder = @import("encode.zig").Decoder;
+const Encoder = @import("encoding").Encoder;
+const Decoder = @import("encoding").Decoder;
 
 const Self = @This();
 

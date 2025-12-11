@@ -1,9 +1,10 @@
 const std = @import("std");
 
-const Encoder = @import("inmem/encode.zig").Encoder;
-const Decoder = @import("inmem/encode.zig").Decoder;
+const Encoder = @import("encoding").Encoder;
+const Decoder = @import("encoding").Decoder;
 
 pub const SID = struct {
+    // TODO: make it [16]const u8
     tenantID: []const u8,
     id: u128,
 

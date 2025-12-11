@@ -1,6 +1,6 @@
 const std = @import("std");
 const encoding = @import("encoding");
-const Decoder = @import("encode.zig").Decoder;
+const Decoder = encoding.Decoder;
 const ValuesEncoder = @import("encode.zig").ValuesEncoder;
 const areNumbersSame = @import("encode.zig").areNumbersSame;
 

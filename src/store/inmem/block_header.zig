@@ -3,8 +3,8 @@ const std = @import("std");
 const SID = @import("../lines.zig").SID;
 const Block = @import("block.zig").Block;
 const Column = @import("block.zig").Column;
-const Encoder = @import("encode.zig").Encoder;
-const Decoder = @import("encode.zig").Decoder;
+const Encoder = @import("encoding").Encoder;
+const Decoder = @import("encoding").Decoder;
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
 
