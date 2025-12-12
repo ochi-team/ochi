@@ -1,15 +1,13 @@
-const std = @import("std");
-
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
-
 const Block = @import("block.zig").Block;
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
+const StreamWriter = @import("stream_writer.zig").StreamWriter;
+
+const std = @import("std");
 
 const Self = @This();
-
-const StreamWriter = @import("stream_writer.zig").StreamWriter;
 
 pub const indexBlockSize = 16 * 1024;
 pub const indexBlockFlushThreshold = 128 * 1024;

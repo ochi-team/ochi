@@ -54,6 +54,7 @@ pub const Field = struct {
 pub const Line = struct {
     timestampNs: u64,
     sid: SID,
+    // can't be const because we reorder fields
     fields: []Field,
     encodedTags: [][]const u8,
 
