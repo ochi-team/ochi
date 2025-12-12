@@ -257,35 +257,6 @@ fn decodeTimestampISO8601(v: []const u8) i64 {
     return @bitCast(n);
 }
 
-/// Decode timestamps from the encoded format (debug print format: "{ 1, 2, 3 }")
-pub fn decodeTimestamps(allocator: std.mem.Allocator, encoded: []const u8) !std.ArrayList(u64) {
-    var timestamps = try std.ArrayList(u64).initCapacity(allocator, 10);
-    errdefer timestamps.deinit(allocator);
-
-    // Format is "{ N, N, ... }"
-    var iter = std.mem.tokenizeScalar(u8, encoded, ' ');
-
-    // Skip opening brace
-    _ = iter.next();
-
-    while (iter.next()) |token| {
-        if (std.mem.eql(u8, token, "}")) {
-            break;
-        }
-
-        // Remove trailing comma if present
-        const num_str = if (std.mem.endsWith(u8, token, ","))
-            token[0 .. token.len - 1]
-        else
-            token;
-
-        const num = std.fmt.parseInt(u64, num_str, 10) catch continue;
-        try timestamps.append(allocator, num);
-    }
-
-    return timestamps;
-}
-
 test "ValuesDecoder.decodeUint8String" {
     const allocator = std.testing.allocator;
     const decoder = try Self.init(allocator);

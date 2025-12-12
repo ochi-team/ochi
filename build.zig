@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
     const cli = b.dependency("cli", .{
         .target = target,
     });
+    const zint = b.dependency("zint", .{
+        .target = target,
+    });
 
     // C dependencies
     const zstd_dependency = b.dependency("zstd", .{
@@ -47,6 +50,7 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "snappy", .module = snappy.module("snappy") },
         std.Build.Module.Import{ .name = "ymlz", .module = ymlz.module("root") },
         std.Build.Module.Import{ .name = "cli", .module = cli.module("cli") },
+        std.Build.Module.Import{ .name = "zint", .module = zint.module("zint") },
         std.Build.Module.Import{ .name = "encoding", .module = encodeModule },
     };
 

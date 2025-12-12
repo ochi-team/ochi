@@ -8,7 +8,6 @@ const SID = @import("../lines.zig").SID;
 
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const BlockWriter = @import("BlockWriter.zig");
-const ValuesDecoder = @import("ValuesDecoder.zig");
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better
@@ -69,7 +68,8 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
 
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
-
+const TimestampsEncoder = @import("TimestampsEncoder.zig").TimestampsEncoder;
+const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 test "addLines" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{});
 }
@@ -108,25 +108,29 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
     // Validate timestamps
     {
-        var decodedTimestamps = try ValuesDecoder.decodeTimestamps(allocator, timestampsContent);
-        defer decodedTimestamps.deinit(allocator);
+        var dst: [2]u64 = undefined;
+        const timestampsEncoder = try TimestampsEncoder(u64).init(allocator);
+        defer timestampsEncoder.deinit(allocator);
+        try timestampsEncoder.decode(dst[0..], timestampsContent);
 
-        try std.testing.expectEqualDeep(&[_]u64{ 1, 2 }, decodedTimestamps.items);
+        try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 2 }, &dst);
     }
 
     // Validate block header
     {
         const blockHeader = try BlockHeader.decode(indexContent);
 
+        // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);
         try std.testing.expectEqual(1, blockHeader.sid.id);
         try std.testing.expectEqual(150, blockHeader.size);
         try std.testing.expectEqual(2, blockHeader.len);
 
         try std.testing.expectEqual(0, blockHeader.timestampsHeader.offset);
-        try std.testing.expectEqual(8, blockHeader.timestampsHeader.size);
+        try std.testing.expectEqual(17, blockHeader.timestampsHeader.size);
         try std.testing.expectEqual(1, blockHeader.timestampsHeader.min);
         try std.testing.expectEqual(2, blockHeader.timestampsHeader.max);
+        try std.testing.expectEqual(EncodingType.ZDeltapack, blockHeader.timestampsHeader.encodingType);
     }
 
     // validate meta index
@@ -136,6 +140,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
         const decodedIndexBlockHeader = try IndexBlockHeader.decode(metaIndexContent);
 
+        // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", decodedIndexBlockHeader.sid.?.tenantID);
         try std.testing.expectEqual(1, decodedIndexBlockHeader.sid.?.id);
         try std.testing.expectEqual(1, decodedIndexBlockHeader.minTs);

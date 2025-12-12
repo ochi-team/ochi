@@ -56,6 +56,10 @@
             .url = "git+https://github.com/allyourcodebase/zstd.git?ref=1.5.7#01327d49cbc56dc24c20a167bb0055d7fc23de84",
             .hash = "zstd-1.5.7-KEItkJ8vAAC5_rRlKmLflYQ-eKXbAIQBWZNmmJtS18q0",
         },
+        .zint = .{
+            .url = "git+https://github.com/steelcake/zint.git?ref=HEAD#a87cb90342506e17095cc5573eb8d4722b4b91a8",
+            .hash = "zint-0.0.2-h0gsmUflAQAaEwvg85cv7QS8oGuSBZNP-Pk3NfXQfJ-p",
+        },
     },
     .paths = .{
         "build.zig",

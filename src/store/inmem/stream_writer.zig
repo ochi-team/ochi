@@ -12,6 +12,7 @@ const Encoder = @import("encoding").Encoder;
 const Packer = @import("Packer.zig");
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
+const TimestampsEncoder = @import("TimestampsEncoder.zig").TimestampsEncoder;
 
 const maxPackedValuesSize = 8 * 1024 * 1024;
 
@@ -46,6 +47,8 @@ pub const StreamWriter = struct {
     nextColI: u16,
     maxColI: u16,
 
+    timestampsEncoder: *TimestampsEncoder(u64),
+
     pub fn init(allocator: std.mem.Allocator, maxColI: u16) !*StreamWriter {
         var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
         errdefer timestampsBuffer.deinit(allocator);
@@ -72,6 +75,9 @@ pub const StreamWriter = struct {
         errdefer columnIDGen.deinit(allocator);
         const colIdx = std.AutoHashMap(u16, u16).init(allocator);
 
+        const timestampsEncoder = try TimestampsEncoder(u64).init(allocator);
+        errdefer timestampsEncoder.deinit(allocator);
+
         const w = try allocator.create(StreamWriter);
         w.* = StreamWriter{
             .timestampsBuf = timestampsBuffer,
@@ -90,6 +96,8 @@ pub const StreamWriter = struct {
             .colIdx = colIdx,
             .nextColI = 0,
             .maxColI = maxColI,
+
+            .timestampsEncoder = timestampsEncoder,
         };
         return w;
     }
@@ -115,6 +123,9 @@ pub const StreamWriter = struct {
 
         self.columnIDGen.deinit(allocator);
         self.colIdx.deinit();
+
+        self.timestampsEncoder.deinit(allocator);
+
         allocator.destroy(self);
     }
 
@@ -150,17 +161,20 @@ pub const StreamWriter = struct {
         if (timestamps.len == 0) {
             return Error.EmptyTimestamps;
         }
-        // TODO: pass static buffer instead of allocator
-        const encodedTimestamps = try ValuesEncoder.encodeTimestamps(allocator, timestamps);
-        defer allocator.free(encodedTimestamps.buf);
+
+        var fba = std.heap.stackFallback(2048, allocator);
+        var staticAllocator = fba.get();
+        const encodedTimestamps = try self.timestampsEncoder.encode(staticAllocator, timestamps);
+        defer staticAllocator.free(encodedTimestamps.buf);
+        const encodedTimestampsBuf = encodedTimestamps.buf[0..encodedTimestamps.offset];
 
         tsHeader.min = timestamps[0];
         tsHeader.max = timestamps[timestamps.len - 1];
         tsHeader.offset = self.timestampsBuf.items.len;
-        tsHeader.size = encodedTimestamps.buf.len;
+        tsHeader.size = encodedTimestampsBuf.len;
         tsHeader.encodingType = encodedTimestamps.encodingType;
 
-        try self.timestampsBuf.appendSlice(allocator, encodedTimestamps.buf);
+        try self.timestampsBuf.appendSlice(allocator, encodedTimestampsBuf);
     }
 
     fn writeColumnHeader(self: *StreamWriter, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {

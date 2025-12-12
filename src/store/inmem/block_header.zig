@@ -7,7 +7,7 @@ const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
-const EncodingType = @import("ValuesEncoder.zig").EncodingType;
+const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 
 pub const BlockHeader = struct {
     sid: SID,
