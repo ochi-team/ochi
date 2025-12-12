@@ -58,7 +58,7 @@ pub const Line = struct {
     encodedTags: [][]const u8,
 
     pub fn fieldsSize(self: *const Line) u32 {
-        return sizing.fieldsSize(self);
+        return sizing.fieldsJsonSize(self);
     }
 };
 

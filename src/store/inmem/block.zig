@@ -75,11 +75,11 @@ pub const Block = struct {
         allocator.destroy(self);
     }
 
-    pub fn getColumns(self: *Block) []Column {
+    pub fn getColumns(self: *const Block) []Column {
         return self.columns[0..self.firstCelled];
     }
     // celledColumns hold columns with a single value
-    pub fn getCelledColumns(self: *Block) []Column {
+    pub fn getCelledColumns(self: *const Block) []Column {
         return self.columns[self.firstCelled..];
     }
 
@@ -88,7 +88,7 @@ pub const Block = struct {
     }
 
     pub fn size(self: *Block) u64 {
-        return sizing.blockSize(self);
+        return sizing.blockJsonSize(self);
     }
 
     fn put(self: *Block, allocator: std.mem.Allocator, lines: []*const Line) !void {
@@ -127,6 +127,7 @@ pub const Block = struct {
             var col = &columns[idx];
             col.key = key;
             col.values = try allocator.alloc([]const u8, lines.len);
+            @memset(col.values, "");
         }
 
         for (lines, 0..) |line, i| {
