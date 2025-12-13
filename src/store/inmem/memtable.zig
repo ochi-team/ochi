@@ -70,6 +70,7 @@ const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig").TimestampsEncoder;
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
+const encoding = @import("encoding");
 test "addLines" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{});
 }
@@ -118,7 +119,12 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
     // Validate block header
     {
-        const blockHeader = try BlockHeader.decode(indexContent);
+        const decompressedSize = try encoding.getFrameContentSize(indexContent);
+        const decompressedBuf = try allocator.alloc(u8, decompressedSize);
+        defer allocator.free(decompressedBuf);
+        _ = try encoding.decompress(decompressedBuf, indexContent);
+
+        const blockHeader = try BlockHeader.decode(decompressedBuf);
 
         // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);

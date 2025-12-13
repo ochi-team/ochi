@@ -48,8 +48,8 @@ pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
     const res = C.ZSTD_getFrameContentSize(src.ptr, src.len);
     // ZSTD_CONTENTSIZE_UNKNOWN = 0xffffffffffffffff
     // ZSTD_CONTENTSIZE_ERROR = 0xfffffffffffffffe
-    const unknownSize = @as(c_ulonglong, 0xffffffffffffffff);
-    const errorSize = @as(c_ulonglong, 0xfffffffffffffffe);
+    const unknownSize: c_ulonglong = 0xffffffffffffffff;
+    const errorSize: c_ulonglong = 0xfffffffffffffffe;
 
     if (res == unknownSize) {
         return DecompressError.Unknown;

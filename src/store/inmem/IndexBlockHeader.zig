@@ -2,8 +2,9 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
-const Encoder = @import("encoding").Encoder;
-const Decoder = @import("encoding").Decoder;
+const encoding = @import("encoding");
+const Encoder = encoding.Encoder;
+const Decoder = encoding.Decoder;
 
 const Self = @This();
 
@@ -30,7 +31,15 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn writeIndexBlock(self: *Self, allocator: std.mem.Allocator, indexBlockBuf: *std.ArrayList(u8), sid: SID, minTs: u64, maxTs: u64, streamWriter: *StreamWriter) !void {
+pub fn writeIndexBlock(
+    self: *Self,
+    allocator: std.mem.Allocator,
+    indexBlockBuf: *std.ArrayList(u8),
+    sid: SID,
+    minTs: u64,
+    maxTs: u64,
+    streamWriter: *StreamWriter,
+) !void {
     if (indexBlockBuf.items.len == 0) {
         return;
     }
@@ -39,11 +48,14 @@ pub fn writeIndexBlock(self: *Self, allocator: std.mem.Allocator, indexBlockBuf:
     self.minTs = minTs;
     self.maxTs = maxTs;
 
-    // TODO: compress zstd or openzl
+    const compressBound = try encoding.compressBound(indexBlockBuf.items.len);
+    const buf = try allocator.alloc(u8, compressBound);
+    defer allocator.free(buf);
+    const offset = try encoding.compressAuto(buf, indexBlockBuf.items);
     self.offset = streamWriter.indexBuf.items.len;
-    self.size = indexBlockBuf.items.len;
+    self.size = offset;
 
-    try streamWriter.indexBuf.appendSlice(allocator, indexBlockBuf.items);
+    try streamWriter.indexBuf.appendSlice(allocator, buf[0..offset]);
 }
 
 // sid 32 + self 32 = 64
