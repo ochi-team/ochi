@@ -105,7 +105,7 @@ pub const Block = struct {
             var columns = try allocator.alloc(Column, firstLine.fields.len);
             errdefer allocator.free(columns);
 
-            @memset(columns, .{ .key = "", .values = undefined });
+            @memset(columns, .{ .key = "", .values = &[_][]const u8{} });
 
             // TODO: Compare with bitset instead of bool array?
             // TODO: Use fixed buffer allocator (1-2kb)
