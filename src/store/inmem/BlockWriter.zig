@@ -4,10 +4,13 @@ const Block = @import("block.zig").Block;
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
+const TableHeader = @import("TableHeader.zig");
 
 const std = @import("std");
 
 const Self = @This();
+
+const currentVersion = 1;
 
 pub const indexBlockSize = 16 * 1024;
 pub const indexBlockFlushThreshold = 128 * 1024;
@@ -119,17 +122,39 @@ fn writeBlock(
     }
 }
 
-pub fn finish(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
+pub fn finish(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
+    _ = th;
+    // th.version = currentVersion;
+    // th.uncompressedSize = self.size;
+    // th.len = self.len;
+    // th.blocksCount = self.blocksCount;
+    // th.minTimestamp = self.minTimestamp;
+    // th.maxTimestamp = self.maxTimestamp;
+    // th.bloomValuesBuffersAmount = streamWriter.bloomValuesList.items.len;
+    //
     try self.flushIndexBlock(allocator, streamWriter);
-
-    // TODO: compress metaindexbuf before writing
+    //
+    // try self.writeColumnNames();
+    //
+    // try self.writeColumnIndexes();
+    //
+    // try self.writeIndexBlockHeaders();
     try streamWriter.metaIndexBuf.appendSlice(allocator, self.metaIndexBuf.items);
+    //
+    // self.compressedSize = streamWriter.size();
 }
 
 fn flushIndexBlock(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
     defer self.indexBlockBuf.clearRetainingCapacity();
     if (self.indexBlockBuf.items.len > 0) {
-        try self.indexBlockHeader.writeIndexBlock(allocator, &self.indexBlockBuf, self.sid.?, self.minTimestamp, self.maxTimestamp, streamWriter);
+        try self.indexBlockHeader.writeIndexBlock(
+            allocator,
+            &self.indexBlockBuf,
+            self.sid.?,
+            self.minTimestamp,
+            self.maxTimestamp,
+            streamWriter,
+        );
 
         try self.metaIndexBuf.ensureUnusedCapacity(allocator, IndexBlockHeader.encodeExpectedSize);
         const slice = self.metaIndexBuf.unusedCapacitySlice()[0..IndexBlockHeader.encodeExpectedSize];

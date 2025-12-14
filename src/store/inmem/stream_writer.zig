@@ -129,6 +129,11 @@ pub const StreamWriter = struct {
         allocator.destroy(self);
     }
 
+    pub fn size(self: *StreamWriter) usize {
+        _ = self;
+        unreachable;
+    }
+
     pub fn writeBlock(
         self: *StreamWriter,
         allocator: std.mem.Allocator,

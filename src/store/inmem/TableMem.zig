@@ -8,6 +8,7 @@ const SID = @import("../lines.zig").SID;
 
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const BlockWriter = @import("BlockWriter.zig");
+const TableHeader = @import("TableHeader.zig");
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better
@@ -20,19 +21,26 @@ pub const Error = error{
 const Self = @This();
 
 streamWriter: *StreamWriter,
+tableHeader: *TableHeader,
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
-    const p = try allocator.create(Self);
-    errdefer allocator.destroy(p);
     const streamWriter = try StreamWriter.init(allocator, 1);
+    errdefer streamWriter.deinit(allocator);
+
+    const th = try TableHeader.init(allocator);
+    errdefer th.deinit(allocator);
+
+    const p = try allocator.create(Self);
     p.* = Self{
         .streamWriter = streamWriter,
+        .tableHeader = th,
     };
 
     return p;
 }
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.streamWriter.deinit(allocator);
+    self.tableHeader.deinit(allocator);
     allocator.destroy(self);
 }
 
@@ -63,7 +71,7 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
     if (streamI != lines.len) {
         try blockWriter.writeLines(allocator, prevSID, lines[streamI..], self.streamWriter);
     }
-    try blockWriter.finish(allocator, self.streamWriter);
+    try blockWriter.finish(allocator, self.streamWriter, self.tableHeader);
 }
 
 const BlockHeader = @import("block_header.zig").BlockHeader;
