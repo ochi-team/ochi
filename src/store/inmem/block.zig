@@ -88,7 +88,7 @@ pub const Block = struct {
         return self.timestamps.len;
     }
 
-    pub fn size(self: *Block) u64 {
+    pub fn size(self: *Block) u32 {
         return sizing.blockJsonSize(self);
     }
 

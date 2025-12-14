@@ -11,7 +11,7 @@ const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 
 pub const BlockHeader = struct {
     sid: SID,
-    size: u64,
+    size: u32,
     len: u32,
     timestampsHeader: TimestampsHeader,
 
@@ -39,16 +39,15 @@ pub const BlockHeader = struct {
         };
     }
 
-    // 32 sid 8 size 4 len 32 timestamps = 76
-    // [32:sid][8:size][4:len][33:timestamps, 32 values and 1 encoding type][40:columns header]
-    pub const encodeExpectedSize = 32 + 8 + 4 + 32 + 1 + 40;
+    // [32:sid][4:size][4:len][33:timestamps, 32 values and 1 encoding type][40:columns header]
+    pub const encodeExpectedSize = 32 + 4 + 4 + 32 + 1 + 40;
 
     pub fn encode(self: *BlockHeader, buf: []u8) usize {
         var enc = Encoder.init(buf);
 
         self.sid.encode(&enc);
 
-        enc.writeInt(u64, self.size);
+        enc.writeInt(u32, self.size);
         enc.writeInt(u32, self.len);
 
         self.timestampsHeader.encode(&enc);
@@ -66,7 +65,7 @@ pub const BlockHeader = struct {
 
         const sid = try SID.decode(try decoder.readBytes(32));
 
-        const size = try decoder.readInt(u64);
+        const size = try decoder.readInt(u32);
         const len = try decoder.readInt(u32);
 
         const timestampsHeader = try TimestampsHeader.decode(&decoder);

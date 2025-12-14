@@ -152,7 +152,12 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         const metaIndexContent = memTable.streamWriter.metaIndexBuf.items;
         try std.testing.expect(metaIndexContent.len > 0);
 
-        const decodedIndexBlockHeader = try IndexBlockHeader.decode(metaIndexContent);
+        const decompressedSize = try encoding.getFrameContentSize(metaIndexContent);
+        const decompressedBuf = try allocator.alloc(u8, decompressedSize);
+        defer allocator.free(decompressedBuf);
+        _ = try encoding.decompress(decompressedBuf, metaIndexContent);
+
+        const decodedIndexBlockHeader = try IndexBlockHeader.decode(decompressedBuf);
 
         // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", decodedIndexBlockHeader.sid.?.tenantID);

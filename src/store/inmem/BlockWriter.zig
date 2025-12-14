@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 const Block = @import("block.zig").Block;
@@ -5,8 +7,8 @@ const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const TableHeader = @import("TableHeader.zig");
-
-const std = @import("std");
+const encoding = @import("encoding");
+const ColumnIDGen = @import("ColumnIDGen.zig");
 
 const Self = @This();
 
@@ -22,7 +24,7 @@ minTimestamp: u64,
 maxTimestamp: u64,
 // state to the all written blocks
 len: u32,
-size: u64,
+size: u32,
 globalMinTimestamp: u64,
 globalMaxTimestamp: u64,
 blocksCount: u32,
@@ -123,25 +125,22 @@ fn writeBlock(
 }
 
 pub fn finish(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
-    _ = th;
-    // th.version = currentVersion;
-    // th.uncompressedSize = self.size;
-    // th.len = self.len;
-    // th.blocksCount = self.blocksCount;
-    // th.minTimestamp = self.minTimestamp;
-    // th.maxTimestamp = self.maxTimestamp;
-    // th.bloomValuesBuffersAmount = streamWriter.bloomValuesList.items.len;
-    //
+    th.version = currentVersion;
+    th.uncompressedSize = self.size;
+    th.len = self.len;
+    th.blocksCount = self.blocksCount;
+    th.minTimestamp = self.minTimestamp;
+    th.maxTimestamp = self.maxTimestamp;
+    th.bloomValuesBuffersAmount = @intCast(streamWriter.bloomValuesList.items.len);
+
     try self.flushIndexBlock(allocator, streamWriter);
-    //
-    // try self.writeColumnNames();
-    //
-    // try self.writeColumnIndexes();
-    //
-    // try self.writeIndexBlockHeaders();
-    try streamWriter.metaIndexBuf.appendSlice(allocator, self.metaIndexBuf.items);
-    //
-    // self.compressedSize = streamWriter.size();
+
+    try streamWriter.writeColumnKeys(allocator);
+    try streamWriter.writeColumnIndexes(allocator);
+
+    try self.writeIndexBlockHeaders(allocator, streamWriter);
+
+    th.compressedSize = streamWriter.size();
 }
 
 fn flushIndexBlock(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
@@ -164,4 +163,12 @@ fn flushIndexBlock(self: *Self, allocator: std.mem.Allocator, streamWriter: *Str
     self.sid = null;
     self.minTimestamp = 0;
     self.maxTimestamp = 0;
+}
+
+fn writeIndexBlockHeaders(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
+    const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
+    try streamWriter.metaIndexBuf.ensureUnusedCapacity(allocator, bound);
+    const slice = streamWriter.metaIndexBuf.unusedCapacitySlice()[0..bound];
+    const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
+    streamWriter.metaIndexBuf.items.len += offset;
 }
