@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Line = @import("store/lines.zig").Line;
 
-const MemTable = @import("store/inmem/memtable.zig");
+const MemTable = @import("store/inmem/Memtable.zig");
 
 pub const DataShard = struct {
     lines: std.ArrayList(*const Line),
