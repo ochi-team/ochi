@@ -5,7 +5,7 @@ const zeit = @import("zeit");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
-const ColumnDict = @import("block_header.zig").ColumnDict;
+const ColumnDict = @import("ColumnDict.zig");
 const ColumnType = @import("block_header.zig").ColumnType;
 
 pub const EncodeValueType = struct {

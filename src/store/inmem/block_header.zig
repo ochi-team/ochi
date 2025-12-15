@@ -8,6 +8,7 @@ const Decoder = @import("encoding").Decoder;
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
+const ColumnDict = @import("ColumnDict.zig");
 
 pub const BlockHeader = struct {
     sid: SID,
@@ -158,7 +159,7 @@ pub const ColumnsHeader = struct {
 
     pub fn encodeBound(self: *const ColumnsHeader) usize {
         // [10:len][256 * headers.len:dict{dict is max here}][20:len,offset][10:celledLen][256 * celledCols]
-        return 10 + maxDictColumnValueSize * self.headers.len + 20 + 10 +
+        return 10 + ColumnDict.maxDictColumnValueSize * self.headers.len + 20 + 10 +
             self.celledColumns.len * Column.maxCelledColumnValueSize;
     }
     pub fn encode(
@@ -195,52 +196,6 @@ pub const ColumnsHeader = struct {
         }
 
         return enc.offset;
-    }
-};
-
-pub const maxDictColumnValueSize = 256;
-pub const maxDictColumnValuesLen = 8;
-pub const ColumnDict = struct {
-    values: std.ArrayList([]const u8),
-
-    pub fn init(allocator: std.mem.Allocator) !ColumnDict {
-        const values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
-        return .{
-            .values = values,
-        };
-    }
-    pub fn deinit(self: *ColumnDict, allocator: std.mem.Allocator) void {
-        self.values.deinit(allocator);
-    }
-
-    pub fn reset(self: *ColumnDict) void {
-        self.values.clearRetainingCapacity();
-    }
-
-    pub fn set(self: *ColumnDict, v: []const u8) ?u8 {
-        if (v.len > maxDictColumnValueSize) return null;
-
-        var valSize: u16 = 0;
-        for (0..self.values.items.len) |i| {
-            if (std.mem.eql(u8, v, self.values.items[i])) {
-                return @intCast(i);
-            }
-
-            valSize += @intCast(self.values.items[i].len);
-        }
-        if (self.values.items.len >= maxDictColumnValuesLen) return null;
-        if (valSize + v.len > maxDictColumnValueSize) return null;
-
-        // we don't allocate more than 8 elements
-        self.values.appendAssumeCapacity(v);
-        return @intCast(self.values.items.len - 1);
-    }
-
-    pub fn encode(self: *ColumnDict, enc: *Encoder) void {
-        enc.writeInt(u8, @intCast(self.values.items.len));
-        for (self.values.items) |str| {
-            enc.writeBytes(str);
-        }
     }
 };
 
@@ -336,64 +291,3 @@ pub const ColumnHeader = struct {
         enc.writeVarInt(self.bloomFilterSize);
     }
 };
-
-test "setReturnsNullOnExceedingMaxColumnValueSize" {
-    var cv = try ColumnDict.init(std.testing.allocator);
-    defer cv.deinit(std.testing.allocator);
-
-    const oversized_value = try std.testing.allocator.alloc(u8, maxDictColumnValueSize + 1);
-    defer std.testing.allocator.free(oversized_value);
-
-    const result = cv.set(oversized_value);
-    try std.testing.expect(result == null);
-}
-
-test "setReturnsNullOnExceedingTotalValueSize" {
-    var cv = try ColumnDict.init(std.testing.allocator);
-    defer cv.deinit(std.testing.allocator);
-
-    const v1 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    const v2 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    const v3 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    defer std.testing.allocator.free(v1);
-    defer std.testing.allocator.free(v2);
-    defer std.testing.allocator.free(v3);
-
-    // fill with some data
-    @memset(v1, 'a');
-    const r1 = cv.set(v1);
-    try std.testing.expect(r1 != null);
-
-    @memset(v2, 'b');
-    const r2 = cv.set(v2);
-    try std.testing.expect(r2 != null);
-
-    // this should fail
-    @memset(v3, 'c');
-    const r3 = cv.set(v3);
-    try std.testing.expect(r3 == null);
-}
-
-test "setReturnsNullOnExceedingTotalValuesLen" {
-    var cv = try ColumnDict.init(std.testing.allocator);
-    defer cv.deinit(std.testing.allocator);
-
-    var testValues: [8][]const u8 = undefined;
-    for (0..8) |i| {
-        testValues[i] = try std.testing.allocator.dupe(u8, &[_]u8{@intCast(i)});
-    }
-    defer {
-        for (0..8) |i| {
-            std.testing.allocator.free(testValues[i]);
-        }
-    }
-
-    // fill with some data
-    for (0..8) |i| {
-        const r = cv.set(testValues[i]);
-        try std.testing.expect(r != null);
-    }
-
-    const r = cv.set("1a");
-    try std.testing.expect(r == null);
-}
