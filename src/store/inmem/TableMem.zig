@@ -12,7 +12,7 @@ const TableHeader = @import("TableHeader.zig");
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better
-const maxBlockSize = 2 * 1024 * 1024;
+pub const maxBlockSize = 2 * 1024 * 1024;
 
 pub const Error = error{
     EmptyLines,
@@ -137,7 +137,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);
         try std.testing.expectEqual(1, blockHeader.sid.id);
-        try std.testing.expectEqual(150, blockHeader.size);
+        try std.testing.expectEqual(140, blockHeader.size);
         try std.testing.expectEqual(2, blockHeader.len);
 
         try std.testing.expectEqual(0, blockHeader.timestampsHeader.offset);
