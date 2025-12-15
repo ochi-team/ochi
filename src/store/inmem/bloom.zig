@@ -8,7 +8,7 @@ pub const HashTokenizer = struct {
     };
 
     buckets: [1024]Bucket,
-    bitset: std.bit_set.DynamicBitSet,
+    bitset: std.bit_set.DynamicBitSetUnmanaged,
 
     pub fn init(allocator: std.mem.Allocator) !*HashTokenizer {
         const s = try allocator.create(HashTokenizer);
@@ -21,7 +21,7 @@ pub const HashTokenizer = struct {
         }
         s.* = HashTokenizer{
             .buckets = buckets,
-            .bitset = try std.bit_set.DynamicBitSet.initEmpty(allocator, buckets.len),
+            .bitset = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, buckets.len),
         };
         return s;
     }
@@ -30,7 +30,7 @@ pub const HashTokenizer = struct {
         for (0..self.buckets.len) |i| {
             self.buckets[i].overflows.deinit(allocator);
         }
-        self.bitset.deinit();
+        self.bitset.deinit(allocator);
         allocator.destroy(self);
     }
 
