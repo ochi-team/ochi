@@ -3,7 +3,6 @@ const std = @import("std");
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
 const Encoder = @import("encoding").Encoder;
-const maxBlockSize = @import("TableMem.zig").maxBlockSize;
 
 const sizing = @import("sizing.zig");
 
@@ -21,6 +20,7 @@ pub const Column = struct {
     // it won't help to improve performance
     pub const maxCelledColumnValueSize = 256;
 
+    // TODO: rename this crap, to "uniform" I guess
     pub fn isCelled(self: *Column) bool {
         if (self.values.len == 0) {
             return true;
