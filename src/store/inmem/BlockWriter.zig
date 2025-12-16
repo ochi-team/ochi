@@ -157,7 +157,7 @@ fn flushIndexBlock(self: *Self, allocator: std.mem.Allocator, streamWriter: *Str
 
         try self.metaIndexBuf.ensureUnusedCapacity(allocator, IndexBlockHeader.encodeExpectedSize);
         const slice = self.metaIndexBuf.unusedCapacitySlice()[0..IndexBlockHeader.encodeExpectedSize];
-        const offset = try self.indexBlockHeader.encode(slice);
+        const offset = self.indexBlockHeader.encode(slice);
         self.metaIndexBuf.items.len += offset;
     }
     self.sid = null;

@@ -5,8 +5,9 @@ const Decoder = @import("encoding").Decoder;
 
 const sizing = @import("inmem/sizing.zig");
 
+const maxTenantIDLen = 16;
+
 pub const SID = struct {
-    // TODO: make it [16]const u8
     tenantID: []const u8,
     id: u128,
 
@@ -23,22 +24,15 @@ pub const SID = struct {
                 self.id < another.id);
     }
 
-    pub fn encode(self: *SID, enc: *Encoder) void {
-        if (self.tenantID.len > 16) {
-            @panic("tenant id can't be larger than 16 bytes");
-        }
-
-        enc.writePadded(self.tenantID, 16);
+    pub fn encode(self: *const SID, enc: *Encoder) void {
+        enc.writePadded(self.tenantID, maxTenantIDLen);
         enc.writeInt(u128, self.id);
     }
 
-    pub fn decode(buf: []const u8) !SID {
-        if (buf.len < 32) {
-            return error.InsufficientBuffer;
-        }
+    pub fn decode(buf: []const u8) SID {
         var decoder = Decoder.init(buf);
-        const tenantID = try decoder.readPadded(16);
-        const id = try decoder.readInt(u128);
+        const tenantID = decoder.readPadded(maxTenantIDLen);
+        const id = decoder.readInt(u128);
         return .{
             .tenantID = tenantID,
             .id = id,

@@ -11,7 +11,7 @@ const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
 const Packer = @import("Packer.zig");
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
-const TimestampsEncoder = @import("TimestampsEncoder.zig").TimestampsEncoder;
+const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const HashTokenizer = @import("bloom.zig").HashTokenizer;
 const encodeBloomHashes = @import("bloom.zig").encodeBloomHashes;
 const encoding = @import("encoding");
@@ -54,7 +54,7 @@ pub const StreamWriter = struct {
     columnKeysBuf: std.ArrayList(u8),
     columnIdxsBuf: std.ArrayList(u8),
 
-    timestampsEncoder: *TimestampsEncoder(u64),
+    timestampsEncoder: *TimestampsEncoder,
 
     pub fn init(allocator: std.mem.Allocator, maxColI: u16) !*StreamWriter {
         var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
@@ -87,7 +87,7 @@ pub const StreamWriter = struct {
         var columnIdxsBuf = try std.ArrayList(u8).initCapacity(allocator, columnIndexesBufferSize);
         errdefer columnIdxsBuf.deinit(allocator);
 
-        const timestampsEncoder = try TimestampsEncoder(u64).init(allocator);
+        const timestampsEncoder = try TimestampsEncoder.init(allocator);
         errdefer timestampsEncoder.deinit(allocator);
 
         const w = try allocator.create(StreamWriter);

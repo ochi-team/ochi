@@ -8,7 +8,7 @@ const Decoder = encoding.Decoder;
 
 const Self = @This();
 
-sid: ?SID,
+sid: SID,
 minTs: u64,
 maxTs: u64,
 
@@ -18,7 +18,7 @@ size: u64,
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const bh = try allocator.create(Self);
     bh.* = .{
-        .sid = null,
+        .sid = .{ .tenantID = "", .id = 0 },
         .minTs = 0,
         .maxTs = 0,
         .offset = 0,
@@ -60,17 +60,9 @@ pub fn writeIndexBlock(
 
 // sid 32 + self 32 = 64
 pub const encodeExpectedSize = 64;
-pub fn encode(self: *Self, buf: []u8) !usize {
-    if (buf.len < encodeExpectedSize) {
-        return std.mem.Allocator.Error.OutOfMemory;
-    }
-
+pub fn encode(self: *const Self, buf: []u8) usize {
     var enc = Encoder.init(buf);
-    if (self.sid) |*sid| {
-        sid.encode(&enc);
-    } else {
-        enc.writePadded("", 32);
-    }
+    self.sid.encode(&enc);
     enc.writeInt(u64, self.minTs);
     enc.writeInt(u64, self.maxTs);
     enc.writeInt(u64, self.offset);
@@ -78,17 +70,14 @@ pub fn encode(self: *Self, buf: []u8) !usize {
     return enc.offset;
 }
 
-pub fn decode(buf: []const u8) !Self {
-    if (buf.len < 64) {
-        return error.InsufficientBuffer;
-    }
+pub fn decode(buf: []const u8) Self {
     var decoder = Decoder.init(buf);
-    const sid = try SID.decode(buf);
+    const sid = SID.decode(buf);
     decoder.offset = 32; // SID is 32 bytes
-    const minTs = try decoder.readInt(u64);
-    const maxTs = try decoder.readInt(u64);
-    const offset = try decoder.readInt(u64);
-    const size = try decoder.readInt(u64);
+    const minTs = decoder.readInt(u64);
+    const maxTs = decoder.readInt(u64);
+    const offset = decoder.readInt(u64);
+    const size = decoder.readInt(u64);
     return .{
         .sid = sid,
         .minTs = minTs,
@@ -96,4 +85,53 @@ pub fn decode(buf: []const u8) !Self {
         .offset = offset,
         .size = size,
     };
+}
+
+test "IndexBlockHeaderEncode" {
+    const Case = struct {
+        header: Self,
+        expectedLen: usize,
+    };
+
+    const cases = &[_]Case{
+        .{
+            .header = .{
+                .sid = .{
+                    .tenantID = "tenant",
+                    .id = 42,
+                },
+                .minTs = 100,
+                .maxTs = 200,
+                .offset = 1,
+                .size = 1234,
+            },
+            .expectedLen = encodeExpectedSize,
+        },
+        .{
+            .header = std.mem.zeroInit(Self, .{}),
+            .expectedLen = encodeExpectedSize,
+        },
+        .{
+            .header = .{
+                .sid = .{
+                    .tenantID = "tenant",
+                    .id = std.math.maxInt(u128),
+                },
+                .minTs = std.math.maxInt(u64),
+                .maxTs = std.math.maxInt(u64),
+                .offset = std.math.maxInt(u64),
+                .size = std.math.maxInt(u64),
+            },
+            .expectedLen = encodeExpectedSize,
+        },
+    };
+
+    for (cases) |case| {
+        var encodeBuf: [encodeExpectedSize]u8 = undefined;
+        const offset = case.header.encode(&encodeBuf);
+        try std.testing.expectEqual(case.expectedLen, offset);
+
+        const h = Self.decode(encodeBuf[0..offset]);
+        try std.testing.expectEqualDeep(case.header, h);
+    }
 }

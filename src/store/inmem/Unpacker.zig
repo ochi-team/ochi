@@ -13,13 +13,6 @@ const UnpackError = error{
     DecompressionFailed,
 };
 
-pub fn CompressedValue(comptime T: type) type {
-    return struct {
-        offset: usize,
-        value: T,
-    };
-}
-
 const Self = @This();
 
 buf: []u8,
@@ -92,7 +85,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 return UnpackError.InsufficientDataLen;
             }
             var decoder = Decoder.init(data[1..]);
-            const v = try decoder.readInt(u16);
+            const v = decoder.readInt(u16);
             for (0..count) |i| {
                 res[i] = @intCast(v);
             }
@@ -102,7 +95,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 return UnpackError.InsufficientDataLen;
             }
             var decoder = Decoder.init(data[1..]);
-            const v = try decoder.readInt(u32);
+            const v = decoder.readInt(u32);
             for (0..count) |i| {
                 res[i] = @intCast(v);
             }
@@ -112,7 +105,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 return UnpackError.InsufficientDataLen;
             }
             var decoder = Decoder.init(data[1..]);
-            const v = try decoder.readInt(u64);
+            const v = decoder.readInt(u64);
             for (0..count) |i| {
                 res[i] = @intCast(v);
             }
@@ -132,7 +125,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
             }
             var decoder = Decoder.init(data[1..]);
             for (0..count) |i| {
-                const v = try decoder.readInt(u16);
+                const v = decoder.readInt(u16);
                 res[i] = @intCast(v);
             }
         },
@@ -142,7 +135,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
             }
             var decoder = Decoder.init(data[1..]);
             for (0..count) |i| {
-                const v = try decoder.readInt(u32);
+                const v = decoder.readInt(u32);
                 res[i] = @intCast(v);
             }
         },
@@ -152,7 +145,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
             }
             var decoder = Decoder.init(data[1..]);
             for (0..count) |i| {
-                const v = try decoder.readInt(u64);
+                const v = decoder.readInt(u64);
                 res[i] = @intCast(v);
             }
         },
@@ -181,7 +174,7 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
         },
         Packer.compressionKindZstd => {
             // compressed format: [kind:u8][len:leb128][compressed_data]
-            const compressedLen = try readLeb128(data[1..]);
+            const compressedLen = Decoder.readVarIntFromBuf(data[1..]);
             offset.* += 1 + compressedLen.offset + compressedLen.value;
             var rest = data[1 + compressedLen.offset ..];
             if (rest.len < compressedLen.value) {
@@ -205,25 +198,4 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
         },
         else => return UnpackError.InvalidCompressionKind,
     }
-}
-
-fn readLeb128(data: []const u8) !CompressedValue(usize) {
-    var result: u64 = 0;
-    var shift: u6 = 0;
-
-    for (0..10) |i| {
-        const byte = data[i];
-        result |= @as(u64, byte & 0x7f) << shift;
-
-        if ((byte & 0x80) == 0) {
-            return .{
-                .offset = i + 1,
-                .value = @intCast(result),
-            };
-        }
-
-        shift += 7;
-    }
-
-    return UnpackError.InvalidLeb128;
 }

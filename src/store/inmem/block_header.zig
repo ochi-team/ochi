@@ -43,7 +43,7 @@ pub const BlockHeader = struct {
     // [32:sid][4:size][4:len][33:timestamps, 32 values and 1 encoding type][40:columns header]
     pub const encodeExpectedSize = 32 + 4 + 4 + 32 + 1 + 40;
 
-    pub fn encode(self: *BlockHeader, buf: []u8) usize {
+    pub fn encode(self: *const BlockHeader, buf: []u8) usize {
         var enc = Encoder.init(buf);
 
         self.sid.encode(&enc);
@@ -61,25 +61,30 @@ pub const BlockHeader = struct {
         return enc.offset;
     }
 
-    pub fn decode(buf: []const u8) !BlockHeader {
+    pub fn decode(buf: []const u8) BlockHeader {
         var decoder = Decoder.init(buf);
 
-        const sid = try SID.decode(try decoder.readBytes(32));
+        const sid = SID.decode(decoder.readBytes(32));
 
-        const size = try decoder.readInt(u32);
-        const len = try decoder.readInt(u32);
+        const size = decoder.readInt(u32);
+        const len = decoder.readInt(u32);
 
-        const timestampsHeader = try TimestampsHeader.decode(&decoder);
+        const timestampsHeader = TimestampsHeader.decode(&decoder);
+
+        const columnsHeaderIndexOffset = decoder.readVarInt();
+        const columnsHeaderIndexSize = decoder.readVarInt();
+        const columnsHeaderOffset = decoder.readVarInt();
+        const columnsHeaderSize = decoder.readVarInt();
 
         return .{
             .sid = sid,
             .size = size,
             .len = len,
             .timestampsHeader = timestampsHeader,
-            .columnsHeaderOffset = 0,
-            .columnsHeaderSize = 0,
-            .columnsHeaderIndexOffset = 0,
-            .columnsHeaderIndexSize = 0,
+            .columnsHeaderOffset = columnsHeaderOffset,
+            .columnsHeaderSize = columnsHeaderSize,
+            .columnsHeaderIndexOffset = columnsHeaderIndexOffset,
+            .columnsHeaderIndexSize = columnsHeaderIndexSize,
         };
     }
 };
@@ -92,7 +97,7 @@ pub const TimestampsHeader = struct {
 
     encodingType: EncodingType,
 
-    pub fn encode(self: *TimestampsHeader, enc: *Encoder) void {
+    pub fn encode(self: *const TimestampsHeader, enc: *Encoder) void {
         enc.writeInt(u64, self.offset);
         enc.writeInt(u64, self.size);
         enc.writeInt(u64, self.min);
@@ -100,12 +105,12 @@ pub const TimestampsHeader = struct {
         enc.writeInt(u8, @intFromEnum(self.encodingType));
     }
 
-    pub fn decode(decoder: *Decoder) !TimestampsHeader {
-        const offset = try decoder.readInt(u64);
-        const size = try decoder.readInt(u64);
-        const min = try decoder.readInt(u64);
-        const max = try decoder.readInt(u64);
-        const encodingType = try decoder.readInt(u8);
+    pub fn decode(decoder: *Decoder) TimestampsHeader {
+        const offset = decoder.readInt(u64);
+        const size = decoder.readInt(u64);
+        const min = decoder.readInt(u64);
+        const max = decoder.readInt(u64);
+        const encodingType = decoder.readInt(u8);
 
         return .{
             .offset = offset,
@@ -291,3 +296,70 @@ pub const ColumnHeader = struct {
         enc.writeVarInt(self.bloomFilterSize);
     }
 };
+
+test "BlockHeaderEncode" {
+    const Case = struct {
+        header: BlockHeader,
+        expectedLen: usize,
+    };
+
+    const cases = &[_]Case{
+        .{
+            .header = .{
+                .sid = .{
+                    .tenantID = "tenant",
+                    .id = 42,
+                },
+                .size = 1234,
+                .len = 123,
+                .timestampsHeader = .{
+                    .offset = 1,
+                    .size = 2,
+                    .min = 50,
+                    .max = 100,
+                    .encodingType = EncodingType.ZDeltapack,
+                },
+                .columnsHeaderOffset = 10,
+                .columnsHeaderSize = 20,
+                .columnsHeaderIndexOffset = 30,
+                .columnsHeaderIndexSize = 40,
+            },
+            .expectedLen = 77,
+        },
+        .{
+            .header = std.mem.zeroInit(BlockHeader, .{}),
+            .expectedLen = 77,
+        },
+        .{
+            .header = .{
+                .sid = .{
+                    .tenantID = "tenant",
+                    .id = std.math.maxInt(u128),
+                },
+                .size = std.math.maxInt(u32),
+                .len = std.math.maxInt(u32),
+                .timestampsHeader = .{
+                    .offset = std.math.maxInt(u64),
+                    .size = std.math.maxInt(u64),
+                    .min = std.math.maxInt(u64),
+                    .max = std.math.maxInt(u64),
+                    .encodingType = EncodingType.ZDeltapack,
+                },
+                .columnsHeaderOffset = std.math.maxInt(usize),
+                .columnsHeaderSize = std.math.maxInt(usize),
+                .columnsHeaderIndexOffset = std.math.maxInt(usize),
+                .columnsHeaderIndexSize = std.math.maxInt(usize),
+            },
+            .expectedLen = BlockHeader.encodeExpectedSize,
+        },
+    };
+
+    for (cases) |case| {
+        var encodeBuf: [BlockHeader.encodeExpectedSize]u8 = undefined;
+        const offset = case.header.encode(&encodeBuf);
+        try std.testing.expectEqual(case.expectedLen, offset);
+
+        const h = BlockHeader.decode(encodeBuf[0..offset]);
+        try std.testing.expectEqualDeep(case.header, h);
+    }
+}

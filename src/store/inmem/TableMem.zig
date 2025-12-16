@@ -132,7 +132,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         defer allocator.free(decompressedBuf);
         _ = try encoding.decompress(decompressedBuf, indexContent);
 
-        const blockHeader = try BlockHeader.decode(decompressedBuf);
+        const blockHeader = BlockHeader.decode(decompressedBuf);
 
         // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);
@@ -157,11 +157,11 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         defer allocator.free(decompressedBuf);
         _ = try encoding.decompress(decompressedBuf, metaIndexContent);
 
-        const decodedIndexBlockHeader = try IndexBlockHeader.decode(decompressedBuf);
+        const decodedIndexBlockHeader = IndexBlockHeader.decode(decompressedBuf);
 
         // TODO: compare all the fields in one expect
-        try std.testing.expectEqualStrings("1234", decodedIndexBlockHeader.sid.?.tenantID);
-        try std.testing.expectEqual(1, decodedIndexBlockHeader.sid.?.id);
+        try std.testing.expectEqualStrings("1234", decodedIndexBlockHeader.sid.tenantID);
+        try std.testing.expectEqual(1, decodedIndexBlockHeader.sid.id);
         try std.testing.expectEqual(1, decodedIndexBlockHeader.minTs);
         try std.testing.expectEqual(2, decodedIndexBlockHeader.maxTs);
         try std.testing.expectEqual(0, decodedIndexBlockHeader.offset);
