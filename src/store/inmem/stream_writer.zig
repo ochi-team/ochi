@@ -167,16 +167,10 @@ pub const StreamWriter = struct {
     }
 
     pub fn writeColumnKeys(self: *StreamWriter, allocator: std.mem.Allocator) !void {
-        const encodingBound = self.columnIDGen.bound();
-        const buf = try allocator.alloc(u8, encodingBound);
-        defer allocator.free(buf);
-
-        const encodingOffset = self.columnIDGen.encode(buf);
-
-        const compressBound = try encoding.compressBound(encodingOffset);
-        try self.columnKeysBuf.ensureUnusedCapacity(allocator, compressBound);
-        const slice = self.columnKeysBuf.unusedCapacitySlice()[0..compressBound];
-        const offset = try encoding.compressAuto(slice, buf[0..encodingOffset]);
+        const encodingBound = try self.columnIDGen.bound();
+        try self.columnKeysBuf.ensureUnusedCapacity(allocator, encodingBound);
+        const slice = self.columnKeysBuf.unusedCapacitySlice()[0..encodingBound];
+        const offset = try self.columnIDGen.encode(allocator, slice);
         self.columnKeysBuf.items.len += offset;
     }
 

@@ -21,6 +21,16 @@ pub const Column = struct {
     pub const maxCelledColumnValueSize = 256;
 
     // TODO: rename this crap, to "uniform" I guess
+    // 1. uniform ⭐ - Clear, descriptive, commonly used in data contexts
+    // 2. constant ⭐ - Mathematically precise, well-understood
+    // 3. invariant - Emphasizes that the value doesn't vary
+    // 4. homogeneous - Academic but precise
+    // 5. singular - Has a single unique value
+    // 6. static - Doesn't change across rows
+    // 7. repeated - Same value repeated
+    // 8. monolithic - Single-valued
+    // 9. fixed - Fixed across all rows
+    // 10. scalar - Single scalar value for the column
     pub fn isCelled(self: *Column) bool {
         if (self.values.len == 0) {
             return true;

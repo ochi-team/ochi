@@ -76,7 +76,7 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
 
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
-const TimestampsEncoder = @import("TimestampsEncoder.zig").TimestampsEncoder;
+const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const encoding = @import("encoding");
 test "addLines" {
@@ -118,7 +118,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
     // Validate timestamps
     {
         var dst: [2]u64 = undefined;
-        const timestampsEncoder = try TimestampsEncoder(u64).init(allocator);
+        const timestampsEncoder = try TimestampsEncoder.init(allocator);
         defer timestampsEncoder.deinit(allocator);
         try timestampsEncoder.decode(dst[0..], timestampsContent);
 

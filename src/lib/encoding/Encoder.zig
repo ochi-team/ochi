@@ -28,6 +28,11 @@ pub fn writeBytes(self: *Self, bytes: []const u8) void {
     @memcpy(slice, bytes[0..]);
 }
 
+pub inline fn writeString(self: *Self, str: []const u8) void {
+    self.writeVarInt(str.len);
+    self.writeBytes(str);
+}
+
 /// Write bytes padded to a fixed size (padding with zeros)
 pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
     if (bytes.len > totalSize) @panic("negative padding now allowed");

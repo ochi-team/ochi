@@ -25,6 +25,11 @@ pub fn readBytes(self: *Self, len: usize) []const u8 {
     return result;
 }
 
+pub inline fn readString(self: *Self) []const u8 {
+    const size = self.readVarInt();
+    return self.readBytes(size);
+}
+
 /// Read padded bytes (fixed size with zero padding), return the actual content without padding
 pub fn readPadded(self: *Self, totalSize: usize) []const u8 {
     const bytes = self.readBytes(totalSize);
