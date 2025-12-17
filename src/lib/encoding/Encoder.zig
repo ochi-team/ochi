@@ -48,6 +48,21 @@ pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
 /// The maximum number of bytes a varint-encoded 64-bit integer can occupy.
 pub const maxVarUint64Len = 10;
 
+/// Calculate the exact number of bytes needed to encode a value as a varint
+/// TODO: Use this instead of maxVarUint64Len in encodeBound calculations for more precise memory allocation
+// pub fn varIntSize(value: u64) usize {
+//     if (value < 0x80) return 1; // < 128
+//     if (value < 0x4000) return 2; // < 16384
+//     if (value < 0x200000) return 3; // < 2097152
+//     if (value < 0x10000000) return 4; // < 268435456
+//     if (value < 0x800000000) return 5; // < 34359738368
+//     if (value < 0x40000000000) return 6; // < 4398046511104
+//     if (value < 0x2000000000000) return 7; // < 562949953421312
+//     if (value < 0x100000000000000) return 8; // < 72057594037927936
+//     if (value < 0x8000000000000000) return 9; // < 9223372036854775808
+//     return 10;
+// }
+
 /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
 /// Returns error.OutOfMemory if the buffer has not enough capacity.
 pub fn writeVarInt(self: *Self, value: u64) void {

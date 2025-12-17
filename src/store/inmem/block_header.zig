@@ -162,10 +162,27 @@ pub const ColumnsHeader = struct {
         allocator.destroy(self);
     }
 
+    // [10:headers len][headers][10:columns len][columns]
     pub fn encodeBound(self: *const ColumnsHeader) usize {
-        // [10:len][256 * headers.len:dict{dict is max here}][20:len,offset][10:celledLen][256 * celledCols]
-        return 10 + ColumnDict.maxDictColumnValueSize * self.headers.len + 20 + 10 +
-            self.celledColumns.len * Column.maxCelledColumnValueSize;
+        var size: usize = 0;
+
+        // Headers length varint
+        size += Encoder.maxVarUint64Len;
+
+        // Sum of all header bounds
+        for (self.headers) |*header| {
+            size += header.encodeBound();
+        }
+
+        // Celled columns length varint
+        size += Encoder.maxVarUint64Len;
+
+        // Sum of all celled column bounds
+        for (self.celledColumns) |*col| {
+            size += col.celledBound(false);
+        }
+
+        return size;
     }
     pub fn encode(
         self: *ColumnsHeader,
@@ -414,6 +431,45 @@ pub const ColumnHeader = struct {
         self.bloomFilterOffset = dec.readVarInt();
         self.bloomFilterSize = dec.readVarInt();
     }
+
+    pub fn encodeBound(self: *const ColumnHeader) usize {
+        var size: usize = 1; // type byte
+
+        switch (self.type) {
+            .string => size += self.valuesAndBloomBound(),
+            .dict => {
+                size += self.dict.bound();
+                size += self.valuesBound();
+            },
+            .uint8 => size += 1 + 1 + self.valuesAndBloomBound(), // min + max + values and bloom
+            .uint16 => size += 2 + 2 + self.valuesAndBloomBound(),
+            .uint32 => size += 4 + 4 + self.valuesAndBloomBound(),
+            .uint64 => size += 8 + 8 + self.valuesAndBloomBound(),
+            .int64 => size += 8 + 8 + self.valuesAndBloomBound(),
+            .float64 => size += 8 + 8 + self.valuesAndBloomBound(),
+            .ipv4 => size += 4 + 4 + self.valuesAndBloomBound(),
+            .timestampIso8601 => size += 8 + 8 + self.valuesAndBloomBound(),
+            .unknown => size += self.valuesAndBloomBound(),
+        }
+
+        return size;
+    }
+
+    inline fn valuesBound(self: *const ColumnHeader) usize {
+        _ = self;
+        // TODO: Use Encoder.varIntSize(self.offset) + Encoder.varIntSize(self.size) for precise calculation
+        return Encoder.maxVarUint64Len * 2;
+    }
+
+    inline fn bloomBound(self: *const ColumnHeader) usize {
+        _ = self;
+        // TODO: Use Encoder.varIntSize() for precise calculation
+        return Encoder.maxVarUint64Len * 2;
+    }
+
+    inline fn valuesAndBloomBound(self: *const ColumnHeader) usize {
+        return self.valuesBound() + self.bloomBound();
+    }
 };
 
 test "BlockHeaderEncode" {
@@ -500,10 +556,10 @@ test "ColumnsHeaderEncode" {
     const headers = try alloc.alloc(ColumnHeader, 3);
     defer alloc.free(headers);
 
-    // String column header
+    // String column header (non-dict type, so dict is empty)
     headers[0] = .{
         .key = "col_string",
-        .dict = try ColumnDict.init(alloc),
+        .dict = ColumnDict{ .values = std.ArrayList([]const u8).empty },
         .type = .string,
         .min = 0,
         .max = 0,
@@ -512,9 +568,8 @@ test "ColumnsHeaderEncode" {
         .bloomFilterSize = 50,
         .bloomFilterOffset = 2000,
     };
-    defer headers[0].dict.deinit(alloc);
 
-    // Dict column header
+    // Dict column header (dict type, so dict has capacity)
     headers[1] = .{
         .key = "col_dict",
         .dict = try ColumnDict.init(alloc),
@@ -530,10 +585,10 @@ test "ColumnsHeaderEncode" {
     headers[1].dict.values.appendAssumeCapacity("value2");
     defer headers[1].dict.deinit(alloc);
 
-    // Uint32 column header
+    // Uint32 column header (non-dict type, so dict is empty)
     headers[2] = .{
         .key = "col_uint32",
-        .dict = try ColumnDict.init(alloc),
+        .dict = ColumnDict{ .values = std.ArrayList([]const u8).empty },
         .type = .uint32,
         .min = 10,
         .max = 1000,
@@ -542,7 +597,6 @@ test "ColumnsHeaderEncode" {
         .bloomFilterSize = 60,
         .bloomFilterOffset = 2100,
     };
-    defer headers[2].dict.deinit(alloc);
 
     // Create test celled columns
     const celledColumns = try alloc.alloc(Column, 2);
@@ -599,32 +653,12 @@ test "ColumnsHeaderEncode" {
         decodedHeader.deinit(alloc);
     }
 
-    // Verify headers
+    // Verify using deep comparison
     try std.testing.expectEqual(headers.len, decodedHeader.headers.len);
     for (headers, decodedHeader.headers) |orig, decoded| {
         try std.testing.expectEqualDeep(orig, decoded);
-        // try std.testing.expectEqualStrings(orig.key, decoded.key);
-        // try std.testing.expectEqual(orig.type, decoded.type);
-        // try std.testing.expectEqual(orig.min, decoded.min);
-        // try std.testing.expectEqual(orig.max, decoded.max);
-        // try std.testing.expectEqual(orig.size, decoded.size);
-        // try std.testing.expectEqual(orig.offset, decoded.offset);
-        // try std.testing.expectEqual(orig.bloomFilterSize, decoded.bloomFilterSize);
-        // try std.testing.expectEqual(orig.bloomFilterOffset, decoded.bloomFilterOffset);
-
-        // Verify dict values for dict columns
-        if (orig.type == .dict) {
-            try std.testing.expectEqual(
-                orig.dict.values.items.len,
-                decoded.dict.values.items.len,
-            );
-            for (orig.dict.values.items, decoded.dict.values.items) |origVal, decodedVal| {
-                try std.testing.expectEqualStrings(origVal, decodedVal);
-            }
-        }
     }
 
-    // Verify celled columns
     try std.testing.expectEqual(celledColumns.len, decodedHeader.celledColumns.len);
     for (celledColumns, decodedHeader.celledColumns) |orig, decoded| {
         try std.testing.expectEqualDeep(orig, decoded);
@@ -637,45 +671,25 @@ test "ColumnHeaderEncode" {
     const Case = struct {
         header: ColumnHeader,
         description: []const u8,
+
+        fn makeDict(allocator: std.mem.Allocator, values: []const []const u8) !ColumnDict {
+            if (values.len == 0) {
+                // For empty dict (non-dict column types), match what decode produces
+                return ColumnDict{ .values = std.ArrayList([]const u8).empty };
+            }
+            var dict = try ColumnDict.init(allocator);
+            for (values) |val| {
+                dict.values.appendAssumeCapacity(val);
+            }
+            return dict;
+        }
     };
 
-    var dict1 = try ColumnDict.init(alloc);
-    defer dict1.deinit(alloc);
-    dict1.values.appendAssumeCapacity("dict_val1");
-    dict1.values.appendAssumeCapacity("dict_val2");
-
-    var dict2 = try ColumnDict.init(alloc);
-    defer dict2.deinit(alloc);
-
-    var dict3 = try ColumnDict.init(alloc);
-    defer dict3.deinit(alloc);
-
-    var dict4 = try ColumnDict.init(alloc);
-    defer dict4.deinit(alloc);
-
-    var dict5 = try ColumnDict.init(alloc);
-    defer dict5.deinit(alloc);
-
-    var dict6 = try ColumnDict.init(alloc);
-    defer dict6.deinit(alloc);
-
-    var dict7 = try ColumnDict.init(alloc);
-    defer dict7.deinit(alloc);
-
-    var dict8 = try ColumnDict.init(alloc);
-    defer dict8.deinit(alloc);
-
-    var dict9 = try ColumnDict.init(alloc);
-    defer dict9.deinit(alloc);
-
-    var dict10 = try ColumnDict.init(alloc);
-    defer dict10.deinit(alloc);
-
-    const cases = &[_]Case{
+    var cases = [_]Case{
         .{
             .header = .{
                 .key = "string_col",
-                .dict = dict1,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .string,
                 .min = 0,
                 .max = 0,
@@ -689,7 +703,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "dict_col",
-                .dict = dict2,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{ "value1", "value2", "value3" }),
                 .type = .dict,
                 .min = 0,
                 .max = 0,
@@ -698,12 +712,12 @@ test "ColumnHeaderEncode" {
                 .bloomFilterSize = 0,
                 .bloomFilterOffset = 0,
             },
-            .description = "dict type with empty dict",
+            .description = "dict type with values",
         },
         .{
             .header = .{
                 .key = "uint8_col",
-                .dict = dict3,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .uint8,
                 .min = 0,
                 .max = 255,
@@ -717,7 +731,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint16_col",
-                .dict = dict4,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .uint16,
                 .min = 0,
                 .max = 65535,
@@ -731,7 +745,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint32_col",
-                .dict = dict5,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .uint32,
                 .min = 10,
                 .max = 1000,
@@ -745,7 +759,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint64_col",
-                .dict = dict6,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .uint64,
                 .min = 100,
                 .max = 10000,
@@ -759,7 +773,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "int64_col",
-                .dict = dict7,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .int64,
                 .min = 0,
                 .max = 5000,
@@ -773,7 +787,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "float64_col",
-                .dict = dict8,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .float64,
                 .min = 0,
                 .max = 1000,
@@ -787,7 +801,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "ipv4_col",
-                .dict = dict9,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .ipv4,
                 .min = 0,
                 .max = 4294967295,
@@ -801,7 +815,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "timestamp_col",
-                .dict = dict10,
+                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
                 .type = .timestampIso8601,
                 .min = 1000000,
                 .max = 2000000,
@@ -813,6 +827,11 @@ test "ColumnHeaderEncode" {
             .description = "timestamp type",
         },
     };
+    defer {
+        for (&cases) |*case| {
+            case.header.dict.deinit(alloc);
+        }
+    }
 
     for (cases) |case| {
         // Encode
@@ -826,25 +845,7 @@ test "ColumnHeaderEncode" {
         var decoded = try ColumnHeader.decode(&dec, case.header.key, alloc);
         defer decoded.dict.deinit(alloc);
 
-        // Verify
-        try std.testing.expectEqualStrings(case.header.key, decoded.key);
-        try std.testing.expectEqual(case.header.type, decoded.type);
-        try std.testing.expectEqual(case.header.min, decoded.min);
-        try std.testing.expectEqual(case.header.max, decoded.max);
-        try std.testing.expectEqual(case.header.size, decoded.size);
-        try std.testing.expectEqual(case.header.offset, decoded.offset);
-        try std.testing.expectEqual(case.header.bloomFilterSize, decoded.bloomFilterSize);
-        try std.testing.expectEqual(case.header.bloomFilterOffset, decoded.bloomFilterOffset);
-
-        // Verify dict for dict type
-        if (case.header.type == .dict) {
-            try std.testing.expectEqual(
-                case.header.dict.values.items.len,
-                decoded.dict.values.items.len,
-            );
-            for (case.header.dict.values.items, decoded.dict.values.items) |origVal, decodedVal| {
-                try std.testing.expectEqualStrings(origVal, decodedVal);
-            }
-        }
+        // Verify using deep comparison
+        try std.testing.expectEqualDeep(case.header, decoded);
     }
 }

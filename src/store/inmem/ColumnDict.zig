@@ -62,7 +62,7 @@ pub fn encode(self: *const Self, enc: *Encoder) void {
 
 pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !Self {
     const len = dec.readInt(u8);
-    var values = try std.ArrayList([]const u8).initCapacity(allocator, len);
+    var values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
     for (0..len) |_| {
         const str = dec.readString();
         values.appendAssumeCapacity(str);
@@ -180,10 +180,7 @@ test "ColumnDictEncode" {
         var decoded = try Self.decode(&dec, alloc);
         defer decoded.deinit(alloc);
 
-        // Verify
-        try std.testing.expectEqual(case.values.len, decoded.values.items.len);
-        for (case.values, decoded.values.items) |expected, actual| {
-            try std.testing.expectEqualStrings(expected, actual);
-        }
+        // Verify - now we can use expectEqualDeep since capacity is consistent
+        try std.testing.expectEqualDeep(dict, decoded);
     }
 }
