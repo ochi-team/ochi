@@ -2,8 +2,8 @@ const std = @import("std");
 
 const ValuesEncoder = @import("ValuesEncoder.zig");
 
-const Block = @import("block.zig").Block;
-const Column = @import("block.zig").Column;
+const Block = @import("Block.zig");
+const Column = @import("Column.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
 const ColumnHeader = @import("block_header.zig").ColumnHeader;

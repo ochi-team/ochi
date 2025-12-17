@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Encoder = @import("encoding").Encoder;
+const Decoder = @import("encoding").Decoder;
 
 pub const maxDictColumnValueSize = 256;
 pub const maxDictColumnValuesLen = 8;
@@ -42,11 +43,33 @@ pub fn set(self: *Self, v: []const u8) ?u8 {
     return @intCast(self.values.items.len - 1);
 }
 
-pub fn encode(self: *Self, enc: *Encoder) void {
+pub fn bound(self: *const Self) usize {
+    // 1 byte for count + varint length + string data for each value
+    var size: usize = 1; // u8 for count
+    for (self.values.items) |str| {
+        size += Encoder.maxVarUint64Len; // varint length
+        size += str.len; // string data
+    }
+    return size;
+}
+
+pub fn encode(self: *const Self, enc: *Encoder) void {
     enc.writeInt(u8, @intCast(self.values.items.len));
     for (self.values.items) |str| {
-        enc.writeBytes(str);
+        enc.writeString(str);
     }
+}
+
+pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !Self {
+    const len = dec.readInt(u8);
+    var values = try std.ArrayList([]const u8).initCapacity(allocator, len);
+    for (0..len) |_| {
+        const str = dec.readString();
+        values.appendAssumeCapacity(str);
+    }
+    return .{
+        .values = values,
+    };
 }
 
 test "setReturnsNullOnExceedingMaxColumnValueSize" {
@@ -108,4 +131,59 @@ test "setReturnsNullOnExceedingTotalValuesLen" {
 
     const r = cv.set("1a");
     try std.testing.expect(r == null);
+}
+
+test "ColumnDictEncode" {
+    const alloc = std.testing.allocator;
+
+    const Case = struct {
+        values: []const []const u8,
+    };
+
+    const cases = &[_]Case{
+        .{
+            .values = &[_][]const u8{},
+        },
+        .{
+            .values = &[_][]const u8{"value1"},
+        },
+        .{
+            .values = &[_][]const u8{ "value1", "value2", "value3" },
+        },
+        .{
+            .values = &[_][]const u8{ "a", "b", "c", "d", "e", "f", "g", "h" },
+        },
+        .{
+            .values = &[_][]const u8{ "", "non-empty", "another" },
+        },
+    };
+
+    for (cases) |case| {
+        var dict = try Self.init(alloc);
+        defer dict.deinit(alloc);
+
+        // Populate dict
+        for (case.values) |value| {
+            dict.values.appendAssumeCapacity(value);
+        }
+
+        // Encode
+        const bufSize = dict.bound();
+        const buf = try alloc.alloc(u8, bufSize);
+        defer alloc.free(buf);
+
+        var enc = Encoder.init(buf);
+        dict.encode(&enc);
+
+        // Decode
+        var dec = Decoder.init(buf[0..enc.offset]);
+        var decoded = try Self.decode(&dec, alloc);
+        defer decoded.deinit(alloc);
+
+        // Verify
+        try std.testing.expectEqual(case.values.len, decoded.values.items.len);
+        for (case.values, decoded.values.items) |expected, actual| {
+            try std.testing.expectEqualStrings(expected, actual);
+        }
+    }
 }

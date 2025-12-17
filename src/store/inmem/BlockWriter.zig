@@ -2,13 +2,12 @@ const std = @import("std");
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
-const Block = @import("block.zig").Block;
+const Block = @import("Block.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const StreamWriter = @import("stream_writer.zig").StreamWriter;
 const TableHeader = @import("TableHeader.zig");
 const encoding = @import("encoding");
-const ColumnIDGen = @import("ColumnIDGen.zig");
 
 const Self = @This();
 

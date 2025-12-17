@@ -9,7 +9,7 @@ const lineTsSize: u32 = tsRfc3339Nano.len + tsLineJsonSurrounding.len;
 const lineSurroundSize: u32 = "\"\":\"\",".len;
 const msgKey = "_msg";
 
-const Block = @import("block.zig").Block;
+const Block = @import("Block.zig");
 const Line = @import("../lines.zig").Line;
 
 // gives size in resulted json object
