@@ -5,7 +5,7 @@ const SID = @import("../lines.zig").SID;
 const Block = @import("Block.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
-const StreamWriter = @import("stream_writer.zig").StreamWriter;
+const StreamWriter = @import("StreamWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const encoding = @import("encoding");
 

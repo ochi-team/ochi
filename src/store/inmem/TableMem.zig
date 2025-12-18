@@ -6,7 +6,7 @@ const lineLessThan = @import("../lines.zig").lineLessThan;
 const fieldLessThan = @import("../lines.zig").fieldLessThan;
 const SID = @import("../lines.zig").SID;
 
-const StreamWriter = @import("stream_writer.zig").StreamWriter;
+const StreamWriter = @import("StreamWriter.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 

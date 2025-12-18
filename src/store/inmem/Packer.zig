@@ -164,7 +164,7 @@ fn areValuesSame(values: []const []const u8) bool {
     return true;
 }
 
-test "ValuesEncoder.packValuesRoundtrip" {
+test "Packer.packValuesRoundtrip" {
     const allocator = std.testing.allocator;
 
     const Case = struct {

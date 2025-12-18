@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
-const StreamWriter = @import("stream_writer.zig").StreamWriter;
+const StreamWriter = @import("StreamWriter.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
