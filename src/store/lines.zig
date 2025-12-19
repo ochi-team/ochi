@@ -45,9 +45,11 @@ pub const Field = struct {
     value: []const u8,
 };
 
+// Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
     sid: SID,
+    // field.key can be empty meaning it's a message field (_msg by fefault in the API)
     // can't be const because we reorder fields
     fields: []Field,
     encodedTags: [][]const u8,
