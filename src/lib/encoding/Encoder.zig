@@ -65,6 +65,7 @@ pub const maxVarUint64Len = 10;
 
 /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
 /// Returns error.OutOfMemory if the buffer has not enough capacity.
+/// TODO: migrate to std.leb
 pub fn writeVarInt(self: *Self, value: u64) void {
     const slice = self.buf[self.offset .. self.offset + 10];
 

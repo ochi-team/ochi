@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const server = @import("server.zig");
-const Conf = @import("conf.zig");
+const Conf = @import("conf.zig").Conf;
 
 test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
@@ -9,7 +9,7 @@ test "serverWithSIGTERM" {
     // Start the server in a separate thread
     const ServerThread = struct {
         fn run() void {
-            server.startServer(allocator, Conf.Conf.default()) catch |err| {
+            server.startServer(allocator, allocator, Conf.default()) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }

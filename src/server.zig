@@ -21,8 +21,8 @@ fn handleSigterm(_: c_int) callconv(.c) void {
     }
 }
 
-pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
-    const store = try Store.init(allocator, ".seqor");
+pub fn startServer(allocator: std.mem.Allocator, backgroundAllocator: std.mem.Allocator, conf: Conf) !void {
+    const store = try Store.init(allocator, backgroundAllocator,  ".seqor");
     defer store.deinit(allocator);
     const processor = try Processor.init(allocator, store);
     defer processor.deinit(allocator);

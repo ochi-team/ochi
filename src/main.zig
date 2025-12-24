@@ -8,7 +8,7 @@ const server = @import("server.zig");
 const cli = @import("cli");
 
 var cli_config = struct {
-    config: []const u8 = "seqor.yaml",
+    config: []const u8 = "", // e.g. "seqor.yaml",
 }{};
 
 pub fn main() !void {
@@ -31,7 +31,7 @@ pub fn main() !void {
                 },
             }),
             .target = cli.CommandTarget{
-                .action = cli.CommandAction{ .exec = run_server },
+                .action = cli.CommandAction{ .exec = runServer },
             },
         },
     };
@@ -39,7 +39,7 @@ pub fn main() !void {
     return runner.run(&app);
 }
 
-fn run_server() !void {
+fn runServer() !void {
     std.debug.print("Seqor version {s}", .{build.version});
 
     const config = try Conf.init(std.heap.page_allocator, cli_config.config);
@@ -50,5 +50,5 @@ fn run_server() !void {
     // TODO: introduce structured logger
     std.debug.print("Seqor in mono mode starting at port={d}, time={s}\n", .{ config.server.port, nowStr });
 
-    try server.startServer(std.heap.page_allocator, config);
+    try server.startServer(std.heap.page_allocator, std.heap.page_allocator, config);
 }

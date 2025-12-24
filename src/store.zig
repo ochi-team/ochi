@@ -69,11 +69,18 @@ pub const Store = struct {
     path: []const u8,
 
     partitions: std.ArrayList(*Partition),
-    hot: *Partition,
+    hot: ?*Partition,
 
-    pub fn init(allocator: std.mem.Allocator, path: []const u8) !*Store {
+    backgroundAllocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, backgroundAllocator: std.mem.Allocator, path: []const u8) !*Store {
         const store = try allocator.create(Store);
-        store.path = path;
+        store.* = .{
+            .path = path,
+            .partitions = std.ArrayList(*Partition).empty,
+            .hot = null,
+            .backgroundAllocator = backgroundAllocator,
+        };
         // truncate separator
         if (path[store.path.len - 1] == std.fs.path.sep_str[0]) {
             store.path = path[0 .. path.len - 1];
@@ -82,11 +89,15 @@ pub const Store = struct {
     }
 
     pub fn deinit(self: *Store, allocator: std.mem.Allocator) void {
-        // TODO: destroy all the partitions
+        self.partitions.deinit(allocator);
         allocator.destroy(self);
     }
 
-    pub fn addLines(self: *Store, allocator: std.mem.Allocator, lines: std.AutoHashMap(u64, std.ArrayList(*const Line))) !void {
+    pub fn addLines(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        lines: std.AutoHashMap(u64, std.ArrayList(*const Line)),
+    ) !void {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
             const partition = try self.getPartition(allocator, it.key_ptr.*);
@@ -108,7 +119,11 @@ pub const Store = struct {
         }
 
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const partitionPath = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{d}", .{ self.path, std.fs.path.sep_str, partitionsFolderName, std.fs.path.sep_str, day });
+        const partitionPath = try std.fmt.bufPrint(
+            &path_buf,
+            "{s}{s}{s}{s}{d}",
+            .{ self.path, std.fs.path.sep_str, partitionsFolderName, std.fs.path.sep_str, day },
+        );
 
         const res = std.fs.accessAbsolute(partitionPath, .{ .mode = .read_write });
         if (res) |_| {
@@ -136,7 +151,7 @@ pub const Store = struct {
         const indexTable = try Table.init(allocator, 5 * SecNs);
         const index = try Index.init(allocator, indexTable);
 
-        const data = try Data.init(allocator);
+        const data = try Data.init(allocator, self.backgroundAllocator);
         // TODO: remove unused parts directories
 
         const partition = try allocator.create(Partition);
