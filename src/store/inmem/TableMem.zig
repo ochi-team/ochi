@@ -25,6 +25,8 @@ const Self = @This();
 streamWriter: *StreamWriter,
 tableHeader: *TableHeader,
 
+flushAtUs: ?i64 = null,
+
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const streamWriter = try StreamWriter.init(allocator, 1);
     errdefer streamWriter.deinit(allocator);

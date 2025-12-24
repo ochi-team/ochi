@@ -38,7 +38,7 @@ pub const Index = struct {
         return i;
     }
 
-    pub fn addLines(self: *Index, streamID: SID, encodedStream: [][]const u8) !void {
+    pub fn addLines(self: *Index, streamID: SID, encodedStream: [][]const u8) void {
         _ = self;
         _ = streamID;
         _ = encodedStream;
@@ -51,17 +51,17 @@ pub const Partition = struct {
     index: *Index,
     data: *Data,
 
-    pub fn addLines(self: *Partition, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) !void {
+    pub fn addLines(self: *Partition, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) void {
         for (lines.items) |line| {
             // TODO: calculate stream ID and validate cache, if cached then skip the step,
             // put to cache in the end of the loop
 
             // TODO: if eq to previous line (by stream ID) then skip, must be in the cache
             // TODO: if index has the stream ID then skip
-            try self.index.addLines(line.sid, line.encodedTags);
+            self.index.addLines(line.sid, line.encodedTags);
         }
 
-        try self.data.addLines(allocator, lines);
+        self.data.addLines(allocator, lines);
     }
 };
 
@@ -101,7 +101,7 @@ pub const Store = struct {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
             const partition = try self.getPartition(allocator, it.key_ptr.*);
-            try partition.addLines(allocator, it.value_ptr.*);
+            partition.addLines(allocator, it.value_ptr.*);
         }
     }
 

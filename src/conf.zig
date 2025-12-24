@@ -5,7 +5,8 @@ fn calculatePools() PoolsConfig {
     // TODO: log warning if can't get cpus, no clue why getCpuCount may fail,
     // perhaps due to a weird CPU architecture
     const cpus = std.Thread.getCpuCount() catch 4;
-    const totalThreads: u16 = @intCast(@max(cpus, 2));
+    // 4 is a minimum amount of threads for workers
+    const totalThreads: u16 = @intCast(@max(cpus, 8));
     // TODO: the numbers must be tuned further to balance between http and workers
     const workers = totalThreads / 2;
     // TODO: http threads are not used yet

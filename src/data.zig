@@ -5,6 +5,10 @@ const Line = @import("store/lines.zig").Line;
 
 const TableMem = @import("store/inmem/TableMem.zig");
 
+inline fn setFlushTime() i64 {
+    return std.time.microTimestamp() + std.time.us_per_s;
+}
+
 pub const DataShard = struct {
     mx: std.Thread.Mutex = .{},
     lines: std.ArrayList(*const Line) = std.ArrayList(*const Line).empty,
@@ -21,15 +25,22 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, allocator: std.mem.Allocator) !void {
+    fn flush(self: *DataShard, allocator: std.mem.Allocator, sem: *std.Thread.Semaphore) !?*TableMem {
         if (self.lines.items.len == 0) {
-            return;
+            return null;
         }
+
+        sem.wait();
+        errdefer sem.post();
 
         self.flushAtUs = null;
         const memTable = try TableMem.init(allocator);
-        defer memTable.deinit(allocator);
         try memTable.addLines(allocator, self.lines.items);
+
+        sem.post();
+
+        memTable.flushAtUs = setFlushTime();
+        return memTable;
     }
 };
 
@@ -37,14 +48,20 @@ pub const Data = struct {
     shards: []DataShard,
     nextShard: std.atomic.Value(usize),
 
+    mx: std.Thread.Mutex,
+    memTables: std.ArrayList(*TableMem),
+
     pool: *std.Thread.Pool,
     wg: std.Thread.WaitGroup,
+    sem: std.Thread.Semaphore,
     stopped: std.atomic.Value(bool),
 
     pub fn init(allocator: std.mem.Allocator, workersAllocator: std.mem.Allocator) !*Data {
         const conf = getConf().server.pools;
         std.debug.assert(conf.cpus != 0);
-        std.debug.assert(conf.workerThreads != 0);
+        // 4 is a minimum amount for workers:
+        // data shards flushare, mem table flusher, mem table merger, disk table merger
+        std.debug.assert(conf.workerThreads >= 4);
 
         const shards = try allocator.alloc(DataShard, conf.cpus);
         errdefer allocator.free(shards);
@@ -67,8 +84,13 @@ pub const Data = struct {
         self.* = Data{
             .shards = shards,
             .nextShard = std.atomic.Value(usize).init(0),
+
+            .mx = .{},
+            .memTables = std.ArrayList(*TableMem).empty,
+
             .pool = pool,
             .wg = wg,
+            .sem = .{ .permits = conf.cpus },
             .stopped = std.atomic.Value(bool).init(false),
         };
 
@@ -111,6 +133,7 @@ pub const Data = struct {
         std.debug.print("flush completed with force={}\n", .{force});
     }
 
+    /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
     fn startDataShardsFlusher(self: *Data, allocator: std.mem.Allocator) void {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
@@ -128,11 +151,7 @@ pub const Data = struct {
         if (force) {
             for (self.shards) |*shard| {
                 shard.mx.lock();
-                shard.flush(allocator) catch {
-                    std.debug.print("ERROR: failed to flush a data shard, OOM\n", .{});
-                    self.stopped.store(true, .release);
-                    // TODO: broadcast the app must close
-                };
+                self.flushShard(allocator, shard);
                 shard.mx.unlock();
             }
             return;
@@ -144,11 +163,7 @@ pub const Data = struct {
             if (shard.mx.tryLock()) {
                 if (shard.flushAtUs) |flushAtUs| {
                     if (flushAtUs < nowUs) {
-                        shard.flush(allocator) catch {
-                            std.debug.print("ERROR: failed to flush a data shard, OOM\n", .{});
-                            self.stopped.store(true, .release);
-                            // TODO: broadcast the app must close
-                        };
+                        self.flushShard(allocator, shard);
                     }
                 }
                 shard.mx.unlock();
@@ -156,18 +171,51 @@ pub const Data = struct {
         }
     }
 
-    pub fn addLines(self: *Data, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) !void {
+    fn flushShard(self: *Data, allocator: std.mem.Allocator, shard: *DataShard) void {
+        const maybeMemTable = shard.flush(allocator, &self.sem) catch |err| {
+            self.handleErr(err);
+            return;
+        };
+        if (maybeMemTable) |memTable| {
+            self.mx.lock();
+            self.memTables.append(allocator, memTable) catch |err| {
+                self.handleErr(err);
+                return;
+            };
+            self.pool.spawnWg(&self.wg, startMemTableMerger, .{ self, allocator });
+            self.mx.lock();
+        }
+    }
+
+    fn handleErr(self: *Data, err: anyerror) void {
+        std.debug.print("ERROR: failed to flush a data shard, err={}\n", .{err});
+        self.stopped.store(true, .release);
+        // TODO: broadcast the app must close
+        return;
+    }
+
+    fn startMemTableMerger(self: *Data, allocator: std.mem.Allocator) void {
+        self.mergeTables();
+        _ = allocator;
+    }
+
+    fn mergeTables(self: *Data) void {
+        _ = self;
+    }
+
+    // FIXME: allocator must be the same as in the background workers to have same source of ownership for mem tables
+    pub fn addLines(self: *Data, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) void {
         const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
         var shard = &self.shards[i];
 
         shard.mx.lock();
 
         if (shard.flushAtUs == null) {
-            shard.flushAtUs = std.time.microTimestamp();
+            shard.flushAtUs = setFlushTime();
         }
         shard.lines = lines;
         if (shard.mustFlush()) {
-            try shard.flush(allocator);
+            self.flushShard(allocator, shard);
         }
 
         shard.mx.unlock();
