@@ -3,3 +3,4 @@ zig-out/
 .claude/
 *.o
 simulator/k6
+.vscode
