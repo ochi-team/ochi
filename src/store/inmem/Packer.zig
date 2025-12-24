@@ -3,11 +3,6 @@ const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Unpacker = @import("Unpacker.zig");
 
-pub const EncodedValue = struct {
-    buf: []u8,
-    len: usize,
-};
-
 const Width = struct {
     max: u64,
     size: usize,
@@ -94,44 +89,59 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
         for (self.lengths.items) |n| _ = enc.writeIntBytes(w.size, n);
     }
 
-    const encodedLens = try self.packBytes(fba, interBuf);
-    defer fba.free(encodedLens.buf);
-
     // Optimize: if all values are the same, only pack the first one
     const valuesAreSame = (values.len >= 2) and areValuesSame(values);
     const valuesToPack = if (valuesAreSame) values[0..1] else values;
     const packSum = if (valuesAreSame) values[0].len else lenSum;
 
-    const buf = try self.allocator.alloc(u8, packSum);
-    defer self.allocator.free(buf);
+    // TODO: perhaps fixed buffer is useful here
+    const valuesBuf = try self.allocator.alloc(u8, packSum);
+    defer self.allocator.free(valuesBuf);
     var bufOffset: usize = 0;
     for (valuesToPack) |value| {
-        @memcpy(buf[bufOffset .. bufOffset + value.len], value);
+        @memcpy(valuesBuf[bufOffset .. bufOffset + value.len], value);
         bufOffset += value.len;
     }
-    const encodedValues = try self.packBytes(self.allocator, buf);
-    defer fba.free(encodedValues.buf);
 
-    // TODO: review implementation of encode, it is not optimal at all
+    // Calculate bounds for both encoded parts
+    const lensBound = try packBytesBound(interBuf.len);
+    const valuesBound = try packBytesBound(valuesBuf.len);
 
-    // TODO: get rid of concat, append to a buffer shared between lens and values
+    // Allocate once for both encoded lengths and values
+    const totalBound = lensBound + valuesBound;
+    const result = try self.allocator.alloc(u8, totalBound);
+    errdefer self.allocator.free(result);
 
-    return std.mem.concat(self.allocator, u8, &[_][]const u8{
-        encodedLens.buf[0..encodedLens.len],
-        encodedValues.buf[0..encodedValues.len],
-    });
+    // Pack lengths and values into different slices of the same buffer
+    const encodedLensSize = try packBytes(fba, result[0..lensBound], interBuf);
+    const encodedValuesSize = try packBytes(fba, result[encodedLensSize..], valuesBuf);
+
+    // Return the exact slice we used (not the whole bound)
+    // TODO: benchmark whether the realloc worth it or better to return the entire slice,
+    // perhaps worth adding a metric on relation of actualSize to result.len
+    const actualSize = encodedLensSize + encodedValuesSize;
+    return self.allocator.realloc(result, actualSize);
 }
 
-fn packBytes(self: *Self, fba: std.mem.Allocator, src: []u8) !EncodedValue {
+fn packBytesBound(src_len: usize) !usize {
+    if (src_len < 128) {
+        // 1 compression kind, 1 len, len of the buf
+        return 2 + src_len;
+    }
+    // 1 compression kind, 10 compressed len via leb128, len of the compressed (worst case)
+    const compressSize = try encoding.compressBound(src_len);
+    return 11 + compressSize;
+}
+
+fn packBytes(fba: std.mem.Allocator, dest: []u8, src: []u8) !usize {
     if (src.len < 128) {
         // skip compression, up to 127 can be in a single byte to be compatible with leb128
         // 1 compression kind, 1 len, len of the buf
-        const res = try self.allocator.alloc(u8, 2 + src.len);
-        var enc = Encoder.init(res);
+        var enc = Encoder.init(dest);
         enc.writeInt(u8, compressionKindPlain);
         enc.writeInt(u8, @intCast(src.len));
         enc.writeBytes(src);
-        return .{ .buf = res, .len = enc.offset };
+        return enc.offset;
     }
 
     const compressSize = try encoding.compressBound(src.len);
@@ -140,12 +150,11 @@ fn packBytes(self: *Self, fba: std.mem.Allocator, src: []u8) !EncodedValue {
     const compressedSize = try encoding.compressAuto(compressed, src);
 
     // 1 compression kind, 10 compressed len via leb128, len of the compressed
-    const res = try self.allocator.alloc(u8, 11 + compressedSize);
-    var enc = Encoder.init(res);
+    var enc = Encoder.init(dest);
     enc.writeInt(u8, compressionKindZstd);
     enc.writeVarInt(compressedSize);
     enc.writeBytes(compressed[0..compressedSize]);
-    return .{ .buf = res, .len = enc.offset };
+    return enc.offset;
 }
 
 pub fn areNumbersSame(a: []const u64) bool {
