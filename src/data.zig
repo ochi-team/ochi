@@ -137,12 +137,15 @@ pub const Data = struct {
 
     /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
     fn startDataShardsFlusher(self: *Data, allocator: std.mem.Allocator) void {
+        // half a sec
+        const flushInterval = std.time.ns_per_s / 2;
+
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
 
         const alloc = arena.allocator();
         while (!self.stopped.load(.acquire)) {
-            std.Thread.sleep(std.time.ns_per_s);
+            std.Thread.sleep(flushInterval);
             self.flushDataShards(alloc, false);
             _ = arena.reset(.retain_capacity);
         }
