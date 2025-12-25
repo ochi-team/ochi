@@ -5,6 +5,8 @@ const Line = @import("store/lines.zig").Line;
 
 const TableMem = @import("store/inmem/TableMem.zig");
 
+const maxLevelSize = 100 * 1024 * 1024 * 1024;
+
 inline fn setFlushTime() i64 {
     return std.time.microTimestamp() + std.time.us_per_s;
 }
@@ -178,12 +180,12 @@ pub const Data = struct {
         };
         if (maybeMemTable) |memTable| {
             self.mx.lock();
+            defer self.mx.unlock();
             self.memTables.append(allocator, memTable) catch |err| {
                 self.handleErr(err);
                 return;
             };
             self.pool.spawnWg(&self.wg, startMemTableMerger, .{ self, allocator });
-            self.mx.lock();
         }
     }
 
@@ -195,12 +197,36 @@ pub const Data = struct {
     }
 
     fn startMemTableMerger(self: *Data, allocator: std.mem.Allocator) void {
-        self.mergeTables();
-        _ = allocator;
+        while (true) {
+            if (self.stopped.load(.acquire)) return;
+
+            // TODO: validate it has enough space for the max amount
+            const maxSize = maxLevelSize;
+            self.mx.lock();
+            var fallbackFba = std.heap.stackFallback(1024, allocator);
+            const alloc = fallbackFba.get();
+            const maybeMemTables = tableSliceToMerge(alloc, &self.memTables, maxSize) catch |err| {
+                self.handleErr(err);
+                return;
+            };
+            self.mx.unlock();
+
+            const memTables = maybeMemTables orelse return;
+            if (memTables.len == 0) return;
+
+            defer alloc.free(memTables);
+
+            self.sem.wait();
+            self.mergeTables(allocator, memTables, false);
+            self.sem.post();
+        }
     }
 
-    fn mergeTables(self: *Data) void {
+    fn mergeTables(self: *Data, alloc: std.mem.Allocator, tables: []*TableMem, force: bool) void {
         _ = self;
+        _ = alloc;
+        _ = tables;
+        _ = force;
     }
 
     // FIXME: allocator must be the same as in the background workers to have same source of ownership for mem tables
@@ -221,6 +247,34 @@ pub const Data = struct {
         shard.mx.unlock();
     }
 };
+
+fn tableSliceToMerge(alloc: std.mem.Allocator, tables: *std.ArrayList(*TableMem), _: u64) !?[]*TableMem {
+    var size: usize = 0;
+    for (tables.items) |t| {
+        if (!t.isInMerge) size += 1;
+    }
+    const interSlice = try alloc.alloc(*TableMem, size);
+    defer alloc.free(interSlice);
+
+    const maybeSlice = try filterToMerge(alloc, interSlice);
+    const slice = maybeSlice orelse return null;
+    for (slice) |t| {
+        std.debug.assert(!t.isInMerge);
+        t.isInMerge = true;
+    }
+    return slice;
+}
+
+fn filterToMerge(alloc: std.mem.Allocator, tables: []*TableMem) !?[]*TableMem {
+    if (tables.len < 2) return null;
+
+    // TODO: not implemented
+    const res = try alloc.alloc(*TableMem, tables.len);
+    for (0..tables.len) |i| {
+        res[i] = tables[i];
+    }
+    return tables;
+}
 
 const Conf = @import("conf.zig").Conf;
 test "dataWorker" {

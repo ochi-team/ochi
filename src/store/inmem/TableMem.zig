@@ -26,6 +26,7 @@ streamWriter: *StreamWriter,
 tableHeader: *TableHeader,
 
 flushAtUs: ?i64 = null,
+isInMerge: bool = false,
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const streamWriter = try StreamWriter.init(allocator, 1);
