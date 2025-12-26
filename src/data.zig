@@ -8,6 +8,7 @@ const TableMem = @import("store/inmem/TableMem.zig");
 const maxLevelSize = 100 * 1024 * 1024 * 1024;
 
 inline fn setFlushTime() i64 {
+    // now + 1s
     return std.time.microTimestamp() + std.time.us_per_s;
 }
 
@@ -55,7 +56,7 @@ pub const Data = struct {
 
     pool: *std.Thread.Pool,
     wg: std.Thread.WaitGroup,
-    sem: std.Thread.Semaphore,
+    memTableSem: std.Thread.Semaphore,
     stopped: std.atomic.Value(bool),
 
     pub fn init(allocator: std.mem.Allocator, workersAllocator: std.mem.Allocator) !*Data {
@@ -92,7 +93,7 @@ pub const Data = struct {
 
             .pool = pool,
             .wg = wg,
-            .sem = .{ .permits = conf.cpus },
+            .memTableSem = .{ .permits = conf.cpus },
             .stopped = std.atomic.Value(bool).init(false),
         };
 
@@ -130,9 +131,26 @@ pub const Data = struct {
     }
 
     fn flushMemTable(self: *Data, allocator: std.mem.Allocator, force: bool) void {
-        _ = self;
-        _ = allocator;
-        std.debug.print("flush completed with force={}\n", .{force});
+        const nowUs = std.time.microTimestamp();
+
+        self.mx.lock();
+        defer self.mx.unlock();
+
+        var tables = std.ArrayList(*TableMem).initCapacity(allocator, self.memTables.items.len) catch |err| {
+            self.handleErr(err);
+            return;
+        };
+        for (self.memTables.items) |memTable| {
+            const isTimeToMerge = if (memTable.flushAtUs) |flushAtUs| nowUs > flushAtUs else false;
+            if (!memTable.isInMerge and (force or isTimeToMerge)) {
+                tables.appendAssumeCapacity(memTable);
+            }
+        }
+
+        // TODO: reshuffle parts to merge in order to build more effective file sizes
+        self.memTableSem.wait();
+        self.mergeTables(allocator, tables.items, force);
+        self.memTableSem.post();
     }
 
     /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
@@ -177,7 +195,7 @@ pub const Data = struct {
     }
 
     fn flushShard(self: *Data, allocator: std.mem.Allocator, shard: *DataShard) void {
-        const maybeMemTable = shard.flush(allocator, &self.sem) catch |err| {
+        const maybeMemTable = shard.flush(allocator, &self.memTableSem) catch |err| {
             self.handleErr(err);
             return;
         };
@@ -219,9 +237,9 @@ pub const Data = struct {
 
             defer alloc.free(memTables);
 
-            self.sem.wait();
+            self.memTableSem.wait();
             self.mergeTables(allocator, memTables, false);
-            self.sem.post();
+            self.memTableSem.post();
         }
     }
 
