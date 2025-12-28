@@ -81,13 +81,11 @@ test "sizingBlockAndFieldsMatch" {
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &sameField1,
-            .encodedTags = undefined,
         },
         .{
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &sameField2,
-            .encodedTags = undefined,
         },
     };
 
@@ -104,13 +102,11 @@ test "sizingBlockAndFieldsMatch" {
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &emptyField1,
-            .encodedTags = undefined,
         },
         .{
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &emptyField2,
-            .encodedTags = undefined,
         },
     };
 
@@ -127,13 +123,11 @@ test "sizingBlockAndFieldsMatch" {
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &emptyKey1,
-            .encodedTags = undefined,
         },
         .{
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &emptyKey2,
-            .encodedTags = undefined,
         },
     };
     var diffField1 = [_]Field{
@@ -147,13 +141,11 @@ test "sizingBlockAndFieldsMatch" {
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &diffField1,
-            .encodedTags = undefined,
         },
         .{
             .timestampNs = undefined,
             .sid = undefined,
             .fields = &diffField2,
-            .encodedTags = undefined,
         },
     };
 

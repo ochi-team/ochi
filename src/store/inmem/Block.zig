@@ -271,13 +271,11 @@ test "areSameFields: happy path" {
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
-            .encodedTags = undefined,
         },
         &.{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
-            .encodedTags = undefined,
         },
     };
 
@@ -298,13 +296,11 @@ test "areSameFields: unhappy path" {
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
-            .encodedTags = undefined,
         },
         &.{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
-            .encodedTags = undefined,
         },
     };
 
@@ -325,13 +321,11 @@ test "areSameValuesWithinColumn: happy path" {
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
-            .encodedTags = undefined,
         },
         &.{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
-            .encodedTags = undefined,
         },
     };
 
@@ -353,13 +347,11 @@ test "areSameValuesWithinColumn: unhappy path" {
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
-            .encodedTags = undefined,
         },
         &.{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
-            .encodedTags = undefined,
         },
     };
 
@@ -421,7 +413,6 @@ test "SelfInitMaxColumns" {
             const line = try alloc.create(Line);
             line.* = Line{
                 .fields = fields,
-                .encodedTags = undefined,
                 .sid = undefined,
                 .timestampNs = 1,
             };
@@ -466,13 +457,11 @@ test "Self.put" {
             .timestampNs = 100,
             .sid = undefined,
             .fields = &fields1,
-            .encodedTags = undefined,
         };
         const line2 = Line{
             .timestampNs = 200,
             .sid = undefined,
             .fields = &fields2,
-            .encodedTags = undefined,
         };
         var arr = [_]*const Line{ &line1, &line2 };
         break :blk &arr;
@@ -514,19 +503,16 @@ test "Self.put" {
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
-                .encodedTags = undefined,
             },
             &.{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
-                .encodedTags = undefined,
             },
             &.{
                 .timestampNs = 300,
                 .sid = undefined,
                 .fields = fields3[0..],
-                .encodedTags = undefined,
             },
         };
         break :blk &lines;
@@ -545,13 +531,11 @@ test "Self.put" {
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
-                .encodedTags = undefined,
             },
             &.{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
-                .encodedTags = undefined,
             },
         };
         break :blk &lines;
@@ -588,19 +572,16 @@ test "Self.put" {
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
-                .encodedTags = undefined,
             },
             &.{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
-                .encodedTags = undefined,
             },
             &.{
                 .timestampNs = 300,
                 .sid = undefined,
                 .fields = fields3[0..],
-                .encodedTags = undefined,
             },
         };
         break :blk &lines;
@@ -637,13 +618,11 @@ test "Self.put" {
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
-                .encodedTags = undefined,
             },
             &.{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
-                .encodedTags = undefined,
             },
         };
         break :blk &lines;

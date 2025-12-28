@@ -187,7 +187,8 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
             // second is optional and defines what field in the given json is read as a _msg field
             try labels.append(allocator, .{ .key = "_msg", .value = msg });
 
-            try processor.pushLine(allocator, tsNs, labels.items, params);
+            const tags = labels.items[0 .. labels.items.len - 1]; // -1 cuts _msg off
+            try processor.pushLine(allocator, tsNs, labels.items, tags, params);
 
             // clean value labels, but retain stream labels
             labels.items.len = streamLabelsLen;

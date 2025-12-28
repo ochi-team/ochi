@@ -24,6 +24,7 @@ pub const SID = struct {
                 self.id < another.id);
     }
 
+    pub const encodeBound = 32;
     pub fn encode(self: *const SID, enc: *Encoder) void {
         enc.writePadded(self.tenantID, maxTenantIDLen);
         enc.writeInt(u128, self.id);
@@ -52,7 +53,6 @@ pub const Line = struct {
     // field.key can be empty meaning it's a message field (_msg by fefault in the API)
     // can't be const because we reorder fields
     fields: []Field,
-    encodedTags: [][]const u8,
 
     pub fn fieldsSize(self: *const Line) u32 {
         return sizing.fieldsJsonSize(self);

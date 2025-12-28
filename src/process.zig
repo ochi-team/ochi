@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Store = @import("store.zig").Store;
+const Encoder = @import("encoding").Encoder;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
@@ -9,27 +10,45 @@ pub const Params = struct {
     tenantID: []const u8,
 };
 
-fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![][]const u8 {
-    // TODO: the implementation is fake, fix it
-    // it also may required changing the structure in future, now it's a slice of slices,
-    // because it allows not to copy the underlying key/value
-    const encoded = try allocator.alloc([]const u8, tags.len * 2);
-    var i: u16 = 0;
-    for (tags) |f| {
-        encoded[i] = f.key;
-        i += 1;
-        encoded[i] = f.value;
-        i += 1;
+const EncodedTags = struct {
+    buf: []u8,
+    offset: usize,
+};
+
+fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) !EncodedTags {
+    // [10:len] + tags.len * [10:key len][key][10:value.len][value]
+    var size: usize = 10;
+    for (tags) |tag| {
+        size += 20;
+        size += tag.key.len + tag.value.len;
+    }
+    const buf = try allocator.alloc(u8, size);
+
+    var enc = Encoder.init(buf);
+    enc.writeVarInt(tags.len);
+    for (tags) |tag| {
+        enc.writeString(tag.key);
+        enc.writeString(tag.value);
     }
 
-    return encoded;
+    return .{
+        .buf = buf,
+        .offset = enc.offset,
+    };
 }
 
-fn makeStreamID(tenantID: []const u8, encodedStream: [][]const u8) SID {
-    // TODO: implement, calculate the fastest hash from encodedStream
+const magic = "xxhash";
+fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
+    var hasher = std.hash.XxHash64.init(0);
+    hasher.update(encodedStream);
+    const first = hasher.final();
+    hasher.update(magic);
+    const second = hasher.final();
+    const id = @as(u128, first) << 64 | second;
+
     return SID{
         .tenantID = tenantID,
-        .id = encodedStream.len,
+        .id = id,
     };
 }
 
@@ -44,19 +63,31 @@ fn sortStreamFields(_: void, one: Field, another: Field) bool {
 
 pub const Processor = struct {
     lines: [1]Line,
+    encodedTags: EncodedTags,
 
     store: *Store,
 
     pub fn init(allocator: std.mem.Allocator, store: *Store) !*Processor {
         const processor = try allocator.create(Processor);
         processor.store = store;
+        processor.encodedTags = .{ .buf = undefined, .offset = 0 };
         return processor;
     }
     pub fn deinit(self: *Processor, allocator: std.mem.Allocator) void {
+        if (self.encodedTags.offset != 0) {
+            allocator.free(self.encodedTags.buf);
+        }
         allocator.destroy(self);
     }
 
-    pub fn pushLine(self: *Processor, allocator: std.mem.Allocator, timestampNs: u64, fields: []Field, params: Params) !void {
+    pub fn pushLine(
+        self: *Processor,
+        allocator: std.mem.Allocator,
+        timestampNs: u64,
+        fields: []Field,
+        tags: []Field,
+        params: Params,
+    ) !void {
         // TODO: controll how many fields a single line may contain
         // add a config value and validate fields length
         // 1000 is a default limit
@@ -73,19 +104,23 @@ pub const Processor = struct {
         // TODO: add an option to accept ignore fields
         // doesn't impact stream fields, to narrow set of stream fields better to use stream fields option
 
-        const tags = fields[0 .. fields.len - 1]; // -1 cuts _msg off
         // use unstable sort because we don't expect duplicated keys
-        std.mem.sortUnstable(Field, @constCast(tags), {}, sortStreamFields);
+        std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
 
         const encodedTags = try encodeTags(allocator, tags);
-        const streamID = makeStreamID(params.tenantID, encodedTags);
+        const streamID = makeStreamID(params.tenantID, encodedTags.buf[0..encodedTags.offset]);
+
         const line = Line{
             .timestampNs = timestampNs,
             .sid = streamID,
-            .fields = fields[fields.len - 1 ..],
-            .encodedTags = encodedTags,
+            .fields = fields,
         };
         self.lines[0] = line;
+
+        if (self.encodedTags.offset != 0) {
+            allocator.free(self.encodedTags.buf);
+        }
+        self.encodedTags = encodedTags;
     }
     pub fn mustFlush(_: *Processor) bool {
         return true;
@@ -97,6 +132,7 @@ pub const Processor = struct {
         const minDay = (now - retention) / dayNs;
 
         var linesByInterval = std.AutoHashMap(u64, std.ArrayList(*const Line)).init(allocator);
+
         for (self.lines) |line| {
             const day = line.timestampNs / dayNs;
             if (day < minDay) {
@@ -115,6 +151,6 @@ pub const Processor = struct {
             try list.append(allocator, &line);
         }
 
-        try self.store.addLines(allocator, linesByInterval);
+        try self.store.addLines(allocator, linesByInterval, self.encodedTags.buf[0..self.encodedTags.offset]);
     }
 };

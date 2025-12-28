@@ -105,7 +105,8 @@ pub fn flushToDisk(self: *Self, alloc: std.mem.Allocator, path: []const u8) !voi
         else => return err,
     }
 
-    std.debug.assert(self.streamWriter.bloomTokensList.items.len == 1 and self.streamWriter.bloomValuesList.items.len == 1);
+    std.debug.assert(self.streamWriter.bloomTokensList.items.len == 1);
+    std.debug.assert(self.streamWriter.bloomValuesList.items.len == 1);
 
     var stack = std.heap.stackFallback(2048, alloc);
     const allocator = stack.get();
@@ -203,13 +204,11 @@ fn populateSampleLines(sample: *SampleLines) void {
             .timestampNs = 2,
             .sid = .{ .id = 1, .tenantID = "1234" },
             .fields = sample.fields2[0..],
-            .encodedTags = undefined,
         },
         .{
             .timestampNs = 1,
             .sid = .{ .id = 1, .tenantID = "1234" },
             .fields = sample.fields1[0..],
-            .encodedTags = undefined,
         },
     };
 }
@@ -217,7 +216,7 @@ fn populateSampleLines(sample: *SampleLines) void {
 fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     var file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
-    return try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    return file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
 
 test "addLines" {

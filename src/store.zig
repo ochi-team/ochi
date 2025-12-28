@@ -1,8 +1,13 @@
 const std = @import("std");
 
 const Data = @import("data.zig").Data;
+const Index = @import("Index.zig");
+const IndexTable = @import("IndexTable.zig");
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
+const Cache = @import("Cache.zig");
+
+const Encoder = @import("encoding").Encoder;
 
 const partitionsFolderName = "partitions";
 const dataFolderName = "data";
@@ -13,37 +18,9 @@ const partsFileName = "parts";
 
 const SecNs = 1_000_000_000;
 
-pub const Table = struct {
-    flushInterval: u64,
-    pub fn init(allocator: std.mem.Allocator, flushInterval: u64) !*Table {
-        const t = try allocator.create(Table);
-        t.* = Table{
-            .flushInterval = flushInterval,
-        };
-        // TODO: open parts from parts
-        // TODO: init shards object, ~ num cpu * 16
-        // TODO: start backound workers
-        return t;
-    }
-};
-
-pub const Index = struct {
-    table: *Table,
-
-    pub fn init(allocator: std.mem.Allocator, table: *Table) !*Index {
-        const i = try allocator.create(Index);
-        i.* = Index{
-            .table = table,
-        };
-        return i;
-    }
-
-    pub fn addLines(self: *Index, streamID: SID, encodedStream: [][]const u8) void {
-        _ = self;
-        _ = streamID;
-        _ = encodedStream;
-    }
-};
+fn streamIndexLess(lines: std.ArrayList(*const Line), i: usize, j: usize) bool {
+    return lines.items[i].sid.lessThan(&lines.items[j].sid);
+}
 
 pub const Partition = struct {
     day: u64,
@@ -51,17 +28,68 @@ pub const Partition = struct {
     index: *Index,
     data: *Data,
 
-    pub fn addLines(self: *Partition, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) void {
-        for (lines.items) |line| {
-            // TODO: calculate stream ID and validate cache, if cached then skip the step,
-            // put to cache in the end of the loop
+    streamCache: *Cache.StreamCache,
 
-            // TODO: if eq to previous line (by stream ID) then skip, must be in the cache
-            // TODO: if index has the stream ID then skip
-            self.index.addLines(line.sid, line.encodedTags);
+    const bufSize = 128;
+    pub fn addLines(
+        self: *Partition,
+        allocator: std.mem.Allocator,
+        lines: std.ArrayList(*const Line),
+        encodedTags: []const u8,
+    ) !void {
+        var fallbackFba = std.heap.stackFallback(bufSize, allocator);
+        const fba = fallbackFba.get();
+        var streamsToCache = try std.ArrayList(usize).initCapacity(fba, bufSize / @sizeOf(usize));
+        defer streamsToCache.deinit(fba);
+
+        // detect not cached stream ids
+        for (0..lines.items.len) |i| {
+            const line = lines.items[i];
+            if (self.isCached(line)) {
+                continue;
+            }
+
+            if (streamsToCache.items.len == 0 or line.sid.eql(&lines.items[streamsToCache.items.len - 1].sid)) {
+                try streamsToCache.append(fba, i);
+            }
+        }
+
+        if (streamsToCache.items.len > 0) {
+            // sort the stream ids,
+            // it's necessary in case the incoming lines are mixed like [1, 2, 1, 2],
+            // so to make it [1, 1, 2, 2]
+            std.mem.sortUnstable(usize, streamsToCache.items, lines, streamIndexLess);
+
+            for (streamsToCache.items) |i| {
+                const sid = lines.items[i].sid;
+
+                if (i > 0 and lines.items[streamsToCache.items[i - 1]].sid.eql(&sid)) continue;
+
+                if (!self.index.hasStream(sid)) {
+                    try self.index.registerStream(allocator, sid, encodedTags);
+                }
+                try self.cache(sid);
+            }
         }
 
         self.data.addLines(allocator, lines);
+    }
+
+    fn isCached(self: *Partition, line: *const Line) bool {
+        // TODO: consider using u256 keys (u128 tenant id and u128 sid)
+        var buf: [SID.encodeBound]u8 = undefined;
+        var enc = Encoder.init(&buf);
+        line.sid.encode(&enc);
+
+        return self.streamCache.contains(buf[0..]);
+    }
+
+    fn cache(self: *Partition, sid: SID) !void {
+        var buf: [SID.encodeBound]u8 = undefined;
+        var enc = Encoder.init(&buf);
+        sid.encode(&enc);
+
+        try self.streamCache.set(&buf, {});
     }
 };
 
@@ -97,11 +125,12 @@ pub const Store = struct {
         self: *Store,
         allocator: std.mem.Allocator,
         lines: std.AutoHashMap(u64, std.ArrayList(*const Line)),
+        encodedTags: []const u8,
     ) !void {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
             const partition = try self.getPartition(allocator, it.key_ptr.*);
-            partition.addLines(allocator, it.value_ptr.*);
+            try partition.addLines(allocator, it.value_ptr.*, encodedTags);
         }
     }
 
@@ -148,11 +177,13 @@ pub const Store = struct {
     }
 
     fn openPartition(self: *Store, allocator: std.mem.Allocator, path: []const u8, day: u64) !*Partition {
-        const indexTable = try Table.init(allocator, 5 * SecNs);
+        const indexTable = try IndexTable.init(allocator, 5 * SecNs);
         const index = try Index.init(allocator, indexTable);
 
         const data = try Data.init(allocator, self.backgroundAllocator);
         // TODO: remove unused parts directories
+
+        const cache = try Cache.StreamCache.init(allocator);
 
         const partition = try allocator.create(Partition);
         partition.* = Partition{
@@ -160,6 +191,7 @@ pub const Store = struct {
             .path = path,
             .index = index,
             .data = data,
+            .streamCache = cache,
         };
         self.hot = partition;
         try self.partitions.append(allocator, partition);
