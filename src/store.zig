@@ -5,6 +5,7 @@ const Index = @import("Index.zig");
 const IndexTable = @import("IndexTable.zig");
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
+const Field = @import("store/lines.zig").Field;
 const Cache = @import("Cache.zig");
 
 const Encoder = @import("encoding").Encoder;
@@ -35,6 +36,7 @@ pub const Partition = struct {
         self: *Partition,
         allocator: std.mem.Allocator,
         lines: std.ArrayList(*const Line),
+        tags: []Field,
         encodedTags: []const u8,
     ) !void {
         var fallbackFba = std.heap.stackFallback(bufSize, allocator);
@@ -66,7 +68,7 @@ pub const Partition = struct {
                 if (i > 0 and lines.items[streamsToCache.items[i - 1]].sid.eql(&sid)) continue;
 
                 if (!self.index.hasStream(sid)) {
-                    try self.index.registerStream(allocator, sid, encodedTags);
+                    try self.index.indexStream(allocator, sid, tags, encodedTags);
                 }
                 try self.cache(sid);
             }
@@ -125,12 +127,13 @@ pub const Store = struct {
         self: *Store,
         allocator: std.mem.Allocator,
         lines: std.AutoHashMap(u64, std.ArrayList(*const Line)),
+        tags: []Field,
         encodedTags: []const u8,
     ) !void {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
             const partition = try self.getPartition(allocator, it.key_ptr.*);
-            try partition.addLines(allocator, it.value_ptr.*, encodedTags);
+            try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
         }
     }
 

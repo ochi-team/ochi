@@ -63,6 +63,7 @@ fn sortStreamFields(_: void, one: Field, another: Field) bool {
 
 pub const Processor = struct {
     lines: [1]Line,
+    tags: [1][]Field,
     encodedTags: EncodedTags,
 
     store: *Store,
@@ -116,6 +117,7 @@ pub const Processor = struct {
             .fields = fields,
         };
         self.lines[0] = line;
+        self.tags[0] = tags;
 
         if (self.encodedTags.offset != 0) {
             allocator.free(self.encodedTags.buf);
@@ -151,6 +153,6 @@ pub const Processor = struct {
             try list.append(allocator, &line);
         }
 
-        try self.store.addLines(allocator, linesByInterval, self.encodedTags.buf[0..self.encodedTags.offset]);
+        try self.store.addLines(allocator, linesByInterval, self.tags[0], self.encodedTags.buf[0..self.encodedTags.offset]);
     }
 };
