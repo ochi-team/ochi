@@ -7,15 +7,20 @@ const getConf = @import("conf.zig").getConf;
 // depending on used CPU model must be changed according its L1 cache size
 const maxMemBlockSize = 32 * 1024;
 
+const maxBlocksPerShard = 256;
+
+// TODO: worth tuning on practice
+const blocksInMemTable = 15;
+
 const MemBlock = struct {
-    data: std.ArrayList(u8),
-    ends: std.ArrayList(u32),
+    data: std.ArrayList([]const u8),
+    size: u32,
 
     pub fn add(self: *MemBlock, alloc: Allocator, entry: []const u8) !bool {
-        if ((entry.len + self.data.items.len) > maxMemBlockSize) return false;
+        if ((self.size + entry.len) > maxMemBlockSize) return false;
 
-        try self.data.appendSlice(alloc, entry);
-        try self.ends.append(alloc, @intCast(self.data.items.len));
+        try self.data.append(alloc, entry);
+        self.size += @intCast(entry.len);
         return true;
     }
 };
@@ -72,6 +77,11 @@ const Entries = struct {
         return e;
     }
 
+    pub fn next(self: *Entries) *EntriesShard {
+        const i = self.shardIdx.fetchAdd(1, .acquire) % self.shards.len;
+        return &self.shards[i];
+    }
+
     pub fn deinit(self: *Entries, alloc: Allocator) void {
         alloc.free(self.shards);
         alloc.destroy(self);
@@ -82,6 +92,10 @@ const Self = @This();
 
 flushInterval: u64,
 entries: *Entries,
+
+blocks: std.ArrayList(*MemBlock) = .empty,
+mxBlocks: std.Thread.Mutex = .{},
+flushAtUs: ?i64 = null,
 
 pub fn init(alloc: Allocator, flushInterval: u64) !*Self {
     const entries = try Entries.init(alloc);
@@ -96,16 +110,84 @@ pub fn init(alloc: Allocator, flushInterval: u64) !*Self {
 }
 
 pub fn add(self: *Self, alloc: Allocator, entries: [][]const u8) !void {
-    const i = self.entries.shardIdx.fetchAdd(1, .acquire) % self.entries.shards.len;
-    var shard = &self.entries.shards[i];
-
+    const shard = self.entries.next();
     const blocks = try shard.add(alloc, entries);
     if (blocks.len == 0) return;
-    self.flushBlocks(blocks);
+    try self.flushBlocks(alloc, blocks);
 }
 
-fn flushBlocks(self: *Self, blocks: []*MemBlock) void {
-    _ = self;
-    _ = blocks;
-    unreachable;
+fn flushBlocks(self: *Self, alloc: Allocator, blocks: []*MemBlock) !void {
+    self.mxBlocks.lock();
+    defer self.mxBlocks.unlock();
+
+    if (self.blocks.items.len == 0) {
+        self.flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+    }
+
+    try self.blocks.appendSlice(alloc, blocks);
+    if (self.blocks.items.len >= maxBlocksPerShard * self.entries.shards.len) {
+        try self.flush(alloc, self.blocks.items, false);
+        self.blocks.clearRetainingCapacity();
+    }
 }
+
+fn flush(self: *Self, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+    const tablesSize = (blocks.len + blocksInMemTable - 1) / blocksInMemTable;
+    var res = try std.ArrayList(*MemTable).initCapacity(alloc, tablesSize);
+    errdefer {
+        for (res.items) |memTable| memTable.deinit(alloc);
+        res.deinit(alloc);
+    }
+
+    var tail = blocks[0..];
+    // TODO: benchmark parallel mem table creation
+    while (tail.len > 0) {
+        const offset = @min(blocksInMemTable, tail.len);
+        const head = tail[0..offset];
+        tail = tail[offset..];
+
+        const memTable = try MemTable.init(alloc, head);
+        res.appendAssumeCapacity(memTable);
+    }
+
+    _ = self;
+    _ = force;
+}
+
+const MemTable = struct {
+    pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
+        const readers = try alloc.alloc(*BlockReader, blocks.len);
+        var lastInit: usize = 0;
+        errdefer {
+            for (readers[0..lastInit]) |reader| reader.deinit(alloc);
+            alloc.free(readers);
+        }
+
+        for (0..blocks.len) |i| {
+            const reader = try BlockReader.init(alloc, blocks[i]);
+            readers[i] = reader;
+            lastInit = i + 1;
+        }
+
+        const t = try alloc.create(MemTable);
+        t.* = .{};
+        return t;
+    }
+
+    pub fn deinit(self: *MemTable, alloc: Allocator) void {
+        alloc.destroy(self);
+    }
+};
+
+const BlockReader = struct {
+    pub fn init(alloc: Allocator, block: *MemBlock) !*BlockReader {
+        _ = block;
+        const r = try alloc.create(BlockReader);
+        r.* = .{};
+        return r;
+    }
+
+    pub fn deinit(self: *BlockReader, alloc: Allocator) void {
+        alloc.destroy(self);
+    }
+};
