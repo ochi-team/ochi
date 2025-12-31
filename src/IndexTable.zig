@@ -15,6 +15,7 @@ const blocksInMemTable = 15;
 const MemBlock = struct {
     data: std.ArrayList([]const u8),
     size: u32,
+    prefix: []const u8,
 
     pub fn add(self: *MemBlock, alloc: Allocator, entry: []const u8) !bool {
         if ((self.size + entry.len) > maxMemBlockSize) return false;
@@ -23,7 +24,52 @@ const MemBlock = struct {
         self.size += @intCast(entry.len);
         return true;
     }
+
+    pub fn setPrefixes(self: *MemBlock) void {
+        // TODO: evaluate the chances of the data being sorted, might improve performance a lot
+        if (self.data.items.len == 0) return;
+
+        if (self.data.items.len == 1) {
+            self.prefix = self.data.items[0];
+            return;
+        }
+
+        var prefix = self.data.items[0];
+        for (self.data.items[1..]) |entry| {
+            if (std.mem.startsWith(u8, entry, prefix)) {
+                continue;
+            }
+
+            prefix = findPrefix(prefix, entry);
+            if (prefix.len == 0) return;
+        }
+
+        self.prefix = prefix;
+        self.sort();
+    }
+    pub fn sort(self: *MemBlock) void {
+        std.mem.sortUnstable([]const u8, self.data.items, self, memBlockEntryLessThan);
+    }
+
+    fn memBlockEntryLessThan(self: *MemBlock, one: []const u8, another: []const u8) bool {
+        const prefixLen = self.prefix.len;
+
+        const oneSuffix = one[prefixLen..];
+        const anotherSuffix = another[prefixLen..];
+
+        return std.mem.lessThan(u8, oneSuffix, anotherSuffix);
+    }
 };
+
+fn findPrefix(first: []const u8, second: []const u8) []const u8 {
+    var n = @min(first.len, second.len);
+    while (n > 0) {
+        if (std.mem.eql(u8, first[0..n], second[0..n])) return first[0..n];
+        n -= 1;
+    }
+
+    return first[0..0];
+}
 
 const EntriesShard = struct {
     mx: std.Thread.Mutex,
@@ -156,34 +202,50 @@ fn flush(self: *Self, alloc: Allocator, blocks: []*MemBlock, force: bool) !void 
 
 const MemTable = struct {
     pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
-        const readers = try alloc.alloc(*BlockReader, blocks.len);
-        var lastInit: usize = 0;
+        var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocks.len);
         errdefer {
-            for (readers[0..lastInit]) |reader| reader.deinit(alloc);
-            alloc.free(readers);
+            for (readers.items) |reader| reader.deinit(alloc);
+            readers.deinit(alloc);
         }
 
         for (0..blocks.len) |i| {
             const reader = try BlockReader.init(alloc, blocks[i]);
-            readers[i] = reader;
-            lastInit = i + 1;
+            readers.appendAssumeCapacity(reader);
         }
 
+        // const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
         const t = try alloc.create(MemTable);
         t.* = .{};
+        if (readers.items.len > 1) {
+            t.fromReaders(readers);
+            return t;
+        }
+
+        // unreachable;
+
         return t;
     }
 
     pub fn deinit(self: *MemTable, alloc: Allocator) void {
         alloc.destroy(self);
     }
+
+    fn fromReaders(self: *MemTable, readers: std.ArrayList(*BlockReader)) void {
+        _ = self;
+        _ = readers;
+    }
 };
 
 const BlockReader = struct {
+    block: *MemBlock,
+
     pub fn init(alloc: Allocator, block: *MemBlock) !*BlockReader {
-        _ = block;
+        block.setPrefixes();
+
         const r = try alloc.create(BlockReader);
-        r.* = .{};
+        r.* = .{
+            .block = block,
+        };
         return r;
     }
 
