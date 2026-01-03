@@ -94,16 +94,34 @@ pub fn build(b: *std.Build) void {
         .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
     });
 
+    // encoding module tests
+    const encoding_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lib/encoding/root.zig"),
+            .target = target,
+            .imports = &.{
+                .{ .name = "c", .module = cModule },
+            },
+        }),
+        .filters = if (test_filter) |filter| filter else &[_][]const u8{},
+        .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
+    });
+
     // build test
     const install_tests = b.addInstallArtifact(unit_tests, .{});
-    const btest_step = b.step("btest", "Build unit tests (for debugging)");
+    const install_encoding_tests = b.addInstallArtifact(encoding_tests, .{ .dest_sub_path = "encoding-test" });
+    const btest_step = b.step("btest", "Build unit tests");
     btest_step.dependOn(&install_tests.step);
+    btest_step.dependOn(&install_encoding_tests.step);
 
     // test command
     const test_step = b.step("test", "run unit tests");
     const run_unit_tests = b.addSystemCommand(&[_][]const u8{"zig-out/bin/test"});
     run_unit_tests.step.dependOn(&install_tests.step);
+    const run_encoding_tests = b.addSystemCommand(&[_][]const u8{"zig-out/bin/encoding-test"});
+    run_encoding_tests.step.dependOn(&install_encoding_tests.step);
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_encoding_tests.step);
 
     // check command
     const check = b.step("check", "Check if compiles");

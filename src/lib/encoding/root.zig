@@ -18,5 +18,8 @@ pub const decompress = compress.decompress;
 // decode
 
 pub const Decoder = @import("Decoder.zig");
-pub const DecodeError = Decoder.DecodeError;
 pub const Encoder = @import("Encoder.zig");
+
+test {
+    @import("std").testing.refAllDeclsRecursive(@This());
+}

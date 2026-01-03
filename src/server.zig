@@ -22,7 +22,7 @@ fn handleSigterm(_: c_int) callconv(.c) void {
 }
 
 pub fn startServer(allocator: std.mem.Allocator, backgroundAllocator: std.mem.Allocator, conf: Conf) !void {
-    const store = try Store.init(allocator, backgroundAllocator,  ".seqor");
+    const store = try Store.init(allocator, backgroundAllocator, ".seqor");
     defer store.deinit(allocator);
     const processor = try Processor.init(allocator, store);
     defer processor.deinit(allocator);
@@ -68,9 +68,32 @@ pub fn startServer(allocator: std.mem.Allocator, backgroundAllocator: std.mem.Al
     };
 }
 
-// TODO: this is not ok, I have to import every module I want to test???
 test {
-    std.testing.refAllDecls(@This());
+    std.testing.refAllDeclsRecursive(@This());
+}
 
-    _ = @import("server_test.zig");
+test "serverWithSIGTERM" {
+    const allocator = std.testing.allocator;
+
+    // Start the server in a separate thread
+    const ServerThread = struct {
+        fn run() void {
+            startServer(allocator, allocator, Conf.default()) catch |err| {
+                std.debug.print("Server error: {}\n", .{err});
+            };
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, ServerThread.run, .{});
+
+    // Give the server time to start
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+
+    // Send SIGTERM to ourselves
+    const posix = std.posix;
+    const pid = std.c.getpid();
+    try posix.kill(pid, posix.SIG.TERM);
+
+    // Wait for the server thread to finish
+    thread.join();
 }
