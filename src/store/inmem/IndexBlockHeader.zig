@@ -16,6 +16,7 @@ offset: u64,
 size: u64,
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
+    // TODO: test if it can be used by value, doesn't seem it needs an allocator
     const bh = try allocator.create(Self);
     bh.* = .{
         .sid = .{ .tenantID = "", .id = 0 },
