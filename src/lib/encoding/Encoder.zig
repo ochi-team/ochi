@@ -13,7 +13,6 @@ pub fn init(buf: []u8) Self {
 /// Write a typed integer value to the buffer using big-endian encoding
 pub fn writeInt(self: *Self, comptime T: type, value: T) void {
     const slice = self.buf[self.offset .. self.offset + @sizeOf(T)];
-    if (slice.len < @sizeOf(T)) unreachable;
     self.offset += @sizeOf(T);
     var bytes: [@sizeOf(T)]u8 = undefined;
     std.mem.writeInt(T, &bytes, value, .big);
@@ -23,7 +22,6 @@ pub fn writeInt(self: *Self, comptime T: type, value: T) void {
 /// Write raw bytes to the buffer
 pub fn writeBytes(self: *Self, bytes: []const u8) void {
     const slice = self.buf[self.offset .. self.offset + bytes.len];
-    if (slice.len < bytes.len) unreachable;
     self.offset += bytes.len;
     @memcpy(slice, bytes[0..]);
 }
@@ -38,7 +36,6 @@ pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
     if (bytes.len > totalSize) @panic("negative padding now allowed");
 
     const slice = self.buf[self.offset .. self.offset + totalSize];
-    if (slice.len < totalSize) unreachable;
     self.offset += totalSize;
 
     @memset(slice, 0x00);

@@ -152,7 +152,7 @@ fn tryUintEncoding(self: *Self, values: []const []const u8) !?EncodeValueType {
             .uint16 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u16, @as(u16, @intCast(n)))),
             .uint32 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u32, @as(u32, @intCast(n)))),
             .uint64 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u64, n)),
-            else => unreachable,
+            else => std.debug.panic("unexpected uint type, given={any}", .{vt}),
         }
         const slice = self.buf.items[start..];
         try self.values.append(self.allocator, slice);

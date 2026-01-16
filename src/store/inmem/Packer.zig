@@ -28,7 +28,7 @@ fn pickWidth(maxLen: u64) Width {
     for (widths) |w| {
         if (maxLen < w.max) return w;
     }
-    unreachable;
+    std.debug.panic("unexpected int width, given len={maxLen}", .{maxLen});
 }
 
 pub const compressionKindPlain: u8 = 0;

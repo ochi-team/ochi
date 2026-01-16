@@ -8,7 +8,9 @@ pub fn syncPathAndParentDir(path: []const u8) void {
 }
 
 fn syncPath(path: []const u8) void {
-    var file = std.fs.openFileAbsolute(path, .{}) catch unreachable;
+    // TODO: handle the error and write data to a recovery log,
+    // panicking here means data loss
+    var file = std.fs.openFileAbsolute(path, .{}) catch std.debug.panic("failed to sync path={s}", .{path});
     defer file.close();
 
     file.sync() catch |err| {
