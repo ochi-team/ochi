@@ -3,7 +3,7 @@ const std = @import("std");
 const zeit = @import("zeit");
 
 const build = @import("build");
-const Conf = @import("conf.zig").Conf;
+const Conf = @import("conf.zig");
 const server = @import("server.zig");
 const cli = @import("cli");
 

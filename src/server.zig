@@ -2,7 +2,7 @@ const std = @import("std");
 
 const httpz = @import("httpz");
 
-const Conf = @import("conf.zig").Conf;
+const Conf = @import("conf.zig");
 const Dispatcher = @import("dispatch.zig").Dispatcher;
 const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;

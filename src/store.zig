@@ -1,12 +1,12 @@
 const std = @import("std");
 
 const Data = @import("data.zig").Data;
-const Index = @import("Index.zig");
-const IndexTable = @import("IndexTable.zig");
+const Index = @import("store/index/Index.zig");
+const IndexTable = @import("store/index/IndexTable.zig");
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
-const Cache = @import("Cache.zig");
+const Cache = @import("stds/Cache.zig");
 
 const Encoder = @import("encoding").Encoder;
 

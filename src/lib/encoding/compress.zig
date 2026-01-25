@@ -4,12 +4,12 @@ pub const CompressError = error{
     Unknown,
 };
 
-pub fn compressAuto(dst: []u8, src: []u8) CompressError!usize {
+pub fn compressAuto(dst: []u8, src: []const u8) CompressError!usize {
     const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
     return compress(dst, src, level);
 }
 
-pub fn compress(dst: []u8, src: []u8, level: u8) CompressError!usize {
+pub fn compress(dst: []u8, src: []const u8, level: u8) CompressError!usize {
     const res = C.ZSTD_compress(dst.ptr, dst.len, src.ptr, src.len, level);
     if (C.ZSTD_isError(res) == 1) {
         // TODO: log an error to understand the exact error code

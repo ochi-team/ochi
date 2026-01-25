@@ -60,6 +60,14 @@ pub fn varIntBound(value: u64) usize {
     return 10;
 }
 
+pub inline fn varIntsBound(comptime T: type, values: []T) usize {
+    var res: usize = 0;
+    for (values) |v| {
+        res += varIntBound(v);
+    }
+    return res;
+}
+
 /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
 /// Returns error.OutOfMemory if the buffer has not enough capacity.
 /// TODO: migrate to std.leb
@@ -76,6 +84,12 @@ pub fn writeVarInt(self: *Self, value: u64) void {
     slice[i] = @as(u8, @truncate(v));
 
     self.offset += i + 1;
+}
+
+pub inline fn writeVarInts(self: *Self, T: type, values: []T) void {
+    for (values) |v| {
+        self.writeVarInt(v);
+    }
 }
 
 pub fn writeIntBytes(self: *Self, size: usize, value: u64) void {
