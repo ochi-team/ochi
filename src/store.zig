@@ -17,8 +17,6 @@ const indexFolderName = "index";
 // holds parts names separated by \n
 const partsFileName = "parts";
 
-const SecNs = 1_000_000_000;
-
 fn streamIndexLess(lines: std.ArrayList(*const Line), i: usize, j: usize) bool {
     return lines.items[i].sid.lessThan(&lines.items[j].sid);
 }
@@ -180,7 +178,7 @@ pub const Store = struct {
     }
 
     fn openPartition(self: *Store, allocator: std.mem.Allocator, path: []const u8, day: u64) !*Partition {
-        const indexTable = try IndexTable.init(allocator, 5 * SecNs);
+        const indexTable = try IndexTable.init(allocator);
         const index = try Index.init(allocator, indexTable);
 
         const data = try Data.init(allocator, self.backgroundAllocator);

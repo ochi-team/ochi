@@ -23,6 +23,8 @@ pub const AppConfig = struct {
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,
     /// must be cache friendly, depending on used CPU model must be changed according its L1 cache size
     maxIndexMemBlockSize: u32 = 32 * 1024,
+    // time interval in microseconds to flush mem tables to disk
+    flushIntervalUs: i64 = 5 * std.time.us_per_s,
 };
 
 pub const ServerConfig = struct {

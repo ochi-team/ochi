@@ -7,6 +7,7 @@ const filenameMeta = "metadata.json";
 
 const TableHeader = @This();
 
+// TODO: try making both values u32
 itemsCount: u64 = 0,
 blocksCount: u64 = 0,
 firstItem: []const u8 = undefined,

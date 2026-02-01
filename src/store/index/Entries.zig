@@ -289,7 +289,7 @@ test "EntriesShard.add" {
         try testing.expectEqual(case.expected_block_count, shard.blocks.items.len);
         if (shard.blocks.items.len > 0) {
             const lastBlock = shard.blocks.items[shard.blocks.items.len - 1];
-            try testing.expectEqual(case.expected_last_block_entries, lastBlock.data.items.len);
+            try testing.expectEqual(case.expected_last_block_entries, lastBlock.items.items.len);
         }
     }
 }

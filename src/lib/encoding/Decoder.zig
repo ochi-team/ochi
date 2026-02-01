@@ -44,6 +44,12 @@ pub fn readVarInt(self: *Self) u64 {
     return v.value;
 }
 
+pub fn readVarInts(self: *Self, dst: []u64) void {
+    for (0..dst.len) |i| {
+        dst[i] = self.readVarInt();
+    }
+}
+
 pub fn CompressedValue(comptime T: type) type {
     return struct {
         offset: usize,

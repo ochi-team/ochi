@@ -1,3 +1,16 @@
+//! BlockMerger: Merges multiple sorted BlockReaders into a single sorted output.
+//!
+//! Use cases:
+//! - SSTable compaction: merging multiple index blocks during LSM-tree compaction
+//! - Flush operations: combining in-memory blocks with on-disk blocks
+//!
+//! Constraints:
+//! - Input BlockReaders must contain sorted data
+//! - Uses a min-heap for k-way merge, O(n log k) complexity
+//! - Automatically merges consecutive tagToSids records with same prefix (tenant+tag)
+//! - Limited to maxStreamsPerRecord (32) stream IDs per merged tag record
+//! - Can be stopped mid-merge via atomic stopped flag
+
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
@@ -35,7 +48,7 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
     var i: usize = 0;
     while (i < readers.items.len) {
         const reader = readers.items[i];
-        const hasNext = try reader.next();
+        const hasNext = try reader.next(alloc);
         if (!hasNext) {
             reader.deinit(alloc);
             _ = readers.swapRemove(i);
@@ -87,7 +100,7 @@ pub fn merge(
             hasNextItem = true;
         }
 
-        const items = reader.block.data.items;
+        const items = reader.block.?.items.items;
         var compareEveryItem = true;
         if (reader.currentI < items.len) {
             const lastItem = items[items.len - 1];
@@ -108,7 +121,7 @@ pub fn merge(
         }
 
         if (reader.currentI == items.len) {
-            if (try reader.next()) {
+            if (try reader.next(alloc)) {
                 self.heap.fix(0);
                 continue;
             }
@@ -128,7 +141,7 @@ fn flush(
     writer: *BlockWriter,
     tableHeader: *TableHeader,
 ) !void {
-    const items = self.block.data.items;
+    const items = self.block.items.items;
     if (items.len == 0) {
         return;
     }
@@ -137,31 +150,32 @@ fn flush(
     self.lastItem = items[items.len - 1];
     try self.mergeTagsRecords(alloc);
 
-    if (self.block.data.items.len == 0) {
+    if (self.block.items.items.len == 0) {
         // nothing to flush
         return;
     }
 
-    const blockLastItem = self.block.data.items[self.block.data.items.len - 1];
+    const blockLastItem = self.block.items.items[self.block.items.items.len - 1];
 
     // TODO: move this validation to tests and test the block is sorted
-    std.debug.assert(std.mem.order(u8, self.block.data.items[0], self.firstItem) != .lt);
+    std.debug.assert(std.mem.order(u8, self.block.items.items[0], self.firstItem) != .lt);
     std.debug.assert(std.mem.order(u8, blockLastItem, self.lastItem) != .gt);
     if (builtin.is_test) {
-        std.debug.assert(std.sort.isSorted([]const u8, self.block.data.items, {}, MemOrder(u8).lessThanConst));
+        std.debug.assert(std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst));
     }
 
-    tableHeader.itemsCount += self.block.data.items.len;
+    tableHeader.itemsCount += self.block.items.items.len;
     if (tableHeader.firstItem.len == 0) {
-        tableHeader.firstItem = self.block.data.items[0];
+        tableHeader.firstItem = self.block.items.items[0];
     }
     tableHeader.lastItem = blockLastItem;
     try writer.writeBlock(alloc, self.block);
+    tableHeader.blocksCount += 1;
     self.block.reset();
 }
 
 fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
-    const items = self.block.data.items;
+    const items = self.block.items.items;
 
     if (items.len <= 2) {
         return;
@@ -184,15 +198,15 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     defer blockCopy.deinit(alloc);
     blockCopy.appendSliceAssumeCapacity(items);
     // can start mutating the original array after copying
-    self.block.data.clearRetainingCapacity();
+    self.block.items.clearRetainingCapacity();
+
     // TODO: tune the capacity to more practical amount
-    if (self.block.stateBuffer == null) {
-        self.block.stateBuffer = try .initCapacity(alloc, 2048);
+    if (self.block.buf.capacity == 0) {
+        try self.block.buf.ensureUnusedCapacity(alloc, 2048);
     } else {
-        // TODO: validate whether its possible
-        self.block.stateBuffer.?.clearRetainingCapacity();
+        self.block.buf.clearRetainingCapacity();
     }
-    const stateBuf = &self.block.stateBuffer.?;
+    const stateBuf = &self.block.buf;
 
     var tagRecordsMerger = try TagRecordsMerger.init(alloc);
     defer tagRecordsMerger.deinit(alloc);
@@ -200,45 +214,43 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     // use block copy because we override block itself from the beginning
     for (0..blockCopy.items.len) |i| {
         if (items[i].len == 0 or items[i][0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == items.len - 1) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.data);
-            try self.block.data.append(alloc, items[i]);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
+            try self.block.items.append(alloc, items[i]);
             continue;
         }
 
         try tagRecordsMerger.state.setup(items[i]);
         if (tagRecordsMerger.state.streamsLen() > maxStreamsPerRecord) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.data);
-            try self.block.data.append(alloc, items[i]);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
+            try self.block.items.append(alloc, items[i]);
             continue;
         }
 
         if (!tagRecordsMerger.statesPrefixEqual()) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.data);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
         }
 
         try tagRecordsMerger.state.parseStreamIDs(alloc);
         try tagRecordsMerger.moveParsedState(alloc);
 
         if (tagRecordsMerger.streamIDs.items.len >= maxStreamsPerRecord) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.data);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
         }
     }
 
     std.debug.assert(tagRecordsMerger.streamIDs.items.len == 0);
-    const isSorted = std.sort.isSorted([]const u8, self.block.data.items, {}, MemOrder(u8).lessThanConst);
+    const isSorted = std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst);
     if (!isSorted) {
         // defend against parallel writing leaving the state unmerged,
         // fallback to the original data
-        self.block.stateBuffer.?.clearRetainingCapacity();
-        self.block.data.clearRetainingCapacity();
-        try self.block.data.ensureUnusedCapacity(alloc, blockCopy.items.len);
-        self.block.data.appendSliceAssumeCapacity(blockCopy.items);
+        self.block.buf.clearRetainingCapacity();
+        self.block.items.clearRetainingCapacity();
+        try self.block.items.ensureUnusedCapacity(alloc, blockCopy.items.len);
+        self.block.items.appendSliceAssumeCapacity(blockCopy.items);
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 const testing = std.testing;
 const SID = @import("../lines.zig").SID;
@@ -304,35 +316,6 @@ fn createTestEntries(alloc: Allocator, count: usize, size: usize) ![][]const u8 
     return entries.toOwnedSlice(alloc);
 }
 
-fn createTagRecord(
-    alloc: Allocator,
-    tenantID: []const u8,
-    tag: Field,
-    streamIDs: []const u128,
-) ![]const u8 {
-    const bufSize = 1 + 16 + tag.encodeIndexTagBound() + (streamIDs.len * @sizeOf(u128));
-    const buf = try alloc.alloc(u8, bufSize);
-
-    buf[0] = @intFromEnum(IndexKind.tagToSids);
-
-    // Write padded tenantID
-    var enc = Encoder.init(buf[1..]);
-    enc.writePadded(tenantID, 16);
-
-    // Encode tag
-    const tagOffset = tag.encodeIndexTag(buf[17..]);
-
-    // Write streamIDs
-    var offset = 17 + tagOffset;
-    for (streamIDs) |streamID| {
-        var streamEnc = Encoder.init(buf[offset..]);
-        streamEnc.writeInt(u128, streamID);
-        offset += 16;
-    }
-
-    return buf[0..offset];
-}
-
 fn createSidEntry(alloc: Allocator, tenantID: []const u8, streamID: u128) ![]const u8 {
     const buf = try alloc.alloc(u8, 1 + SID.encodeBound);
     buf[0] = @intFromEnum(IndexKind.sid);
@@ -344,47 +327,35 @@ fn createSidEntry(alloc: Allocator, tenantID: []const u8, streamID: u128) ![]con
     return buf;
 }
 
-test "BlockMerger.merge basic scenarios" {
+test "BlockMerger.mergeBasicScenarios" {
     const alloc = testing.allocator;
     const maxIndexBlockSize = 1024;
 
     const Case = struct {
         blocks: []const []const []const u8,
-        expectedItemsCount: u64,
-        expectedFirstItem: ?[]const u8,
-        expectedLastItem: ?[]const u8,
+        expectedTableHeader: TableHeader,
     };
 
     const cases = [_]Case{
         .{
             .blocks = &.{},
-            .expectedItemsCount = 0,
-            .expectedFirstItem = null,
-            .expectedLastItem = null,
+            .expectedTableHeader = .{ .itemsCount = 0 },
         },
         .{
             .blocks = &.{&.{ "a", "b", "c" }},
-            .expectedItemsCount = 3,
-            .expectedFirstItem = "a",
-            .expectedLastItem = "c",
+            .expectedTableHeader = .{ .itemsCount = 3, .blocksCount = 1, .firstItem = "a", .lastItem = "c" },
         },
         .{
             .blocks = &.{ &.{ "a", "d", "g" }, &.{ "b", "e", "h" }, &.{ "c", "f", "i" } },
-            .expectedItemsCount = 9,
-            .expectedFirstItem = "a",
-            .expectedLastItem = "i",
+            .expectedTableHeader = .{ .itemsCount = 9, .blocksCount = 1, .firstItem = "a", .lastItem = "i" },
         },
         .{
             .blocks = &.{ &.{ "a", "b", "c" }, &.{ "x", "y", "z" } },
-            .expectedItemsCount = 6,
-            .expectedFirstItem = "a",
-            .expectedLastItem = "z",
+            .expectedTableHeader = .{ .itemsCount = 6, .blocksCount = 1, .firstItem = "a", .lastItem = "z" },
         },
         .{
             .blocks = &.{ &.{ "a", "b", "c" }, &.{ "b", "c", "d" } },
-            .expectedItemsCount = 6,
-            .expectedFirstItem = "a",
-            .expectedLastItem = "d",
+            .expectedTableHeader = .{ .itemsCount = 6, .blocksCount = 1, .firstItem = "a", .lastItem = "d" },
         },
     };
 
@@ -403,15 +374,7 @@ test "BlockMerger.merge basic scenarios" {
 
         const tableHeader = try merger.merge(alloc, &writer, null);
 
-        try testing.expectEqual(case.expectedItemsCount, tableHeader.itemsCount);
-
-        if (case.expectedFirstItem) |expected| {
-            try testing.expectEqualStrings(expected, tableHeader.firstItem);
-        }
-
-        if (case.expectedLastItem) |expected| {
-            try testing.expectEqualStrings(expected, tableHeader.lastItem);
-        }
+        try testing.expectEqual(case.expectedTableHeader, tableHeader);
     }
 }
 
@@ -434,14 +397,7 @@ test "BlockMerger.merge block overflow" {
             .expectedItemsCount = 6,
         },
         .{
-            // Case 2: 2 entries of 2000 bytes each - entries too large to fit in 1024 byte block
-            // Each reader gets 1 entry, but entries exceed block size limit, so all are dropped
-            .entryCount = 2,
-            .entrySize = 2000,
-            .expectedItemsCount = 0,
-        },
-        .{
-            // Case 3: 20 entries of 200 bytes each
+            // Case 2: 20 entries of 200 bytes each
             // Split into 2 readers with 10 entries each, but each block can only hold 5 entries (1000 bytes)
             // Result: 5 entries from first reader + 5 from second = 10 total
             .entryCount = 20,
@@ -482,6 +438,52 @@ test "BlockMerger.merge block overflow" {
     }
 }
 
+test "BlockMerger.merge oversized entries" {
+    const alloc = testing.allocator;
+    const maxIndexBlockSize = 1024;
+
+    const OversizedCase = struct {
+        index: usize,
+        size: usize,
+    };
+    const entriesSpec = [_]OversizedCase{
+        .{ .index = 0, .size = 200 },
+        .{ .index = 1, .size = 2000 },
+        .{ .index = 2, .size = 200 },
+        .{ .index = 3, .size = 2000 },
+    };
+    var mixedEntries = try std.ArrayList([]const u8).initCapacity(alloc, entriesSpec.len);
+    defer {
+        for (mixedEntries.items) |entry| alloc.free(entry);
+        mixedEntries.deinit(alloc);
+    }
+    for (entriesSpec) |spec| {
+        const entry = try std.fmt.allocPrint(alloc, "entry_{d:0>[1]}", .{ spec.index, spec.size - 7 });
+        mixedEntries.appendAssumeCapacity(entry);
+    }
+
+    const mid = mixedEntries.items.len / 2;
+    const mixedBlocks = [_][]const []const u8{
+        mixedEntries.items[0..mid],
+        mixedEntries.items[mid..],
+    };
+
+    var readers = try createTestReaders(alloc, &mixedBlocks, maxIndexBlockSize);
+    defer cleanupReaders(alloc, &readers);
+
+    var memTable = try createTestMemTable(alloc);
+    defer memTable.deinit(alloc);
+
+    var writer = BlockWriter.initFromMemTable(memTable);
+    defer writer.deinit(alloc);
+
+    var merger = try BlockMerger.init(alloc, &readers);
+    defer merger.deinit(alloc);
+
+    const tableHeader = try merger.merge(alloc, &writer, null);
+    try testing.expectEqual(@as(u64, 2), tableHeader.itemsCount);
+}
+
 test "BlockMerger.merge tag records" {
     const alloc = testing.allocator;
     const maxIndexBlockSize = 1024;
@@ -503,7 +505,8 @@ test "BlockMerger.merge tag records" {
                         for (entries.items) |entry| a.free(entry);
                         entries.deinit(a);
                     }
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, &[_]u128{ 100, 200 }));
+                    const entry = try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{ 100, 200 });
+                    entries.appendAssumeCapacity(entry);
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -520,9 +523,9 @@ test "BlockMerger.merge tag records" {
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant0", 50));
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant0a", 60));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, &[_]u128{100}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, &[_]u128{200}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant2", t, &[_]u128{300}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{100}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{200}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant2", t, &[_]u128{300}));
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -539,9 +542,9 @@ test "BlockMerger.merge tag records" {
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant0", 50));
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant0a", 60));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, &[_]u128{100}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant2", t, &[_]u128{200}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant3", t, &[_]u128{300}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{100}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant2", t, &[_]u128{200}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant3", t, &[_]u128{300}));
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -557,7 +560,7 @@ test "BlockMerger.merge tag records" {
                         entries.deinit(a);
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant1", 100));
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, &[_]u128{100}));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{100}));
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -586,11 +589,11 @@ test "BlockMerger.merge tag records" {
                         streamIDs1.appendAssumeCapacity(10);
                     }
                     streamIDs1.appendAssumeCapacity(50);
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, streamIDs1.items));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, streamIDs1.items));
                     // Second record with streamIDs: [100, 400]
                     // Would come after deduplicated first record [100, 500]
                     // but 500 > 400, making merged output unsorted
-                    entries.appendAssumeCapacity(try createTagRecord(a, "tenant1", t, &[_]u128{ 10, 40 }));
+                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{ 10, 40 }));
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant2", 60));
                     return entries.toOwnedSlice(a);
                 }

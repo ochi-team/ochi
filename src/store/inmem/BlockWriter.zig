@@ -1,3 +1,5 @@
+/// Block writer is created once per ingestion request cycle,
+/// it expects sorted chunks of data broken by streams (stream id + tenant)
 const std = @import("std");
 
 const Line = @import("../lines.zig").Line;
@@ -85,6 +87,9 @@ fn writeBlock(
     sid: SID,
     streamWriter: *StreamWriter,
 ) !void {
+    // TODO: assert incoming sid is growing,
+    // because it expects the caller passes blocks ordered by sid,
+    // assert in builting.is_test
     if (block.len() == 0) {
         return;
     }

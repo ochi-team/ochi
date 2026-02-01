@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const builtin = @import("builtin");
 
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
@@ -8,6 +9,11 @@ const Decoder = encoding.Decoder;
 pub const EncodingType = enum(u8) {
     plain = 0,
     zstd = 1,
+};
+
+pub const DecodedBlockHeader = struct {
+    blockHeader: BlockHeader,
+    offset: usize,
 };
 
 const BlockHeader = @This();
@@ -53,7 +59,7 @@ pub fn encodeAlloc(self: *const BlockHeader, alloc: Allocator) ![]u8 {
     return buf;
 }
 
-pub fn decode(buf: []const u8) BlockHeader {
+pub fn decode(buf: []const u8) DecodedBlockHeader {
     var dec = Decoder.init(buf);
 
     const firstItem = dec.readString();
@@ -65,16 +71,42 @@ pub fn decode(buf: []const u8) BlockHeader {
     const itemsBlockSize = dec.readInt(u32);
     const lensBlockSize = dec.readInt(u32);
 
-    return BlockHeader{
-        .firstItem = firstItem,
-        .prefix = prefix,
-        .encodingType = encodingType,
-        .itemsCount = itemsCount,
-        .itemsBlockOffset = itemsBlockOffset,
-        .lensBlockOffset = lensBlockOffset,
-        .itemsBlockSize = itemsBlockSize,
-        .lensBlockSize = lensBlockSize,
+    return .{
+        .blockHeader = .{
+            .firstItem = firstItem,
+            .prefix = prefix,
+            .encodingType = encodingType,
+            .itemsCount = itemsCount,
+            .itemsBlockOffset = itemsBlockOffset,
+            .lensBlockOffset = lensBlockOffset,
+            .itemsBlockSize = itemsBlockSize,
+            .lensBlockSize = lensBlockSize,
+        },
+        .offset = dec.offset,
     };
+}
+
+pub fn decodeMany(alloc: Allocator, buf: []const u8, count: usize) ![]BlockHeader {
+    std.debug.assert(count > 0);
+    const headers = try alloc.alloc(BlockHeader, count);
+
+    var offset: usize = 0;
+    for (headers) |*header| {
+        const decoded = decode(buf[offset..]);
+        offset += decoded.offset;
+        header.* = decoded.blockHeader;
+    }
+
+    if (builtin.is_test) {
+        const ok = std.sort.isSorted(BlockHeader, headers, {}, blockHeaderLessThan);
+        std.debug.assert(ok);
+    }
+
+    return headers;
+}
+
+pub fn blockHeaderLessThan(_: void, a: BlockHeader, b: BlockHeader) bool {
+    return std.mem.lessThan(u8, a.firstItem, b.firstItem);
 }
 
 test "BlockHeader encode/decode" {
@@ -147,6 +179,63 @@ test "BlockHeader encode/decode" {
         case.bh.encode(buf);
         const decoded = BlockHeader.decode(buf);
 
-        try std.testing.expectEqualDeep(case.bh, decoded);
+        try std.testing.expectEqualDeep(case.bh, decoded.blockHeader);
+    }
+}
+
+test "BlockHeader decodeMany" {
+    const allocator = std.testing.allocator;
+
+    const headers = [_]BlockHeader{
+        .{
+            .firstItem = "aaa",
+            .prefix = "a",
+            .encodingType = .plain,
+            .itemsCount = 10,
+            .itemsBlockOffset = 0,
+            .lensBlockOffset = 100,
+            .itemsBlockSize = 50,
+            .lensBlockSize = 25,
+        },
+        .{
+            .firstItem = "bbb",
+            .prefix = "b",
+            .encodingType = .zstd,
+            .itemsCount = 20,
+            .itemsBlockOffset = 200,
+            .lensBlockOffset = 300,
+            .itemsBlockSize = 75,
+            .lensBlockSize = 40,
+        },
+        .{
+            .firstItem = "ccc",
+            .prefix = "c",
+            .encodingType = .plain,
+            .itemsCount = 30,
+            .itemsBlockOffset = 400,
+            .lensBlockOffset = 500,
+            .itemsBlockSize = 100,
+            .lensBlockSize = 60,
+        },
+    };
+
+    var totalSize: usize = 0;
+    for (&headers) |*h| totalSize += h.bound();
+
+    const buf = try allocator.alloc(u8, totalSize);
+    defer allocator.free(buf);
+
+    var offset: usize = 0;
+    for (&headers) |*h| {
+        h.encode(buf[offset..]);
+        offset += h.bound();
+    }
+
+    const decoded = try decodeMany(allocator, buf, headers.len);
+    defer allocator.free(decoded);
+
+    try std.testing.expectEqual(headers.len, decoded.len);
+    for (headers, decoded) |expected, actual| {
+        try std.testing.expectEqualDeep(expected, actual);
     }
 }
