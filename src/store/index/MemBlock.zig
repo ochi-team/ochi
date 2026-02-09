@@ -9,6 +9,9 @@ const Encoder = encoding.Encoder;
 const StorageBlock = @import("StorageBlock.zig");
 const EncodingType = @import("BlockHeader.zig").EncodingType;
 
+// TODO: tune the value
+const maxPlainMemBlockLen = 64;
+
 const EncodedMemBlock = struct {
     firstItem: []const u8,
     prefix: []const u8,
@@ -140,7 +143,7 @@ pub fn encode(
     const firstItem = self.items.items[0];
 
     // TODO: consider making len limit 128
-    if (self.size - self.prefix.len * self.items.items.len < 64 or self.items.items.len < 2) {
+    if (self.size - self.prefix.len * self.items.items.len < maxPlainMemBlockLen or self.items.items.len < 2) {
         try self.encodePlain(alloc, sb);
         return EncodedMemBlock{
             .firstItem = firstItem,

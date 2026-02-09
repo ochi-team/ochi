@@ -12,7 +12,7 @@ const EntriesShard = struct {
     blocks: std.ArrayList(*MemBlock),
     flushAtUs: i64,
 
-    // TODO: init blocks with maxBlocks capacity
+    // TODO: init EntriesShard and its blocks with maxBlocks capacity
 
     pub fn add(
         self: *EntriesShard,
@@ -110,7 +110,7 @@ const testing = std.testing;
 
 test "Entries.shardIdxOverflow" {
     const alloc = testing.allocator;
-    _ = Conf.default();
+    _ = try Conf.default();
 
     const e = try Entries.init(alloc);
     defer e.deinit(alloc);

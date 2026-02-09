@@ -300,7 +300,7 @@ fn filterToMerge(alloc: std.mem.Allocator, tables: []*TableMem) !?[]*TableMem {
 }
 
 test "dataWorker" {
-    _ = Conf.default();
+    _ = try Conf.default();
 
     const alloc = std.testing.allocator;
     var d = try Data.init(alloc, alloc);

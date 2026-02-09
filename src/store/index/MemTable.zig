@@ -19,9 +19,11 @@ const flush = @import("flush/flush.zig");
 blockHeader: BlockHeader,
 tableHeader: TableHeader,
 metaIndex: MetaIndex,
+
 dataBuf: std.ArrayList(u8) = .empty,
 lensBuf: std.ArrayList(u8) = .empty,
 indexBuf: std.ArrayList(u8) = .empty,
+
 metaindexBuf: std.ArrayList(u8) = .empty,
 
 flushAtUs: ?i64 = null,
@@ -64,7 +66,7 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     return t;
 }
 
-pub fn mergeTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
+pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     errdefer {
         for (readers.items) |r| r.deinit(alloc);

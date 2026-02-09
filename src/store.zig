@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Data = @import("data.zig").Data;
 const Index = @import("store/index/Index.zig");
-const IndexTable = @import("store/index/IndexTable.zig");
+const IndexRecorder = @import("store/index/IndexRecorder.zig");
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
@@ -178,7 +178,7 @@ pub const Store = struct {
     }
 
     fn openPartition(self: *Store, allocator: std.mem.Allocator, path: []const u8, day: u64) !*Partition {
-        const indexTable = try IndexTable.init(allocator);
+        const indexTable = try IndexRecorder.init(allocator, "");
         const index = try Index.init(allocator, indexTable);
 
         const data = try Data.init(allocator, self.backgroundAllocator);

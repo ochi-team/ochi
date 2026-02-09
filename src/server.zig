@@ -75,16 +75,17 @@ test {
 test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
 
+    const conf = try Conf.default();
     // Start the server in a separate thread
     const ServerThread = struct {
-        fn run() void {
-            startServer(allocator, allocator, Conf.default()) catch |err| {
+        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
+            startServer(threadAllocator, threadAllocator, threadConf) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }
     };
 
-    const thread = try std.Thread.spawn(.{}, ServerThread.run, .{});
+    const thread = try std.Thread.spawn(.{}, ServerThread.run, .{ allocator, conf });
 
     // Give the server time to start
     std.Thread.sleep(100 * std.time.ns_per_ms);

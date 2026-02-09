@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Ymlz = @import("ymlz").Ymlz;
 
 fn calculatePools() PoolsConfig {
@@ -38,16 +39,62 @@ pub const PoolsConfig = struct {
     cpus: u16,
 };
 
+pub const Sys = struct {
+    maxMem: u64,
+    maxCachePortion: f64 = 0.5,
+    cacheSize: u64,
+};
+
 var conf: Conf = undefined;
 pub fn getConf() Conf {
     return conf;
 }
 
+// server config
 server: ServerConfig,
 
+// app config, defines application level settings
 app: AppConfig,
 
+// system config, defines system resources
+sys: Sys,
+
 const Conf = @This();
+
+fn makeSys() !Sys {
+    switch (builtin.os.tag) {
+        .macos => {
+            var memsize: u64 = 0;
+            var len: usize = @sizeOf(u64);
+            try std.posix.sysctlbynameZ("hw.memsize", &memsize, &len, null, 0);
+
+            var sys = Sys{
+                .maxMem = memsize,
+                .cacheSize = 0,
+            };
+            const maxMemF: f64 = @floatFromInt(sys.maxMem);
+            sys.cacheSize = @intFromFloat(maxMemF * sys.maxCachePortion);
+            return sys;
+        },
+        .linux => {
+            var info: std.os.linux.Sysinfo = undefined;
+            const result: usize = std.os.linux.sysinfo(&info);
+            if (std.os.linux.E.init(result) != .SUCCESS) {
+                return error.UnknownTotalSystemMemory;
+            }
+
+            const maxMem: u64 = @as(u64, info.totalram) * info.mem_unit;
+            var sys = Sys{
+                .maxMem = maxMem,
+                .cacheSize = 0,
+            };
+            const maxMemF: f64 = @floatFromInt(sys.maxMem);
+            sys.cacheSize = @intFromFloat(maxMemF * sys.maxCachePortion);
+            return sys;
+        },
+        else => return error.UnsupportedOS,
+    }
+}
 
 // TODO: thiis is currently the only way to setup the cofnig,
 // ideal solution would be:
@@ -55,15 +102,19 @@ const Conf = @This();
 // 2. easy override per test, so another runnig parallel test doesn't impact it
 // probably the config gonna be define per package here and the package intry point accepts it,
 // which further distributes its values to the dependencies
-pub fn default() Conf {
+pub fn default() !Conf {
     const pools = calculatePools();
+    const sys = try makeSys();
     conf = Conf{
         .server = .{
             .port = 9012,
             .pools = pools,
         },
         .app = .{},
+        .sys = sys,
     };
+
+    std.debug.assert(conf.app.flushIntervalUs >= std.time.us_per_s);
     return conf;
 }
 
@@ -86,6 +137,7 @@ pub fn init(allocator: std.mem.Allocator, path: []const u8) !Conf {
     conf = Conf{
         .server = result.server,
         .app = result.app,
+        .sys = result.sys,
     };
     return conf;
 }

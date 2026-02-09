@@ -39,6 +39,13 @@ pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
     };
 }
 
+pub fn initFromDiskTable(path: []const u8, toCache: bool) BlockWriter {
+    // TODO: not implemented
+    _ = path;
+    _ = toCache;
+    unreachable;
+}
+
 pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
     self.sb.deinit(alloc);
     self.uncompressedIndexBlockBuf.deinit(alloc);
