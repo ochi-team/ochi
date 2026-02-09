@@ -174,7 +174,7 @@ pub fn mergeBlocks(
     if (tablePath.len != 0) {
         var fbaFallback = std.heap.stackFallback(512, alloc);
         const fba = fbaFallback.get();
-        try self.tableHeader.writeMeta(fba, tablePath);
+        try self.tableHeader.writeFile(fba, tablePath);
     }
 }
 

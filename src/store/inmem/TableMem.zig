@@ -10,7 +10,7 @@ const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("StreamWriter.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
-const Filenames = @import("Filenames.zig");
+const Filenames = @import("../../Filenames.zig");
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better
@@ -173,7 +173,7 @@ pub fn flushToDisk(self: *Self, alloc: std.mem.Allocator, path: []const u8) !voi
     defer allocator.free(valuesPath);
     try fs.writeBufferValToFile(valuesPath, self.streamWriter.bloomValuesList.items[0].items);
 
-    try self.tableHeader.flushMetadata(allocator, path, Filenames.metadata);
+    try self.tableHeader.flushMetadata(allocator, path, Filenames.header);
 
     fs.syncPathAndParentDir(path);
 }
@@ -376,7 +376,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     defer allocator.free(bloomTokensPath);
     const bloomValuesPath = try getFilePathSharded(allocator, flushPath, Filenames.bloom, 0);
     defer allocator.free(bloomValuesPath);
-    const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.metadata });
+    const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.header });
     defer allocator.free(metadataPath);
 
     const columnNamesContent = try readFileAll(allocator, columnNamesPath);

@@ -12,11 +12,14 @@ pub const bloom = "bloom.bin";
 pub const messageValues = "message_values.bin";
 pub const messageBloom = "message_bloom.bin";
 
-pub const metadata = "metadata.json";
-pub const parts = "parts.json";
+pub const lens = "lens.bin";
+pub const entries = "entries.bin";
+
+pub const header = "header.json";
+pub const tables = "tables.json";
 pub const deleteTasks = "delete_tasks.json";
 
-pub const indexdb = "indexdb";
-pub const datadb = "datadb";
+pub const tableIndex = "index";
+pub const tableData = "data";
 pub const partitions = "partitions";
 pub const snapshots = "snapshots";
