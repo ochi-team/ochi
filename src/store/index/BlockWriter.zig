@@ -3,6 +3,9 @@ const Allocator = std.mem.Allocator;
 
 const encoding = @import("encoding");
 
+const fs = @import("../../fs.zig");
+const Filenames = @import("../../Filenames.zig");
+
 const BlockHeader = @import("BlockHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const StorageBlock = @import("StorageBlock.zig");
@@ -39,10 +42,25 @@ pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
     };
 }
 
-pub fn initFromDiskTable(path: []const u8, toCache: bool) BlockWriter {
-    // TODO: not implemented
-    _ = path;
-    _ = toCache;
+pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitsInCache: bool) !BlockWriter {
+    // TODO: apply fitsInCache to create a component to write into a file taking OS cache into account
+    _ = fitsInCache;
+
+    fs.makeDirAssert(path);
+
+    var fba = std.heap.stackFallback(512, alloc);
+    const fbaAlloc = fba.get();
+
+    // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
+    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.index });
+    defer fbaAlloc.free(indexPath);
+    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.entries });
+    defer fbaAlloc.free(entriesPath);
+    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.lens });
+    defer fbaAlloc.free(lensPath);
+    const metaIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
+    defer fbaAlloc.free(metaIndexPath);
+
     unreachable;
 }
 

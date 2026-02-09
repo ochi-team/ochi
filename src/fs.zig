@@ -22,6 +22,14 @@ fn syncPath(path: []const u8) void {
     };
 }
 
+pub fn makeDirAssert(path: []const u8) void {
+    const e = std.fs.accessAbsolute(path, .{});
+    std.debug.assert(e == error.FileNotFound);
+    std.fs.makeDirAbsolute(path) catch |err| {
+        std.debug.panic("failed to make dir {s}: {s}", .{ path, @errorName(err) });
+    };
+}
+
 pub fn writeBufferValToFile(
     path: []const u8,
     buffer_val: []const u8,

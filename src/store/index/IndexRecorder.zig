@@ -287,8 +287,8 @@ pub fn mergeTables(
         for (tables) |table| {
             sourceItemsCount += table.tableHeader.itemsCount;
         }
-        const toCache = sourceItemsCount <= maxItemsPerCachedTable();
-        blockWriter = BlockWriter.initFromDiskTable(destinationTablePath, toCache);
+        const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable();
+        blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
     }
 
     // try newMemTable.?.mergeBlocks(alloc, destinationTablePath, &blockWriter, &readers, &self.stopped);
