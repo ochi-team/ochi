@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const fs = @import("../../fs.zig");
+
 const Entries = @import("Entries.zig");
 const MemBlock = @import("MemBlock.zig");
 const Table = @import("Table.zig");
@@ -229,7 +231,7 @@ fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
         }
 
         // TODO: make sure error.Stopped is handled on the upper level
-        try self.mergeTables(alloc, self.memTables.items, false);
+        try self.mergeTables(alloc, self.memTables.items, false, &self.stopped);
     }
 }
 
@@ -242,6 +244,7 @@ pub fn mergeTables(
     alloc: Allocator,
     tables: []*Table,
     force: bool,
+    stopped: ?*const std.atomic.Value(bool),
 ) !void {
     const tableKind = getDestinationTableKind(tables, force);
     var fba = std.heap.stackFallback(64, alloc);
@@ -291,17 +294,24 @@ pub fn mergeTables(
         blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
     }
 
-    // try newMemTable.?.mergeBlocks(alloc, destinationTablePath, &blockWriter, &readers, &self.stopped);
-    // if (newMemTable) |memTable| {
-    //     _ = memTable;
-    //     newMemTable = try MemTable.empty(alloc);
-    // }
-    //
-    // const newTable = openCreatedTable(destinationTablePath, self.memTables.items, newMemTable.?);
+    const tableHeader = try MemTable.mergeBlocks(
+        alloc,
+        destinationTablePath,
+        &blockWriter,
+        &readers,
+        stopped,
+    );
+    if (newMemTable) |memTable| {
+        memTable.tableHeader = tableHeader;
+    } else {
+        fs.syncPathAndParentDir(destinationTablePath);
+    }
+
+    const openTable = try openCreatedTable(alloc, destinationTablePath, self.memTables.items, newMemTable.?);
+    _ = openTable;
     // try self.swapTables(alloc, newTable, tableKind);
 }
 
-// TODO: implement it, at the moment it does only mem tables merging
 fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
     if (force) return .file;
 
@@ -373,14 +383,19 @@ fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockRea
 }
 
 fn openCreatedTable(
+    alloc: Allocator,
     tablePath: []const u8,
-    memTables: []*MemTable,
-    newTable: *MemTable,
-) *MemTable {
-    const deadlineUs = flush.getFlushToDiskDeadline(memTables);
-    newTable.flushAtUs = deadlineUs;
-    _ = tablePath;
-    return newTable;
+    tables: []*Table,
+    maybeMemTable: ?*MemTable,
+) !*Table {
+    if (maybeMemTable) |memTable| {
+        // const flushToDiskDeadline = flush.getFlushToDiskDeadline(tables);
+        _ = tables;
+        return Table.fromMem(alloc, memTable);
+        // t.flushAtUs = flushToDiskDeadline;
+    }
+
+    return Table.open(alloc, tablePath);
 }
 
 fn swapTables(

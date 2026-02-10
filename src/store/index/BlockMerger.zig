@@ -74,7 +74,7 @@ pub fn merge(
     self: *BlockMerger,
     alloc: Allocator,
     writer: *BlockWriter,
-    stopped: ?*std.atomic.Value(bool),
+    stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
     var tableHeader = TableHeader{};
     while (true) {
