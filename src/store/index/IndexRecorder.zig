@@ -308,8 +308,7 @@ pub fn mergeTables(
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, self.memTables.items, newMemTable.?);
-    _ = openTable;
-    // try self.swapTables(alloc, newTable, tableKind);
+    try self.swapTables(alloc, tables, openTable, tableKind);
 }
 
 fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
@@ -389,10 +388,8 @@ fn openCreatedTable(
     maybeMemTable: ?*MemTable,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        // const flushToDiskDeadline = flush.getFlushToDiskDeadline(tables);
-        _ = tables;
+        memTable.flushAtUs = flush.getFlushToDiskDeadline(tables);
         return Table.fromMem(alloc, memTable);
-        // t.flushAtUs = flushToDiskDeadline;
     }
 
     return Table.open(alloc, tablePath);
@@ -401,12 +398,14 @@ fn openCreatedTable(
 fn swapTables(
     self: *IndexRecorder,
     alloc: Allocator,
-    newTable: *MemTable,
+    tables: []*Table,
+    newTable: *Table,
     tableKind: TableKind,
 ) !void {
     self.memTables.clearRetainingCapacity();
     try self.memTables.append(alloc, newTable);
     _ = tableKind;
+    _ = tables;
     // TODO: probably it's worth running startMemTablesMerge recurvisely here again,
     // I assume the loop keeps running and next iteration there is a single mem table,
     // so it must flush it to disk,
