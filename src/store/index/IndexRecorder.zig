@@ -16,7 +16,7 @@ const Conf = @import("../../Conf.zig");
 
 const TableKind = enum {
     mem,
-    file,
+    disk,
 };
 
 const maxBlocksPerShard = 256;
@@ -35,11 +35,17 @@ flushAtUs: ?i64 = null,
 blocksThresholdToFlush: u32,
 
 // config fields
+// TODO: make it as a config access instead of a field
 maxIndexBlockSize: u32,
 
 stopped: std.atomic.Value(bool) = .init(false),
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
+// TODO: find an optimal way to handle ingestion rate higher than merge rate
+// 1. throttle ingestion: sub optimal
+// 2. extend limit of inmemory tables
+// 3. find a way to make flushing / merging more optimal
+// 4. more aggresive memory merging
 memTablesSem: std.Thread.Semaphore = .{
     .permits = maxMemTables,
 },
@@ -222,7 +228,7 @@ fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) !void {
     return self.runMemTablesMerger(alloc);
 }
 
-fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
+fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) anyerror!void {
     while (true) {
         // TODO: implement disk space limit
 
@@ -233,6 +239,13 @@ fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
         // TODO: make sure error.Stopped is handled on the upper level
         try self.mergeTables(alloc, self.memTables.items, false, &self.stopped);
     }
+}
+
+fn runDiskTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
+    _ = self;
+    _ = alloc;
+    unreachable;
+    // FIXME: pls
 }
 
 fn invalidateStreamFilterCache(self: *IndexRecorder) void {
@@ -254,7 +267,7 @@ pub fn mergeTables(
     // we can't bitcast it to [8]u8 because we need human readlable file names
     var destinationTablePath: []u8 = "";
     defer if (destinationTablePath.len > 0) fbaAlloc.free(destinationTablePath);
-    if (tableKind == .file) {
+    if (tableKind == .disk) {
         destinationTablePath = try fbaAlloc.alloc(u8, self.path.len + 1 + 16);
         const idx = self.nextMergeIdx();
         _ = try std.fmt.bufPrint(
@@ -312,11 +325,11 @@ pub fn mergeTables(
 }
 
 fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
-    if (force) return .file;
+    if (force) return .disk;
 
     const size = getTablesSize(tables);
-    if (size > getMaxInmemoryTableSize()) return .file;
-    if (!areTablesMem(tables)) return .file;
+    if (size > getMaxInmemoryTableSize()) return .disk;
+    if (!areTablesMem(tables)) return .disk;
 
     return .mem;
 }

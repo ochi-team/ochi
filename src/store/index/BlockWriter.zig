@@ -21,6 +21,7 @@ const MemDestination = struct {
     metaindexBuf: *std.ArrayList(u8),
 };
 
+// TODO: refactor this garbage to work with Wrter interface 
 const DiskDestination = struct {
     entriesFile: std.fs.File,
     lensFile: std.fs.File,
