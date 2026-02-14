@@ -8,6 +8,8 @@ const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
 const DiskTable = @import("DiskTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
+const BlockWriter = @import("BlockWriter.zig");
+const MemBlock = @import("MemBlock.zig");
 
 const Table = @This();
 
@@ -33,7 +35,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // refCounter follows how many clients open a table,
 // first time it's open on start up,
 // then readers can retain it
-refCounter: std.atomic.Value(i32),
+refCounter: std.atomic.Value(u32),
 
 pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
     std.fs.makeDirAbsolute(path) catch |err| {
@@ -163,6 +165,10 @@ pub fn close(self: *Table, alloc: Allocator) void {
         disk.indexFile.close();
         disk.entriesFile.close();
         disk.lensFile.close();
+        disk.tableHeader.deinit(alloc);
+        for (disk.metaindexRecords) |*rec| rec.deinit(alloc);
+        if (disk.metaindexRecords.len > 0) alloc.free(disk.metaindexRecords);
+        alloc.destroy(disk);
     }
     alloc.destroy(self);
 }
@@ -262,21 +268,108 @@ pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) !void {
 }
 
 pub fn retain(self: *Table) void {
-    self.refCounter.fetchAdd(1, .acquire);
+    _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
 pub fn release(self: *Table, alloc: Allocator) void {
-    const v = self.refCounter.fetchAdd(-1, .acquire);
+    const prev = self.refCounter.fetchSub(1, .acq_rel);
+    std.debug.assert(prev > 0);
 
-    if (v > 0) return;
-    std.debug.assert(v == 0);
+    if (prev != 1) return;
+
+    const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
+    const pathCopy = if (shouldRemove) alloc.dupe(u8, self.path) catch |err| {
+        std.debug.panic("failed to copy table path '{s}': {s}", .{ self.path, @errorName(err) });
+    } else null;
+    defer if (pathCopy) |p| alloc.free(p);
 
     self.close(alloc);
-    if (self.disk) |_| {
-        if (self.toRemove.load(.acquire)) {
-            std.fs.deleteDirAbsolute(self.path) catch |err| {
-                std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
-            };
-        }
+    if (pathCopy) |p| {
+        std.fs.deleteTreeAbsolute(p) catch |err| {
+            std.debug.panic("failed to delete table '{s}': {s}", .{ p, @errorName(err) });
+        };
     }
+}
+
+const testing = std.testing;
+
+fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
+    var total: u32 = 0;
+    for (items) |item| total += @intCast(item.len);
+
+    var block = try MemBlock.init(alloc, total + 16);
+    errdefer block.deinit(alloc);
+    for (items) |item| {
+        const ok = block.add(item);
+        try testing.expect(ok);
+    }
+    block.sortData();
+    return block;
+}
+
+fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
+    const items = [_][]const u8{ "alpha", "beta", "omega" };
+    var block = try createTestMemBlock(alloc, &items);
+    defer block.deinit(alloc);
+
+    var writer = try BlockWriter.initFromDiskTable(alloc, tablePath, true);
+    defer writer.deinit(alloc);
+    try writer.writeBlock(alloc, block);
+    try writer.close(alloc);
+
+    var header = TableHeader{
+        .itemsCount = items.len,
+        .blocksCount = 1,
+        .firstItem = items[0],
+        .lastItem = items[items.len - 1],
+    };
+    try header.writeFile(alloc, tablePath);
+}
+
+test "release keeps table unless toRemove is set, then removes table dir" {
+    const alloc = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
+    defer alloc.free(tablePath);
+
+    try createTestTableDir(alloc, tablePath);
+
+    const table1 = try Table.open(alloc, tablePath);
+    table1.release(alloc);
+    try std.fs.accessAbsolute(tablePath, .{});
+
+    const table2 = try Table.open(alloc, tablePath);
+    table2.toRemove.store(true, .release);
+    table2.release(alloc);
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
+}
+
+test "release fromMem does not affect filesystem path" {
+    const alloc = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const missingPath = try std.fs.path.join(alloc, &.{ rootPath, "never-created" });
+    defer alloc.free(missingPath);
+
+    var memTable = try MemTable.empty(alloc);
+    defer memTable.deinit(alloc);
+
+    const table = try Table.fromMem(alloc, memTable);
+    // we expected only second release close cleans the table, otherwise it's a memory leak
+    table.retain();
+
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
+    table.release(alloc);
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
+    table.release(alloc);
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
 }
