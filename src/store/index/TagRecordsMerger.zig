@@ -10,7 +10,6 @@
 /// - Uses two TagRecordsParseState instances for comparing consecutive records
 /// - Output streamIDs are sorted and deduplicated
 /// - Caller must call writeState() before switching to a different prefix
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

@@ -8,6 +8,9 @@ const Decoder = encoding.Decoder;
 
 const Self = @This();
 
+// Maximum size for an index block (8MB)
+pub const maxIndexBlockSize: u64 = 8 * 1024 * 1024;
+
 sid: SID,
 minTs: u64,
 maxTs: u64,
@@ -29,7 +32,12 @@ pub fn init(allocator: std.mem.Allocator) !*Self {
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    self.deinitRead(allocator);
     allocator.destroy(self);
+}
+
+pub fn deinitRead(self: *Self, allocator: std.mem.Allocator) void {
+    self.sid.deinit(allocator);
 }
 
 pub fn writeIndexBlock(
@@ -74,7 +82,7 @@ pub fn encode(self: *const Self, buf: []u8) usize {
 pub fn decode(buf: []const u8) Self {
     var decoder = Decoder.init(buf);
     const sid = SID.decode(buf);
-    decoder.offset = 32; // SID is 32 bytes
+    decoder.offset += 32; // SID is 32 bytes
     const minTs = decoder.readInt(u64);
     const maxTs = decoder.readInt(u64);
     const offset = decoder.readInt(u64);
@@ -86,6 +94,70 @@ pub fn decode(buf: []const u8) Self {
         .offset = offset,
         .size = size,
     };
+}
+
+// TODO: unify the way how we use SID
+pub fn decodeAlloc(allocator: std.mem.Allocator, buf: []const u8) !Self {
+    var decoder = Decoder.init(buf);
+    const sid = try SID.decodeAlloc(allocator, buf);
+    decoder.offset += 32; // SID is 32 bytes
+    const minTs = decoder.readInt(u64);
+    const maxTs = decoder.readInt(u64);
+    const offset = decoder.readInt(u64);
+    const size = decoder.readInt(u64);
+    return .{
+        .sid = sid,
+        .minTs = minTs,
+        .maxTs = maxTs,
+        .offset = offset,
+        .size = size,
+    };
+}
+
+pub fn readIndexBlockHeaders(
+    allocator: std.mem.Allocator,
+    compressed: []const u8,
+) ![]Self {
+    const decompressedSize = try encoding.getFrameContentSize(compressed);
+
+    var decompressedBuf = try allocator.alloc(u8, decompressedSize);
+    defer allocator.free(decompressedBuf);
+
+    const n = try encoding.decompress(
+        decompressedBuf,
+        compressed,
+    );
+    const decompressed = decompressedBuf[0..n];
+
+    std.debug.assert(decompressed.len % encodeExpectedSize == 0);
+
+    const count = decompressed.len / encodeExpectedSize;
+
+    var dst = try allocator.alloc(Self, count);
+    var i: usize = 0;
+    errdefer {
+        for (dst[0..i]) |*reader| reader.deinitRead(allocator);
+        allocator.free(dst);
+    }
+
+    var off: usize = 0;
+    while (off < decompressed.len) : ({
+        off += encodeExpectedSize;
+        i += 1;
+    }) {
+        dst[i] = try decodeAlloc(allocator, decompressed[off .. off + encodeExpectedSize]);
+    }
+
+    validateIndexBlockHeaders(dst);
+
+    return dst;
+}
+
+// TODO: consider to move it under builtin.is_test condition
+fn validateIndexBlockHeaders(headers: []const Self) void {
+    for (1..headers.len) |i| {
+        std.debug.assert(!headers[i].sid.lessThan(&headers[i - 1].sid));
+    }
 }
 
 test "IndexBlockHeaderEncode" {

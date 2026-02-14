@@ -4,8 +4,14 @@ const Conf = @import("conf.zig");
 const Line = @import("store/lines.zig").Line;
 
 const TableMem = @import("store/inmem/TableMem.zig");
+const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 
 const maxLevelSize = 100 * 1024 * 1024 * 1024;
+
+const TableType = enum(u8) {
+    inmemory = 0,
+    disk = 1,
+};
 
 inline fn setFlushTime() i64 {
     // now + 1s
@@ -52,6 +58,7 @@ pub const DataShard = struct {
 pub const Data = struct {
     shards: []DataShard,
     nextShard: std.atomic.Value(usize),
+    mergeIdx: std.atomic.Value(usize),
 
     mx: std.Thread.Mutex,
     memTables: std.ArrayList(*TableMem),
@@ -61,7 +68,9 @@ pub const Data = struct {
     memTableSem: std.Thread.Semaphore,
     stopped: std.atomic.Value(bool),
 
-    pub fn init(allocator: std.mem.Allocator, workersAllocator: std.mem.Allocator) !*Data {
+    path: []const u8,
+
+    pub fn init(allocator: std.mem.Allocator, workersAllocator: std.mem.Allocator, path: []const u8) !*Data {
         const conf = Conf.getConf().server.pools;
         std.debug.assert(conf.cpus != 0);
         // 4 is a minimum amount for workers:
@@ -89,6 +98,7 @@ pub const Data = struct {
         self.* = Data{
             .shards = shards,
             .nextShard = std.atomic.Value(usize).init(0),
+            .mergeIdx = std.atomic.Value(usize).init(0),
 
             .mx = .{},
             .memTables = std.ArrayList(*TableMem).empty,
@@ -97,6 +107,7 @@ pub const Data = struct {
             .wg = wg,
             .memTableSem = .{ .permits = conf.cpus },
             .stopped = std.atomic.Value(bool).init(false),
+            .path = path,
         };
 
         // the allocator is different from http life cycle,
@@ -245,11 +256,86 @@ pub const Data = struct {
         }
     }
 
-    fn mergeTables(self: *Data, alloc: std.mem.Allocator, tables: []*TableMem, force: bool) void {
+    fn getDstTableType(self: *Data, allocator: std.mem.Allocator) TableType {
         _ = self;
-        _ = alloc;
-        _ = tables;
-        _ = force;
+        _ = allocator;
+
+        // TODO: implement a decision strategy
+        return TableType.inmemory;
+    }
+
+    fn getDstTablePath(self: *Data, allocator: std.mem.Allocator, dstTableType: TableType) ![]const u8 {
+        // In-memory tables do not have a destination path.
+        if (dstTableType == .inmemory) {
+            return "";
+        }
+
+        // For file-backed tables, allocate exact buffer and format the path into it.
+        const buf_len = self.path.len + 1 + 16; // "{path}/{mergeIdx_as_16_hex}"
+        const destinationTablePath = try allocator.alloc(u8, buf_len);
+        const mergeIdx = self.nextMergeIdx();
+        _ = try std.fmt.bufPrint(
+            destinationTablePath,
+            "{s}/{X:0>16}",
+            .{ self.path, mergeIdx },
+        );
+
+        return destinationTablePath;
+    }
+
+    fn nextMergeIdx(self: *Data) usize {
+        return self.mergeIdx.fetchAdd(1, .acq_rel);
+    }
+
+    fn timer() std.time.Timer {
+        return std.time.Timer.start() catch |err| std.debug.panic("failed to start timer: {s}", .{@errorName(err)});
+    }
+
+    // TODO: implement it
+    fn openBlockStreamReaders(allocator: std.mem.Allocator) ![]*BlockReader {
+        const readers = try allocator.alloc(*BlockReader, 1);
+        return readers;
+    }
+
+    fn mergeTables(self: *Data, alloc: std.mem.Allocator, tables: []*TableMem, force: bool) void {
+        if (tables.len == 0) {
+            return;
+        }
+
+        for (tables) |table| {
+            std.debug.assert(table.isInMerge);
+        }
+
+        defer {
+            self.mx.lock();
+            for (tables) |table| {
+                std.debug.assert(table.isInMerge);
+                table.isInMerge = false;
+            }
+            self.mx.unlock();
+        }
+
+        var t = timer();
+        const dstTableType = self.getDstTableType(alloc);
+        if (dstTableType != .inmemory) {
+            // TODO: do some disk reservations when disk type
+        }
+
+        switch (dstTableType) {
+            // TODO: track progress
+            .inmemory => {},
+            .disk => {},
+        }
+        const readers = openBlockStreamReaders(alloc) catch std.debug.panic("failed to open block readers", .{});
+        _ = readers;
+        const dstPathTable = self.getDstTablePath(alloc, dstTableType) catch std.debug.panic("path problem dstPathPart", .{});
+        defer if (dstTableType != .inmemory and dstPathTable.len > 0) alloc.free(dstPathTable);
+
+        if (force and tables.len == 1 and dstTableType != .inmemory) {
+            tables[0].flushToDisk(alloc, dstPathTable) catch std.debug.panic("failed to flush to disk path={s}", .{dstPathTable});
+        }
+
+        _ = t.lap();
     }
 
     // FIXME: allocator must be the same as in the background workers to have same source of ownership for mem tables
@@ -303,7 +389,8 @@ test "dataWorker" {
     _ = try Conf.default();
 
     const alloc = std.testing.allocator;
-    var d = try Data.init(alloc, alloc);
+
+    var d = try Data.init(alloc, alloc, "abc"[0..]);
     std.Thread.sleep(2 * std.time.ns_per_s);
     d.deinit(alloc);
 }

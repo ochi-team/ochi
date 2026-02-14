@@ -59,9 +59,10 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
 
     var streamI: usize = 0;
     var blockSize: u32 = 0;
-    var prevSID: SID = lines[0].sid;
 
     std.mem.sortUnstable(*const Line, lines, {}, lineLessThan);
+    var prevSID: SID = lines[0].sid;
+
     for (lines, 0..) |line, i| {
         std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
 
@@ -261,7 +262,8 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         defer allocator.free(decompressedBuf);
         _ = try encoding.decompress(decompressedBuf, indexContent);
 
-        const blockHeader = BlockHeader.decode(decompressedBuf);
+        const decodedBlockHeader = BlockHeader.decode(decompressedBuf);
+        const blockHeader = decodedBlockHeader.header;
 
         // TODO: compare all the fields in one expect
         try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);

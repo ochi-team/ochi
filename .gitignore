@@ -4,3 +4,4 @@ zig-out/
 *.o
 simulator/k6
 .vscode
+.idea/

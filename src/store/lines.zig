@@ -10,6 +10,8 @@ pub const maxTenantIDLen = 16;
 pub const SID = struct {
     tenantID: []const u8,
     id: u128,
+    // buf holds ownership of tenant id
+    buf: ?[]u8 = null,
 
     pub fn eql(self: *const SID, another: *const SID) bool {
         return std.mem.eql(u8, self.tenantID, another.tenantID) and
@@ -38,6 +40,24 @@ pub const SID = struct {
             .tenantID = tenantID,
             .id = id,
         };
+    }
+
+    pub fn decodeAlloc(allocator: std.mem.Allocator, buf: []const u8) !SID {
+        const tenantID = try allocator.alloc(u8, maxTenantIDLen);
+
+        var decoder = Decoder.init(buf);
+        decoder.readPaddedToBuf(maxTenantIDLen, tenantID);
+        const id = decoder.readInt(u128);
+        return .{
+            .tenantID = tenantID,
+            .id = id,
+            .buf = tenantID,
+        };
+    }
+
+    pub fn deinit(self: *SID, allocator: std.mem.Allocator) void {
+        if (self.buf) |buf| allocator.free(buf);
+        self.* = undefined;
     }
 };
 

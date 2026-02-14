@@ -61,7 +61,7 @@ pub const BlockHeader = struct {
         return enc.offset;
     }
 
-    pub fn decode(buf: []const u8) BlockHeader {
+    pub fn decode(buf: []const u8) struct { header: BlockHeader, offset: usize } {
         var decoder = Decoder.init(buf);
 
         const sid = SID.decode(decoder.readBytes(32));
@@ -77,15 +77,55 @@ pub const BlockHeader = struct {
         const columnsHeaderSize = decoder.readVarInt();
 
         return .{
-            .sid = sid,
-            .size = size,
-            .len = len,
-            .timestampsHeader = timestampsHeader,
-            .columnsHeaderOffset = columnsHeaderOffset,
-            .columnsHeaderSize = columnsHeaderSize,
-            .columnsHeaderIndexOffset = columnsHeaderIndexOffset,
-            .columnsHeaderIndexSize = columnsHeaderIndexSize,
+            .header = .{
+                .sid = sid,
+                .size = size,
+                .len = len,
+                .timestampsHeader = timestampsHeader,
+                .columnsHeaderOffset = columnsHeaderOffset,
+                .columnsHeaderSize = columnsHeaderSize,
+                .columnsHeaderIndexOffset = columnsHeaderIndexOffset,
+                .columnsHeaderIndexSize = columnsHeaderIndexSize,
+            },
+            .offset = decoder.offset,
         };
+    }
+
+    pub fn decodeFew(
+        allocator: std.mem.Allocator,
+        dst: *std.ArrayList(BlockHeader),
+        src: []const u8,
+    ) !void {
+        const dst_len = dst.items.len;
+        var buf = src;
+
+        while (buf.len > 0) {
+            const res = BlockHeader.decode(buf);
+            try dst.append(allocator, res.header);
+            buf = buf[res.offset..];
+        }
+
+        validateBlockHeaders(dst.items[dst_len..]);
+    }
+
+    pub fn validateBlockHeaders(bhs: []const BlockHeader) void {
+        if (bhs.len < 2) return;
+
+        for (1..bhs.len) |i| {
+            const curr = &bhs[i];
+            const prev = &bhs[i - 1];
+
+            std.debug.assert(!curr.sid.lessThan(&prev.sid));
+
+            if (!curr.sid.eql(&prev.sid)) {
+                continue;
+            }
+
+            const th_curr = curr.timestampsHeader;
+            const th_prev = prev.timestampsHeader;
+
+            std.debug.assert(th_curr.min >= th_prev.min);
+        }
     }
 };
 
@@ -125,6 +165,9 @@ pub const TimestampsHeader = struct {
 pub const ColumnsHeader = struct {
     headers: []ColumnHeader,
     celledColumns: []Column,
+    /// When true, deinit owns and frees celledColumns and each column's values (decode path).
+    /// TODO: find a workaround for clear ownership instead of a flag
+    owns_celled_columns: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, block: *Block) !*ColumnsHeader {
         const cols = block.getColumns();
@@ -159,6 +202,10 @@ pub const ColumnsHeader = struct {
             self.headers[i].dict.deinit(allocator);
         }
         allocator.free(self.headers);
+        if (self.owns_celled_columns) {
+            for (self.celledColumns) |*column| allocator.free(column.values);
+            allocator.free(self.celledColumns);
+        }
         allocator.destroy(self);
     }
 
@@ -230,28 +277,39 @@ pub const ColumnsHeader = struct {
 
         const headersLen = dec.readVarInt();
         const headers = try allocator.alloc(ColumnHeader, headersLen);
-        errdefer allocator.free(headers);
+        var headersDecoded: usize = 0;
+        errdefer {
+            for (headers[0..headersDecoded]) |*header| header.dict.deinit(allocator);
+            allocator.free(headers);
+        }
 
         for (0..headersLen) |i| {
             const colID = cshIdx.columns.items[i].columndID;
             const key = columnIDGen.keyIDs.keys()[colID];
             headers[i] = try ColumnHeader.decode(&dec, key, allocator);
+            headersDecoded += 1;
         }
 
         const celledLen = dec.readVarInt();
         const celledColumns = try allocator.alloc(Column, celledLen);
-        errdefer allocator.free(celledColumns);
+        var celledDecoded: usize = 0;
+        errdefer {
+            for (celledColumns[0..celledDecoded]) |*column| allocator.free(column.values);
+            allocator.free(celledColumns);
+        }
 
         for (0..celledLen) |i| {
             const colID = cshIdx.celledColumns.items[i].columndID;
             celledColumns[i] = try Column.decodeAsCelled(&dec, allocator, false);
             celledColumns[i].key = columnIDGen.keyIDs.keys()[colID];
+            celledDecoded = i + 1;
         }
 
         const ch = try allocator.create(ColumnsHeader);
         ch.* = .{
             .headers = headers,
             .celledColumns = celledColumns,
+            .owns_celled_columns = true,
         };
 
         return ch;
@@ -535,7 +593,7 @@ test "BlockHeaderEncode" {
         try std.testing.expectEqual(case.expectedLen, offset);
 
         const h = BlockHeader.decode(encodeBuf[0..offset]);
-        try std.testing.expectEqualDeep(case.header, h);
+        try std.testing.expectEqualDeep(case.header, h.header);
     }
 }
 
@@ -645,13 +703,7 @@ test "ColumnsHeaderEncode" {
         cshIdx,
         columnIDGen,
     );
-    defer {
-        for (decodedHeader.celledColumns) |col| {
-            alloc.free(col.values);
-        }
-        alloc.free(decodedHeader.celledColumns);
-        decodedHeader.deinit(alloc);
-    }
+    defer decodedHeader.deinit(alloc);
 
     // Verify using deep comparison
     try std.testing.expectEqual(headers.len, decodedHeader.headers.len);
