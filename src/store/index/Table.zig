@@ -23,7 +23,17 @@ size: u64,
 path: []const u8,
 
 // state
+
+// inMerge defines whether the table is taken by a merge job
 inMerge: bool = false,
+// toRemove defines if the table must be removed on releasing,
+// we do it via a flag instead of a direct removal,
+// because a table could be retained in a reader
+toRemove: std.atomic.Value(bool) = .init(false),
+// refCounter follows how many clients open a table,
+// first time it's open on start up,
+// then readers can retain it
+refCounter: std.atomic.Value(i32),
 
 pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
     std.fs.makeDirAbsolute(path) catch |err| {
@@ -42,7 +52,7 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
     // read table names,
     // they are given either from a file or listed directories in the path
     const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, Filenames.tables });
-    const tableNames = try readTableNames(alloc, tablesFilePath);
+    const tableNames = try readNames(alloc, tablesFilePath);
 
     // syncing tables with a json, make sure all the listed dirs exist
     for (tableNames.items) |tableName| {
@@ -140,6 +150,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .size = decodedMetaindex.compressedSize + indexSize + entriesSize + lensSize,
         .path = path,
         .tableHeader = undefined,
+        .refCounter = .init(1),
     };
     table.tableHeader = &table.disk.?.tableHeader;
 
@@ -164,6 +175,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .size = memTable.size(),
         .path = "",
         .tableHeader = &memTable.tableHeader,
+        .refCounter = .init(1),
     };
 
     return table;
@@ -171,7 +183,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
 
 // nothing specific, we simply don't expected a small json file to be larger than that
 const maxFileBytes = 16 * 1024 * 1024;
-fn readTableNames(alloc: Allocator, tablesFilePath: []const u8) !std.ArrayList([]const u8) {
+fn readNames(alloc: Allocator, tablesFilePath: []const u8) !std.ArrayList([]const u8) {
     if (std.fs.cwd().openFile(tablesFilePath, .{})) |file| {
         defer file.close();
 
@@ -219,5 +231,52 @@ fn readTableNames(alloc: Allocator, tablesFilePath: []const u8) !std.ArrayList([
             return .empty;
         },
         else => return err,
+    }
+}
+
+pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) !void {
+    var tableNames = try std.ArrayList([]const u8).initCapacity(alloc, tables.len);
+    defer tableNames.deinit(alloc);
+
+    for (tables) |table| {
+        if (table.disk == null) {
+            // collect only disk table names
+            continue;
+        }
+        tableNames.appendAssumeCapacity(std.fs.path.basename(table.path));
+    }
+
+    var stackFba = std.heap.stackFallback(512, alloc);
+    const fba = stackFba.get();
+    // TODO: worth migrating json to names suparated by new line \n
+    // since they are limited to 16 symbols hex symbols [0-9A-F]
+    const data = try std.json.Stringify.valueAlloc(fba, tableNames.items, .{
+        .whitespace = .minified,
+    });
+    defer fba.free(data);
+
+    const tablesFilePath = try std.fs.path.join(fba, &.{ path, Filenames.tables });
+    defer fba.free(tablesFilePath);
+
+    try fs.writeBufferToFileAtomic(alloc, tablesFilePath, data, true);
+}
+
+pub fn retain(self: *Table) void {
+    self.refCounter.fetchAdd(1, .acquire);
+}
+
+pub fn release(self: *Table, alloc: Allocator) void {
+    const v = self.refCounter.fetchAdd(-1, .acquire);
+
+    if (v > 0) return;
+    std.debug.assert(v == 0);
+
+    self.close(alloc);
+    if (self.disk) |_| {
+        if (self.toRemove.load(.acquire)) {
+            std.fs.deleteDirAbsolute(self.path) catch |err| {
+                std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
+            };
+        }
     }
 }

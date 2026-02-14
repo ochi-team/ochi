@@ -49,7 +49,7 @@ stopped: std.atomic.Value(bool) = .init(false),
 memTablesSem: std.Thread.Semaphore = .{
     .permits = maxMemTables,
 },
-memTablesMx: std.Thread.Mutex = .{},
+tablesMx: std.Thread.Mutex = .{},
 tables: std.ArrayList(*Table),
 memTables: std.ArrayList(*Table),
 
@@ -84,11 +84,12 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    // TODO: move it to the config level
+    // TODO: move it to the config level and pass path as trimmed
     var trimmedPath = path[0..];
     if (std.fs.path.isSep(trimmedPath[trimmedPath.len])) {
         trimmedPath = trimmedPath[0 .. trimmedPath.len - 1];
     }
+    std.debug.assert(std.fs.path.isAbsolute(trimmedPath));
 
     var tables = try Table.openAll(alloc, trimmedPath);
     errdefer {
@@ -202,11 +203,11 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
     errdefer if (semaphoreWaited) self.memTablesSem.post();
 
     // TODO: ideally to know the amount of mem tables and call unlock without errdefer
-    self.memTablesMx.lock();
-    errdefer self.memTablesMx.unlock();
+    self.tablesMx.lock();
+    errdefer self.tablesMx.unlock();
     try self.memTables.append(alloc, memTable);
     try self.startMemTablesMerge(alloc);
-    self.memTablesMx.unlock();
+    self.tablesMx.unlock();
 
     if (force) {
         self.invalidateStreamFilterCache();
@@ -415,15 +416,55 @@ fn swapTables(
     newTable: *Table,
     tableKind: TableKind,
 ) !void {
-    self.memTables.clearRetainingCapacity();
-    try self.memTables.append(alloc, newTable);
-    _ = tableKind;
-    _ = tables;
-    // TODO: probably it's worth running startMemTablesMerge recurvisely here again,
-    // I assume the loop keeps running and next iteration there is a single mem table,
-    // so it must flush it to disk,
-    // but the call might be necessary to support concurrent jobs running,
-    // worth taking a metric of it
+    self.tablesMx.lock();
+    errdefer self.tablesMx.unlock();
+
+    const removedDiskTables = removeTables(&self.memTables, tables);
+    const removedMemTables = removeTables(&self.tables, tables);
+
+    switch (tableKind) {
+        .disk => {
+            try self.tables.append(alloc, newTable);
+            try self.runDiskTablesMerger(alloc);
+        },
+        .mem => {
+            try self.memTables.append(alloc, newTable);
+            try self.runMemTablesMerger(alloc);
+        },
+    }
+
+    self.tablesMx.unlock();
+
+    if (removedDiskTables > 0 or tableKind == .disk) {
+        try Table.writeNames(alloc, self.path, self.tables.items);
+    }
+
+    for (0..removedMemTables) |_| self.memTablesSem.post();
+    if (tableKind == .mem) self.memTablesSem.wait();
+
+    std.debug.assert(tables.len == removedDiskTables + removedMemTables);
+
+    for (tables) |table| {
+        // remove via reference counter,
+        // it could have been open by a client.
+        // order flag doesn't matter, we don't expect any other part to change it back to 
+        table.toRemove.store(true, .unordered);
+        table.release(alloc);
+    }
+}
+
+fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
+    var removed: u32 = 0;
+    for (0..tables.items.len) |i| {
+        for (remove) |r| {
+            if (tables.items[i] == r) {
+                _ = tables.swapRemove(i);
+                removed += 1;
+            }
+        }
+    }
+
+    return removed;
 }
 
 fn startCacheKeyInvalidator(self: *IndexRecorder) !void {
