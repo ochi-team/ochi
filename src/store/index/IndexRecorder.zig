@@ -50,8 +50,11 @@ memTablesSem: std.Thread.Semaphore = .{
     .permits = maxMemTables,
 },
 tablesMx: std.Thread.Mutex = .{},
-tables: std.ArrayList(*Table),
+diskTables: std.ArrayList(*Table),
 memTables: std.ArrayList(*Table),
+
+diskMergeSem: std.Thread.Semaphore,
+memMergeSem: std.Thread.Semaphore,
 
 pool: *std.Thread.Pool,
 // wg holds all the running jobs
@@ -68,7 +71,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     const entries = try Entries.init(alloc);
     errdefer entries.deinit(alloc);
 
-    const blocksThresholdToFlush: u64 = @intCast(entries.shards.len * maxBlocksPerShard);
+    const blocksThresholdToFlush: u32 = @intCast(entries.shards.len * maxBlocksPerShard);
 
     // TODO: try using list of lists instead in order not to copy data from blocks to blocksToFlush
     var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksThresholdToFlush);
@@ -97,25 +100,50 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
         tables.deinit(alloc);
     }
 
+    const diskMergeLimit = @max(4, conf.server.pools.cpus);
+    const memMergeLimit = conf.server.pools.cpus;
+
     const t = try alloc.create(IndexRecorder);
     t.* = .{
         .entries = entries,
-        .blocksThresholdToFlush = @intCast(entries.shards.len * maxBlocksPerShard),
+        .blocksThresholdToFlush = blocksThresholdToFlush,
         .blocksToFlush = blocksToFlush,
         .maxIndexBlockSize = Conf.getConf().app.maxIndexMemBlockSize,
         .pool = pool,
-        .tables = tables,
+        .diskTables = tables,
         .memTables = memTables,
         .mergeIdx = .init(@intCast(std.time.nanoTimestamp())),
         .path = trimmedPath,
+        .diskMergeSem = .{
+            .permits = diskMergeLimit,
+        },
+        .memMergeSem = .{
+            .permits = memMergeLimit,
+        },
     };
+
+    // the allocator is different from http life cycle,
+    // but shared between all the background jobs
+    // TODO: find a better allocator, perhaps an arena with regular reset
+
+    // disk tables merge task is different,
+    // it doesn't run infinitely, but runs a few merge cycles to process left overs
+    // from the previous launches
+    for (0..diskMergeLimit) |_| {
+        t.startDiskTablesMerge(alloc);
+    }
+
+    t.pool.spawnWg(&t.wg, startMemTablesFlusher, .{t});
+    t.pool.spawnWg(&t.wg, startMemBlockFlusher, .{t});
+    t.pool.spawnWg(&t.wg, startCacheKeyInvalidator, .{t});
+
     return t;
 }
 
 pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     self.entries.deinit(alloc);
     self.blocksToFlush.deinit(alloc);
-    self.tables.deinit(alloc);
+    self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
     self.pool.deinit();
     alloc.destroy(self);
@@ -218,6 +246,14 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
     }
 }
 
+// merge-flush
+// the functions below describe merge/flush jobs
+// the naming is grouped on the following levels
+// 1. startX - starts an infinite (or limited) cycle of a task
+// 2. runX - runs a given task that MUST be able to complete without stopped signal
+
+/// it's not supposed to run at the beginning in backrgound,
+/// we run it only on demand
 fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) !void {
     if (self.stopped.load(.acquire)) return;
 
@@ -229,24 +265,111 @@ fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) !void {
     return self.runMemTablesMerger(alloc);
 }
 
-fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) anyerror!void {
-    while (true) {
-        // TODO: implement disk space limit
+fn startDiskTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
+    if (self.stopped.load(.acquire)) return;
 
-        if (self.memTables.items.len == 0) {
+    self.pool.spawnWg(&self.wg, runDiskTablesMerger, .{ self, alloc });
+}
+
+fn startMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) !void {
+    while (true) {
+        if (self.stopped.load(.acquire)) {
+            return;
+        }
+
+        try self.runMemTablesFlusher(alloc);
+        std.Thread.sleep(std.time.ns_per_s);
+    }
+}
+
+fn startMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) !void {
+    while (true) {
+        if (self.stopped.load(.acquire)) {
+            return;
+        }
+
+        try self.runEntriesFlusher(alloc, false);
+        std.Thread.sleep(std.time.ns_per_s);
+    }
+}
+
+fn startCacheKeyInvalidator(self: *IndexRecorder) void {
+    while (true) {
+        std.Thread.sleep(std.time.ns_per_s * 10);
+
+        if (self.stopped.load(.acquire)) {
+            self.invalidateStreamFilterCache();
+            return;
+        }
+
+        if (self.needInvalidate.cmpxchgWeak(false, true, .release, .monotonic)) |yes| {
+            if (yes) self.invalidateStreamFilterCache();
+        }
+    }
+}
+
+fn runMemTablesFlusher(self: *IndexRecorder, alloc: Allocator, force: bool) void {
+    _ = self;
+    _ = force;
+    _ = alloc;
+    unreachable;
+}
+
+fn runMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) !void {
+    _ = self;
+    _ = alloc;
+    // no clue what is required
+    unreachable;
+}
+
+fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) anyerror!void {
+    try self.runTablesMerger(alloc, &self.memTables, &self.memMergeSem);
+}
+
+fn runDiskTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
+    try self.runTablesMerger(alloc, &self.diskTables, &self.diskMergeSem);
+}
+
+fn runEntriesFlusher(self: *IndexRecorder, force: bool) void {
+    _ = self;
+    _ = force;
+    unreachable;
+}
+
+fn runTablesMerger(
+    self: *IndexRecorder,
+    alloc: Allocator,
+    tables: *std.ArrayList(*Table),
+    sem: *std.Thread.Semaphore,
+) anyerror!void {
+    while (true) {
+        const maxDiskTableSize = self.getMaxTableSize();
+
+        // capacity for 16 tables, must be enough for most of the cases
+        // TODO: metric how many tables we merge
+        var fba = std.heap.stackFallback(1024, alloc);
+        const fbaAlloc = fba.get();
+
+        var tablesToMerge = try std.ArrayList(*Table).initCapacity(fbaAlloc, tables.items.len);
+        defer tablesToMerge.deinit(fbaAlloc);
+        self.tablesMx.lock();
+        self.filterTablesToMerge(tables.items, &tablesToMerge, maxDiskTableSize);
+        self.tablesMx.unlock();
+        if (tablesToMerge.items.len == 0) {
             return;
         }
 
         // TODO: make sure error.Stopped is handled on the upper level
-        try self.mergeTables(alloc, self.memTables.items, false, &self.stopped);
+        sem.wait();
+        errdefer sem.post();
+        self.mergeTables(alloc, tablesToMerge.items, false, &self.stopped) catch |err| {
+            switch (err) {
+                error.Stopped => return,
+                else => return err,
+            }
+        };
+        sem.post();
     }
-}
-
-fn runDiskTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
-    _ = self;
-    _ = alloc;
-    unreachable;
-    // FIXME: pls
 }
 
 fn invalidateStreamFilterCache(self: *IndexRecorder) void {
@@ -323,6 +446,7 @@ pub fn mergeTables(
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, self.memTables.items, newMemTable.?);
     try self.swapTables(alloc, tables, openTable, tableKind);
+    unreachable;
 }
 
 fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
@@ -420,23 +544,23 @@ fn swapTables(
     errdefer self.tablesMx.unlock();
 
     const removedDiskTables = removeTables(&self.memTables, tables);
-    const removedMemTables = removeTables(&self.tables, tables);
+    const removedMemTables = removeTables(&self.diskTables, tables);
 
     switch (tableKind) {
         .disk => {
-            try self.tables.append(alloc, newTable);
+            try self.diskTables.append(alloc, newTable);
             try self.runDiskTablesMerger(alloc);
         },
         .mem => {
             try self.memTables.append(alloc, newTable);
-            try self.runMemTablesMerger(alloc);
+            try self.startMemTablesMerge(alloc);
         },
     }
 
     self.tablesMx.unlock();
 
     if (removedDiskTables > 0 or tableKind == .disk) {
-        try Table.writeNames(alloc, self.path, self.tables.items);
+        try Table.writeNames(alloc, self.path, self.diskTables.items);
     }
 
     for (0..removedMemTables) |_| self.memTablesSem.post();
@@ -447,7 +571,7 @@ fn swapTables(
     for (tables) |table| {
         // remove via reference counter,
         // it could have been open by a client.
-        // order flag doesn't matter, we don't expect any other part to change it back to 
+        // order flag doesn't matter, we don't expect any other part to change it back to
         table.toRemove.store(true, .unordered);
         table.release(alloc);
     }
@@ -467,30 +591,20 @@ fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
     return removed;
 }
 
-fn startCacheKeyInvalidator(self: *IndexRecorder) !void {
-    // TODO: add time sleep jitter
-    self.wg.spawnManager(startCacheKeyInvalidatorTask, .{self});
-}
-
-fn startCacheKeyInvalidatorTask(self: *IndexRecorder) void {
-    while (true) {
-        std.time.sleep(std.time.ns_per_s * 10);
-
-        if (self.stopped.load(.acquire)) {
-            self.invalidateStreamFilterCache();
-            return;
-        }
-
-        if (self.needInvalidate.cmpxchgWeak(false, true, .release, .monotonic)) {
-            self.invalidateStreamFilterCache();
-        }
-    }
-}
-
-fn startMemTablesFlusher(self: *IndexRecorder, _: Allocator) void {
+fn getMaxTableSize(self: *IndexRecorder) u64 {
     _ = self;
+    unreachable;
 }
 
-fn startEntriesFlusher(self: *IndexRecorder, _: Allocator) void {
+fn filterTablesToMerge(
+    self: *IndexRecorder,
+    tables: []*Table,
+    toMerge: *std.ArrayList(*Table),
+    maxDiskTableSize: u64,
+) void {
     _ = self;
+    _ = tables;
+    _ = toMerge;
+    _ = maxDiskTableSize;
+    unreachable;
 }
