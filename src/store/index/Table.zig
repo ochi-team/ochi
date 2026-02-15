@@ -271,6 +271,8 @@ pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
+// TODO: obviously releasing it from read path an allocator won't be the same as owning the table,
+// so we must store the allocator in the table itself
 pub fn release(self: *Table, alloc: Allocator) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
