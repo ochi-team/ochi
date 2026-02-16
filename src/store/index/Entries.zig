@@ -10,6 +10,7 @@ const MemBlock = @import("MemBlock.zig");
 const EntriesShard = struct {
     mx: std.Thread.Mutex,
     blocks: std.ArrayList(*MemBlock),
+    // TODO: perhaps worth making it atomic instead of accessable under a mutex lock
     flushAtUs: i64,
 
     // TODO: init EntriesShard and its blocks with maxBlocks capacity
@@ -72,6 +73,24 @@ const EntriesShard = struct {
         }
 
         return null;
+    }
+
+    pub fn collectBlocks(
+        self: *EntriesShard,
+        alloc: Allocator,
+        destination: *std.ArrayList(*MemBlock),
+        nowUs: i64,
+        force: bool,
+    ) !void {
+        self.mx.lock();
+        defer self.mx.unlock();
+
+        if (!force and nowUs < self.flushAtUs) {
+            return;
+        }
+
+        try destination.appendSlice(alloc, self.blocks.items);
+        self.blocks.clearRetainingCapacity();
     }
 };
 

@@ -25,13 +25,19 @@ const maxBlocksPerShard = 256;
 const blocksInMemTable = 15;
 const maxMemTables = 24;
 
+// we need to balance throughput and memory limits
+// this number is just a guess
+const amountOfTablesToMerge = 16;
+
 const IndexRecorder = @This();
 
 entries: *Entries,
 
 blocksToFlush: std.ArrayList(*MemBlock),
 mxBlocks: std.Thread.Mutex = .{},
-flushAtUs: ?i64 = null,
+// TODO: make it as atomic instead of locking to access this value,
+// we still need mutex to access blocksToFlush
+flushEntriesAtUs: ?i64 = null,
 blocksThresholdToFlush: u32,
 
 // config fields
@@ -133,8 +139,8 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
         t.startDiskTablesMerge(alloc);
     }
 
-    t.pool.spawnWg(&t.wg, startMemTablesFlusher, .{t});
-    t.pool.spawnWg(&t.wg, startMemBlockFlusher, .{t});
+    t.pool.spawnWg(&t.wg, startMemTablesFlusher, .{ t, alloc });
+    t.pool.spawnWg(&t.wg, startMemBlockFlusher, .{ t, alloc });
     t.pool.spawnWg(&t.wg, startCacheKeyInvalidator, .{t});
 
     return t;
@@ -167,16 +173,22 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
     if (blocks.len == 0) return;
 
     self.mxBlocks.lock();
-    defer self.mxBlocks.unlock();
-
+    errdefer self.mxBlocks.unlock();
     if (self.blocksToFlush.items.len == 0) {
-        self.flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+        self.flushEntriesAtUs = std.time.microTimestamp() + std.time.us_per_s;
     }
 
     try self.blocksToFlush.appendSlice(alloc, blocks);
     if (self.blocksToFlush.items.len >= self.blocksThresholdToFlush) {
-        try self.flushBlocksToMemTables(alloc, self.blocksToFlush.items, false);
-        self.blocksToFlush.clearRetainingCapacity();
+        // TODO: metric how much capacity is actual capacity of it comparing to expected
+        // TODO: this slice could have come out of a mem pool which preallocates such slices by 10x
+        // and pops on demand
+        var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksToFlush.items.len);
+        std.mem.swap(std.ArrayList(*MemBlock), &blocksToFlush, &self.blocksToFlush);
+        self.mxBlocks.unlock();
+        defer blocksToFlush.deinit(alloc);
+
+        try self.flushBlocksToMemTables(alloc, blocksToFlush.items, false);
     }
 }
 
@@ -262,33 +274,63 @@ fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) !void {
     // 1. holding a mutex for mem tables
     // 2. adding a semaphore to limit concurrent merges
     // 3. mark mem tables being merged to avoid double acquisition
-    return self.runMemTablesMerger(alloc);
+
+    _ = alloc;
+    unreachable;
+    // return self.runMemTablesMerger(alloc);
 }
 
 fn startDiskTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
     if (self.stopped.load(.acquire)) return;
 
-    self.pool.spawnWg(&self.wg, runDiskTablesMerger, .{ self, alloc });
+    self.pool.spawnWg(&self.wg, runDiskTablesMergerWorker, .{ self, alloc });
 }
 
-fn startMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) !void {
+fn runDiskTablesMergerWorker(self: *IndexRecorder, alloc: Allocator) void {
+    self.runDiskTablesMerger(alloc) catch |err| {
+        std.debug.panic("failed to run disk tables merger: {s}\n", .{@errorName(err)});
+    };
+}
+
+fn startMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) void {
     while (true) {
         if (self.stopped.load(.acquire)) {
             return;
         }
 
-        try self.runMemTablesFlusher(alloc);
+        self.runMemTablesFlusher(alloc, false);
         std.Thread.sleep(std.time.ns_per_s);
     }
 }
 
-fn startMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) !void {
+fn startMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) void {
+    var blocksDestination = std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush) catch {
+        std.debug.print("failed to start mem blocks flusher, OOM", .{});
+        return;
+    };
+    defer blocksDestination.deinit(alloc);
+
     while (true) {
         if (self.stopped.load(.acquire)) {
             return;
         }
 
-        try self.runEntriesFlusher(alloc, false);
+        self.runEntriesFlusher(alloc, &blocksDestination, false) catch |err| {
+            switch (err) {
+                error.OutOfMemory => {
+                    std.debug.print("failed to run mem blocks flusher: OOM", .{});
+                    return;
+                },
+                error.Stopped => {
+                    return;
+                },
+                else => {
+                    std.debug.print("unexpected error on running mem blocks flusher, {s}", .{@errorName(err)});
+                    return;
+                },
+            }
+        };
+        blocksDestination.clearRetainingCapacity();
         std.Thread.sleep(std.time.ns_per_s);
     }
 }
@@ -330,10 +372,31 @@ fn runDiskTablesMerger(self: *IndexRecorder, alloc: Allocator) !void {
     try self.runTablesMerger(alloc, &self.diskTables, &self.diskMergeSem);
 }
 
-fn runEntriesFlusher(self: *IndexRecorder, force: bool) void {
-    _ = self;
-    _ = force;
-    unreachable;
+fn runEntriesFlusher(
+    self: *IndexRecorder,
+    alloc: Allocator,
+    blocksDestination: *std.ArrayList(*MemBlock),
+    force: bool,
+) !void {
+    const nowUs = std.time.microTimestamp();
+
+    self.mxBlocks.lock();
+    errdefer self.mxBlocks.unlock();
+
+    if (force) {
+        std.mem.swap(std.ArrayList(*MemBlock), blocksDestination, &self.blocksToFlush);
+    } else if (self.flushEntriesAtUs) |flushAtUs| {
+        if (flushAtUs > nowUs) {
+            std.mem.swap(std.ArrayList(*MemBlock), blocksDestination, &self.blocksToFlush);
+        }
+    }
+    self.mxBlocks.unlock();
+
+    for (self.entries.shards) |*shard| {
+        try shard.collectBlocks(alloc, blocksDestination, nowUs, force);
+    }
+
+    try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
 }
 
 fn runTablesMerger(
@@ -342,33 +405,33 @@ fn runTablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *std.Thread.Semaphore,
 ) anyerror!void {
+    // TODO: metric and find out whether we can hold it on stack (if it fits 2-4kb size, so 32-64 table max)
+    var tablesToMerge = std.ArrayList(*Table).empty;
+    defer tablesToMerge.deinit(alloc);
+
     while (true) {
         const maxDiskTableSize = self.getMaxTableSize();
 
-        // capacity for 16 tables, must be enough for most of the cases
-        // TODO: metric how many tables we merge
-        var fba = std.heap.stackFallback(1024, alloc);
-        const fbaAlloc = fba.get();
-
-        var tablesToMerge = try std.ArrayList(*Table).initCapacity(fbaAlloc, tables.items.len);
-        defer tablesToMerge.deinit(fbaAlloc);
         self.tablesMx.lock();
-        self.filterTablesToMerge(tables.items, &tablesToMerge, maxDiskTableSize);
+        errdefer self.tablesMx.unlock();
+        // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
+        const filteredTablesToMerge = try filterTablesToMerge(alloc, tables.items, &tablesToMerge, maxDiskTableSize);
         self.tablesMx.unlock();
-        if (tablesToMerge.items.len == 0) {
+        if (filteredTablesToMerge.len == 0) {
             return;
         }
 
         // TODO: make sure error.Stopped is handled on the upper level
         sem.wait();
         errdefer sem.post();
-        self.mergeTables(alloc, tablesToMerge.items, false, &self.stopped) catch |err| {
+        self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped) catch |err| {
             switch (err) {
                 error.Stopped => return,
                 else => return err,
             }
         };
         sem.post();
+        tablesToMerge.clearRetainingCapacity();
     }
 }
 
@@ -446,7 +509,6 @@ pub fn mergeTables(
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, self.memTables.items, newMemTable.?);
     try self.swapTables(alloc, tables, openTable, tableKind);
-    unreachable;
 }
 
 fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
@@ -597,14 +659,94 @@ fn getMaxTableSize(self: *IndexRecorder) u64 {
 }
 
 fn filterTablesToMerge(
-    self: *IndexRecorder,
+    alloc: Allocator,
     tables: []*Table,
     toMerge: *std.ArrayList(*Table),
     maxDiskTableSize: u64,
-) void {
-    _ = self;
-    _ = tables;
-    _ = toMerge;
-    _ = maxDiskTableSize;
-    unreachable;
+) Allocator.Error![]*Table {
+    try toMerge.ensureUnusedCapacity(alloc, tables.len);
+
+    for (tables) |table| {
+        if (!table.inMerge) {
+            toMerge.appendAssumeCapacity(table);
+        }
+    }
+
+    // tablesToMerge is a slice of toMerge ArrayList, no need to free it
+    const tablesToMerge = filterLeveledTables(toMerge, maxDiskTableSize, amountOfTablesToMerge);
+    for (tablesToMerge) |table| {
+        std.debug.assert(!table.inMerge);
+        table.inMerge = true;
+    }
+
+    return tablesToMerge;
+}
+
+// avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
+// guess based number, might be changed on the practical data
+const mergeMultiple = 2;
+
+fn sortToMerge(toMerge: *std.ArrayList(*Table)) void {
+    std.mem.sortUnstable(*Table, toMerge.items, {}, Table.lessThan);
+}
+
+fn filterLeveledTables(
+    toMerge: *std.ArrayList(*Table),
+    maxDiskTableSize: u64,
+    maxTablesToMerge: comptime_int,
+) []*Table {
+    comptime if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
+
+    if (toMerge.items.len < 2) return &.{};
+
+    const maxSize = maxDiskTableSize / mergeMultiple;
+    var idx: usize = 0;
+    while (idx < toMerge.items.len) {
+        if (toMerge.items[idx].size > maxSize) {
+            _ = toMerge.swapRemove(idx);
+            continue;
+        }
+        idx += 1;
+    }
+
+    sortToMerge(toMerge);
+
+    // we want to merge at least a half of them
+    const upperBound = @min(maxTablesToMerge, toMerge.items.len);
+    const lowerBound = @max(2, (upperBound + 1) / 2);
+    var maxScore: f64 = 0;
+    var windowToMerge: []*Table = &.{};
+
+    // +1 to make upperBound inclusive
+    for (lowerBound..upperBound + 1) |i| {
+        for (0..toMerge.items.len - i + 1) |j| {
+            const mergeWindow = toMerge.items[j .. j + i];
+            const largestTableSize: u64 = mergeWindow[mergeWindow.len - 1].size;
+
+            if (mergeWindow[0].size * mergeWindow.len < largestTableSize) {
+                // too much of a difference, it's not a balanced merge, unncecessary write
+                continue;
+            }
+
+            var resultSize: u64 = 0;
+            for (mergeWindow) |table| resultSize += table.size;
+            // further iterations bring only bigger tables
+            if (resultSize > maxDiskTableSize) break;
+
+            const score: f64 = @as(f64, @floatFromInt(resultSize)) / @as(f64, @floatFromInt(largestTableSize));
+            if (score < maxScore) continue;
+
+            maxScore = score;
+            windowToMerge = mergeWindow;
+        }
+    }
+
+    const minScore: f64 = @max(@as(f64, @floatFromInt(maxTablesToMerge)) / 2, 2, mergeMultiple);
+    if (maxScore < minScore) {
+        // nothing to merge
+        toMerge.clearRetainingCapacity();
+        return &.{};
+    }
+
+    return windowToMerge;
 }

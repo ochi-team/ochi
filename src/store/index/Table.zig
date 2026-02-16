@@ -187,6 +187,10 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     return table;
 }
 
+pub fn lessThan(_: void, one: *Table, another: *Table) bool {
+    return one.size < another.size;
+}
+
 // nothing specific, we simply don't expected a small json file to be larger than that
 const maxFileBytes = 16 * 1024 * 1024;
 fn readNames(alloc: Allocator, tablesFilePath: []const u8) !std.ArrayList([]const u8) {
