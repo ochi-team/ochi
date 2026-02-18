@@ -211,27 +211,46 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
         memTables.appendAssumeCapacity(memTable);
     }
 
-    // TODO: make mergeMemTables returning tail, all the merged and unmerged tables,
-    // so that we could identify big enough tables and add them,
-    // for high ingestion rate it's required to handle limited size of tables,
-    // it requires:
-    // 1. returning a tail from merge
-    // 2. identify tables for optimal merge in the loop over the tables
-    const mergedMemTable = try mergeMemTables(alloc, memTables.items);
-    const table = try Table.fromMem(alloc, mergedMemTable);
-    try self.addToMemTables(alloc, table, force);
+    const maxSize = getMaxInmemoryTableSize();
+
+    var left = try std.ArrayList(*MemTable).initCapacity(alloc, memTables.items.len);
+    defer left.deinit(alloc);
+
+    while (memTables.items.len > 1) {
+        try mergeMemTables(alloc, &memTables);
+
+        for (memTables.items) |table| {
+            if (table.size() >= maxSize) {
+                const t = try Table.fromMem(alloc, table);
+                try self.addToMemTables(alloc, t, force);
+            } else {
+                left.appendAssumeCapacity(table);
+            }
+        }
+
+        memTables.clearRetainingCapacity();
+        std.mem.swap(std.ArrayList(*MemTable), &memTables, &left);
+    }
+
+    if (memTables.items.len == 1) {
+        const table = try Table.fromMem(alloc, memTables.items[0]);
+        try self.addToMemTables(alloc, table, force);
+    }
 }
 
 /// merges mem tables to a bigger size ones
 /// requires same Allocator that's used to create them,
 /// because it deinits the merged ones
-fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
+fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*MemTable)) !void {
     // TODO: run merging job in parallel and benchmark whether it doesn't hurt general throughput
 
-    std.debug.assert(memTables.len != 0);
-    if (memTables.len == 1) return memTables[0];
+    std.debug.assert(memTables.items.len != 0);
+    if (memTables.items.len == 1) return;
 
-    return MemTable.mergeMemTables(alloc, memTables);
+    const res = try MemTable.mergeMemTables(alloc, memTables.items);
+    for (memTables.items) |table| table.deinit(alloc);
+    memTables.items[0] = res;
+    memTables.items.len = 1;
 }
 
 fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, force: bool) !void {
