@@ -3,6 +3,9 @@ const Allocator = std.mem.Allocator;
 
 const encoding = @import("encoding");
 
+const fs = @import("../../fs.zig");
+const Filenames = @import("../../Filenames.zig");
+
 const BlockHeader = @import("BlockHeader.zig");
 const TableHeader = @import("TableHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
@@ -185,4 +188,28 @@ pub fn size(self: *MemTable) u64 {
     return @intCast(
         self.dataBuf.items.len + self.lensBuf.items.len + self.indexBuf.items.len + self.metaindexBuf.items.len,
     );
+}
+
+pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
+    fs.makeDirAssert(path);
+
+    var fba = std.heap.stackFallback(512, alloc);
+    const fbaAlloc = fba.get();
+
+    // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
+    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
+    defer fbaAlloc.free(metaindexPath);
+    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.index });
+    defer fbaAlloc.free(indexPath);
+    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.entries });
+    defer fbaAlloc.free(entriesPath);
+    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.lens });
+    defer fbaAlloc.free(lensPath);
+
+    try fs.writeBufferValToFile(metaindexPath, self.metaindexBuf.items);
+    try fs.writeBufferValToFile(indexPath, self.indexBuf.items);
+    try fs.writeBufferValToFile(entriesPath, self.dataBuf.items);
+    try fs.writeBufferValToFile(lensPath, self.lensBuf.items);
+
+    fs.syncPathAndParentDir(path);
 }
