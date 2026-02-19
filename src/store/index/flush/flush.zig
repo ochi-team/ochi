@@ -8,9 +8,7 @@ pub fn getFlushToDiskDeadline(memTables: []*Table) i64 {
     var min: i64 = interval + std.time.microTimestamp();
     for (memTables) |table| {
         if (table.mem) |memTable| {
-            if (memTable.flushAtUs) |flushAtUs| {
-                min = @min(flushAtUs, min);
-            }
+            min = @min(memTable.flushAtUs, min);
         }
     }
 

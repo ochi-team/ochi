@@ -29,7 +29,7 @@ indexBuf: std.ArrayList(u8) = .empty,
 
 metaindexBuf: std.ArrayList(u8) = .empty,
 
-flushAtUs: ?i64 = null,
+flushAtUs: i64,
 
 pub fn empty(alloc: Allocator) !*MemTable {
     const t = try alloc.create(MemTable);
@@ -37,6 +37,7 @@ pub fn empty(alloc: Allocator) !*MemTable {
         .blockHeader = undefined,
         .tableHeader = undefined,
         .metaIndex = undefined,
+        .flushAtUs = undefined,
     };
     return t;
 }
