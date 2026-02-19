@@ -162,13 +162,10 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
 pub fn close(self: *Table, alloc: Allocator) void {
     // TODO: close files in parallel
     if (self.disk) |disk| {
-        disk.indexFile.close();
-        disk.entriesFile.close();
-        disk.lensFile.close();
-        disk.tableHeader.deinit(alloc);
-        for (disk.metaindexRecords) |*rec| rec.deinit(alloc);
-        if (disk.metaindexRecords.len > 0) alloc.free(disk.metaindexRecords);
-        alloc.destroy(disk);
+        disk.deinit(alloc);
+    }
+    if (self.mem) |mem| {
+        mem.deinit(alloc);
     }
     alloc.destroy(self);
 }

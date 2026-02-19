@@ -17,7 +17,11 @@ pub fn deinit(self: *DiskTable, alloc: Allocator) void {
     self.indexFile.close();
     self.entriesFile.close();
     self.lensFile.close();
+
+    for (self.metaindexRecords) |*rec| rec.deinit(alloc);
     if (self.metaindexRecords.len > 0) alloc.free(self.metaindexRecords);
+
     self.tableHeader.deinit(alloc);
+
     alloc.destroy(self);
 }
