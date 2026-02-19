@@ -385,10 +385,12 @@ fn filterToMerge(alloc: std.mem.Allocator, tables: []*TableMem) !?[]*TableMem {
     return tables;
 }
 
-test "dataWorker" {
-    _ = try Conf.default();
+const testing = std.testing;
 
-    const alloc = std.testing.allocator;
+test "dataWorker" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
 
     var d = try Data.init(alloc, alloc, "abc"[0..]);
     std.Thread.sleep(2 * std.time.ns_per_s);

@@ -129,7 +129,8 @@ const testing = std.testing;
 
 test "Entries.shardIdxOverflow" {
     const alloc = testing.allocator;
-    _ = try Conf.default();
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
 
     const e = try Entries.init(alloc);
     defer e.deinit(alloc);

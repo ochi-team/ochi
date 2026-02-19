@@ -29,6 +29,9 @@ const maxMemTables = 24;
 // this number is just a guess
 const amountOfTablesToMerge = 16;
 
+// 100 GB
+const maxTableSize = 100 * 1024 * 1024 * 1024;
+
 const IndexRecorder = @This();
 
 entries: *Entries,
@@ -700,6 +703,9 @@ fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
 fn getMaxTableSize(self: *IndexRecorder) u64 {
     _ = self;
     unreachable;
+    // const space = fs.getFreeDiskSpace(self.path);
+    // const maxSize = space / self.pool.threads.len;
+    // return @min(maxSize, maxTableSize);
 }
 
 fn filterTablesToMerge(
