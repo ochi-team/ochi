@@ -3,9 +3,7 @@ const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 const Ymlz = @import("ymlz").Ymlz;
-const C = @cImport({
-    @cInclude("sys/statvfs.h");
-});
+const C = @import("c").C;
 
 fn calculatePools() PoolsConfig {
     // TODO: log warning if can't get cpus, no clue why getCpuCount may fail,

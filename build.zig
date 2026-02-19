@@ -51,6 +51,7 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "ymlz", .module = ymlz.module("root") },
         std.Build.Module.Import{ .name = "cli", .module = cli.module("cli") },
         std.Build.Module.Import{ .name = "zint", .module = zint.module("zint") },
+        std.Build.Module.Import{ .name = "c", .module = cModule },
         std.Build.Module.Import{ .name = "encoding", .module = encodeModule },
     };
 
