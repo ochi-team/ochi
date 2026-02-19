@@ -455,9 +455,18 @@ fn runEntriesFlusher(
 }
 
 fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
-    _ = self;
-    _ = alloc;
-    _ = toFlush;
+    if (toFlush.items.len == 0) return;
+
+    // TODO: consider running chunks merging in parallel
+    var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
+    while (left.items.len > 0) {
+        const n = selectTablesToMerge(&left);
+        std.debug.assert(n > 0);
+        left = std.ArrayList(*Table).initBuffer(left.items[n..]);
+
+        // pass stopped as null since we must be able to flush data to disk
+        try self.mergeTables(alloc, left.items, true, null);
+    }
 }
 
 fn tablesMerger(
