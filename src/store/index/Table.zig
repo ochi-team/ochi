@@ -363,8 +363,7 @@ test "release fromMem does not affect filesystem path" {
     const missingPath = try std.fs.path.join(alloc, &.{ rootPath, "never-created" });
     defer alloc.free(missingPath);
 
-    var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit(alloc);
+    const memTable = try MemTable.empty(alloc);
 
     const table = try Table.fromMem(alloc, memTable);
     // we expected only second release close cleans the table, otherwise it's a memory leak
