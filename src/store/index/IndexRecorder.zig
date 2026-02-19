@@ -327,7 +327,11 @@ fn runMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) void {
             return;
         }
 
-        self.flushMemTables(alloc, false);
+        self.flushMemTables(alloc, false) catch |err| {
+            std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
+            self.stopped.store(true, .release);
+            return;
+        };
         std.Thread.sleep(std.time.ns_per_s);
     }
 }
@@ -401,11 +405,26 @@ fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) void {
     };
 }
 
-fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) void {
-    _ = self;
-    _ = force;
-    _ = alloc;
-    unreachable;
+fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
+    const nowUs = std.time.microTimestamp();
+    const bufsize = 1024;
+    // TODO: metric to understand whether it's enough
+    var fba = std.heap.stackFallback(bufsize, alloc);
+    const fbaAlloc = fba.get();
+
+    var toFlush = try std.ArrayList(*Table).initCapacity(fbaAlloc, bufsize / 64);
+    defer toFlush.deinit(fbaAlloc);
+
+    self.mxTables.lock();
+    errdefer self.mxTables.unlock();
+    for (self.memTables.items) |memTable| {
+        if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
+            try toFlush.append(fbaAlloc, memTable);
+        }
+    }
+    self.mxTables.unlock();
+
+    try self.flushMemTablesInChunks(alloc, toFlush);
 }
 
 fn runEntriesFlusher(
@@ -433,6 +452,12 @@ fn runEntriesFlusher(
     }
 
     try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
+}
+
+fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
+    _ = self;
+    _ = alloc;
+    _ = toFlush;
 }
 
 fn tablesMerger(

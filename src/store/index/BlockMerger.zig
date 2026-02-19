@@ -287,6 +287,7 @@ fn createTestMemTable(alloc: Allocator) !*MemTable {
         .blockHeader = undefined,
         .tableHeader = .{},
         .metaIndex = .{},
+        .flushAtUs = undefined,
     };
     return memTable;
 }
