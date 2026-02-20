@@ -38,11 +38,12 @@ toRemove: std.atomic.Value(bool) = .init(false),
 refCounter: std.atomic.Value(u32),
 
 pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
-    std.fs.makeDirAbsolute(path) catch |err| {
-        std.debug.panic(
+    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+        std.posix.MakeDirError.PathAlreadyExists => {},
+        else => std.debug.panic(
             "failed to create a table dir '{s}': {s}",
             .{ path, @errorName(err) },
-        );
+        ),
     };
 
     // fsync after opening tables because it creates the files
@@ -54,7 +55,9 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
     // read table names,
     // they are given either from a file or listed directories in the path
     const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, Filenames.tables });
-    const tableNames = try readNames(alloc, tablesFilePath);
+    defer alloc.free(tablesFilePath);
+    var tableNames = try readNames(alloc, tablesFilePath);
+    defer tableNames.deinit(alloc);
 
     // syncing tables with a json, make sure all the listed dirs exist
     for (tableNames.items) |tableName| {
@@ -98,7 +101,9 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
         tables.deinit(parentAlloc);
     }
     for (tableNames.items) |tableName| {
-        const tablePath = try std.fs.path.join(alloc, &.{ path, tableName });
+        // don't clean tablePath, Table owns it
+        const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
+        errdefer parentAlloc.free(tablePath);
         const table = try Table.open(parentAlloc, tablePath);
         tables.appendAssumeCapacity(table);
     }
@@ -166,6 +171,9 @@ pub fn close(self: *Table, alloc: Allocator) void {
     }
     if (self.mem) |mem| {
         mem.deinit(alloc);
+    }
+    if (self.path.len > 0) {
+        alloc.free(self.path);
     }
     alloc.destroy(self);
 }
@@ -342,11 +350,13 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
     try createTestTableDir(alloc, tablePath);
 
-    const table1 = try Table.open(alloc, tablePath);
+    const table1Path = try alloc.dupe(u8, tablePath);
+    const table1 = try Table.open(alloc, table1Path);
     table1.release(alloc);
     try std.fs.accessAbsolute(tablePath, .{});
 
-    const table2 = try Table.open(alloc, tablePath);
+    const table2Path = try alloc.dupe(u8, tablePath);
+    const table2 = try Table.open(alloc, table2Path);
     table2.toRemove.store(true, .release);
     table2.release(alloc);
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
