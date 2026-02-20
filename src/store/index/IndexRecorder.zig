@@ -62,6 +62,7 @@ mxTables: std.Thread.Mutex = .{},
 diskTables: std.ArrayList(*Table),
 memTables: std.ArrayList(*Table),
 
+concurrency: u16,
 diskMergeSem: std.Thread.Semaphore,
 memMergeSem: std.Thread.Semaphore,
 
@@ -77,7 +78,8 @@ path: []const u8,
 
 pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     const conf = Conf.getConf();
-    const entries = try Entries.init(alloc);
+    const concurrency = conf.server.pools.cpus;
+    const entries = try Entries.init(alloc, concurrency);
     errdefer entries.deinit(alloc);
 
     const blocksThresholdToFlush: u32 = @intCast(entries.shards.len * maxBlocksPerShard);
@@ -109,9 +111,6 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
         tables.deinit(alloc);
     }
 
-    const diskMergeLimit = @max(4, conf.server.pools.cpus);
-    const memMergeLimit = conf.server.pools.cpus;
-
     const t = try alloc.create(IndexRecorder);
     t.* = .{
         .entries = entries,
@@ -123,11 +122,12 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
         .memTables = memTables,
         .mergeIdx = .init(@intCast(std.time.nanoTimestamp())),
         .path = trimmedPath,
+        .concurrency = concurrency,
         .diskMergeSem = .{
-            .permits = diskMergeLimit,
+            .permits = @max(4, concurrency),
         },
         .memMergeSem = .{
-            .permits = memMergeLimit,
+            .permits = @max(4, concurrency),
         },
     };
 
@@ -138,7 +138,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     // disk tables merge task is different,
     // it doesn't run infinitely, but runs a few merge cycles to process left overs
     // from the previous launches
-    for (0..diskMergeLimit) |_| {
+    for (0..concurrency) |_| {
         t.startDiskTablesMerge(alloc);
     }
 
@@ -352,7 +352,7 @@ fn runMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) void {
             return;
         }
 
-        self.runEntriesFlusher(alloc, &blocksDestination, false) catch |err| {
+        self.flushMemEntries(alloc, &blocksDestination, false) catch |err| {
             switch (err) {
                 error.OutOfMemory => {
                     std.debug.print("failed to run mem blocks flusher: OOM", .{});
@@ -427,7 +427,7 @@ fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
     try self.flushMemTablesInChunks(alloc, toFlush);
 }
 
-fn runEntriesFlusher(
+fn flushMemEntries(
     self: *IndexRecorder,
     alloc: Allocator,
     blocksDestination: *std.ArrayList(*MemBlock),
@@ -700,11 +700,10 @@ fn swapTables(
         },
     }
 
-    self.mxTables.unlock();
-
     if (removedDiskTables > 0 or tableKind == .disk) {
         try Table.writeNames(alloc, self.path, self.diskTables.items);
     }
+    self.mxTables.unlock();
 
     for (0..removedMemTables) |_| self.memTablesSem.post();
     if (tableKind == .mem) self.memTablesSem.wait();
@@ -736,7 +735,7 @@ fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
 
 fn getMaxTableSize(self: *IndexRecorder) u64 {
     const space = Conf.getFreeDiskSpace(self.path);
-    const maxSize = space / self.pool.threads.len;
+    const maxSize = space / self.concurrency;
     return @min(maxSize, maxTableSize);
 }
 

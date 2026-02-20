@@ -101,11 +101,10 @@ const Entries = @This();
 shardIdx: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 shards: []EntriesShard,
 
-pub fn init(alloc: Allocator) !*Entries {
-    const conf = Conf.getConf().server.pools;
-    std.debug.assert(conf.cpus != 0);
+pub fn init(alloc: Allocator, concurrency: u16) !*Entries {
+    std.debug.assert(concurrency != 0);
 
-    const shards = try alloc.alloc(EntriesShard, conf.cpus);
+    const shards = try alloc.alloc(EntriesShard, concurrency);
     errdefer alloc.free(shards);
 
     const e = try alloc.create(Entries);
@@ -129,10 +128,8 @@ const testing = std.testing;
 
 test "Entries.shardIdxOverflow" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
-    const e = try Entries.init(alloc);
+    const e = try Entries.init(alloc, 4);
     defer e.deinit(alloc);
     e.shardIdx = .init(std.math.maxInt(usize));
     try std.testing.expectEqual(e.shardIdx.load(.acquire), std.math.maxInt(usize));
