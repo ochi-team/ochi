@@ -212,5 +212,7 @@ pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
     try fs.writeBufferValToFile(entriesPath, self.dataBuf.items);
     try fs.writeBufferValToFile(lensPath, self.lensBuf.items);
 
+    try self.tableHeader.writeFile(alloc, path);
+
     fs.syncPathAndParentDir(path);
 }

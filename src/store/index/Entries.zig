@@ -3,17 +3,29 @@ const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 
-const Conf = @import("../../Conf.zig");
-
 const MemBlock = @import("MemBlock.zig");
 
 const EntriesShard = struct {
-    mx: std.Thread.Mutex,
+    mx: std.Thread.Mutex = .{},
     blocks: std.ArrayList(*MemBlock),
     // TODO: perhaps worth making it atomic instead of accessable under a mutex lock
-    flushAtUs: i64,
+    flushAtUs: i64 = std.math.maxInt(i64),
 
-    // TODO: init EntriesShard and its blocks with maxBlocks capacity
+    pub fn init(alloc: Allocator, blocksCap: usize) !EntriesShard {
+        return .{
+            .blocks = try .initCapacity(alloc, blocksCap),
+        };
+    }
+
+    pub fn deinit(self: *EntriesShard, alloc: Allocator) void {
+        for (self.blocks.items) |block| {
+            // TODO: find a way to assert there are no items, this is critical,
+            // we must assert on shutdown path it's empty
+            block.deinit(alloc);
+        }
+
+        self.blocks.deinit(alloc);
+    }
 
     pub fn add(
         self: *EntriesShard,
@@ -106,6 +118,9 @@ pub fn init(alloc: Allocator, concurrency: u16) !*Entries {
 
     const shards = try alloc.alloc(EntriesShard, concurrency);
     errdefer alloc.free(shards);
+    for (shards) |*shard| {
+        shard.* = try .init(alloc, maxBlocksPerShard);
+    }
 
     const e = try alloc.create(Entries);
     e.* = .{
@@ -120,6 +135,9 @@ pub fn next(self: *Entries) *EntriesShard {
 }
 
 pub fn deinit(self: *Entries, alloc: Allocator) void {
+    for (self.shards) |*shard| {
+        shard.deinit(alloc);
+    }
     alloc.free(self.shards);
     alloc.destroy(self);
 }

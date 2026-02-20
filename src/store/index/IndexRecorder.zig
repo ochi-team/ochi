@@ -40,7 +40,7 @@ blocksToFlush: std.ArrayList(*MemBlock),
 mxBlocks: std.Thread.Mutex = .{},
 // TODO: make it as atomic instead of locking to access this value,
 // we still need mutex to access blocksToFlush
-flushEntriesAtUs: ?i64 = null,
+flushEntriesAtUs: i64 = std.math.maxInt(i64),
 blocksThresholdToFlush: u32,
 
 // config fields
@@ -77,6 +77,8 @@ mergeIdx: std.atomic.Value(u64),
 path: []const u8,
 
 pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
+    std.debug.assert(path.len > 0);
+
     const conf = Conf.getConf();
     const concurrency = conf.server.pools.cpus;
     const entries = try Entries.init(alloc, concurrency);
@@ -100,7 +102,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
 
     // TODO: move it to the config level and pass path as trimmed
     var trimmedPath = path[0..];
-    if (std.fs.path.isSep(trimmedPath[trimmedPath.len])) {
+    if (std.fs.path.isSep(path[path.len - 1])) {
         trimmedPath = trimmedPath[0 .. trimmedPath.len - 1];
     }
     std.debug.assert(std.fs.path.isAbsolute(trimmedPath));
@@ -149,12 +151,48 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     return t;
 }
 
+// TODO: find an approach to make it never fail,
+// the only option it fails is OOM, so cleaning more memory in advance might be more reliable
+// another problem it's hard to test it via checkAllAllocationFailures
+pub fn stop(self: *IndexRecorder, alloc: Allocator) !void {
+    self.stopped.store(true, .release);
+    self.wg.wait();
+
+    try self.flushForce(alloc);
+
+    self.deinit(alloc);
+}
+
+pub fn flushForce(self: *IndexRecorder, alloc: Allocator) !void {
+    // pass empty destination because we don't plan to push more data in
+    //     var blocksDestination = try std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush);
+    var blocksDestination = std.ArrayList(*MemBlock).empty;
+    defer blocksDestination.deinit(alloc);
+
+    try self.flushMemEntries(alloc, &blocksDestination, true);
+    try self.flushMemTables(alloc, true);
+}
+
+// TODO: this must assert there is no data inmemory or it flushes it immediately
+// entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
+    for (self.blocksToFlush.items) |block| {
+        block.deinit(alloc);
+    }
+
+    for (self.diskTables.items) |table| {
+        table.release(alloc);
+    }
+    for (self.memTables.items) |table| {
+        table.release(alloc);
+    }
+
     self.entries.deinit(alloc);
     self.blocksToFlush.deinit(alloc);
     self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
     self.pool.deinit();
+    alloc.destroy(self.pool);
     alloc.destroy(self);
 }
 
@@ -196,11 +234,14 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+    var fba = std.heap.stackFallback(2048, alloc);
+    const fbaAlloc = fba.get();
+
     const tablesSize = (blocks.len + blocksInMemTable - 1) / blocksInMemTable;
-    var memTables = try std.ArrayList(*Table).initCapacity(alloc, tablesSize);
+    var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
+    defer memTables.deinit(fbaAlloc);
     errdefer {
         for (memTables.items) |memTable| memTable.close(alloc);
-        memTables.deinit(alloc);
     }
 
     var tail = blocks[0..];
@@ -377,16 +418,24 @@ fn startCacheKeyInvalidator(self: *IndexRecorder) void {
 }
 
 fn runCacheKeyInvalidator(self: *IndexRecorder) void {
+    var ticks: u8 = 0;
     while (true) {
-        std.Thread.sleep(std.time.ns_per_s * 10);
+        // invalidate every 15 secs, check stopped every 3 secs
+        std.Thread.sleep(3 * std.time.ns_per_s);
+        ticks +%= 1;
 
         if (self.stopped.load(.acquire)) {
             self.invalidateStreamFilterCache();
             return;
         }
 
-        if (self.needInvalidate.cmpxchgWeak(false, true, .release, .monotonic)) |yes| {
-            if (yes) self.invalidateStreamFilterCache();
+        if (ticks < 5) {
+            continue;
+        }
+        ticks = 0;
+
+        if (self.needInvalidate.cmpxchgWeak(true, false, .acq_rel, .acquire) == null) {
+            self.invalidateStreamFilterCache();
         }
     }
 }
@@ -419,6 +468,7 @@ fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
     errdefer self.mxTables.unlock();
     for (self.memTables.items) |memTable| {
         if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
+            memTable.inMerge = true;
             try toFlush.append(fbaAlloc, memTable);
         }
     }
@@ -436,14 +486,8 @@ fn flushMemEntries(
     const nowUs = std.time.microTimestamp();
 
     self.mxBlocks.lock();
-    errdefer self.mxBlocks.unlock();
-
-    if (force) {
+    if (force or nowUs >= self.flushEntriesAtUs) {
         std.mem.swap(std.ArrayList(*MemBlock), blocksDestination, &self.blocksToFlush);
-    } else if (self.flushEntriesAtUs) |flushAtUs| {
-        if (flushAtUs > nowUs) {
-            std.mem.swap(std.ArrayList(*MemBlock), blocksDestination, &self.blocksToFlush);
-        }
     }
     self.mxBlocks.unlock();
 
@@ -462,10 +506,10 @@ fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.A
     while (left.items.len > 0) {
         const n = selectTablesToMerge(&left);
         std.debug.assert(n > 0);
-        left = std.ArrayList(*Table).initBuffer(left.items[n..]);
 
+        left = std.ArrayList(*Table).initBuffer(left.items[n..]);
         // pass stopped as null since we must be able to flush data to disk
-        try self.mergeTables(alloc, left.items, true, null);
+        try self.mergeTables(alloc, left.items[0..n], true, null);
     }
 }
 
@@ -520,24 +564,26 @@ pub fn mergeTables(
     force: bool,
     stopped: ?*const std.atomic.Value(bool),
 ) !void {
+    std.debug.assert(tables.len > 0);
     for (tables) |table| std.debug.assert(table.inMerge);
 
+    var swapped = false;
     defer {
-        self.mxTables.lock();
-        for (tables) |table| table.inMerge = false;
-        self.mxTables.unlock();
+        if (!swapped) {
+            self.mxTables.lock();
+            for (tables) |table| table.inMerge = false;
+            self.mxTables.unlock();
+        }
     }
 
     const tableKind = getDestinationTableKind(tables, force);
-    var fba = std.heap.stackFallback(64, alloc);
-    const fbaAlloc = fba.get();
 
     // 1 for / and 16 for 16 bytes of idx representation,
     // we can't bitcast it to [8]u8 because we need human readlable file names
     var destinationTablePath: []u8 = "";
-    defer if (destinationTablePath.len > 0) fbaAlloc.free(destinationTablePath);
+    errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
     if (tableKind == .disk) {
-        destinationTablePath = try fbaAlloc.alloc(u8, self.path.len + 1 + 16);
+        destinationTablePath = try alloc.alloc(u8, self.path.len + 1 + 16);
         const idx = self.nextMergeIdx();
         _ = try std.fmt.bufPrint(
             destinationTablePath,
@@ -551,6 +597,7 @@ pub fn mergeTables(
         try table.storeToDisk(alloc, destinationTablePath);
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
         try self.swapTables(alloc, tables, newTable, tableKind);
+        swapped = true;
         return;
     }
 
@@ -588,8 +635,9 @@ pub fn mergeTables(
         fs.syncPathAndParentDir(destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable.?);
+    const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
     try self.swapTables(alloc, tables, openTable, tableKind);
+    swapped = true;
 }
 
 fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
@@ -645,7 +693,7 @@ fn maxItemsPerCachedTable() u64 {
 
 fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
-    defer {
+    errdefer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
     }
@@ -721,13 +769,18 @@ fn swapTables(
 
 fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
     var removed: u32 = 0;
-    for (0..tables.items.len) |i| {
+    var i: usize = 0;
+    while (i < tables.items.len) {
+        var isRemoved = false;
         for (remove) |r| {
             if (tables.items[i] == r) {
                 _ = tables.swapRemove(i);
                 removed += 1;
+                isRemoved = true;
+                break;
             }
         }
+        if (!isRemoved) i += 1;
     }
 
     return removed;
@@ -864,8 +917,9 @@ fn selectTablesToMerge(tables: *std.ArrayList(*Table)) usize {
     return edge;
 }
 
+const testing = std.testing;
+
 test "selectTablesToMerge moves selected window to the beginning and returns edge" {
-    const testing = std.testing;
     const alloc = testing.allocator;
 
     const Case = struct {
@@ -939,4 +993,330 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
         }
         try testing.expectEqualSlices(u16, case.expectedLeft, left);
     }
+}
+
+fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table {
+    var total: u32 = 0;
+    for (items) |item| total += @intCast(item.len);
+    var block = try MemBlock.init(alloc, total + 16);
+    errdefer block.deinit(alloc);
+    for (items) |item| {
+        const ok = block.add(item);
+        try testing.expect(ok);
+    }
+    var blocks = [_]*MemBlock{block};
+    const memTable = try MemTable.init(alloc, &blocks);
+    block.deinit(alloc);
+    return Table.fromMem(alloc, memTable);
+}
+
+fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
+    const memTable = try MemTable.empty(alloc);
+    try memTable.dataBuf.resize(alloc, size);
+    return Table.fromMem(alloc, memTable);
+}
+
+fn createDiskTableFromItems(alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
+    const memTable = try createMemTableFromItems(alloc, items);
+    defer memTable.close(alloc);
+    const mem = memTable.mem.?;
+    try mem.storeToDisk(alloc, tablePath);
+    try mem.tableHeader.writeFile(alloc, tablePath);
+    return Table.open(alloc, tablePath);
+}
+
+fn countItemsInTable(table: *Table) !u64 {
+    return table.tableHeader.itemsCount;
+}
+
+fn countItemsInRecorder(recorder: *IndexRecorder) !u64 {
+    var count: u64 = 0;
+    for (recorder.memTables.items) |table| {
+        count += try countItemsInTable(table);
+    }
+    for (recorder.diskTables.items) |table| {
+        count += try countItemsInTable(table);
+    }
+    return count;
+}
+
+const AddWorkerCtx = struct {
+    recorder: *IndexRecorder,
+    alloc: Allocator,
+    workerID: usize,
+    items: usize,
+};
+
+const stableItems = [_][]const u8{
+    "item-a", "item-b", "item-c", "item-d", "item-e", "item-f", "item-g", "item-h",
+};
+
+fn addWorker(ctx: *AddWorkerCtx) void {
+    var i: usize = 0;
+    while (i < ctx.items) : (i += 1) {
+        const item = stableItems[(ctx.workerID + i) % stableItems.len];
+        var batch = [_][]const u8{item};
+        ctx.recorder.add(ctx.alloc, &batch) catch unreachable;
+    }
+}
+
+test "IndexRecorder init and close empty dir" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    try testing.expectEqual(@as(usize, 0), recorder.diskTables.items.len);
+    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+    try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
+    try recorder.stop(alloc);
+}
+
+test "IndexRecorder init trims trailing slash" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const pathWithSlash = try std.mem.concat(alloc, u8, &.{ rootPath, std.fs.path.sep_str });
+    defer alloc.free(pathWithSlash);
+
+    const recorder = try IndexRecorder.init(alloc, pathWithSlash);
+    try testing.expect(std.mem.eql(u8, recorder.path, rootPath));
+    try recorder.stop(alloc);
+}
+
+test "getDestinationTableKind rules" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    const small1 = try createSizedMemTable(alloc, 256);
+    defer small1.close(alloc);
+    const small2 = try createSizedMemTable(alloc, 512);
+    defer small2.close(alloc);
+
+    var bothSmall = [_]*Table{ small1, small2 };
+    try testing.expectEqual(TableKind.mem, getDestinationTableKind(bothSmall[0..], false));
+    try testing.expectEqual(TableKind.disk, getDestinationTableKind(bothSmall[0..], true));
+
+    const large = try createSizedMemTable(alloc, @intCast(getMaxInmemoryTableSize() + 1));
+    defer large.close(alloc);
+    var onlyLarge = [_]*Table{large};
+    try testing.expectEqual(TableKind.disk, getDestinationTableKind(onlyLarge[0..], false));
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
+    errdefer alloc.free(diskPath);
+    const disk = try createDiskTableFromItems(alloc, diskPath, &.{ "a", "b", "c" });
+    defer disk.close(alloc);
+    var mixed = [_]*Table{ small1, disk };
+    try testing.expectEqual(TableKind.disk, getDestinationTableKind(mixed[0..], false));
+}
+
+test "filterTablesToMerge marks only selected tables inMerge" {
+    const alloc = testing.allocator;
+
+    const sizes = [_]u16{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 };
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, sizes.len);
+    defer {
+        for (tables.items) |table| table.close(alloc);
+        tables.deinit(alloc);
+    }
+    for (sizes) |size| {
+        const table = try createSizedMemTable(alloc, size);
+        tables.appendAssumeCapacity(table);
+    }
+
+    var toMerge = std.ArrayList(*Table).empty;
+    defer toMerge.deinit(alloc);
+
+    const window = try filterTablesToMerge(alloc, tables.items, &toMerge, std.math.maxInt(u64));
+    try testing.expect(window != null);
+    const w = window.?;
+
+    for (toMerge.items, 0..) |table, i| {
+        const expected = i >= w.lower and i < w.upper;
+        try testing.expectEqual(expected, table.inMerge);
+    }
+}
+
+test "removeTables removes exact pointers" {
+    const alloc = testing.allocator;
+    const one = try createSizedMemTable(alloc, 100);
+    const two = try createSizedMemTable(alloc, 100);
+    const three = try createSizedMemTable(alloc, 100);
+    defer one.close(alloc);
+    defer two.close(alloc);
+    defer three.close(alloc);
+
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, 3);
+    defer tables.deinit(alloc);
+    tables.appendAssumeCapacity(one);
+    tables.appendAssumeCapacity(two);
+    tables.appendAssumeCapacity(three);
+
+    var removeList = [_]*Table{two};
+    const removed = removeTables(&tables, removeList[0..]);
+    try testing.expectEqual(@as(u32, 1), removed);
+    try testing.expectEqual(@as(usize, 2), tables.items.len);
+    try testing.expect(tables.items[0] != two);
+    try testing.expect(tables.items[1] != two);
+}
+
+test "flushMemEntries non-force respects flush deadline" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    var block = try MemBlock.init(alloc, 64);
+    const ok = block.add("alpha");
+    try testing.expect(ok);
+    try recorder.blocksToFlush.append(alloc, block);
+
+    var dst = try std.ArrayList(*MemBlock).initCapacity(alloc, recorder.blocksThresholdToFlush);
+    defer dst.deinit(alloc);
+
+    recorder.flushEntriesAtUs = std.time.microTimestamp() + std.time.us_per_s;
+    try recorder.flushMemEntries(alloc, &dst, false);
+    try testing.expectEqual(@as(usize, 1), recorder.blocksToFlush.items.len);
+    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+
+    recorder.flushEntriesAtUs = std.time.microTimestamp() - std.time.us_per_s;
+    try recorder.flushMemEntries(alloc, &dst, false);
+    block.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
+    try testing.expect(recorder.memTables.items.len > 0);
+}
+
+test "mergeTables force single mem table creates disk table" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    const table = try createMemTableFromItems(alloc, &.{ "k1", "k2", "k3" });
+    try recorder.memTables.append(alloc, table);
+    recorder.memTablesSem.wait();
+    table.inMerge = true;
+
+    var single = [_]*Table{table};
+    try recorder.mergeTables(alloc, single[0..], true, null);
+    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+    try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
+    try testing.expect(recorder.diskTables.items[0].disk != null);
+}
+
+test "IndexRecorder add and reopen preserves item count" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const inserted: usize = 128;
+    {
+        const recorder = try IndexRecorder.init(alloc, rootPath);
+
+        for (0..inserted) |i| {
+            const item = stableItems[i % stableItems.len];
+            var batch = [_][]const u8{item};
+            try recorder.add(alloc, &batch);
+        }
+
+        recorder.stopped.store(true, .release);
+        recorder.wg.wait();
+        try recorder.flushForce(alloc);
+        while (recorder.memTables.items.len > 0) {
+            const table = recorder.memTables.items[0];
+            table.inMerge = true;
+            var single = [_]*Table{table};
+            try recorder.mergeTables(alloc, single[0..], true, null);
+        }
+        try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+        try testing.expect(recorder.diskTables.items.len > 0);
+        const count = try countItemsInRecorder(recorder);
+        try testing.expectEqual(@as(u64, inserted), count);
+        recorder.deinit(alloc);
+    }
+
+    {
+        const reopened = try IndexRecorder.init(alloc, rootPath);
+        reopened.stopped.store(true, .release);
+        reopened.wg.wait();
+        try testing.expect(reopened.diskTables.items.len > 0);
+        const count = try countItemsInRecorder(reopened);
+        try testing.expectEqual(@as(u64, inserted), count);
+        reopened.deinit(alloc);
+    }
+}
+
+test "IndexRecorder concurrent add preserves item count" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    defer recorder.deinit(alloc);
+
+    const workers = 4;
+    const items_per_worker = 64;
+    var ctxs: [workers]AddWorkerCtx = undefined;
+    var threads: [workers]std.Thread = undefined;
+
+    for (0..workers) |i| {
+        ctxs[i] = .{
+            .recorder = recorder,
+            .alloc = alloc,
+            .workerID = i,
+            .items = items_per_worker,
+        };
+        threads[i] = try std.Thread.spawn(.{}, addWorker, .{&ctxs[i]});
+    }
+    for (threads) |t| t.join();
+
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    try recorder.flushForce(alloc);
+
+    const count = try countItemsInRecorder(recorder);
+    try testing.expectEqual(@as(u64, workers * items_per_worker), count);
 }
