@@ -43,6 +43,9 @@ Nice to have:
 - Drop a couple blog posts in there on:
     1. why static allocation is not the best 
     2. write logs effectively
+    3. key value store for a logging database
+    4. storing index for logs
+    5. object storage complexity
 
 ### tiny package movements
 - extract structs from store/inmem/block_header.zig

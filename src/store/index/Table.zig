@@ -63,16 +63,14 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
     for (tableNames.items) |tableName| {
         const tablePath = try std.fs.path.join(alloc, &.{ path, tableName });
         defer alloc.free(tablePath);
-        if (std.fs.cwd().openFile(tablesFilePath, .{})) |file| {
-            file.close();
-        } else |err| switch (err) {
+        std.fs.accessAbsolute(tablePath, .{}) catch |err| switch (err) {
             error.FileNotFound => std.debug.panic(
                 "table '{s}' is missing on disk, but listed in '{s}'\n" ++
                     "make sure the content is not corrupted, remove '{s}' from file '{s}' or restore the missing file",
                 .{ tablePath, tablesFilePath, tablePath, tablesFilePath },
             ),
             else => return err,
-        }
+        };
     }
 
     // syncing tables with a json, remove all the not listed dirs,
