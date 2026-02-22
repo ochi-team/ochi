@@ -25,12 +25,12 @@ comptime {
 
 const Self = @This();
 
-table: *IndexRecorder,
+recorder: *IndexRecorder,
 
 pub fn init(allocator: std.mem.Allocator, table: *IndexRecorder) !*Self {
     const i = try allocator.create(Self);
     i.* = .{
-        .table = table,
+        .recorder = table,
     };
     return i;
 }
@@ -80,6 +80,6 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
         ei += 1;
     }
 
-    try self.table.add(alloc, entries);
+    try self.recorder.add(alloc, entries);
     unreachable;
 }
