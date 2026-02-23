@@ -32,6 +32,11 @@ pub const SID = struct {
         enc.writeInt(u128, self.id);
     }
 
+    pub fn encodeTenantWithPrefix(self: *const SID, enc: *Encoder, prefix: u8) void {
+        enc.writeInt(u8, prefix);
+        enc.writePadded(self.tenantID, maxTenantIDLen);
+    }
+
     pub fn decode(buf: []const u8) SID {
         var decoder = Decoder.init(buf);
         const tenantID = decoder.readPadded(maxTenantIDLen);
