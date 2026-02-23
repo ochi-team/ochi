@@ -1,4 +1,4 @@
-/// insert module provides write path for Seqor
+/// insert module provides write path for Ochi
 const std = @import("std");
 
 const httpz = @import("httpz");

@@ -1,4 +1,4 @@
-# Agent Guidelines for Seqor
+# Agent Guidelines for Ochi
 
 ## Build/Test Commands
 - **Build**: `zig build`
