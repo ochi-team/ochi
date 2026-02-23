@@ -319,11 +319,10 @@ fn createTestEntries(alloc: Allocator, count: usize, size: usize) ![][]const u8 
 
 fn createSidEntry(alloc: Allocator, tenantID: []const u8, streamID: u128) ![]const u8 {
     const buf = try alloc.alloc(u8, 1 + SID.encodeBound);
-    buf[0] = @intFromEnum(IndexKind.sid);
-
-    var enc = Encoder.init(buf[1..]);
+    var enc = Encoder.init(buf);
     const sid = SID{ .tenantID = tenantID, .id = streamID };
-    sid.encode(&enc);
+    sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
+    enc.writeInt(u128, sid.id);
 
     return buf;
 }

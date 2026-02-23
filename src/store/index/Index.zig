@@ -46,15 +46,16 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     var ei: usize = 0;
 
     // index stream existence
-    var sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
-    sidBuf[0] = @intFromEnum(IndexKind.sid);
-    var enc = Encoder.init(sidBuf[1..]);
-    sid.encode(&enc);
+    const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
+    var enc = Encoder.init(sidBuf);
+    sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
+    enc.writeInt(u128, sid.id);
+
     entries[ei] = sidBuf;
     ei += 1;
 
-    const tenantID = enc.buf[0..16];
-    const streamID = enc.buf[16..];
+    const tenantID = enc.buf[1..17];
+    const streamID = enc.buf[17..];
 
     // index stream -> tags
     // it's stored in index instead of data
