@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const MemOrder = @import("../../stds/sort.zig").MemOrder;
+const strings = @import("../../stds/strings.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
@@ -18,13 +19,6 @@ const EncodedMemBlock = struct {
     itemsCount: u32,
     encodingType: EncodingType,
 };
-
-fn findPrefix(first: []const u8, second: []const u8) []const u8 {
-    const n = @min(first.len, second.len);
-    var i: usize = 0;
-    while (i < n and first[i] == second[i]) : (i += 1) {}
-    return first[0..@intCast(i)];
-}
 
 const MemBlock = @This();
 
@@ -96,7 +90,7 @@ pub fn setPrefix(self: *MemBlock) void {
             continue;
         }
 
-        prefix = findPrefix(prefix, entry);
+        prefix = strings.findPrefix(prefix, entry);
         if (prefix.len == 0) return;
     }
 
@@ -108,7 +102,7 @@ pub fn setPrefixSorted(self: *MemBlock) void {
         return;
     }
 
-    self.prefix = findPrefix(self.items.items[0], self.items.items[self.items.items.len - 1]);
+    self.prefix = strings.findPrefix(self.items.items[0], self.items.items[self.items.items.len - 1]);
 }
 
 pub fn sort(self: *MemBlock) void {
@@ -165,7 +159,7 @@ pub fn encode(
 
     for (self.items.items[1..]) |item| {
         const currItem = item[self.prefix.len..];
-        const prefix = findPrefix(prevItem, currItem);
+        const prefix = strings.findPrefix(prevItem, currItem);
         itemsBuf.appendSliceAssumeCapacity(currItem[prefix.len..]);
 
         const xLen = prefix.len ^ prevLen;
