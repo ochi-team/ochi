@@ -32,7 +32,7 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
         }
 
         /// Swap elements at indices i and j
-        fn swap(self: *Self, i: usize, j: usize) void {
+        fn swap(self: *const Self, i: usize, j: usize) void {
             const tmp = self.array.items[i];
             self.array.items[i] = self.array.items[j];
             self.array.items[j] = tmp;
@@ -40,7 +40,7 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
 
         /// Establish heap invariants from an unsorted array.
         /// Complexity: O(n) where n = len()
-        pub fn heapify(self: *Self) void {
+        pub fn heapify(self: *const Self) void {
             const n = self.len();
             if (n <= 1) return;
 
@@ -52,7 +52,7 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
 
         /// Push an element onto the heap.
         /// Complexity: O(log n) where n = len()
-        pub fn push(self: *Self, x: T) !void {
+        pub fn push(self: *const Self, x: T) !void {
             try self.array.append(self.allocator, x);
             self.up(self.len() - 1);
         }
@@ -60,7 +60,7 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
         /// Remove and return the minimum element from the heap.
         /// Asserts that the heap is not empty.
         /// Complexity: O(log n) where n = len()
-        pub fn pop(self: *Self) T {
+        pub fn pop(self: *const Self) T {
             const n = self.len();
             std.debug.assert(n > 0);
 
@@ -78,7 +78,7 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
 
         /// Remove and return the element at index i from the heap.
         /// Complexity: O(log n) where n = len()
-        pub fn remove(self: *Self, i: usize) T {
+        pub fn remove(self: *const Self, i: usize) T {
             const n = self.len();
             std.debug.assert(i < n);
 
@@ -94,14 +94,14 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
 
         /// Re-establish heap ordering after the element at index i has changed.
         /// Complexity: O(log n) where n = len()
-        pub fn fix(self: *Self, i: usize) void {
+        pub fn fix(self: *const Self, i: usize) void {
             if (!self.down(i, self.len())) {
                 self.up(i);
             }
         }
 
         /// Move element at index j up to its proper position
-        fn up(self: *Self, j_start: usize) void {
+        fn up(self: *const Self, j_start: usize) void {
             var j = j_start;
             while (true) {
                 if (j == 0) break;
@@ -116,7 +116,7 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
 
         /// Move element at index start_idx down to its proper position
         /// Returns true if the element was moved
-        fn down(self: *Self, start_idx: usize, n: usize) bool {
+        fn down(self: *const Self, start_idx: usize, n: usize) bool {
             var i = start_idx;
             while (true) {
                 const j1 = 2 * i + 1;

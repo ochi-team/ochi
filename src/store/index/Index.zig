@@ -45,7 +45,7 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
 
-    const maybeItem = lookup.findFirstByPrefix(sidBuf);
+    const maybeItem = try lookup.findFirstByPrefix(alloc, sidBuf);
     if (maybeItem) |item| {
         return item.len == sidBuf.len;
     }

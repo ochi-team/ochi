@@ -53,12 +53,15 @@ pub fn init(alloc: Allocator, recorder: *IndexRecorder) !Lookup {
 }
 
 pub fn deinit(self: *Lookup, alloc: Allocator) void {
+    for (self.lookupTables.items) |*lt| lt.deinit();
+    self.lookupTables.deinit(alloc);
+    self.heapArray.deinit(alloc);
     for (self.tables.items) |t| t.release();
     self.tables.deinit(alloc);
 }
 
-pub fn findFirstByPrefix(self: *const Lookup, alloc: Allocator, prefix: []const u8) ?[]const u8 {
-    self.seek(prefix, alloc);
+pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?[]const u8 {
+    try self.seek(alloc, prefix);
 
     if (!self.next()) {
         return null;
@@ -75,7 +78,8 @@ fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
     self.isRead = false;
     self.heapArray.clearRetainingCapacity();
 
-    for (self.lookupTables.items) |*lt| {
+    for (0..self.lookupTables.items.len) |i| {
+        var lt = self.lookupTables.items[i];
         lt.seek(key);
         if (!lt.next()) {
             continue;
@@ -95,7 +99,7 @@ fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
     self.seekedIsCurrent = true;
 }
 
-fn next(self: *const Lookup) bool {
+fn next(self: *Lookup) bool {
     if (self.isRead) return false;
 
     if (self.seekedIsCurrent) {
@@ -108,17 +112,17 @@ fn next(self: *const Lookup) bool {
     return hasNext;
 }
 
-fn nextBlock(self: *const Lookup) bool {
-    const lt = self.tablesHeap.array.items[0];
+fn nextBlock(self: *Lookup) bool {
+    var lt = self.tablesHeap.array.items[0];
     if (lt.next()) {
         self.tablesHeap.fix(0);
         self.current = self.tablesHeap.array.items[0].current;
         return true;
     }
 
-    self.tablesHeap.pop();
+    _ = self.tablesHeap.pop();
     if (self.tablesHeap.array.items.len == 0) return false;
 
-    self.current = self.tablesHeap.array.items[0];
+    self.current = self.tablesHeap.array.items[0].current;
     return true;
 }
