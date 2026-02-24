@@ -109,7 +109,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
 
     var tables = try Table.openAll(alloc, trimmedPath);
     errdefer {
-        for (tables.items) |table| table.close(alloc);
+        for (tables.items) |table| table.close();
         tables.deinit(alloc);
     }
 
@@ -181,10 +181,10 @@ pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     }
 
     for (self.diskTables.items) |table| {
-        table.release(alloc);
+        table.release();
     }
     for (self.memTables.items) |table| {
-        table.release(alloc);
+        table.release();
     }
 
     self.entries.deinit(alloc);
@@ -208,6 +208,25 @@ pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void 
     var blocks = blocksList.?;
     defer blocks.deinit(alloc);
     try self.flushBlocks(alloc, blocks.items);
+}
+
+pub fn getTables(self: *IndexRecorder, alloc: Allocator) !std.ArrayList(*Table) {
+    self.mxTables.lock();
+    defer self.mxTables.unlock();
+
+    const tablesLen = self.memTables.items.len + self.diskTables.items.len;
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, tablesLen);
+
+    for (self.memTables.items) |table| {
+        table.retain();
+        tables.appendAssumeCapacity(table);
+    }
+    for (self.diskTables.items) |table| {
+        table.retain();
+        tables.appendAssumeCapacity(table);
+    }
+
+    return tables;
 }
 
 fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !void {
@@ -241,7 +260,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
     defer memTables.deinit(fbaAlloc);
     errdefer {
-        for (memTables.items) |memTable| memTable.close(alloc);
+        for (memTables.items) |memTable| memTable.close();
     }
 
     var tail = blocks[0..];
@@ -307,7 +326,7 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
         left.items.len = tail.len;
 
         const res = try MemTable.mergeMemTables(alloc, toMerge);
-        for (toMerge) |t| t.close(alloc);
+        for (toMerge) |t| t.close();
         const t = try Table.fromMem(alloc, res);
         try mergedTables.append(fbaAlloc, t);
     }
@@ -769,7 +788,7 @@ fn swapTables(
         // it could have been open by a client.
         // order flag doesn't matter, we don't expect any other part to change it back to
         table.toRemove.store(true, .unordered);
-        table.release(alloc);
+        table.release();
     }
 }
 
@@ -971,7 +990,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
     for (cases) |case| {
         var tables = try std.ArrayList(*Table).initCapacity(alloc, case.sizes.len);
         defer {
-            for (tables.items) |table| table.close(alloc);
+            for (tables.items) |table| table.close();
             tables.deinit(alloc);
         }
 
@@ -1023,7 +1042,7 @@ fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
 
 fn createDiskTableFromItems(alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
     const memTable = try createMemTableFromItems(alloc, items);
-    defer memTable.close(alloc);
+    defer memTable.close();
     const mem = memTable.mem.?;
     try mem.storeToDisk(alloc, tablePath);
     return Table.open(alloc, tablePath);
@@ -1077,16 +1096,16 @@ test "getDestinationTableKind rules" {
     defer Conf.deinit();
 
     const small1 = try createSizedMemTable(alloc, 256);
-    defer small1.close(alloc);
+    defer small1.close();
     const small2 = try createSizedMemTable(alloc, 512);
-    defer small2.close(alloc);
+    defer small2.close();
 
     var bothSmall = [_]*Table{ small1, small2 };
     try testing.expectEqual(TableKind.mem, getDestinationTableKind(bothSmall[0..], false));
     try testing.expectEqual(TableKind.disk, getDestinationTableKind(bothSmall[0..], true));
 
     const large = try createSizedMemTable(alloc, @intCast(getMaxInmemoryTableSize() + 1));
-    defer large.close(alloc);
+    defer large.close();
     var onlyLarge = [_]*Table{large};
     try testing.expectEqual(TableKind.disk, getDestinationTableKind(onlyLarge[0..], false));
 
@@ -1097,7 +1116,7 @@ test "getDestinationTableKind rules" {
     const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
     errdefer alloc.free(diskPath);
     const disk = try createDiskTableFromItems(alloc, diskPath, &.{ "a", "b", "c" });
-    defer disk.close(alloc);
+    defer disk.close();
     var mixed = [_]*Table{ small1, disk };
     try testing.expectEqual(TableKind.disk, getDestinationTableKind(mixed[0..], false));
 }
@@ -1108,7 +1127,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     const sizes = [_]u16{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 };
     var tables = try std.ArrayList(*Table).initCapacity(alloc, sizes.len);
     defer {
-        for (tables.items) |table| table.close(alloc);
+        for (tables.items) |table| table.close();
         tables.deinit(alloc);
     }
     for (sizes) |size| {
@@ -1134,9 +1153,9 @@ test "removeTables removes exact pointers" {
     const one = try createSizedMemTable(alloc, 100);
     const two = try createSizedMemTable(alloc, 100);
     const three = try createSizedMemTable(alloc, 100);
-    defer one.close(alloc);
-    defer two.close(alloc);
-    defer three.close(alloc);
+    defer one.close();
+    defer two.close();
+    defer three.close();
 
     var tables = try std.ArrayList(*Table).initCapacity(alloc, 3);
     defer tables.deinit(alloc);

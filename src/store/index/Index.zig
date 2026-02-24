@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
+const Lookup = @import("lookup/Lookup.zig");
 
 const Encoder = @import("encoding").Encoder;
 
@@ -35,11 +36,23 @@ pub fn init(allocator: std.mem.Allocator, table: *IndexRecorder) !*Self {
     return i;
 }
 
-pub fn hasStream(self: *Self, sid: SID) bool {
-    _ = self;
-    _ = sid;
-    unreachable;
+pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
+    var lookup = try Lookup.init(alloc, self.recorder);
+    defer lookup.deinit(alloc);
+
+    const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
+    var enc = Encoder.init(sidBuf);
+    sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
+    enc.writeInt(u128, sid.id);
+
+    const maybeItem = lookup.findFirstByPrefix(sidBuf);
+    if (maybeItem) |item| {
+        return item.len == sidBuf.len;
+    }
+
+    return false;
 }
+
 pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
     alloc.free(entries);

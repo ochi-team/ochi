@@ -65,7 +65,7 @@ pub const Partition = struct {
 
                 if (i > 0 and lines.items[streamsToCache.items[i - 1]].sid.eql(&sid)) continue;
 
-                if (!self.index.hasStream(sid)) {
+                if (!try self.index.hasStream(allocator, sid)) {
                     try self.index.indexStream(allocator, sid, tags, encodedTags);
                 }
                 try self.cache(sid);
