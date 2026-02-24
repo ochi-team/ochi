@@ -24,6 +24,10 @@ tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
 
+// holds ownership,
+// it's necessary in order to support ref counter
+alloc: Allocator,
+
 // state
 
 // inMerge defines whether the table is taken by a merge job
@@ -156,24 +160,25 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .path = path,
         .tableHeader = undefined,
         .refCounter = .init(1),
+        .alloc = alloc,
     };
     table.tableHeader = &table.disk.?.tableHeader;
 
     return table;
 }
 
-pub fn close(self: *Table, alloc: Allocator) void {
+pub fn close(self: *Table) void {
     // TODO: close files in parallel
     if (self.disk) |disk| {
-        disk.deinit(alloc);
+        disk.deinit(self.alloc);
     }
     if (self.mem) |mem| {
-        mem.deinit(alloc);
+        mem.deinit(self.alloc);
     }
     if (self.path.len > 0) {
-        alloc.free(self.path);
+        self.alloc.free(self.path);
     }
-    alloc.destroy(self);
+    self.alloc.destroy(self);
 }
 
 pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
@@ -185,6 +190,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .path = "",
         .tableHeader = &memTable.tableHeader,
         .refCounter = .init(1),
+        .alloc = alloc,
     };
 
     return table;
@@ -278,21 +284,19 @@ pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-// TODO: obviously releasing it from read path an allocator won't be the same as owning the table,
-// so we must store the allocator in the table itself
-pub fn release(self: *Table, alloc: Allocator) void {
+pub fn release(self: *Table) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
     if (prev != 1) return;
 
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
-    const pathCopy = if (shouldRemove) alloc.dupe(u8, self.path) catch |err| {
+    const pathCopy = if (shouldRemove) self.alloc.dupe(u8, self.path) catch |err| {
         std.debug.panic("failed to copy table path '{s}': {s}", .{ self.path, @errorName(err) });
     } else null;
-    defer if (pathCopy) |p| alloc.free(p);
+    defer if (pathCopy) |p| self.alloc.free(p);
 
-    self.close(alloc);
+    self.close();
     if (pathCopy) |p| {
         std.fs.deleteTreeAbsolute(p) catch |err| {
             std.debug.panic("failed to delete table '{s}': {s}", .{ p, @errorName(err) });
@@ -350,13 +354,13 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
     const table1Path = try alloc.dupe(u8, tablePath);
     const table1 = try Table.open(alloc, table1Path);
-    table1.release(alloc);
+    table1.release();
     try std.fs.accessAbsolute(tablePath, .{});
 
     const table2Path = try alloc.dupe(u8, tablePath);
     const table2 = try Table.open(alloc, table2Path);
     table2.toRemove.store(true, .release);
-    table2.release(alloc);
+    table2.release();
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
 }
 
@@ -378,8 +382,8 @@ test "release fromMem does not affect filesystem path" {
     table.retain();
 
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
-    table.release(alloc);
+    table.release();
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
-    table.release(alloc);
+    table.release();
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
 }
