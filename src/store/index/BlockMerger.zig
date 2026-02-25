@@ -286,7 +286,6 @@ fn createTestMemTable(alloc: Allocator) !*MemTable {
     memTable.* = .{
         .blockHeader = undefined,
         .tableHeader = .{},
-        .metaIndex = .{},
         .flushAtUs = undefined,
     };
     return memTable;
@@ -589,11 +588,15 @@ test "BlockMerger.merge tag records" {
                         streamIDs1.appendAssumeCapacity(10);
                     }
                     streamIDs1.appendAssumeCapacity(50);
-                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, streamIDs1.items));
+                    entries.appendAssumeCapacity(
+                        try TagRecordsMerger.createTagRecord(a, "tenant1", t, streamIDs1.items),
+                    );
                     // Second record with streamIDs: [100, 400]
                     // Would come after deduplicated first record [100, 500]
                     // but 500 > 400, making merged output unsorted
-                    entries.appendAssumeCapacity(try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{ 10, 40 }));
+                    entries.appendAssumeCapacity(
+                        try TagRecordsMerger.createTagRecord(a, "tenant1", t, &[_]u128{ 10, 40 }),
+                    );
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant2", 60));
                     return entries.toOwnedSlice(a);
                 }

@@ -21,7 +21,6 @@ const flush = @import("flush/flush.zig");
 
 blockHeader: BlockHeader,
 tableHeader: TableHeader,
-metaIndex: MetaIndex,
 
 dataBuf: std.ArrayList(u8) = .empty,
 lensBuf: std.ArrayList(u8) = .empty,
@@ -36,7 +35,6 @@ pub fn empty(alloc: Allocator) !*MemTable {
     t.* = .{
         .blockHeader = undefined,
         .tableHeader = undefined,
-        .metaIndex = undefined,
         .flushAtUs = undefined,
     };
     return t;
@@ -132,22 +130,24 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     var n = try encoding.compressAuto(compressed, encodedBlockHeader);
     try self.indexBuf.appendSlice(alloc, compressed[0..n]);
 
-    self.metaIndex.firstItem = self.blockHeader.firstItem;
-    self.metaIndex.blockHeadersCount = 1;
-    self.metaIndex.indexBlockOffset = 0;
-    self.metaIndex.indexBlockSize = @intCast(n);
+    const metaIndex = MetaIndex{
+        .firstItem = self.blockHeader.firstItem,
+        .blockHeadersCount = 1,
+        .indexBlockOffset = 0,
+        .indexBlockSize = @intCast(n),
+    };
 
     var fbaFallback = std.heap.stackFallback(128, alloc);
     var fba = fbaFallback.get();
-    const encodedMetaIndex = try self.metaIndex.encodeAlloc(fba);
+    const encodedMetaIndex = try metaIndex.encodeAlloc(fba);
     defer fba.free(encodedMetaIndex);
 
     bound = try encoding.compressBound(encodedMetaIndex.len);
-    const compressedMr = try alloc.alloc(u8, bound);
-    defer alloc.free(compressedMr);
-    n = try encoding.compressAuto(compressedMr, encodedMetaIndex);
+    const compressedMetaIndex = try alloc.alloc(u8, bound);
+    defer alloc.free(compressedMetaIndex);
+    n = try encoding.compressAuto(compressedMetaIndex, encodedMetaIndex);
 
-    try self.metaindexBuf.appendSlice(alloc, compressedMr[0..n]);
+    try self.metaindexBuf.appendSlice(alloc, compressedMetaIndex[0..n]);
 }
 
 fn mergeIntoMemTable(
