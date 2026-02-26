@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const Filenames = @import("../../Filenames.zig");
@@ -20,6 +21,7 @@ mem: ?*MemTable,
 disk: ?*DiskTable,
 
 // fields for all the tables
+metaindexRecords: []MetaIndex,
 tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
@@ -146,7 +148,6 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     errdefer alloc.destroy(disk);
     disk.* = .{
         .tableHeader = tableHeader,
-        .metaindexRecords = decodedMetaindex.records,
         .indexFile = indexFile,
         .entriesFile = entriesFile,
         .lensFile = lensFile,
@@ -158,6 +159,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .disk = disk,
         .size = decodedMetaindex.compressedSize + indexSize + entriesSize + lensSize,
         .path = path,
+        .metaindexRecords = decodedMetaindex.records,
         .tableHeader = undefined,
         .refCounter = .init(1),
         .alloc = alloc,
@@ -168,13 +170,16 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
 }
 
 pub fn close(self: *Table) void {
-    // TODO: close files in parallel
     if (self.disk) |disk| {
         disk.deinit(self.alloc);
     }
     if (self.mem) |mem| {
         mem.deinit(self.alloc);
     }
+
+    for (self.metaindexRecords) |*rec| rec.deinit(self.alloc);
+    if (self.metaindexRecords.len > 0) self.alloc.free(self.metaindexRecords);
+
     if (self.path.len > 0) {
         self.alloc.free(self.path);
     }
@@ -182,12 +187,30 @@ pub fn close(self: *Table) void {
 }
 
 pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
+    var decodedMetaindex: MetaIndex.DecodedMetaIndex = .{
+        .records = &.{},
+        .compressedSize = undefined,
+    };
+    // TODO: we must generate a real table for this use case,
+    // but it requires an moving all the stub models generation from all the test to a designated package/file,
+    // then we can remove this dumb condition
+    if (!builtin.is_test or memTable.metaindexBuf.items.len > 0) {
+        decodedMetaindex = try MetaIndex.decodeDecompress(
+            alloc,
+            memTable.metaindexBuf.items,
+            memTable.tableHeader.blocksCount,
+        );
+    }
+    errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
+
     const table = try alloc.create(Table);
+
     table.* = .{
         .mem = memTable,
         .disk = null,
         .size = memTable.size(),
         .path = "",
+        .metaindexRecords = decodedMetaindex.records,
         .tableHeader = &memTable.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
