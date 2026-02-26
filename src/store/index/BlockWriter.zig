@@ -21,7 +21,7 @@ const MemDestination = struct {
     metaindexBuf: *std.ArrayList(u8),
 };
 
-// TODO: refactor this garbage to work with Wrter interface 
+// TODO: refactor this garbage to work with Wrter interface
 const DiskDestination = struct {
     entriesFile: std.fs.File,
     lensFile: std.fs.File,
@@ -322,4 +322,59 @@ test "BlockWriter disk output matches mem output" {
     try testing.expectEqualSlices(u8, memTable.lensBuf.items, lens);
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, index);
     try testing.expectEqualSlices(u8, memTable.metaindexBuf.items, metaindex);
+}
+
+test "BlockWriter metaindexBuf may contain multiple records" {
+    const alloc = testing.allocator;
+    const blocksCount: usize = 1400;
+
+    var memTable = try MemTable.empty(alloc);
+    defer memTable.deinit(alloc);
+
+    var writer = BlockWriter.initFromMemTable(memTable);
+    defer writer.deinit(alloc);
+
+    var itemsOwned = try std.ArrayList([]u8).initCapacity(alloc, blocksCount);
+    defer {
+        for (itemsOwned.items) |item| alloc.free(item);
+        itemsOwned.deinit(alloc);
+    }
+
+    var blocks = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksCount);
+    defer {
+        for (blocks.items) |block| block.deinit(alloc);
+        blocks.deinit(alloc);
+    }
+
+    // Simulate a compaction/merge path calling writeBlock() many times.
+    for (0..blocksCount) |i| {
+        const item = try std.fmt.allocPrint(alloc, "merge-item-{d:0>6}", .{i});
+        try itemsOwned.append(alloc, item);
+
+        const items = [_][]const u8{item};
+        const block = try createTestMemBlock(alloc, &items);
+        try blocks.append(alloc, block);
+
+        try writer.writeBlock(alloc, block);
+    }
+    try writer.close(alloc);
+
+    const decoded = try MetaIndex.decodeDecompress(
+        alloc,
+        memTable.metaindexBuf.items,
+        @intCast(blocksCount),
+    );
+    defer {
+        for (decoded.records) |*rec| rec.deinit(alloc);
+        if (decoded.records.len > 0) alloc.free(decoded.records);
+    }
+
+    try testing.expect(decoded.records.len > 1);
+
+    var totalBlockHeaders: u64 = 0;
+    for (decoded.records) |rec| {
+        try testing.expect(rec.blockHeadersCount > 0);
+        totalBlockHeaders += rec.blockHeadersCount;
+    }
+    try testing.expectEqual(@as(u64, @intCast(blocksCount)), totalBlockHeaders);
 }
