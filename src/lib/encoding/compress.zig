@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const C = @import("c").C;
 
 pub const CompressError = error{
@@ -63,10 +65,18 @@ pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
 pub fn decompress(dst: []u8, src: []const u8) DecompressError!usize {
     const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
     if (C.ZSTD_isError(res) == 1) {
+        const errCode = C.ZSTD_getErrorCode(res);
+        const msg = C.ZSTD_getErrorName(res);
+        std.debug.print("decompress error: {d}, msg={s}\n", .{ errCode, msg });
         // TODO: log an error to understand the exact error code
-        // const errCode = c.zstd.ZSTD_getErrorCode(res);
-        // const msg = c.zstd.ZSTD_getErrorName(res);
-        return DecompressError.Unknown;
+        return handleErrCode(errCode);
     }
     return res;
+}
+
+fn handleErrCode(code: C.ZSTD_ErrorCode) DecompressError {
+    return switch (code) {
+        70 => return DecompressError.InsufficientCapacity,
+        else => DecompressError.Unknown,
+    };
 }

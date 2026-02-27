@@ -13,12 +13,15 @@ const LookupTable = @This();
 
 table: *Table,
 maxMemBlockSize: u32,
+// blockHeadersOwned always keeps the base allocation we must free.
+blockHeadersOwned: []BlockHeader,
 
 // state
+
 current: []const u8,
+// blockHeaders may point into a tail subslice while scanning
 blockHeaders: []BlockHeader,
 indexBuf: std.ArrayList(u8) = .empty,
-compressedIndexBuf: std.ArrayList(u8) = .empty,
 entriesBlock: EntriesBlock,
 
 metaindexRecords: []MetaIndex,
@@ -28,6 +31,7 @@ isRead: bool,
 memBlock: ?*MemBlock,
 memBlockIdx: usize,
 
+/// Creates a reusable lookup cursor for a single Table
 pub fn init(table: *Table, maxMemBlockSize: u32) LookupTable {
     return .{
         .table = table,
@@ -36,6 +40,7 @@ pub fn init(table: *Table, maxMemBlockSize: u32) LookupTable {
         .current = "",
         .isRead = false,
         .blockHeaders = &.{},
+        .blockHeadersOwned = &.{},
         .entriesBlock = .{},
         .metaindexRecords = &.{},
         .memBlock = null,
@@ -46,9 +51,9 @@ pub fn init(table: *Table, maxMemBlockSize: u32) LookupTable {
 pub fn deinit(self: *LookupTable, alloc: Allocator) void {
     if (self.memBlock) |memBlock| memBlock.deinit(alloc);
     self.memBlock = null;
+    if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
 
     self.indexBuf.deinit(alloc);
-    self.compressedIndexBuf.deinit(alloc);
     self.entriesBlock.deinit(alloc);
 
     self.* = undefined;
@@ -58,6 +63,7 @@ pub fn lessThan(one: LookupTable, another: LookupTable) bool {
     return std.mem.lessThan(u8, one.current, another.current);
 }
 
+/// Positions the cursor to the first item `>= key`.
 pub fn seek(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
     self.isRead = false;
 
@@ -87,15 +93,15 @@ fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
     const keyPrefixLen = strings.findPrefix(block.prefix, key).len;
     const keySuffix = key[keyPrefixLen..];
 
-    // check upper blound,
-    // if the key is out then it's in the next block
+    // check upper bound,
+    // If key is greater than the block upper bound, caller must load next block.
     if (std.mem.lessThan(u8, items[items.len - 1][keyPrefixLen..], keySuffix)) {
         // key is in the next block
         return false;
     }
 
-    // check lower bound,
-    // if the key is out then it's in the previous block
+    // If key may be below current position, step one item back and verify
+    // the key still belongs to this block.
     if (idx > 0) idx -= 1;
     if (std.mem.lessThan(u8, keySuffix, items[idx][keyPrefixLen..])) {
         items = items[0..idx];
@@ -113,7 +119,7 @@ fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
 }
 
 fn seekFromStart(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
-    self.resetState();
+    self.resetState(alloc);
 
     if (std.mem.eql(u8, key, self.table.tableHeader.firstItem) or
         std.mem.lessThan(u8, key, self.table.tableHeader.firstItem))
@@ -123,6 +129,8 @@ fn seekFromStart(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
     }
     std.debug.assert(self.metaindexRecords.len != 0);
 
+    // Binary search can return the first row strictly above the key.
+    // Step back by one row because the target may belong to the previous range.
     var i = std.sort.binarySearch(MetaIndex, self.metaindexRecords, key, MetaIndex.compareToKey) orelse 0;
     if (i > 0) i -= 1;
     self.metaindexRecords = self.metaindexRecords[i..];
@@ -130,6 +138,7 @@ fn seekFromStart(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
         return;
     }
 
+    // Same idea at block-header level: include the previous block as candidate.
     i = std.sort.binarySearch(BlockHeader, self.blockHeaders, key, BlockHeader.compareToKey) orelse 0;
     if (i > 0) i -= 1;
     self.blockHeaders = self.blockHeaders[i..];
@@ -146,16 +155,19 @@ fn seekFromStart(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
     _ = try self.nextBlock(alloc);
 }
 
-fn resetState(self: *LookupTable) void {
+fn resetState(self: *LookupTable, alloc: Allocator) void {
     self.current = "";
     self.blockHeaders = &.{};
+    if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
+    self.blockHeadersOwned = &.{};
     self.indexBuf.clearRetainingCapacity();
-    self.compressedIndexBuf.clearRetainingCapacity();
 
+    if (self.memBlock) |memBlock| memBlock.deinit(alloc);
     self.memBlock = null;
     self.memBlockIdx = 0;
     self.entriesBlock.reset();
 
+    // Reset to full table scan window; seek narrows this slice later.
     self.metaindexRecords = self.table.metaindexRecords;
 }
 
@@ -180,9 +192,23 @@ fn lowerBoundBySuffix(items: []const []const u8, key: []const u8, prefixLen: usi
     return lo;
 }
 
-pub fn next(self: *const LookupTable) bool {
-    _ = self;
-    unreachable;
+/// Moves to the next item in table order.
+pub fn next(self: *LookupTable, alloc: Allocator) !bool {
+    if (self.isRead) return false;
+
+    if (self.memBlockIdx < self.memBlock.?.items.items.len) {
+        self.current = self.memBlock.?.items.items[self.memBlockIdx];
+        self.memBlockIdx += 1;
+        return true;
+    }
+
+    if (!try self.nextBlock(alloc)) {
+        return false;
+    }
+
+    self.current = self.memBlock.?.items.items[0];
+    self.memBlockIdx += 1;
+    return true;
 }
 
 fn nextBlock(self: *LookupTable, alloc: Allocator) !bool {
@@ -192,7 +218,11 @@ fn nextBlock(self: *LookupTable, alloc: Allocator) !bool {
     }
 
     const blockHeader = self.blockHeaders[0];
-    self.memBlock = try self.getMemBlock(blockHeader);
+    const newMemBlock = try self.getMemBlock(blockHeader);
+
+    // Each block decode allocates a new MemBlock; free previous one first.
+    if (self.memBlock) |memBlock| memBlock.deinit(alloc);
+    self.memBlock = newMemBlock;
     self.blockHeaders = self.blockHeaders[1..];
     self.memBlockIdx = 0;
 
@@ -210,20 +240,29 @@ fn nextBlockHeaders(self: *LookupTable, alloc: Allocator) !bool {
 
     // TODO: cache block headers
 
-    self.blockHeaders = try self.readBlockHeaders(alloc, metaIndex);
+    const blockHeadersOwned = try self.readBlockHeaders(alloc, metaIndex);
+
+    // Always free the previous decode batch before loading the next one,
+    // only after readBlockHeaders went successful
+    if (self.blockHeadersOwned.len > 0) {
+        alloc.free(self.blockHeadersOwned);
+        self.blockHeadersOwned = &.{};
+        self.blockHeaders = &.{};
+    }
+    self.blockHeadersOwned = blockHeadersOwned;
+    self.blockHeaders = self.blockHeadersOwned;
     return true;
 }
 
 fn readBlockHeaders(self: *LookupTable, alloc: Allocator, metaIndex: MetaIndex) ![]BlockHeader {
-    try self.compressedIndexBuf.ensureUnusedCapacity(alloc, metaIndex.indexBlockSize);
     const end = metaIndex.indexBlockOffset + metaIndex.indexBlockSize;
     const compressedIndex = self.table.indexBuf[metaIndex.indexBlockOffset..end];
 
     const indexSize = try encoding.getFrameContentSize(compressedIndex);
     try self.indexBuf.ensureUnusedCapacity(alloc, indexSize);
-    const n = try encoding.decompress(self.indexBuf.items, compressedIndex);
+    const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), compressedIndex);
     std.debug.assert(n == indexSize);
-    self.indexBuf.items.len += indexSize;
+    self.indexBuf.items.len = n;
 
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
 }
@@ -238,11 +277,14 @@ fn readMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
 
     self.entriesBlock.reset();
 
+    // Copy exact encoded slices for this block and decode them into a fresh MemBlock.
     try self.entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, blockHeader.entriesBlockSize);
     const itemsStart: usize = @intCast(blockHeader.entriesBlockOffset);
     const itemsEnd = itemsStart + blockHeader.entriesBlockSize;
     const itemsSrc = self.table.entriesBuf[itemsStart..itemsEnd];
-    @memmove(self.entriesBlock.entriesBuf.unusedCapacitySlice(), itemsSrc);
+    const itemsDst = self.entriesBlock.entriesBuf.unusedCapacitySlice()[0..blockHeader.entriesBlockSize];
+    @memcpy(itemsDst, itemsSrc);
+
     std.debug.assert(itemsSrc.len == blockHeader.entriesBlockSize);
     self.entriesBlock.entriesBuf.items.len = blockHeader.entriesBlockSize;
 
@@ -250,7 +292,9 @@ fn readMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
     const lensStart: usize = @intCast(blockHeader.lensBlockOffset);
     const lensEnd = lensStart + blockHeader.lensBlockSize;
     const lensSrc = self.table.lensBuf[lensStart..lensEnd];
-    @memmove(self.entriesBlock.lensBuf.unusedCapacitySlice(), lensSrc);
+    const lensDst = self.entriesBlock.lensBuf.unusedCapacitySlice()[0..blockHeader.lensBlockSize];
+    @memcpy(lensDst, lensSrc);
+
     std.debug.assert(lensSrc.len == blockHeader.lensBlockSize);
     self.entriesBlock.lensBuf.items.len = blockHeader.lensBlockSize;
 
