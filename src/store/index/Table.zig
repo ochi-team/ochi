@@ -26,6 +26,11 @@ tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
 
+indexReader: std.Io.Reader,
+entriesReader: std.Io.Reader,
+lensReader: std.Io.Reader,
+readersBuf: [4096]u8 = undefined,
+
 // holds ownership,
 // it's necessary in order to support ref counter
 alloc: Allocator,
@@ -153,7 +158,12 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .lensFile = lensFile,
     };
 
+    // FIXME: it doesn'tseem a thread safe approach, must be validated and fixed
     const table = try alloc.create(Table);
+    const indexReader = indexFile.reader(table.readersBuf[0..]);
+    const entriesReader = entriesFile.reader(table.readersBuf[0..]);
+    const lensReader = lensFile.reader(table.readersBuf[0..]);
+
     table.* = .{
         .mem = null,
         .disk = disk,
@@ -163,6 +173,10 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .tableHeader = undefined,
         .refCounter = .init(1),
         .alloc = alloc,
+
+        .indexReader = indexReader.interface,
+        .entriesReader = entriesReader.interface,
+        .lensReader = lensReader.interface,
     };
     table.tableHeader = &table.disk.?.tableHeader;
 
@@ -205,6 +219,10 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
 
     const table = try alloc.create(Table);
 
+    const indexReader = std.Io.Reader.fixed(memTable.indexBuf.items);
+    const entriesReader = std.Io.Reader.fixed(memTable.entriesBuf.items);
+    const lensReader = std.Io.Reader.fixed(memTable.lensBuf.items);
+
     table.* = .{
         .mem = memTable,
         .disk = null,
@@ -214,6 +232,10 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .tableHeader = &memTable.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
+
+        .entriesReader = entriesReader,
+        .lensReader = lensReader,
+        .indexReader = indexReader,
     };
 
     return table;

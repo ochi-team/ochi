@@ -11,7 +11,7 @@ const TableHeader = @import("TableHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const MemBlock = @import("MemBlock.zig");
 const BlockReader = @import("BlockReader.zig");
-const StorageBlock = @import("StorageBlock.zig");
+const EntriesBlock = @import("EntrieBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockMerger = @import("BlockMerger.zig");
 
@@ -22,7 +22,7 @@ const flush = @import("flush/flush.zig");
 blockHeader: BlockHeader,
 tableHeader: TableHeader,
 
-dataBuf: std.ArrayList(u8) = .empty,
+entriesBuf: std.ArrayList(u8) = .empty,
 lensBuf: std.ArrayList(u8) = .empty,
 indexBuf: std.ArrayList(u8) = .empty,
 
@@ -87,7 +87,7 @@ pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
 }
 
 pub fn deinit(self: *MemTable, alloc: Allocator) void {
-    self.dataBuf.deinit(alloc);
+    self.entriesBuf.deinit(alloc);
     self.lensBuf.deinit(alloc);
     self.indexBuf.deinit(alloc);
     self.metaindexBuf.deinit(alloc);
@@ -98,9 +98,9 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     block.sortData();
     self.flushAtUs = flushAtUs;
 
-    var sb = StorageBlock{};
-    defer sb.deinit(alloc);
-    const encodedBlock = try block.encode(alloc, &sb);
+    var entriesBlock = EntriesBlock{};
+    defer entriesBlock.deinit(alloc);
+    const encodedBlock = try block.encode(alloc, &entriesBlock);
     self.blockHeader.firstItem = encodedBlock.firstItem;
     self.blockHeader.prefix = encodedBlock.prefix;
     self.blockHeader.itemsCount = encodedBlock.itemsCount;
@@ -113,13 +113,13 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
         .lastItem = block.items.items[block.items.items.len - 1],
     };
 
-    try self.dataBuf.appendSlice(alloc, sb.itemsData.items);
+    try self.entriesBuf.appendSlice(alloc, entriesBlock.entriesBuf.items);
     self.blockHeader.itemsBlockOffset = 0;
-    self.blockHeader.itemsBlockSize = @intCast(sb.itemsData.items.len);
+    self.blockHeader.itemsBlockSize = @intCast(entriesBlock.entriesBuf.items.len);
 
-    try self.lensBuf.appendSlice(alloc, sb.lensData.items);
+    try self.lensBuf.appendSlice(alloc, entriesBlock.lensBuf.items);
     self.blockHeader.lensBlockOffset = 0;
-    self.blockHeader.lensBlockSize = @intCast(sb.lensData.items.len);
+    self.blockHeader.lensBlockSize = @intCast(entriesBlock.lensBuf.items.len);
 
     const encodedBlockHeader = try self.blockHeader.encodeAlloc(alloc);
     defer alloc.free(encodedBlockHeader);
@@ -187,7 +187,7 @@ pub fn mergeBlocks(
 
 pub fn size(self: *MemTable) u64 {
     return @intCast(
-        self.dataBuf.items.len + self.lensBuf.items.len + self.indexBuf.items.len + self.metaindexBuf.items.len,
+        self.entriesBuf.items.len + self.lensBuf.items.len + self.indexBuf.items.len + self.metaindexBuf.items.len,
     );
 }
 
@@ -209,7 +209,7 @@ pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
 
     try fs.writeBufferValToFile(metaindexPath, self.metaindexBuf.items);
     try fs.writeBufferValToFile(indexPath, self.indexBuf.items);
-    try fs.writeBufferValToFile(entriesPath, self.dataBuf.items);
+    try fs.writeBufferValToFile(entriesPath, self.entriesBuf.items);
     try fs.writeBufferValToFile(lensPath, self.lensBuf.items);
 
     try self.tableHeader.writeFile(alloc, path);
