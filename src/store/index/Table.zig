@@ -26,10 +26,9 @@ tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
 
-indexReader: std.Io.Reader,
-entriesReader: std.Io.Reader,
-lensReader: std.Io.Reader,
-readersBuf: [4096]u8 = undefined,
+indexBuf: []u8,
+entriesBuf: []u8,
+lensBuf: []u8,
 
 // holds ownership,
 // it's necessary in order to support ref counter
@@ -158,11 +157,14 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .lensFile = lensFile,
     };
 
-    // FIXME: it doesn'tseem a thread safe approach, must be validated and fixed
+    // TODO: this is complete garbage, we must use real reader API here
     const table = try alloc.create(Table);
-    const indexReader = indexFile.reader(table.readersBuf[0..]);
-    const entriesReader = entriesFile.reader(table.readersBuf[0..]);
-    const lensReader = lensFile.reader(table.readersBuf[0..]);
+    const indexBuf = try fs.readAll(alloc, indexPath);
+    errdefer alloc.free(indexBuf);
+    const entriesBuf = try fs.readAll(alloc, entriesPath);
+    errdefer alloc.free(entriesBuf);
+    const lensBuf = try fs.readAll(alloc, lensPath);
+    errdefer alloc.free(lensBuf);
 
     table.* = .{
         .mem = null,
@@ -174,9 +176,9 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .refCounter = .init(1),
         .alloc = alloc,
 
-        .indexReader = indexReader.interface,
-        .entriesReader = entriesReader.interface,
-        .lensReader = lensReader.interface,
+        .indexBuf = indexBuf,
+        .entriesBuf = entriesBuf,
+        .lensBuf = lensBuf,
     };
     table.tableHeader = &table.disk.?.tableHeader;
 
@@ -185,6 +187,10 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
 
 pub fn close(self: *Table) void {
     if (self.disk) |disk| {
+        self.alloc.free(self.entriesBuf);
+        self.alloc.free(self.lensBuf);
+        self.alloc.free(self.indexBuf);
+
         disk.deinit(self.alloc);
     }
     if (self.mem) |mem| {
@@ -197,6 +203,7 @@ pub fn close(self: *Table) void {
     if (self.path.len > 0) {
         self.alloc.free(self.path);
     }
+
     self.alloc.destroy(self);
 }
 
@@ -219,10 +226,6 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
 
     const table = try alloc.create(Table);
 
-    const indexReader = std.Io.Reader.fixed(memTable.indexBuf.items);
-    const entriesReader = std.Io.Reader.fixed(memTable.entriesBuf.items);
-    const lensReader = std.Io.Reader.fixed(memTable.lensBuf.items);
-
     table.* = .{
         .mem = memTable,
         .disk = null,
@@ -233,9 +236,9 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .refCounter = .init(1),
         .alloc = alloc,
 
-        .entriesReader = entriesReader,
-        .lensReader = lensReader,
-        .indexReader = indexReader,
+        .entriesBuf = memTable.entriesBuf.items,
+        .lensBuf = memTable.lensBuf.items,
+        .indexBuf = memTable.indexBuf.items,
     };
 
     return table;
@@ -336,10 +339,15 @@ pub fn release(self: *Table) void {
     if (prev != 1) return;
 
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
-    const pathCopy = if (shouldRemove) self.alloc.dupe(u8, self.path) catch |err| {
+    var alloc = self.alloc;
+    if (shouldRemove) {
+        var fba = std.heap.stackFallback(128, alloc);
+        alloc = fba.get();
+    }
+    const pathCopy = if (shouldRemove) alloc.dupe(u8, self.path) catch |err| {
         std.debug.panic("failed to copy table path '{s}': {s}", .{ self.path, @errorName(err) });
     } else null;
-    defer if (pathCopy) |p| self.alloc.free(p);
+    defer if (pathCopy) |p| alloc.free(p);
 
     self.close();
     if (pathCopy) |p| {
