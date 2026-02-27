@@ -7,7 +7,7 @@ const strings = @import("../../stds/strings.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
-const StorageBlock = @import("StorageBlock.zig");
+const EntrieBlock = @import("EntrieBlock.zig");
 const EncodingType = @import("BlockHeader.zig").EncodingType;
 
 // TODO: tune the value
@@ -127,7 +127,7 @@ inline fn assertIsSorted(self: *MemBlock) void {
 pub fn encode(
     self: *MemBlock,
     alloc: Allocator,
-    sb: *StorageBlock,
+    entriesBlock: *EntrieBlock,
 ) !EncodedMemBlock {
     std.debug.assert(self.items.items.len != 0);
     // this API can't be called on unsorted data
@@ -138,7 +138,7 @@ pub fn encode(
 
     // TODO: consider making len limit 128
     if (self.size - self.prefix.len * self.items.items.len < maxPlainMemBlockLen or self.items.items.len < 2) {
-        try self.encodePlain(alloc, sb);
+        try self.encodePlain(alloc, entriesBlock);
         return EncodedMemBlock{
             .firstItem = firstItem,
             .prefix = self.prefix,
@@ -180,9 +180,9 @@ pub fn encode(
 
     // compress items
     var bound = try encoding.compressBound(itemsBuf.items.len);
-    sb.itemsData.clearRetainingCapacity();
-    try sb.itemsData.ensureUnusedCapacity(alloc, bound);
-    sb.itemsData.items.len = try encoding.compressAuto(sb.itemsData.unusedCapacitySlice(), itemsBuf.items);
+    entriesBlock.entriesBuf.clearRetainingCapacity();
+    try entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, bound);
+    entriesBlock.entriesBuf.items.len = try encoding.compressAuto(entriesBlock.entriesBuf.unusedCapacitySlice(), itemsBuf.items);
 
     // write lens
     lens.clearRetainingCapacity();
@@ -204,17 +204,17 @@ pub fn encode(
     defer fba.free(lensData);
 
     bound = try encoding.compressBound(lensData.len);
-    sb.lensData.clearRetainingCapacity();
-    try sb.lensData.ensureUnusedCapacity(alloc, bound);
-    sb.lensData.items.len = try encoding.compressAuto(sb.lensData.unusedCapacitySlice(), lensData);
+    entriesBlock.lensBuf.clearRetainingCapacity();
+    try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, bound);
+    entriesBlock.lensBuf.items.len = try encoding.compressAuto(entriesBlock.lensBuf.unusedCapacitySlice(), lensData);
 
     // if compressed content is more than 90% of the original size - not worth it
     // TODO: consider tweaking the value up to 80-85%
-    if (@as(f64, @floatFromInt(sb.itemsData.items.len)) >
+    if (@as(f64, @floatFromInt(entriesBlock.lensBuf.items.len)) >
         0.9 * @as(f64, @floatFromInt(self.size - self.prefix.len * self.items.items.len)))
     {
-        sb.reset();
-        try self.encodePlain(alloc, sb);
+        entriesBlock.reset();
+        try self.encodePlain(alloc, entriesBlock);
         return EncodedMemBlock{
             .firstItem = firstItem,
             .prefix = self.prefix,
@@ -231,32 +231,32 @@ pub fn encode(
     };
 }
 
-fn encodePlain(self: *MemBlock, alloc: Allocator, sb: *StorageBlock) !void {
-    try sb.itemsData.ensureUnusedCapacity(
+fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock) !void {
+    try entriesBlock.entriesBuf.ensureUnusedCapacity(
         alloc,
         self.size - self.prefix.len * self.items.items.len + self.prefix.len - self.items.items[0].len,
     );
-    try sb.lensData.ensureUnusedCapacity(alloc, 2 * (self.items.items.len - 1));
+    try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, 2 * (self.items.items.len - 1));
 
     for (self.items.items[1..]) |item| {
         const suffix = item[self.prefix.len..];
-        sb.itemsData.appendSliceAssumeCapacity(suffix);
+        entriesBlock.entriesBuf.appendSliceAssumeCapacity(suffix);
     }
 
     // no chance any len value is larger than 16384 (0x4000)
-    const slice = sb.lensData.unusedCapacitySlice();
+    const slice = entriesBlock.lensBuf.unusedCapacitySlice();
     var enc = Encoder.init(slice);
     for (self.items.items[1..]) |item| {
         const len: u64 = @intCast(item.len - self.prefix.len);
         enc.writeVarInt(len);
     }
-    sb.lensData.items.len = enc.offset;
+    entriesBlock.lensBuf.items.len = enc.offset;
 }
 
 pub fn decode(
     self: *MemBlock,
     alloc: Allocator,
-    sb: *StorageBlock,
+    entriesBlock: *EntrieBlock,
     firstItem: []const u8,
     prefix: []const u8,
     itemsCount: u32,
@@ -270,7 +270,7 @@ pub fn decode(
 
     switch (encodingType) {
         .plain => {
-            try self.decodePlain(alloc, sb, firstItem, itemsCount);
+            try self.decodePlain(alloc, entriesBlock, firstItem, itemsCount);
             self.assertIsSorted();
             return;
         },
@@ -284,10 +284,10 @@ pub fn decode(
     const fbaAlloc = fba.get();
 
     // decompress prefix lens
-    const size = try encoding.getFrameContentSize(sb.lensData.items);
+    const size = try encoding.getFrameContentSize(entriesBlock.lensBuf.items);
     const decompressedLensBuf = try alloc.alloc(u8, size);
     defer alloc.free(decompressedLensBuf);
-    var n = try encoding.decompress(decompressedLensBuf, sb.lensData.items);
+    var n = try encoding.decompress(decompressedLensBuf, entriesBlock.lensBuf.items);
 
     // decode prefix lens
     const decodedLens = try fbaAlloc.alloc(u64, itemsCount - 1);
@@ -324,10 +324,10 @@ pub fn decode(
     }
 
     // read items data
-    const decompressedItemsSize = try encoding.getFrameContentSize(sb.itemsData.items);
+    const decompressedItemsSize = try encoding.getFrameContentSize(entriesBlock.entriesBuf.items);
     const decompressedItemsBuf = try alloc.alloc(u8, decompressedItemsSize);
     defer alloc.free(decompressedItemsBuf);
-    n = try encoding.decompress(decompressedItemsBuf, sb.itemsData.items);
+    n = try encoding.decompress(decompressedItemsBuf, entriesBlock.entriesBuf.items);
 
     try self.items.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
@@ -361,26 +361,26 @@ pub fn decode(
     }
 }
 
-pub fn decodePlain(self: *MemBlock, alloc: Allocator, sb: *StorageBlock, firstItem: []const u8, itemsCount: u32) !void {
+pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock, firstItem: []const u8, itemsCount: u32) !void {
     // decode lens
     const lensBuf = try alloc.alloc(u64, itemsCount);
     defer alloc.free(lensBuf);
     lensBuf[0] = firstItem.len - self.prefix.len;
 
-    var dec = encoding.Decoder.init(sb.lensData.items);
+    var dec = encoding.Decoder.init(entriesBlock.lensBuf.items);
     for (1..itemsCount) |i| {
         lensBuf[i] = dec.readVarInt();
     }
     std.debug.assert(dec.offset == dec.buf.len);
 
     // decode items
-    const dataLen: usize = self.prefix.len * (itemsCount - 1) + firstItem.len + sb.itemsData.items.len;
+    const dataLen: usize = self.prefix.len * (itemsCount - 1) + firstItem.len + entriesBlock.entriesBuf.items.len;
     try self.items.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
     self.buf.appendSliceAssumeCapacity(firstItem);
     self.items.appendAssumeCapacity(self.buf.items[0..firstItem.len]);
 
-    var itemsSlice = sb.itemsData.items;
+    var itemsSlice = entriesBlock.entriesBuf.items;
     for (1..itemsCount) |i| {
         const itemLen = lensBuf[i];
         const start = self.buf.items.len;
@@ -482,14 +482,14 @@ test "MemBlock.encode/decode plain and zstd cases" {
         defer block.deinit(alloc);
         block.sortData();
 
-        var sb = StorageBlock{};
-        defer sb.deinit(alloc);
-        const encoded = try block.encode(alloc, &sb);
+        var entriesBlock = EntrieBlock{};
+        defer entriesBlock.deinit(alloc);
+        const encoded = try block.encode(alloc, &entriesBlock);
         try testing.expectEqualDeep(case.expectedEncodedBlock, encoded);
 
         var decoded = try MemBlock.init(alloc, 16);
         defer decoded.deinit(alloc);
-        try decoded.decode(alloc, &sb, encoded.firstItem, encoded.prefix, encoded.itemsCount, encoded.encodingType);
+        try decoded.decode(alloc, &entriesBlock, encoded.firstItem, encoded.prefix, encoded.itemsCount, encoded.encodingType);
 
         try testing.expectEqualStrings(block.prefix, decoded.prefix);
         try testing.expectEqualStrings(block.prefix, case.expectedEncodedBlock.prefix);
@@ -519,25 +519,25 @@ test "MemBlock.decodePlain handles min and max lens values" {
     };
 
     for (cases) |case| {
-        var sb = StorageBlock{};
-        defer sb.deinit(alloc);
+        var entriesBlock = EntrieBlock{};
+        defer entriesBlock.deinit(alloc);
 
         // Only append item bytes when the second item is non-empty. This ensures
         // decodePlain doesn't assume a positive length or read past the buffer.
         if (case.secondLen > 0) {
             const second = try allocFilled(alloc, 'b', case.secondLen);
             defer alloc.free(second);
-            try sb.itemsData.appendSlice(alloc, second);
+            try entriesBlock.entriesBuf.appendSlice(alloc, second);
         }
 
         // Encode a single varint length for the second item. The first item's length
         // is implicit in decodePlain (from firstItem and prefix), so lensData holds
         // only item[1..].
         const lensBound = Encoder.varIntBound(@intCast(case.secondLen));
-        try sb.lensData.ensureUnusedCapacity(alloc, lensBound);
-        var enc = Encoder.init(sb.lensData.unusedCapacitySlice());
+        try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, lensBound);
+        var enc = Encoder.init(entriesBlock.lensBuf.unusedCapacitySlice());
         enc.writeVarInt(@intCast(case.secondLen));
-        sb.lensData.items.len = enc.offset;
+        entriesBlock.lensBuf.items.len = enc.offset;
 
         var block = try MemBlock.init(alloc, 2);
         defer block.deinit(alloc);
@@ -547,7 +547,7 @@ test "MemBlock.decodePlain handles min and max lens values" {
 
         // Call decodePlain directly to isolate its varint length handling from the
         // full decode flow (which can route to zstd and other paths).
-        try block.decodePlain(alloc, &sb, "a", 2);
+        try block.decodePlain(alloc, &entriesBlock, "a", 2);
         try testing.expectEqual(@as(usize, 2), block.items.items.len);
         try testing.expectEqualSlices(u8, "a", block.items.items[0]);
         // Ensure the decoded second item length matches the varint value, including zero.

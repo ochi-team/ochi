@@ -10,7 +10,7 @@ const fs = @import("../../fs.zig");
 const MemBlock = @import("MemBlock.zig");
 const MemTable = @import("MemTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
-const StorageBlock = @import("StorageBlock.zig");
+const EntriesBlock = @import("EntrieBlock.zig");
 const TableHeader = @import("TableHeader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 
@@ -56,7 +56,7 @@ blockHeaders: []BlockHeader = &.{},
 // TODO: perhaps remove it in order not to hold the pointer
 blockHeader: *BlockHeader = undefined,
 // current storage block
-sb: StorageBlock = .{},
+entriesBlock: EntriesBlock = .{},
 // number of blocks read
 blocksRead: usize = 0,
 // number of items read
@@ -99,7 +99,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
         .metaIndexRecords = metaIndexRecords.records,
         .tableHeader = memTable.tableHeader,
         .indexBuf = memTable.indexBuf,
-        .dataBuf = memTable.dataBuf,
+        .dataBuf = memTable.entriesBuf,
         .lensBuf = memTable.lensBuf,
         .currentI = 0,
         .isRead = false,
@@ -167,7 +167,7 @@ pub fn deinit(self: *BlockReader, alloc: Allocator) void {
     for (self.metaIndexRecords) |*rec| rec.deinit(alloc);
     if (self.metaIndexRecords.len > 0) alloc.free(self.metaIndexRecords);
     if (self.blockHeaders.len > 0) alloc.free(self.blockHeaders);
-    self.sb.deinit(alloc);
+    self.entriesBlock.deinit(alloc);
     self.compressedBuf.deinit(alloc);
     self.uncompressedBuf.deinit(alloc);
 
@@ -209,25 +209,25 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
 
     // TODO: for chunked buffer find a way just to  transfer a chunk ownership, perhaps via std.mem.swap,
     // for a file reader we must just read the content
-    self.sb.itemsData.clearRetainingCapacity();
-    try self.sb.itemsData.ensureUnusedCapacity(alloc, self.blockHeader.itemsBlockSize);
-    const itemsDest = self.sb.itemsData.unusedCapacitySlice()[0..self.blockHeader.itemsBlockSize];
+    self.entriesBlock.entriesBuf.clearRetainingCapacity();
+    try self.entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, self.blockHeader.itemsBlockSize);
+    const itemsDest = self.entriesBlock.entriesBuf.unusedCapacitySlice()[0..self.blockHeader.itemsBlockSize];
     const itemsStart: usize = @intCast(self.blockHeader.itemsBlockOffset);
     const itemsEnd = itemsStart + self.blockHeader.itemsBlockSize;
     @memmove(itemsDest, self.dataBuf.items[itemsStart..itemsEnd]);
-    self.sb.itemsData.items.len = self.blockHeader.itemsBlockSize;
+    self.entriesBlock.entriesBuf.items.len = self.blockHeader.itemsBlockSize;
 
-    self.sb.lensData.clearRetainingCapacity();
-    try self.sb.lensData.ensureUnusedCapacity(alloc, self.blockHeader.lensBlockSize);
-    const lensDest = self.sb.lensData.unusedCapacitySlice()[0..self.blockHeader.lensBlockSize];
+    self.entriesBlock.lensBuf.clearRetainingCapacity();
+    try self.entriesBlock.lensBuf.ensureUnusedCapacity(alloc, self.blockHeader.lensBlockSize);
+    const lensDest = self.entriesBlock.lensBuf.unusedCapacitySlice()[0..self.blockHeader.lensBlockSize];
     const lensStart: usize = @intCast(self.blockHeader.lensBlockOffset);
     const lensEnd = lensStart + self.blockHeader.lensBlockSize;
     @memmove(lensDest, self.lensBuf.items[lensStart..lensEnd]);
-    self.sb.lensData.items.len = self.blockHeader.lensBlockSize;
+    self.entriesBlock.lensBuf.items.len = self.blockHeader.lensBlockSize;
 
     try self.block.?.decode(
         alloc,
-        &self.sb,
+        &self.entriesBlock,
         self.blockHeader.firstItem,
         self.blockHeader.prefix,
         self.blockHeader.itemsCount,

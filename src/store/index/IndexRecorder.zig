@@ -996,7 +996,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
 
         for (case.sizes) |size| {
             const table = try MemTable.empty(alloc);
-            try table.dataBuf.resize(alloc, size);
+            try table.entriesBuf.resize(alloc, size);
             const t = try Table.fromMem(alloc, table);
             tables.appendAssumeCapacity(t);
         }
@@ -1036,7 +1036,7 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
 
 fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
     const memTable = try MemTable.empty(alloc);
-    try memTable.dataBuf.resize(alloc, size);
+    try memTable.entriesBuf.resize(alloc, size);
     return Table.fromMem(alloc, memTable);
 }
 

@@ -53,7 +53,7 @@ pub fn init(alloc: Allocator, recorder: *IndexRecorder) !Lookup {
 }
 
 pub fn deinit(self: *Lookup, alloc: Allocator) void {
-    for (self.lookupTables.items) |*lt| lt.deinit();
+    for (self.lookupTables.items) |*lt| lt.deinit(alloc);
     self.lookupTables.deinit(alloc);
     self.heapArray.deinit(alloc);
     for (self.tables.items) |t| t.release();
@@ -67,7 +67,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
         return null;
     }
 
-    if (std.mem.containsAtLeast(u8, self.current, 1, prefix)) {
+    if (self.current.len >= prefix.len and std.mem.eql(u8, self.current[0..prefix.len], prefix)) {
         return self.current;
     }
 
@@ -79,13 +79,13 @@ fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
     self.heapArray.clearRetainingCapacity();
 
     for (0..self.lookupTables.items.len) |i| {
-        var lt = self.lookupTables.items[i];
-        lt.seek(key);
+        var lt = &self.lookupTables.items[i];
+        lt.seek(alloc, key);
         if (!lt.next()) {
             continue;
         }
 
-        try self.heapArray.append(alloc, lt);
+        try self.heapArray.append(alloc, lt.*);
     }
 
     if (self.heapArray.items.len == 0) {

@@ -8,14 +8,14 @@ const Filenames = @import("../../Filenames.zig");
 
 const BlockHeader = @import("BlockHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
-const StorageBlock = @import("StorageBlock.zig");
+const EntriesBlock = @import("EntrieBlock.zig");
 const MemTable = @import("MemTable.zig");
 const MemBlock = @import("MemBlock.zig");
 
 const maxIndexBlockSize = 64 * 1024;
 
 const MemDestination = struct {
-    dataBuf: *std.ArrayList(u8),
+    entriesBuf: *std.ArrayList(u8),
     lensBuf: *std.ArrayList(u8),
     indexBuf: *std.ArrayList(u8),
     metaindexBuf: *std.ArrayList(u8),
@@ -58,7 +58,7 @@ mi: MetaIndex = .{},
 itemsBlockOffset: u64 = 0,
 lensBlockOffset: u64 = 0,
 
-sb: StorageBlock = .{},
+entriesBlock: EntriesBlock = .{},
 uncompressedIndexBlockBuf: std.ArrayList(u8) = .empty,
 uncompressedMetaindexBuf: std.ArrayList(u8) = .empty,
 compressedBuf: std.ArrayList(u8) = .empty,
@@ -69,7 +69,7 @@ pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
     return .{
         .destination = .{
             .mem = .{
-                .dataBuf = &memTable.dataBuf,
+                .entriesBuf = &memTable.entriesBuf,
                 .lensBuf = &memTable.lensBuf,
                 .indexBuf = &memTable.indexBuf,
                 .metaindexBuf = &memTable.metaindexBuf,
@@ -119,28 +119,28 @@ pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitsInCache: bool) 
 }
 
 pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
-    self.sb.deinit(alloc);
+    self.entriesBlock.deinit(alloc);
     self.uncompressedIndexBlockBuf.deinit(alloc);
     self.uncompressedMetaindexBuf.deinit(alloc);
     self.compressedBuf.deinit(alloc);
 }
 
 pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void {
-    const encoded = try block.encode(alloc, &self.sb);
+    const encoded = try block.encode(alloc, &self.entriesBlock);
     self.bh.firstItem = encoded.firstItem;
     self.bh.prefix = encoded.prefix;
     self.bh.itemsCount = encoded.itemsCount;
     self.bh.encodingType = encoded.encodingType;
 
     // Write data
-    try self.writeData(alloc, self.sb.itemsData.items);
-    self.bh.itemsBlockSize = @intCast(self.sb.itemsData.items.len);
+    try self.writeData(alloc, self.entriesBlock.entriesBuf.items);
+    self.bh.itemsBlockSize = @intCast(self.entriesBlock.entriesBuf.items.len);
     self.bh.itemsBlockOffset = self.itemsBlockOffset;
     self.itemsBlockOffset += self.bh.itemsBlockSize;
 
     // Write lens
-    try self.writeLens(alloc, self.sb.lensData.items);
-    self.bh.lensBlockSize = @intCast(self.sb.lensData.items.len);
+    try self.writeLens(alloc, self.entriesBlock.lensBuf.items);
+    self.bh.lensBlockSize = @intCast(self.entriesBlock.lensBuf.items.len);
     self.bh.lensBlockOffset = self.lensBlockOffset;
     self.lensBlockOffset += self.bh.lensBlockSize;
 
@@ -195,7 +195,7 @@ fn flushIndexData(self: *BlockWriter, alloc: Allocator) !void {
 
 fn writeData(self: *BlockWriter, alloc: Allocator, data: []const u8) !void {
     switch (self.destination) {
-        .mem => |mem| try mem.dataBuf.appendSlice(alloc, data),
+        .mem => |mem| try mem.entriesBuf.appendSlice(alloc, data),
         .disk => |*disk| try disk.entriesFile.writeAll(data),
     }
 }
@@ -318,7 +318,7 @@ test "BlockWriter disk output matches mem output" {
     const metaindex = try readTableFile(alloc, tablePath, Filenames.metaindex);
     defer alloc.free(metaindex);
 
-    try testing.expectEqualSlices(u8, memTable.dataBuf.items, entries);
+    try testing.expectEqualSlices(u8, memTable.entriesBuf.items, entries);
     try testing.expectEqualSlices(u8, memTable.lensBuf.items, lens);
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, index);
     try testing.expectEqualSlices(u8, memTable.metaindexBuf.items, metaindex);
