@@ -103,7 +103,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     const encodedBlock = try block.encode(alloc, &entriesBlock);
     self.blockHeader.firstItem = encodedBlock.firstItem;
     self.blockHeader.prefix = encodedBlock.prefix;
-    self.blockHeader.itemsCount = encodedBlock.itemsCount;
+    self.blockHeader.entriesCount = encodedBlock.itemsCount;
     self.blockHeader.encodingType = encodedBlock.encodingType;
 
     self.tableHeader = .{
@@ -114,8 +114,8 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     };
 
     try self.entriesBuf.appendSlice(alloc, entriesBlock.entriesBuf.items);
-    self.blockHeader.itemsBlockOffset = 0;
-    self.blockHeader.itemsBlockSize = @intCast(entriesBlock.entriesBuf.items.len);
+    self.blockHeader.entriesBlockOffset = 0;
+    self.blockHeader.entriesBlockSize = @intCast(entriesBlock.entriesBuf.items.len);
 
     try self.lensBuf.appendSlice(alloc, entriesBlock.lensBuf.items);
     self.blockHeader.lensBlockOffset = 0;

@@ -113,6 +113,15 @@ pub fn lessThan(_: void, one: MetaIndex, another: MetaIndex) bool {
     return std.mem.lessThan(u8, one.firstItem, another.firstItem);
 }
 
+pub fn compareToKey(key: []const u8, record: MetaIndex) std.math.Order {
+    const order = std.mem.order(u8, key, record.firstItem);
+    return switch (order) {
+        .eq => .eq,
+        .lt => .eq,
+        .gt => .gt,
+    };
+}
+
 const testing = std.testing;
 
 test "MetaIndex decodeDecompress roundtrip" {

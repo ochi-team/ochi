@@ -45,7 +45,7 @@ blocksThresholdToFlush: u32,
 
 // config fields
 // TODO: make it as a config access instead of a field
-maxIndexBlockSize: u32,
+maxMemBlockSize: u32,
 
 stopped: std.atomic.Value(bool) = .init(false),
 // limits amount of mem tables in order to handle too high ingestion rate,
@@ -118,7 +118,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
         .entries = entries,
         .blocksThresholdToFlush = blocksThresholdToFlush,
         .blocksToFlush = blocksToFlush,
-        .maxIndexBlockSize = Conf.getConf().app.maxIndexMemBlockSize,
+        .maxMemBlockSize = Conf.getConf().app.maxIndexMemBlockSize,
         .pool = pool,
         .diskTables = tables,
         .memTables = memTables,
@@ -202,7 +202,7 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
     const shard = self.entries.next();
-    const blocksList = try shard.add(alloc, entries, self.maxIndexBlockSize);
+    const blocksList = try shard.add(alloc, entries, self.maxMemBlockSize);
     if (blocksList == null) return;
 
     var blocks = blocksList.?;

@@ -34,7 +34,7 @@ pub fn init(alloc: Allocator, recorder: *IndexRecorder) !Lookup {
 
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     for (tables.items) |t| {
-        const lt = LookupTable.init(t);
+        const lt = LookupTable.init(t, recorder.maxMemBlockSize);
         lookupTables.appendAssumeCapacity(lt);
     }
 
@@ -80,7 +80,7 @@ fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
 
     for (0..self.lookupTables.items.len) |i| {
         var lt = &self.lookupTables.items[i];
-        lt.seek(alloc, key);
+        try lt.seek(alloc, key);
         if (!lt.next()) {
             continue;
         }
