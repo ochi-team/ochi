@@ -21,10 +21,10 @@ const BlockHeader = @This();
 firstItem: []const u8,
 prefix: []const u8,
 encodingType: EncodingType,
-itemsCount: u32 = 0,
-itemsBlockOffset: u64 = 0,
+entriesCount: u32 = 0,
+entriesBlockOffset: u64 = 0,
 lensBlockOffset: u64 = 0,
-itemsBlockSize: u32 = 0,
+entriesBlockSize: u32 = 0,
 lensBlockSize: u32 = 0,
 
 pub fn reset(self: *BlockHeader) void {
@@ -44,10 +44,10 @@ pub fn encode(self: *const BlockHeader, buf: []u8) void {
     enc.writeString(self.firstItem);
     enc.writeString(self.prefix);
     enc.writeInt(u8, @intFromEnum(self.encodingType));
-    enc.writeInt(u32, self.itemsCount);
-    enc.writeInt(u64, self.itemsBlockOffset);
+    enc.writeInt(u32, self.entriesCount);
+    enc.writeInt(u64, self.entriesBlockOffset);
     enc.writeInt(u64, self.lensBlockOffset);
-    enc.writeInt(u32, self.itemsBlockSize);
+    enc.writeInt(u32, self.entriesBlockSize);
     enc.writeInt(u32, self.lensBlockSize);
 }
 
@@ -76,10 +76,10 @@ pub fn decode(buf: []const u8) DecodedBlockHeader {
             .firstItem = firstItem,
             .prefix = prefix,
             .encodingType = encodingType,
-            .itemsCount = itemsCount,
-            .itemsBlockOffset = itemsBlockOffset,
+            .entriesCount = itemsCount,
+            .entriesBlockOffset = itemsBlockOffset,
             .lensBlockOffset = lensBlockOffset,
-            .itemsBlockSize = itemsBlockSize,
+            .entriesBlockSize = itemsBlockSize,
             .lensBlockSize = lensBlockSize,
         },
         .offset = dec.offset,
@@ -109,6 +109,15 @@ pub fn blockHeaderLessThan(_: void, a: BlockHeader, b: BlockHeader) bool {
     return std.mem.lessThan(u8, a.firstItem, b.firstItem);
 }
 
+pub fn compareToKey(key: []const u8, header: BlockHeader) std.math.Order {
+    const order = std.mem.order(u8, key, header.firstItem);
+    return switch (order) {
+        .eq => .eq,
+        .lt => .eq,
+        .gt => .gt,
+    };
+}
+
 test "BlockHeader encode/decode" {
     const Case = struct {
         bh: BlockHeader,
@@ -121,10 +130,10 @@ test "BlockHeader encode/decode" {
                 .firstItem = "",
                 .prefix = "",
                 .encodingType = .plain,
-                .itemsCount = 0,
-                .itemsBlockOffset = 0,
+                .entriesCount = 0,
+                .entriesBlockOffset = 0,
                 .lensBlockOffset = 0,
-                .itemsBlockSize = 0,
+                .entriesBlockSize = 0,
                 .lensBlockSize = 0,
             },
         },
@@ -134,10 +143,10 @@ test "BlockHeader encode/decode" {
                 .firstItem = "a",
                 .prefix = "b",
                 .encodingType = .plain,
-                .itemsCount = 1,
-                .itemsBlockOffset = 100,
+                .entriesCount = 1,
+                .entriesBlockOffset = 100,
                 .lensBlockOffset = 200,
-                .itemsBlockSize = 50,
+                .entriesBlockSize = 50,
                 .lensBlockSize = 25,
             },
         },
@@ -147,10 +156,10 @@ test "BlockHeader encode/decode" {
                 .firstItem = "a" ** 127, // Single byte varint
                 .prefix = "b" ** 128, // Two byte varint
                 .encodingType = .plain,
-                .itemsCount = std.math.maxInt(u32),
-                .itemsBlockOffset = std.math.maxInt(u64),
+                .entriesCount = std.math.maxInt(u32),
+                .entriesBlockOffset = std.math.maxInt(u64),
                 .lensBlockOffset = std.math.maxInt(u64),
-                .itemsBlockSize = std.math.maxInt(u32),
+                .entriesBlockSize = std.math.maxInt(u32),
                 .lensBlockSize = std.math.maxInt(u32),
             },
         },
@@ -160,10 +169,10 @@ test "BlockHeader encode/decode" {
                 .firstItem = "x" ** 16383, // Max two byte varint (0x3fff)
                 .prefix = "y" ** 16384, // Three byte varint
                 .encodingType = .zstd,
-                .itemsCount = 999999,
-                .itemsBlockOffset = 1 << 40, // Large offset
+                .entriesCount = 999999,
+                .entriesBlockOffset = 1 << 40, // Large offset
                 .lensBlockOffset = 1 << 50, // Very large offset
-                .itemsBlockSize = 1 << 20, // 1MB
+                .entriesBlockSize = 1 << 20, // 1MB
                 .lensBlockSize = 1 << 20, // 1MB
             },
         },
@@ -191,30 +200,30 @@ test "BlockHeader decodeMany" {
             .firstItem = "aaa",
             .prefix = "a",
             .encodingType = .plain,
-            .itemsCount = 10,
-            .itemsBlockOffset = 0,
+            .entriesCount = 10,
+            .entriesBlockOffset = 0,
             .lensBlockOffset = 100,
-            .itemsBlockSize = 50,
+            .entriesBlockSize = 50,
             .lensBlockSize = 25,
         },
         .{
             .firstItem = "bbb",
             .prefix = "b",
             .encodingType = .zstd,
-            .itemsCount = 20,
-            .itemsBlockOffset = 200,
+            .entriesCount = 20,
+            .entriesBlockOffset = 200,
             .lensBlockOffset = 300,
-            .itemsBlockSize = 75,
+            .entriesBlockSize = 75,
             .lensBlockSize = 40,
         },
         .{
             .firstItem = "ccc",
             .prefix = "c",
             .encodingType = .plain,
-            .itemsCount = 30,
-            .itemsBlockOffset = 400,
+            .entriesCount = 30,
+            .entriesBlockOffset = 400,
             .lensBlockOffset = 500,
-            .itemsBlockSize = 100,
+            .entriesBlockSize = 100,
             .lensBlockSize = 60,
         },
     };

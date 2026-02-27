@@ -129,14 +129,14 @@ pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void 
     const encoded = try block.encode(alloc, &self.entriesBlock);
     self.bh.firstItem = encoded.firstItem;
     self.bh.prefix = encoded.prefix;
-    self.bh.itemsCount = encoded.itemsCount;
+    self.bh.entriesCount = encoded.itemsCount;
     self.bh.encodingType = encoded.encodingType;
 
     // Write data
     try self.writeData(alloc, self.entriesBlock.entriesBuf.items);
-    self.bh.itemsBlockSize = @intCast(self.entriesBlock.entriesBuf.items.len);
-    self.bh.itemsBlockOffset = self.itemsBlockOffset;
-    self.itemsBlockOffset += self.bh.itemsBlockSize;
+    self.bh.entriesBlockSize = @intCast(self.entriesBlock.entriesBuf.items.len);
+    self.bh.entriesBlockOffset = self.itemsBlockOffset;
+    self.itemsBlockOffset += self.bh.entriesBlockSize;
 
     // Write lens
     try self.writeLens(alloc, self.entriesBlock.lensBuf.items);

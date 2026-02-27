@@ -210,12 +210,12 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     // TODO: for chunked buffer find a way just to  transfer a chunk ownership, perhaps via std.mem.swap,
     // for a file reader we must just read the content
     self.entriesBlock.entriesBuf.clearRetainingCapacity();
-    try self.entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, self.blockHeader.itemsBlockSize);
-    const itemsDest = self.entriesBlock.entriesBuf.unusedCapacitySlice()[0..self.blockHeader.itemsBlockSize];
-    const itemsStart: usize = @intCast(self.blockHeader.itemsBlockOffset);
-    const itemsEnd = itemsStart + self.blockHeader.itemsBlockSize;
+    try self.entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, self.blockHeader.entriesBlockSize);
+    const itemsDest = self.entriesBlock.entriesBuf.unusedCapacitySlice()[0..self.blockHeader.entriesBlockSize];
+    const itemsStart: usize = @intCast(self.blockHeader.entriesBlockOffset);
+    const itemsEnd = itemsStart + self.blockHeader.entriesBlockSize;
     @memmove(itemsDest, self.dataBuf.items[itemsStart..itemsEnd]);
-    self.entriesBlock.entriesBuf.items.len = self.blockHeader.itemsBlockSize;
+    self.entriesBlock.entriesBuf.items.len = self.blockHeader.entriesBlockSize;
 
     self.entriesBlock.lensBuf.clearRetainingCapacity();
     try self.entriesBlock.lensBuf.ensureUnusedCapacity(alloc, self.blockHeader.lensBlockSize);
@@ -230,7 +230,7 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
         &self.entriesBlock,
         self.blockHeader.firstItem,
         self.blockHeader.prefix,
-        self.blockHeader.itemsCount,
+        self.blockHeader.entriesCount,
         self.blockHeader.encodingType,
     );
     self.blocksRead += 1;
