@@ -1,0 +1,316 @@
+---
+import "../styles/global.css";
+import EyeBackground from "../components/EyeBackground.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+---
+
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+  <head
+    ><meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ochi - Green Observability</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
+      rel="stylesheet"
+    />
+    <script
+      src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"
+    ></script>
+    <style>
+      body {
+        font-family: "Numans", sans-serif;
+      } /* Custom
+scrollbar for webkit */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #020817;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+      details > summary {
+        list-style: none;
+      }
+      details > summary::-webkit-details-marker {
+        display: none;
+      }
+      .glass-card {
+        backdrop-filter: blur(24px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .hero-glow {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(
+          circle at center,
+          rgba(34, 197, 54, 0.08) 0%,
+          transparent 60%
+        );
+        z-index: -1;
+      }
+    </style><meta
+      name="disabled-font-classes"
+      content="font-geist,font-roboto,font-montserrat,font-poppins,font-playfair,font-instrument-serif,font-merriweather,font-bricolage,font-jakarta,font-manrope,font-space-grotesk,font-work-sans,font-pt-serif,font-geist-mono,font-space-mono,font-quicksand,font-nunito,font-newsreader,font-google-sans-flex,font-oswald,font-dm-sans,font-cormorant"
+    />
+  </head>
+  <body
+    class="bg-[#020817] text-white antialiased selection:bg-[#22c55e] selection:text-[#020817] flex flex-col min-h-screen font-light text-lg"
+  >
+    <EyeBackground />
+    <Header />
+
+    <main class="flex-grow">
+      <section class="relative pt-32 pb-20 overflow-hidden">
+        <div class="hero-glow"></div>
+        <div
+          class="z-10 text-center max-w-7xl mr-auto ml-auto pr-6 pl-6 pt-10 relative"
+        >
+          <a
+            href="https://github.com/ochi-team/ochi"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-2 px-4 py-1.5 mb-8 rounded-full border border-[#a854f7]/20 bg-[#a854f7]/5 backdrop-blur-sm text-[#a854f7] text-xs font-bold uppercase tracking-wider animate-pulse hover:bg-[#a854f7]/10 transition-colors"
+          >
+            <iconify-icon icon="mdi:github" class="text-base"></iconify-icon>
+            Work in Progress: See our Github
+          </a>
+          <h1
+            class="mx-auto max-w-6xl text-4xl font-black leading-[1.05] tracking-tighter text-white sm:text-7xl drop-shadow-[0_10px_10px_rgba(0,0,0,0.5)] flex flex-wrap items-center justify-center gap-x-1"
+          >
+            <span>See Everything with</span>
+            <img
+              src="src/assets/logo.svg"
+              alt="Ochi Logo"
+              class="h-[60px] sm:h-[100px] w-auto -ml-2 select-none pßointer-events-none"
+            />
+          </h1>
+          <p
+            class="text-xl md:text-2xl text-[#8FA3AB] mb-10 max-w-3xl mx-auto font-light leading-relaxed"
+          >
+            A highly efficient, single-binary logging solution. Store logs
+            directly on disk, archive automatically to S3, and query with zero
+            configuration. Loki compatible ingestion.
+          </p>
+          <div
+            class="flex flex-col items-center justify-center gap-6 max-w-lg mx-auto"
+          >
+            <a
+              href="/docs"
+              class="w-fit px-12 py-4 rounded-full bg-[#22c55e] text-[#0c0c14] font-bold hover:bg-opacity-95 transition-all shadow-lg shadow-[#22c55e]/20 flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <iconify-icon icon="mdi:rocket-launch" class="text-xl"
+              ></iconify-icon> Get started with Open Source
+            </a>
+          </div>
+
+          <section id="features" class="pt-24 pb-8">
+            <div class="max-w-7xl mx-auto px-6">
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <div
+                  class="glass-card p-6 rounded-2xl hover:bg-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div class="flex items-center justify-center gap-4 mb-4">
+                    <div
+                      class="w-10 h-10 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-[#22c55e] shrink-0"
+                    >
+                      <iconify-icon icon="solar:box-linear" class="text-xl"
+                      ></iconify-icon>
+                    </div>
+                    <h3 class="text-xl font-normal tracking-tight">
+                      Single Binary
+                    </h3>
+                  </div>
+                  <p class="text-base text-[#8FA3AB]">
+                    No complex microservices. Ochi is delivered as a single,
+                    statically compiled binary. Drop it on a server and run.
+                  </p>
+                </div>
+
+                <div
+                  class="glass-card p-6 rounded-2xl hover:bg-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div class="flex items-center justify-center gap-4 mb-4">
+                    <div
+                      class="w-10 h-10 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-[#22c55e] shrink-0"
+                    >
+                      <iconify-icon icon="solar:refresh-linear" class="text-xl"
+                      ></iconify-icon>
+                    </div>
+                    <h3 class="text-xl font-normal tracking-tight">
+                      Loki Compatible
+                    </h3>
+                  </div>
+                  <p class="text-base text-[#8FA3AB]">
+                    Ingestion endpoints are fully compatible with Grafana Loki.
+                    Use your existing Promtail or Vector agents without changes.
+                  </p>
+                </div>
+
+                <div
+                  class="glass-card p-6 rounded-2xl hover:bg-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div class="flex items-center justify-center gap-4 mb-4">
+                    <div
+                      class="w-10 h-10 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-[#22c55e] shrink-0"
+                    >
+                      <iconify-icon
+                        icon="solar:server-square-linear"
+                        class="text-xl"></iconify-icon>
+                    </div>
+                    <h3 class="text-xl font-normal tracking-tight">
+                      Disk to Object Storage
+                    </h3>
+                  </div>
+                  <p class="text-base text-[#8FA3AB]">
+                    Recent logs are kept hot on local disk for lightning-fast
+                    queries, then automatically compacted and pushed to S3 for
+                    cheap long-term retention.
+                  </p>
+                </div>
+
+                <div
+                  class="glass-card p-6 rounded-2xl hover:bg-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div class="flex items-center justify-center gap-4 mb-4">
+                    <div
+                      class="w-10 h-10 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-[#22c55e] shrink-0"
+                    >
+                      <iconify-icon icon="solar:leaf-linear" class="text-xl"
+                      ></iconify-icon>
+                    </div>
+                    <h3 class="text-xl font-normal tracking-tight">
+                      Green Software
+                    </h3>
+                  </div>
+                  <p class="text-base text-[#8FA3AB]">
+                    By optimizing IO operations and memory allocations, Ochi
+                    consumes significantly less energy than JVM or Go-based
+                    alternatives.
+                  </p>
+                </div>
+
+                <div
+                  class="glass-card p-6 rounded-2xl hover:bg-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div class="flex items-center justify-center gap-4 mb-4">
+                    <div
+                      class="w-10 h-10 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-[#22c55e] shrink-0"
+                    >
+                      <iconify-icon
+                        icon="solar:code-square-linear"
+                        class="text-xl"></iconify-icon>
+                    </div>
+                    <h3 class="text-xl font-normal tracking-tight">
+                      AI Powered CLI
+                    </h3>
+                  </div>
+                  <p class="text-base text-[#8FA3AB]">
+                    Our command-line tool integrates deeply with LLMs. Ask "why
+                    did the database crash yesterday?" and let the AI query your
+                    logs.
+                  </p>
+                </div>
+
+                <div
+                  class="p-6 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div class="flex items-center justify-center gap-4 mb-4">
+                    <div
+                      class="w-10 h-10 rounded-lg bg-[#22c55e]/10 flex items-center justify-center text-[#22c55e] shrink-0"
+                    >
+                      <iconify-icon
+                        icon="solar:server-minimalistic-linear"
+                        class="text-xl"></iconify-icon>
+                    </div>
+                    <h3 class="text-xl font-normal tracking-tight">
+                      Self-host
+                    </h3>
+                  </div>
+                  <p class="text-base text-[#8FA3AB]">
+                    Ochi is open-source. Run it on your own hardware for maximum
+                    control.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="community" class="pt-8 pb-24 relative overflow-hidden">
+        <div class="max-w-7xl mx-auto px-6 text-center">
+          <h2 class="text-4xl md:text-5xl font-black mb-4">
+            Built with the Community
+          </h2>
+          <p class="text-[#8FA3AB] text-lg mb-16 max-w-2xl mx-auto">
+            Ochi is rapidly evolving. Join us in building the future of
+            observability.
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+            <div
+              class="glass-card p-10 rounded-3xl flex flex-col items-center text-center"
+            >
+              <div class="flex items-center gap-3 mb-6">
+                <iconify-icon icon="mdi:github" class="text-4xl"></iconify-icon>
+                <span class="text-3xl font-bold">GitHub</span>
+              </div>
+              <p class="text-[#8FA3AB] mb-10 max-w-[280px]">
+                Star our repository to stay updated with new releases and
+                contribute to the core engine.
+              </p>
+
+              <a
+                href="https://github.com/ochi-team/ochi"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-auto px-8 py-3 rounded-full border border-white/40 font-bold hover:bg-white/5 transition-colors"
+              >
+                Star on GitHub
+              </a>
+            </div>
+
+            <div
+              class="glass-card p-10 rounded-3xl flex flex-col items-center text-center border-t border-r border-[#a854f7]/20 border-l-[#a854f7]/10 border-b-[#a854f7]/10"
+            >
+              <div class="flex items-center gap-3 mb-6">
+                <iconify-icon icon="mdi:discord" class="text-4xl text-[#a854f7]"
+                ></iconify-icon>
+                <span class="text-3xl font-bold">Discord</span>
+              </div>
+              <p class="text-[#8FA3AB] mb-10 max-w-[320px]">
+                Need help or want to provide feedback? Join our active developer
+                community.
+              </p>
+
+              <a
+                href="https://discord.gg/AsCKpCNp5c"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-auto px-12 py-3 rounded-full bg-[#a854f7] text-white font-bold hover:bg-opacity-90 shadow-lg shadow-[#a854f7]/20 transition-all"
+              >
+                Join Discord
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <Footer logoSrc="src/assets/logo.svg" />
+  </body>
+</html>

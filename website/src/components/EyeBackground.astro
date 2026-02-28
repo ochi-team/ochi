@@ -1,0 +1,199 @@
+<div
+    class="eye-container overflow-hidden fixed inset-0 pointer-events-none -z-10 bg-[#020817]"
+>
+    <canvas id="eyeCanvas" class="opacity-40"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById("eyeCanvas") as HTMLCanvasElement;
+    const ctx = canvas.getContext("2d");
+
+    let width: number, height: number;
+
+    const irisColor = "#0d4a2a"; // Deep emerald
+    const irisHighlightColor = "#22c55e"; // Bright green core
+    const irisDarkColor = "#041a0d"; // Near black-green
+    const pupilColor = "#020617"; // Rich black pupil
+
+    const fiberData = Array.from({ length: 400 }, () => ({
+        angle: Math.random() * Math.PI * 2,
+        lengthMult: 0.3 + Math.random() * 0.7,
+        width: 0.5 + Math.random() * 1.5,
+        opacity: 0.1 + Math.random() * 0.3,
+    }));
+
+    function drawIris(centerX: number, centerY: number, radius: number) {
+        if (!ctx) return;
+
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius + 2, 0, Math.PI * 2);
+        ctx.fillStyle = "#000a05";
+        ctx.fill();
+
+        const irisGradient = ctx.createRadialGradient(
+            centerX,
+            centerY,
+            radius * 0.2,
+            centerX,
+            centerY,
+            radius
+        );
+        irisGradient.addColorStop(0, irisHighlightColor);
+        irisGradient.addColorStop(0.4, irisColor);
+        irisGradient.addColorStop(1, irisDarkColor);
+
+        ctx.fillStyle = irisGradient;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        fiberData.forEach((fiber) => {
+            const length = radius * fiber.lengthMult;
+
+            ctx.rotate(fiber.angle);
+            const fiberGradient = ctx.createLinearGradient(
+                0,
+                radius * 0.35,
+                0,
+                length
+            );
+            fiberGradient.addColorStop(
+                0,
+                `rgba(34, 197, 94, ${fiber.opacity})`
+            );
+            fiberGradient.addColorStop(0.5, "rgba(13, 74, 42, 0.05)");
+            fiberGradient.addColorStop(1, "transparent");
+
+            ctx.fillStyle = fiberGradient;
+            ctx.fillRect(
+                -fiber.width / 2,
+                radius * 0.35,
+                fiber.width,
+                length - radius * 0.35
+            );
+            ctx.rotate(-fiber.angle);
+        });
+
+        ctx.strokeStyle = "rgba(34, 197, 94, 0.03)";
+        ctx.lineWidth = 1;
+        for (let j = 0; j < 6; j++) {
+            ctx.beginPath();
+            ctx.arc(0, 0, radius * (0.55 + j * 0.07), 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        ctx.restore();
+        const pupilGlow = ctx.createRadialGradient(
+            centerX,
+            centerY,
+            radius * 0.34,
+            centerX,
+            centerY,
+            radius * 0.38
+        );
+        pupilGlow.addColorStop(0, pupilColor);
+        pupilGlow.addColorStop(1, "transparent");
+
+        ctx.fillStyle = pupilGlow;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius * 0.38, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = pupilColor;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius * 0.34, 0, Math.PI * 2);
+        ctx.fill();
+
+        const reflectGrad = ctx.createRadialGradient(
+            centerX - radius * 0.25,
+            centerY - radius * 0.25,
+            0,
+            centerX - radius * 0.25,
+            centerY - radius * 0.25,
+            radius * 0.3
+        );
+        reflectGrad.addColorStop(0, "rgba(255, 255, 255, 0.15)");
+        reflectGrad.addColorStop(1, "transparent");
+
+        ctx.fillStyle = reflectGrad;
+        ctx.beginPath();
+        ctx.arc(
+            centerX - radius * 0.25,
+            centerY - radius * 0.25,
+            radius * 0.3,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+        ctx.beginPath();
+        ctx.arc(
+            centerX - radius * 0.2,
+            centerY - radius * 0.2,
+            radius * 0.05,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+    }
+
+    function renderOnce() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width * 1.5;
+        canvas.height = height * 1.5;
+
+        if (!ctx) return;
+        ctx.fillStyle = "#020817";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const eyeCenterX = canvas.width / 2;
+        const eyeCenterY = canvas.height / 2;
+        const irisRadius = Math.min(width, height) * 1.0;
+        drawIris(eyeCenterX, eyeCenterY, irisRadius);
+        canvas.style.setProperty("--tx", "0px");
+        canvas.style.setProperty("--ty", "0px");
+    }
+
+    window.addEventListener("resize", renderOnce);
+    renderOnce();
+
+    let currentTx = 0;
+    let currentTy = 0;
+    let targetTx = 0;
+    let targetTy = 0;
+
+    window.addEventListener("mousemove", (e) => {
+        const maxOffset = Math.min(width, height) * 0.12;
+        targetTx = ((e.clientX - width / 2) / width) * maxOffset;
+        targetTy = ((e.clientY - height / 2) / height) * maxOffset;
+    });
+
+    function animateEye() {
+        currentTx += (targetTx - currentTx) * 0.06;
+        currentTy += (targetTy - currentTy) * 0.06;
+        canvas.style.setProperty("--tx", `${currentTx}px`);
+        canvas.style.setProperty("--ty", `${currentTy}px`);
+        requestAnimationFrame(animateEye);
+    }
+
+    animateEye();
+</script>
+
+<style>
+    .eye-container {
+        filter: contrast(1.1) brightness(0.9);
+    }
+
+    #eyeCanvas {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(
+            calc(-50% + var(--tx, 0px)),
+            calc(-50% + var(--ty, 0px))
+        );
+        will-change: transform;
+    }
+</style>

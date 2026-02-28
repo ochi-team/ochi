@@ -1,0 +1,73 @@
+---
+interface Props {
+  activePage?: "index" | "blog";
+}
+const { activePage } = Astro.props;
+const navLink =
+  "text-sm font-light text-[#A8C2D6] hover:text-white transition-colors";
+const navLinkActive = "text-sm font-light text-white transition-colors";
+---
+
+<header class="fixed top-0 w-full z-50 pb-30 header-fade">
+  <div
+    class="flex h-30 max-w-7xl mr-auto ml-auto pr-6 pl-6 items-center justify-between"
+  >
+    <div class="flex items-center gap-8">
+      <a
+        href="/"
+        class="flex items-center gap-0.5 text-2xl font-normal tracking-tight text-[#22c55e] hover:opacity-80 transition-opacity"
+      >
+        <img
+          src="/src/assets/favicon.svg"
+          alt="Ochi Logo"
+          class="h-[60px] sm:h-[42px] w-auto -ml-2 select-none pointer-events-none"
+        />
+      </a>
+      <nav class="hidden md:flex gap-6">
+        <a href="/#features" class={navLink}>Features</a>
+        <a href="/#community" class={navLink}>Community</a>
+        <a href="/docs" class={navLink}>Docs</a>
+        <a href="/blog" class={activePage === "blog" ? navLinkActive : navLink}
+          >Blog</a
+        >
+      </nav>
+    </div>
+    <div class="flex items-center gap-5">
+      <a
+        href="https://github.com/ochi-team/ochi"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="text-[#A8C2D6] hover:text-white transition-colors flex items-center"
+        aria-label="GitHub"
+      >
+        <iconify-icon icon="mdi:github" class="text-4xl"></iconify-icon>
+      </a>
+      <a
+        href="https://discord.gg/AsCKpCNp5c"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="text-[#A8C2D6] hover:text-white transition-colors flex items-center"
+        aria-label="Discord"
+      >
+        <iconify-icon icon="mdi:discord" class="text-4xl"></iconify-icon>
+      </a>
+    </div>
+  </div>
+</header>
+
+<style is:global>
+  .header-fade {
+    height: 180px;
+    background: linear-gradient(
+      to bottom,
+      #020817 0%,
+      rgba(2, 8, 23, 0.95) 20%,
+      rgba(2, 8, 23, 0.4) 60%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+  .header-fade > * {
+    pointer-events: auto;
+  }
+</style>

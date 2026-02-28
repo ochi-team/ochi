@@ -1,0 +1,76 @@
+---
+
+---
+
+<div class="blog-bg fixed inset-0 pointer-events-none -z-10 bg-[#020817]">
+  <div class="blog-bg-rays"></div>
+
+  <div class="blog-bg-glow"></div>
+</div>
+
+<style>
+  .blog-bg {
+    overflow: hidden;
+  }
+
+  /* Stroma-like rays: repeating conic gradient anchored at top-center
+     (same focal point as the eye iris, just above the viewport).
+     They fan downward and fade out before mid-page. */
+  .blog-bg-rays {
+    position: absolute;
+    inset: 0;
+    background: repeating-conic-gradient(
+      from 0deg at 50% -30%,
+      rgba(34, 197, 94, 0.055) 0deg,
+      transparent 3.5deg,
+      transparent 7deg,
+      rgba(34, 197, 94, 0.03) 8deg,
+      transparent 10deg
+    );
+    /* Fade rays out in the lower half of the page */
+    mask-image: radial-gradient(
+      ellipse 100% 80% at 50% -30%,
+      black 0%,
+      black 35%,
+      transparent 75%
+    );
+    -webkit-mask-image: radial-gradient(
+      ellipse 100% 80% at 50% -30%,
+      black 0%,
+      black 35%,
+      transparent 75%
+    );
+  }
+
+  /* Ambient green blobs underneath the rays */
+  .blog-bg-glow {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(
+        ellipse 90% 60% at 50% -10%,
+        rgba(34, 197, 94, 0.35) 0%,
+        transparent 65%
+      ),
+      radial-gradient(
+        ellipse 70% 50% at 50% 45%,
+        rgba(34, 197, 94, 0.12) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 60% 50% at -5% 40%,
+        rgba(34, 197, 94, 0.2) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 55% 45% at 105% 50%,
+        rgba(34, 197, 94, 0.18) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 75% 45% at 50% 115%,
+        rgba(34, 197, 94, 0.18) 0%,
+        transparent 60%
+      );
+  }
+</style>
