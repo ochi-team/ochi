@@ -1,0 +1,92 @@
+---
+interface Props {
+  logoSrc?: string;
+}
+const { logoSrc = "/src/assets/logo.svg" } = Astro.props;
+---
+
+<footer class="relative footer-fade pt-24 pb-12 mt-auto">
+  <div class="max-w-7xl mx-auto px-6">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-12 mb-20">
+      <div class="md:col-span-2">
+        <a
+          href="/"
+          class="flex items-center gap-0.5 text-2xl font-normal tracking-tight text-[#22c55e] mb-6"
+        >
+          <img
+            src={logoSrc}
+            alt="Ochi Logo"
+            class="h-[60px] sm:h-[80px] w-auto -ml-2 select-none pointer-events-none"
+          />
+        </a>
+        <p class="text-base text-[#8FA3AB] max-w-sm mb-8 leading-relaxed">
+          Modern observability, simplified. Open-source logging that puts you in
+          control.
+        </p>
+      </div>
+
+      <div>
+        <h4 class="text-sm font-bold mb-6 text-white uppercase tracking-wider">
+          Resources
+        </h4>
+        <ul class="space-y-4 text-sm font-light text-[#8FA3AB]">
+          <li>
+            <a href="/docs" class="hover:text-white transition-colors"
+              >Documentation</a
+            >
+          </li>
+          <li>
+            <a href="/blog" class="hover:text-white transition-colors">Blog</a>
+          </li>
+        </ul>
+      </div>
+
+      <div>
+        <h4 class="text-sm font-bold mb-6 text-white uppercase tracking-wider">
+          Community
+        </h4>
+        <ul class="space-y-4 text-sm font-light text-[#8FA3AB]">
+          <li>
+            <a
+              href="https://github.com/ochi-team/ochi"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="hover:text-white transition-colors">GitHub</a
+            >
+          </li>
+          <li>
+            <a
+              href="https://discord.gg/AsCKpCNp5c"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="hover:text-white transition-colors">Discord</a
+            >
+          </li>
+          <li>
+            <a href="#" class="hover:text-white transition-colors"
+              >Contribution Guide</a
+            >
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="pt-12 border-t border-white/5 text-center">
+      <p class="text-sm text-[#8FA3AB]/60">
+        © 2026 Ochi Team. Apache License Version 2.0
+      </p>
+    </div>
+  </div>
+</footer>
+
+<style is:global>
+  .footer-fade {
+    background: linear-gradient(
+      to top,
+      #020817 0%,
+      rgba(2, 8, 23, 0.95) 40%,
+      rgba(2, 8, 23, 0.4) 80%,
+      transparent 100%
+    );
+  }
+</style>

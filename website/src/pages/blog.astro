@@ -1,0 +1,111 @@
+---
+import "../styles/global.css";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import BlogBackground from "../components/BlogBackground.astro";
+import { getCollection } from 'astro:content';
+
+const posts = await getCollection('blog');
+---
+
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Blog - Ochi</title>
+		<script src="https://cdn.tailwindcss.com"></script>
+		<link
+			href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
+			rel="stylesheet"
+		/>
+		<script
+			src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"
+		></script>
+		<style>
+			body {
+				font-family: "Numans", sans-serif;
+			}
+			::-webkit-scrollbar {
+				width: 8px;
+			}
+			::-webkit-scrollbar-track {
+				background: #020817;
+			}
+			::-webkit-scrollbar-thumb {
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 4px;
+			}
+			::-webkit-scrollbar-thumb:hover {
+				background: rgba(255, 255, 255, 0.2);
+			}
+
+			.glass-card {
+				backdrop-filter: blur(24px);
+				background: rgba(255, 255, 255, 0.03);
+				/* The border is kept inline on the card to mix with hover states */
+			}
+
+			.blog-section > * {
+				position: relative;
+				z-index: 1;
+			}
+		</style>
+	</head>
+	<body
+		class="bg-[#020817] text-white antialiased selection:bg-[#22c55e] selection:text-[#020817] flex flex-col min-h-screen font-light text-lg"
+	>
+		<BlogBackground />
+		<Header activePage="blog" />
+
+		<main class="flex-grow pt-32">
+			<section class="blog-section max-w-7xl mx-auto px-6 pt-12 pb-24 relative">
+				
+        <!-- Hero Section -->
+        <div class="mb-16 max-w-2xl">
+          <h1 class="text-5xl md:text-6xl font-black tracking-tight mb-6">
+            The Ochi <span class="text-[#22c55e]">Blog</span>
+          </h1>
+          <p class="text-[#8FA3AB] text-lg leading-relaxed max-w-xl">
+            Stay informed with the latest engineering insights, release notes, and community highlights from the Ochi Team. Project is under active development.
+          </p>
+        </div>
+
+        <!-- Blog Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {posts.map(post => (
+            <a href={`/blog/${post.id}`} class="group glass-card flex flex-col border border-white/5 rounded-3xl overflow-hidden hover:border-[#a854f7]/30 hover:shadow-[0_0_30px_-8px_rgba(168,84,247,0.25)] transition-all duration-300">
+              <!-- Content Area -->
+              <div class="p-8 flex flex-col flex-grow">
+                <div class="flex items-center justify-between mb-4">
+                  <span class="text-xs text-[#8FA3AB] font-medium">
+                    {new Date(post.data.date).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                </div>
+                
+                <h3 class="text-xl font-bold mb-3 group-hover:text-[#22c55e] transition-colors">
+                  {post.data.title}
+                </h3>
+                
+                <p class="text-sm text-[#8FA3AB] leading-relaxed mb-8 flex-grow">
+                  {post.data.description}
+                </p>
+                
+                <div class="flex items-center text-sm font-bold text-[#a854f7] group-hover:text-[#a854f7] transition-colors">
+                  Read More <iconify-icon icon="solar:arrow-right-linear" class="ml-1 text-base group-hover:translate-x-1 transition-transform" />
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+		</main>
+
+		<Footer logoSrc="/src/assets/logo.svg" />
+
+	</body>
+</html>

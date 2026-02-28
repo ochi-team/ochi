@@ -1,0 +1,194 @@
+---
+import { getCollection, render } from "astro:content";
+import Header from "../../components/Header.astro";
+import Footer from "../../components/Footer.astro";
+import BlogBackground from "../../components/BlogBackground.astro";
+import "../../styles/global.css";
+
+export async function getStaticPaths() {
+  const posts = await getCollection("blog");
+  // Sort by newest first
+  const sortedPosts = posts.sort(
+    (a, b) => new Date(b.data.date).valueOf() - new Date(a.data.date).valueOf(),
+  );
+  return sortedPosts.map((post, index) => ({
+    params: { id: post.id },
+    props: {
+      post,
+      prevPost: index < sortedPosts.length - 1 ? sortedPosts[index + 1] : null, // chronological "previous" is older (higher index)
+      nextPost: index > 0 ? sortedPosts[index - 1] : null, // chronological "next" is newer (lower index)
+    },
+  }));
+}
+
+const { post, prevPost, nextPost } = Astro.props;
+const { Content } = await render(post);
+---
+
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{post.data.title} - Ochi Blog</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
+      rel="stylesheet"
+    />
+    <script
+      src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"
+    ></script>
+    <style>
+      body {
+        font-family: "Numans", sans-serif;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #020817;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+      .prose p {
+        margin-bottom: 1.5rem;
+        line-height: 1.8;
+        color: #8fa3ab;
+      }
+      .prose h1,
+      .prose h2,
+      .prose h3,
+      .prose h4 {
+        color: white;
+        font-weight: bold;
+        margin-top: 2.5rem;
+        margin-bottom: 1rem;
+      }
+      .prose h1 {
+        font-size: 2.25rem;
+      }
+      .prose h2 {
+        font-size: 1.875rem;
+      }
+      .prose h3 {
+        font-size: 1.5rem;
+      }
+      .prose ul {
+        list-style-type: disc;
+        padding-left: 1.5rem;
+        margin-bottom: 1.5rem;
+        color: #8fa3ab;
+      }
+      .prose li {
+        margin-bottom: 0.5rem;
+      }
+      .prose a {
+        color: #a854f7;
+        text-decoration: underline;
+        transition: color 0.3s;
+      }
+      .prose a:hover {
+        color: #e9d5ff;
+      }
+    </style>
+  </head>
+  <body
+    class="bg-[#020817] text-white antialiased selection:bg-[#22c55e] selection:text-[#020817] flex flex-col min-h-screen font-light text-lg"
+  >
+    <BlogBackground />
+    <Header activePage="blog" />
+
+    <main class="flex-grow pt-32 pb-24 relative z-10">
+      <article class="max-w-3xl mx-auto px-6">
+        <header class="mb-16">
+          <a
+            href="/blog"
+            class="inline-flex items-center text-sm font-bold text-[#a854f7] hover:text-[#e9d5ff] transition-colors mb-8"
+          >
+            <iconify-icon icon="solar:arrow-left-linear" class="mr-2 text-base"
+            ></iconify-icon>
+            Back to Blog
+          </a>
+          <h1
+            class="text-4xl md:text-5xl font-black tracking-tight mb-6 leading-tight"
+          >
+            {post.data.title}
+          </h1>
+          <div
+            class="flex items-center gap-4 text-sm font-medium text-[#8FA3AB]"
+          >
+            <span>
+              {
+                new Date(post.data.date).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              }
+            </span>
+          </div>
+        </header>
+
+        <div class="prose max-w-none">
+          <Content />
+        </div>
+
+        <div
+          class="mt-20 pt-10 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center sm:items-stretch gap-6"
+        >
+          {
+            prevPost ? (
+              <a
+                href={`/blog/${prevPost.id}`}
+                class="group flex-1 flex flex-col w-full sm:w-auto items-start p-6 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-[#22c55e]/30 transition-colors"
+              >
+                <span class="text-xs text-[#8FA3AB] font-bold uppercase tracking-wide mb-2 flex items-center gap-2 group-hover:text-[#22c55e] transition-colors">
+                  <iconify-icon
+                    icon="solar:arrow-left-linear"
+                    class="text-sm group-hover:-translate-x-1 transition-transform"
+                  />
+                  Previous Post
+                </span>
+                <span class="text-lg font-bold text-white group-hover:text-[#22c55e] transition-colors">
+                  {prevPost.data.title}
+                </span>
+              </a>
+            ) : (
+              <div class="flex-1" />
+            )
+          }
+
+          {
+            nextPost ? (
+              <a
+                href={`/blog/${nextPost.id}`}
+                class="group flex-1 flex flex-col w-full sm:w-auto items-end text-right p-6 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-[#a854f7]/30 transition-colors"
+              >
+                <span class="text-xs text-[#8FA3AB] font-bold uppercase tracking-wide mb-2 flex items-center gap-2 group-hover:text-[#a854f7] transition-colors">
+                  Next Post
+                  <iconify-icon
+                    icon="solar:arrow-right-linear"
+                    class="text-sm group-hover:translate-x-1 transition-transform"
+                  />
+                </span>
+                <span class="text-lg font-bold text-white group-hover:text-[#a854f7] transition-colors">
+                  {nextPost.data.title}
+                </span>
+              </a>
+            ) : (
+              <div class="flex-1" />
+            )
+          }
+        </div>
+      </article>
+    </main>
+
+    <Footer logoSrc="/src/assets/logo.svg" />
+  </body>
+</html>
