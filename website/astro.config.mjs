@@ -15,7 +15,7 @@ export default defineConfig({
     starlight({
       title: 'Ochi Documentation',
       customCss: ['./src/styles/theme.css'],
-      favicon: '/src/assets/favicon.ico',
+      favicon: '/favicon.ico',
       social: [
         { icon: 'discord', label: 'Discord', href: 'https://discord.gg/AsCKpCNp5c' },
         {
