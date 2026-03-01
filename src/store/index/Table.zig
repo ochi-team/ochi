@@ -254,25 +254,24 @@ fn readNames(alloc: Allocator, tablesFilePath: []const u8) !std.ArrayList([]cons
     if (std.fs.cwd().openFile(tablesFilePath, .{})) |file| {
         defer file.close();
 
-        const data = file.readToEndAlloc(alloc, maxFileBytes) catch |err| {
-            std.debug.panic("can't read tables file '{s}': {s}", .{ tablesFilePath, @errorName(err) });
-        };
+        const data = try file.readToEndAlloc(alloc, maxFileBytes);
         defer alloc.free(data);
 
-        const parsed = std.json.parseFromSlice(std.json.Value, alloc, data, .{}) catch |err| {
-            std.debug.panic("can't parse tables file '{s}': {s}", .{ tablesFilePath, @errorName(err) });
-        };
+        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, data, .{});
         defer parsed.deinit();
 
         if (parsed.value != .array) {
-            std.debug.panic("tables file '{s}' must contain a JSON array", .{tablesFilePath});
+            return error.TablesFileExpectedArray;
         }
 
         var tableNames = try std.ArrayList([]const u8).initCapacity(alloc, parsed.value.array.items.len);
-        errdefer tableNames.deinit(alloc);
+        errdefer {
+            for (tableNames.items) |name| alloc.free(name);
+            tableNames.deinit(alloc);
+        }
         for (parsed.value.array.items) |item| {
             if (item != .string) {
-                std.debug.panic("tables json '{s}' must contain a JSON array of strings", .{tablesFilePath});
+                return error.TablesFileExpectedStringItems;
             }
             const nameCopy = try alloc.dupe(u8, item.string);
             try tableNames.append(alloc, nameCopy);
@@ -281,19 +280,9 @@ fn readNames(alloc: Allocator, tablesFilePath: []const u8) !std.ArrayList([]cons
         return tableNames;
     } else |err| switch (err) {
         error.FileNotFound => {
-            const f = std.fs.createFileAbsolute(tablesFilePath, .{}) catch |createErr| {
-                std.debug.panic(
-                    "failed to initiate tables file '{s}': '{s}'",
-                    .{ tablesFilePath, @errorName(createErr) },
-                );
-            };
-            _ = f.write("[]") catch |writeErr| {
-                std.debug.panic(
-                    "failed to initial empty state to '{s}': '{s}'",
-                    .{ tablesFilePath, @errorName(writeErr) },
-                );
-            };
-            f.close();
+            const f = try std.fs.createFileAbsolute(tablesFilePath, .{});
+            defer f.close();
+            try f.writeAll("[]");
             std.debug.print("write initial state to '{s}'\n", .{tablesFilePath});
             return .empty;
         },
@@ -339,22 +328,13 @@ pub fn release(self: *Table) void {
     if (prev != 1) return;
 
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
-    var alloc = self.alloc;
     if (shouldRemove) {
-        var fba = std.heap.stackFallback(128, alloc);
-        alloc = fba.get();
-    }
-    const pathCopy = if (shouldRemove) alloc.dupe(u8, self.path) catch |err| {
-        std.debug.panic("failed to copy table path '{s}': {s}", .{ self.path, @errorName(err) });
-    } else null;
-    defer if (pathCopy) |p| alloc.free(p);
-
-    self.close();
-    if (pathCopy) |p| {
-        std.fs.deleteTreeAbsolute(p) catch |err| {
-            std.debug.panic("failed to delete table '{s}': {s}", .{ p, @errorName(err) });
+        // TODO: replace to an error log
+        std.fs.deleteTreeAbsolute(self.path) catch |err| {
+            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
         };
     }
+    self.close();
 }
 
 const testing = std.testing;
@@ -390,6 +370,98 @@ fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
         .lastItem = items[items.len - 1],
     };
     try header.writeFile(alloc, tablePath);
+}
+
+test "readNames" {
+    const Case = struct {
+        content: []const u8,
+        expected: []const []const u8,
+        expectedErr: ?anyerror = null,
+    };
+
+    const alloc = testing.allocator;
+    const cases = [_]Case{
+        .{
+            .content = "[\"table-a\",\"table-b\"]",
+            .expected = &.{ "table-a", "table-b" },
+        },
+        .{
+            .content = "not-json",
+            .expected = &.{},
+            .expectedErr = error.SyntaxError,
+        },
+        .{
+            .content = "{\"name\":\"table-a\"}",
+            .expected = &.{},
+            .expectedErr = error.TablesFileExpectedArray,
+        },
+        .{
+            .content = "[\"table-a\",42]",
+            .expected = &.{},
+            .expectedErr = error.TablesFileExpectedStringItems,
+        },
+    };
+
+    for (cases) |case| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+
+        const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+        defer alloc.free(rootPath);
+        const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, "tables.json" });
+        defer alloc.free(tablesFilePath);
+
+        try fs.writeBufferToFileAtomic(alloc, tablesFilePath, case.content, true);
+
+        if (case.expectedErr) |expectedErr| {
+            try testing.expectError(expectedErr, readNames(alloc, tablesFilePath));
+            continue;
+        }
+
+        var tableNames = try readNames(alloc, tablesFilePath);
+        defer {
+            for (tableNames.items) |name| alloc.free(name);
+            tableNames.deinit(alloc);
+        }
+        try testing.expectEqual(case.expected.len, tableNames.items.len);
+        for (case.expected, 0..) |expected, i| {
+            try testing.expectEqualStrings(expected, tableNames.items[i]);
+        }
+    }
+}
+
+test "readNames creates empty file when missing" {
+    const alloc = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, "tables.json" });
+    defer alloc.free(tablesFilePath);
+
+    var tableNames = try readNames(alloc, tablesFilePath);
+    defer tableNames.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), tableNames.items.len);
+
+    const data = try fs.readAll(alloc, tablesFilePath);
+    defer alloc.free(data);
+    try testing.expectEqualStrings("[]", data);
+}
+
+test "readNames returns error when missing parent path cannot be created" {
+    const alloc = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const missingDirTablesPath = try std.fs.path.join(alloc, &.{ rootPath, "missing", "tables.json" });
+    defer alloc.free(missingDirTablesPath);
+
+    try testing.expectError(error.FileNotFound, readNames(alloc, missingDirTablesPath));
 }
 
 test "release keeps table unless toRemove is set, then removes table dir" {

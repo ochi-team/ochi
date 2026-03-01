@@ -12,9 +12,6 @@ const Cache = @import("stds/Cache.zig");
 
 const Encoder = @import("encoding").Encoder;
 
-// holds parts names separated by \n
-const partsFileName = "parts";
-
 fn streamIndexLess(lines: std.ArrayList(*const Line), i: u32, j: u32) bool {
     return lines.items[i].sid.lessThan(&lines.items[j].sid);
 }
@@ -223,7 +220,7 @@ fn createParitionFiles(allocator: Allocator, indexFolderPath: []const u8, dataFo
     try std.fs.makeDirAbsolute(dataFolderPath);
 
     // TODO: consider using static buffer allocator
-    const partsFilePath = try std.mem.concat(allocator, u8, &.{ dataFolderPath, partsFileName });
+    const partsFilePath = try std.mem.concat(allocator, u8, &.{ dataFolderPath, Filenames.tables });
     defer allocator.free(partsFilePath);
     const file = try std.fs.createFileAbsolute(partsFilePath, .{ .exclusive = true });
     file.close();

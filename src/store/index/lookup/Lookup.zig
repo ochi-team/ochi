@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Heap = @import("../../../stds/heap.zig").Heap;
+const Heap = @import("../../../stds/Heap.zig").Heap;
 const Conf = @import("../../../Conf.zig");
 
 const IndexRecorder = @import("../IndexRecorder.zig");
