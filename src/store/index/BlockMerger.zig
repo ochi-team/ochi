@@ -26,7 +26,7 @@ const IndexKind = @import("Index.zig").IndexKind;
 const TagRecordsMerger = @import("TagRecordsMerger.zig");
 const MemTable = @import("MemTable.zig");
 
-const Heap = @import("../../stds/Heap.zig").Heap;
+const Heap = @import("../../stds/heap.zig").Heap;
 
 const maxStreamsPerRecord = 32;
 
