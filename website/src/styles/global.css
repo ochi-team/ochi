@@ -1,1 +1,5 @@
 @import "tailwindcss";
+
+@theme {
+  --color-soft: #a8c2d6;
+}
