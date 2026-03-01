@@ -14,6 +14,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Ochi Documentation',
+      customCss: ['./src/styles/theme.css'],
       favicon: '/src/assets/favicon.ico',
       social: [
         { icon: 'discord', label: 'Discord', href: 'https://discord.gg/AsCKpCNp5c' },
