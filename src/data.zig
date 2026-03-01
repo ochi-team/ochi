@@ -160,7 +160,7 @@ pub const Data = struct {
             }
         }
 
-        // TODO: reshuffle parts to merge in order to build more effective file sizes
+        // TODO: reshuffle tables to merge in order to build more effective file sizes
         self.memTableSem.wait();
         self.mergeTables(allocator, tables.items, force);
         self.memTableSem.post();
