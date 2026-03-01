@@ -1,6 +1,8 @@
+@import "tailwindcss";
+@import "./global.css";
+
 :root {
   /* Extracted from landing components/pages */
-  --landing-bg: #020817;
   --landing-surface: rgba(255, 255, 255, 0.03);
   --landing-border: rgba(255, 255, 255, 0.1);
   --landing-text: #ffffff;
@@ -25,14 +27,14 @@
   --sl-color-gray-4: var(--landing-text-muted);
   --sl-color-gray-5: #42586a;
   --sl-color-gray-6: #0d1b2d;
-  --sl-color-black: var(--landing-bg);
+  --sl-color-black: var(--color-background);
 
   --sl-color-text: var(--landing-text);
   --sl-color-text-accent: var(--landing-accent);
-  --sl-color-text-invert: var(--landing-bg);
+  --sl-color-text-invert: var(--color-background);
 
-  --sl-color-bg: var(--landing-bg);
-  --sl-color-bg-nav: var(--landing-bg);
+  --sl-color-bg: var(--color-background);
+  --sl-color-bg-nav: var(--color-background);
   --sl-color-bg-sidebar: #061022;
   --sl-color-bg-inline-code: #0b1628;
 
