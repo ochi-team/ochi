@@ -1,5 +1,7 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
+const Filenames = @import("Filenames.zig");
 const Data = @import("data.zig").Data;
 const Index = @import("store/index/Index.zig");
 const IndexRecorder = @import("store/index/IndexRecorder.zig");
@@ -10,47 +12,54 @@ const Cache = @import("stds/Cache.zig");
 
 const Encoder = @import("encoding").Encoder;
 
-const partitionsFolderName = "partitions";
-const dataFolderName = "data";
-const indexFolderName = "index";
-
 // holds parts names separated by \n
 const partsFileName = "parts";
 
-fn streamIndexLess(lines: std.ArrayList(*const Line), i: usize, j: usize) bool {
+fn streamIndexLess(lines: std.ArrayList(*const Line), i: u32, j: u32) bool {
     return lines.items[i].sid.lessThan(&lines.items[j].sid);
 }
+
+const partitionNameSize = 8;
 
 pub const Partition = struct {
     day: u64,
     path: []const u8,
+    name: []const u8,
     index: *Index,
     data: *Data,
 
     streamCache: *Cache.StreamCache,
 
-    const bufSize = 2048;
+    // TODO: meter how much it takes usually
+    const bufSize = 1024;
     pub fn addLines(
         self: *Partition,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         lines: std.ArrayList(*const Line),
         tags: []Field,
         encodedTags: []const u8,
     ) !void {
         var fallbackFba = std.heap.stackFallback(bufSize, allocator);
         const fba = fallbackFba.get();
-        var streamsToCache = try std.ArrayList(usize).initCapacity(fba, bufSize / @sizeOf(usize));
+        var streamsToCache = try std.ArrayList(u32).initCapacity(fba, bufSize / @sizeOf(u32));
         defer streamsToCache.deinit(fba);
 
         // detect not cached stream ids
         for (0..lines.items.len) |i| {
             const line = lines.items[i];
-            if (self.isCached(line)) {
+            if (self.isCached(line.sid)) {
                 continue;
             }
 
-            if (streamsToCache.items.len == 0 or line.sid.eql(&lines.items[streamsToCache.items.len - 1].sid)) {
-                try streamsToCache.append(fba, i);
+            if (streamsToCache.items.len == 0) {
+                try streamsToCache.append(fba, @intCast(i));
+                continue;
+            }
+
+            const lineToCacheIdx = streamsToCache.items[streamsToCache.items.len - 1];
+            const lineToCache = lines.items[lineToCacheIdx];
+            if (!line.sid.eql(&lineToCache.sid)) {
+                try streamsToCache.append(fba, @intCast(i));
             }
         }
 
@@ -58,14 +67,15 @@ pub const Partition = struct {
             // sort the stream ids,
             // it's necessary in case the incoming lines are mixed like [1, 3, 2],
             // so to make it [1, 2, 3]
-            @branchHint(.likely);
-            std.mem.sortUnstable(usize, streamsToCache.items, lines, streamIndexLess);
+            std.mem.sortUnstable(u32, streamsToCache.items, lines, streamIndexLess);
         }
 
-        for (streamsToCache.items) |i| {
+        for (streamsToCache.items, 0..) |i, pos| {
             const sid = lines.items[i].sid;
 
-            if (i > 0 and lines.items[streamsToCache.items[i - 1]].sid.eql(&sid)) continue;
+            if (pos > 0 and lines.items[streamsToCache.items[pos - 1]].sid.eql(&sid)) continue;
+
+            if (self.isCached(lines.items[i].sid)) continue;
 
             if (!try self.index.hasStream(allocator, sid)) {
                 try self.index.indexStream(allocator, sid, tags, encodedTags);
@@ -76,21 +86,22 @@ pub const Partition = struct {
         self.data.addLines(allocator, lines);
     }
 
-    fn isCached(self: *Partition, line: *const Line) bool {
-        // TODO: consider using u256 keys (u128 tenant id and u128 sid)
-        var buf: [SID.encodeBound]u8 = undefined;
-        var enc = Encoder.init(&buf);
-        line.sid.encode(&enc);
+    fn isCached(self: *Partition, sid: SID) bool {
+        var cacheKey: [SID.encodeBound + partitionNameSize]u8 = undefined;
+        var enc = Encoder.init(&cacheKey);
+        sid.encode(&enc);
+        @memcpy(cacheKey[SID.encodeBound..], self.name);
 
-        return self.streamCache.contains(buf[0..]);
+        return self.streamCache.contains(cacheKey[0..]);
     }
 
     fn cache(self: *Partition, sid: SID) !void {
-        var buf: [SID.encodeBound]u8 = undefined;
-        var enc = Encoder.init(&buf);
+        var cacheKey: [SID.encodeBound + partitionNameSize]u8 = undefined;
+        var enc = Encoder.init(&cacheKey);
         sid.encode(&enc);
+        @memcpy(cacheKey[SID.encodeBound..], self.name);
 
-        try self.streamCache.set(&buf, {});
+        try self.streamCache.set(&cacheKey, {});
     }
 };
 
@@ -100,9 +111,9 @@ pub const Store = struct {
     partitions: std.ArrayList(*Partition),
     hot: ?*Partition,
 
-    backgroundAllocator: std.mem.Allocator,
+    backgroundAllocator: Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, backgroundAllocator: std.mem.Allocator, path: []const u8) !*Store {
+    pub fn init(allocator: Allocator, backgroundAllocator: Allocator, path: []const u8) !*Store {
         const store = try allocator.create(Store);
         store.* = .{
             .path = path,
@@ -117,14 +128,14 @@ pub const Store = struct {
         return store;
     }
 
-    pub fn deinit(self: *Store, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Store, allocator: Allocator) void {
         self.partitions.deinit(allocator);
         allocator.destroy(self);
     }
 
     pub fn addLines(
         self: *Store,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         lines: std.AutoHashMap(u64, std.ArrayList(*const Line)),
         tags: []Field,
         encodedTags: []const u8,
@@ -136,7 +147,7 @@ pub const Store = struct {
         }
     }
 
-    fn getPartition(self: *Store, allocator: std.mem.Allocator, day: u64) !*Partition {
+    fn getPartition(self: *Store, allocator: Allocator, day: u64) !*Partition {
         const n = std.sort.binarySearch(
             *Partition,
             self.partitions.items,
@@ -153,7 +164,7 @@ pub const Store = struct {
         const partitionPath = try std.fmt.bufPrint(
             &path_buf,
             "{s}{s}{s}{s}{d}",
-            .{ self.path, std.fs.path.sep_str, partitionsFolderName, std.fs.path.sep_str, day },
+            .{ self.path, std.fs.path.sep_str, Filenames.partitions, std.fs.path.sep_str, day },
         );
 
         const res = std.fs.accessAbsolute(partitionPath, .{ .mode = .read_write });
@@ -167,10 +178,10 @@ pub const Store = struct {
         }
 
         // TODO: consider using fixed buffer allocator for dataFolderPath and indexFolderPath
-        const dataFolderPath = try std.mem.concat(allocator, u8, &.{ partitionPath, dataFolderName });
+        const dataFolderPath = try std.mem.concat(allocator, u8, &.{ partitionPath, Filenames.tableData });
         defer allocator.free(dataFolderPath);
-        const indexFolderPath = try std.mem.concat(allocator, u8, &.{ partitionPath, indexFolderName });
-        defer allocator.free(indexFolderName);
+        const indexFolderPath = try std.mem.concat(allocator, u8, &.{ partitionPath, Filenames.tableIndex });
+        defer allocator.free(indexFolderPath);
 
         try createParitionFiles(allocator, dataFolderPath, indexFolderPath);
         const partition = try self.openPartition(allocator, partitionPath, day);
@@ -178,7 +189,7 @@ pub const Store = struct {
         return partition;
     }
 
-    fn openPartition(self: *Store, allocator: std.mem.Allocator, path: []const u8, day: u64) !*Partition {
+    fn openPartition(self: *Store, allocator: Allocator, path: []const u8, day: u64) !*Partition {
         const indexTable = try IndexRecorder.init(allocator, "");
         const index = try Index.init(allocator, indexTable);
 
@@ -188,10 +199,14 @@ pub const Store = struct {
 
         const cache = try Cache.StreamCache.init(allocator);
 
+        const partitionName = std.fs.path.basename(path);
+        std.debug.assert(partitionName.len == partitionNameSize);
+
         const partition = try allocator.create(Partition);
         partition.* = Partition{
             .day = day,
             .path = path,
+            .name = partitionName,
             .index = index,
             .data = data,
             .streamCache = cache,
@@ -203,7 +218,7 @@ pub const Store = struct {
     }
 };
 
-fn createParitionFiles(allocator: std.mem.Allocator, indexFolderPath: []const u8, dataFolderPath: []const u8) !void {
+fn createParitionFiles(allocator: Allocator, indexFolderPath: []const u8, dataFolderPath: []const u8) !void {
     try std.fs.makeDirAbsolute(indexFolderPath);
     try std.fs.makeDirAbsolute(dataFolderPath);
 
