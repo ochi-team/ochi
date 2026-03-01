@@ -5,7 +5,6 @@
   --landing-border: rgba(255, 255, 255, 0.1);
   --landing-text: #ffffff;
   --landing-text-muted: #8fa3ab;
-  --landing-text-soft: #a8c2d6;
   --landing-accent: #22c55e;
   --landing-accent-strong: #0d4a2a;
   --landing-accent-deep: #041a0d;
@@ -22,7 +21,7 @@
   --sl-color-white: var(--landing-text);
   --sl-color-gray-1: #edf3f5;
   --sl-color-gray-2: #c5d4d9;
-  --sl-color-gray-3: var(--landing-text-soft);
+  --sl-color-gray-3: var(--color-soft);
   --sl-color-gray-4: var(--landing-text-muted);
   --sl-color-gray-5: #42586a;
   --sl-color-gray-6: #0d1b2d;
