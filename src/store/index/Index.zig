@@ -95,5 +95,4 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     }
 
     try self.recorder.add(alloc, entries);
-    unreachable;
 }

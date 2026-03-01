@@ -29,7 +29,7 @@ pub const Partition = struct {
 
     streamCache: *Cache.StreamCache,
 
-    const bufSize = 128;
+    const bufSize = 2048;
     pub fn addLines(
         self: *Partition,
         allocator: std.mem.Allocator,
@@ -56,20 +56,21 @@ pub const Partition = struct {
 
         if (streamsToCache.items.len > 0) {
             // sort the stream ids,
-            // it's necessary in case the incoming lines are mixed like [1, 2, 1, 2],
-            // so to make it [1, 1, 2, 2]
+            // it's necessary in case the incoming lines are mixed like [1, 3, 2],
+            // so to make it [1, 2, 3]
+            @branchHint(.likely);
             std.mem.sortUnstable(usize, streamsToCache.items, lines, streamIndexLess);
+        }
 
-            for (streamsToCache.items) |i| {
-                const sid = lines.items[i].sid;
+        for (streamsToCache.items) |i| {
+            const sid = lines.items[i].sid;
 
-                if (i > 0 and lines.items[streamsToCache.items[i - 1]].sid.eql(&sid)) continue;
+            if (i > 0 and lines.items[streamsToCache.items[i - 1]].sid.eql(&sid)) continue;
 
-                if (!try self.index.hasStream(allocator, sid)) {
-                    try self.index.indexStream(allocator, sid, tags, encodedTags);
-                }
-                try self.cache(sid);
+            if (!try self.index.hasStream(allocator, sid)) {
+                try self.index.indexStream(allocator, sid, tags, encodedTags);
             }
+            try self.cache(sid);
         }
 
         self.data.addLines(allocator, lines);

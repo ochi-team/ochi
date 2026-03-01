@@ -13,7 +13,7 @@ const TableType = enum(u8) {
     disk = 1,
 };
 
-inline fn setFlushTime() i64 {
+fn setFlushTime() i64 {
     // now + 1s
     return std.time.microTimestamp() + std.time.us_per_s;
 }
