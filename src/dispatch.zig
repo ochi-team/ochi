@@ -2,7 +2,7 @@ const std = @import("std");
 
 const httpz = @import("httpz");
 
-const AppConfig = @import("conf.zig").AppConfig;
+const AppConfig = @import("Conf.zig").AppConfig;
 const Processor = @import("process.zig").Processor;
 
 pub const AppContext = struct {
