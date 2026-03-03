@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 
 const Filenames = @import("../../Filenames.zig");
 const fs = @import("../../fs.zig");
+const strings = @import("../../stds/strings.zig");
 
 // nothing specific, we simply don't expected a small json file to be larger than that
 const maxFileBytes = 16 * 1024 * 1024;
@@ -60,6 +61,25 @@ pub fn readNames(alloc: Allocator, tablesFilePath: []const u8, comptime validate
             return .empty;
         },
         else => return err,
+    }
+}
+
+pub fn removeUnusedTables(alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
+    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
+    defer dir.close();
+
+    var fba = std.heap.stackFallback(128, alloc);
+    const fbaAlloc = fba.get();
+
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .directory and entry.kind != .sym_link) continue;
+        if (strings.contains(tableNames, entry.name)) continue;
+
+        const pathToDelete = try std.fs.path.join(fbaAlloc, &.{ path, entry.name });
+        defer fbaAlloc.free(pathToDelete);
+        std.debug.print("removing '{s}' file, sycning table dirs\n", .{pathToDelete});
+        try std.fs.deleteTreeAbsolute(pathToDelete);
     }
 }
 
@@ -123,38 +143,55 @@ test "readNames" {
     }
 }
 
-test "readNames creates empty file when missing" {
+test "readNames handles missing file path cases" {
+    const Case = struct {
+        pathParts: []const []const u8,
+        expectedErr: ?anyerror = null,
+        expectedFileContent: ?[]const u8 = null,
+    };
+
+    const cases = [_]Case{
+        .{
+            .pathParts = &.{ "tables.json" },
+            .expectedFileContent = "[]",
+        },
+        .{
+            .pathParts = &.{ "missing", "tables.json" },
+            .expectedErr = error.FileNotFound,
+        },
+    };
+
     const alloc = testing.allocator;
+    for (cases) |case| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+        const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+        defer alloc.free(rootPath);
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
-    defer alloc.free(rootPath);
-    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, "tables.json" });
-    defer alloc.free(tablesFilePath);
+        var pathSegments = try std.ArrayList([]const u8).initCapacity(alloc, 1 + case.pathParts.len);
+        defer pathSegments.deinit(alloc);
+        try pathSegments.append(alloc, rootPath);
+        try pathSegments.appendSlice(alloc, case.pathParts);
 
-    var tableNames = try readNames(alloc, tablesFilePath, false);
-    defer tableNames.deinit(alloc);
-    try testing.expectEqual(@as(usize, 0), tableNames.items.len);
+        const tablesFilePath = try std.fs.path.join(alloc, pathSegments.items);
+        defer alloc.free(tablesFilePath);
 
-    const data = try fs.readAll(alloc, tablesFilePath);
-    defer alloc.free(data);
-    try testing.expectEqualStrings("[]", data);
-}
+        if (case.expectedErr) |expectedErr| {
+            try testing.expectError(expectedErr, readNames(alloc, tablesFilePath, false));
+            continue;
+        }
 
-test "readNames returns error when missing parent path cannot be created" {
-    const alloc = testing.allocator;
+        var tableNames = try readNames(alloc, tablesFilePath, false);
+        defer tableNames.deinit(alloc);
+        try testing.expectEqual(@as(usize, 0), tableNames.items.len);
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
-    defer alloc.free(rootPath);
-    const missingDirTablesPath = try std.fs.path.join(alloc, &.{ rootPath, "missing", "tables.json" });
-    defer alloc.free(missingDirTablesPath);
-
-    try testing.expectError(error.FileNotFound, readNames(alloc, missingDirTablesPath, false));
+        if (case.expectedFileContent) |content| {
+            const data = try fs.readAll(alloc, tablesFilePath);
+            defer alloc.free(data);
+            try testing.expectEqualStrings(content, data);
+        }
+    }
 }
 
 test "readNames returns error in validate mode when tables file is missing but table dirs exist" {
@@ -176,4 +213,53 @@ test "readNames returns error in validate mode when tables file is missing but t
     try testing.expectError(error.TableFileExistsWithNoTableEntry, readNames(alloc, tablesFilePath, true));
     // Validate mode must not auto-create tables.json in this corruption-like state
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablesFilePath, .{}));
+}
+
+test "removeUnusedTables" {
+    const Case = struct {
+        existingTableNames: []const []const u8,
+        usedTableNames: []const []const u8,
+    };
+
+    const cases = [_]Case{
+        .{
+            .existingTableNames = &.{"table-a"},
+            .usedTableNames = &.{},
+        },
+        .{
+            .existingTableNames = &.{ "table-a", "table-b" },
+            .usedTableNames = &.{"table-a"},
+        },
+        .{
+            .existingTableNames = &.{ "table-a", "table-b" },
+            .usedTableNames = &.{ "table-a", "table-b" },
+        },
+    };
+
+    const alloc = testing.allocator;
+    for (cases) |case| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+
+        const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+        defer alloc.free(rootPath);
+
+        for (case.existingTableNames) |tableName| {
+            const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
+            defer alloc.free(tablePath);
+            try std.fs.makeDirAbsolute(tablePath);
+        }
+
+        try removeUnusedTables(alloc, rootPath, case.usedTableNames);
+
+        for (case.existingTableNames) |tableName| {
+            const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
+            defer alloc.free(tablePath);
+            if (strings.contains(case.usedTableNames, tableName)) {
+                try std.fs.accessAbsolute(tablePath, .{});
+            } else {
+                try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
+            }
+        }
+    }
 }
