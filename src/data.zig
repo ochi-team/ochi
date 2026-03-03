@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Conf = @import("conf.zig");
+const Conf = @import("Conf.zig");
 const Line = @import("store/lines.zig").Line;
 
 const TableMem = @import("store/inmem/TableMem.zig");
