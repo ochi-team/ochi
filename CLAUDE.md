@@ -48,6 +48,49 @@ for (arr) |*ptr, index| {
 }
 ```
 
+### Test
+
+Good test has multiple cases
+```zig
+test "readNames" {
+    const Case = struct {
+        content: []const u8,
+        expected: []const []const u8,
+        expectedErr: ?anyerror = null,
+    };
+
+    const alloc = testing.allocator;
+    const cases = [_]Case{
+        .{
+            .content = "[\"table-a\",\"table-b\"]",
+            .expected = &.{ "table-a", "table-b" },
+        },
+        .{
+            .content = "not-json",
+            .expected = &.{},
+            .expectedErr = error.SyntaxError,
+        },
+    };
+
+    for (cases) |case| {
+        // details here
+    }
+}
+```
+
+And has proper assertions comparing all the fields at once:
+
+```zig
+// GOOD
+const h = Self.decode(encodeBuf[0..offset]);
+try std.testing.expectEqualDeep(case.header, h);
+// BAD
+const h = Self.decode(encodeBuf[0..offset]);
+try std.testing.expectEqual(case.header.sid, h.sid);
+try std.testing.expectEqual(case.header.minTs, h.minTs);
+try std.testing.expectEqual(case.header.maxTs, h.maxTs);
+```
+
 Use zigdoc to validate the API of the used Zig version, e.g.:
 - zigdoc std.ArrayList
 - zigdoc std.mem.Allocator

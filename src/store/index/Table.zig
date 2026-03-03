@@ -4,7 +4,6 @@ const Allocator = std.mem.Allocator;
 
 const Filenames = @import("../../Filenames.zig");
 const fs = @import("../../fs.zig");
-const strings = @import("../../stds/strings.zig");
 const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
 const DiskTable = @import("DiskTable.zig");
@@ -85,24 +84,8 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
         };
     }
 
-    // syncing tables with a json, remove all the not listed dirs,
-    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
-    var it = dir.iterate();
-    while (try it.next()) |entry| {
-        if (entry.kind != .directory and entry.kind != .sym_link) continue;
-
-        // TODO: benchmark against filling a map lookup
-        if (strings.contains(tableNames.items, entry.name)) continue;
-
-        const pathToDelete = try std.fs.path.join(alloc, &.{ path, entry.name });
-        defer alloc.free(pathToDelete);
-        std.debug.print("removing '{s}' file, sycning table dirs\n", .{pathToDelete});
-        std.fs.deleteTreeAbsolute(pathToDelete) catch |err| std.debug.panic(
-            "failed to remove unlisted table dir '{s}': '{s}'\n",
-            .{ pathToDelete, @errorName(err) },
-        );
-    }
+    // syncing tables with a json, remove all the not listed dirs
+    try catalog.removeUnusedTables(alloc, path, tableNames.items);
 
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
