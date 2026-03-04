@@ -11,8 +11,8 @@ const TableHeader = @This();
 // TODO: try making both values u32
 itemsCount: u64 = 0,
 blocksCount: u64 = 0,
-firstItem: []const u8 = undefined,
-lastItem: []const u8 = undefined,
+firstItem: []const u8 = "",
+lastItem: []const u8 = "",
 
 pub fn deinit(self: TableHeader, alloc: Allocator) void {
     alloc.free(self.firstItem);

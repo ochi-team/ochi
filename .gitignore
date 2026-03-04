@@ -1,7 +1,14 @@
+# zig build, deps
 .zig-cache/
 zig-out/
+zig-pkg/
+
+# agents
 .claude/
-*.o
+
+# load test report
 simulator/k6
+
+# IDEs
 .vscode
 .idea/
