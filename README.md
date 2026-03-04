@@ -42,10 +42,15 @@ Nice to have:
 - Design landing page
 - Drop a couple blog posts in there on:
     1. why static allocation is not the best 
+    2. what is the alternative to static allocations? 
+    3. chunked buffers as an alternative to ArrayList
     2. write logs effectively
     3. key value store for a logging database
     4. storing index for logs
     5. object storage complexity
+    6. ARM matters
+    7. opencost integration with Grafana
+    8. why we must stay opensource forever
 
 ### tiny package movements
 - extract structs from store/inmem/block_header.zig
