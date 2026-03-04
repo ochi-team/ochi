@@ -71,20 +71,9 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
     defer tableNames.deinit(alloc);
 
     // syncing tables with a json, make sure all the listed dirs exist
-    for (tableNames.items) |tableName| {
-        const tablePath = try std.fs.path.join(alloc, &.{ path, tableName });
-        defer alloc.free(tablePath);
-        std.fs.accessAbsolute(tablePath, .{}) catch |err| switch (err) {
-            error.FileNotFound => std.debug.panic(
-                "table '{s}' is missing on disk, but listed in '{s}'\n" ++
-                    "make sure the content is not corrupted, remove '{s}' from file '{s}' or restore the missing file",
-                .{ tablePath, tablesFilePath, tablePath, tablesFilePath },
-            ),
-            else => return err,
-        };
-    }
+    try catalog.validateTablesExist(alloc, path, tableNames.items);
 
-    // syncing tables with a json, remove all the not listed dirs
+    // syncing tables with the given names remove all the not listed dirs
     try catalog.removeUnusedTables(alloc, path, tableNames.items);
 
     // open tables

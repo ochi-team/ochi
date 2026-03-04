@@ -64,6 +64,17 @@ pub fn readNames(alloc: Allocator, tablesFilePath: []const u8, comptime validate
     }
 }
 
+pub fn validateTablesExist(alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
+    for (tableNames) |tableName| {
+        const tablePath = try std.fs.path.join(alloc, &.{ path, tableName });
+        defer alloc.free(tablePath);
+        std.fs.accessAbsolute(tablePath, .{}) catch |err| switch (err) {
+            error.FileNotFound => return error.TableDoesNotExist,
+            else => return err,
+        };
+    }
+}
+
 pub fn removeUnusedTables(alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
@@ -152,7 +163,7 @@ test "readNames handles missing file path cases" {
 
     const cases = [_]Case{
         .{
-            .pathParts = &.{ "tables.json" },
+            .pathParts = &.{"tables.json"},
             .expectedFileContent = "[]",
         },
         .{
@@ -213,6 +224,51 @@ test "readNames returns error in validate mode when tables file is missing but t
     try testing.expectError(error.TableFileExistsWithNoTableEntry, readNames(alloc, tablesFilePath, true));
     // Validate mode must not auto-create tables.json in this corruption-like state
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablesFilePath, .{}));
+}
+
+test "validateTablesExist" {
+    const Case = struct {
+        tableNames: []const []const u8,
+        existingTableNames: []const []const u8,
+        expectedErr: ?anyerror = null,
+    };
+
+    const cases = [_]Case{
+        .{
+            .tableNames = &.{},
+            .existingTableNames = &.{},
+        },
+        .{
+            .tableNames = &.{"table-a"},
+            .existingTableNames = &.{"table-a"},
+        },
+        .{
+            .tableNames = &.{ "table-a", "table-b" },
+            .existingTableNames = &.{"table-a"},
+            .expectedErr = error.TableDoesNotExist,
+        },
+    };
+
+    const alloc = testing.allocator;
+    for (cases) |case| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+
+        const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+        defer alloc.free(rootPath);
+
+        for (case.existingTableNames) |tableName| {
+            const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
+            defer alloc.free(tablePath);
+            try std.fs.makeDirAbsolute(tablePath);
+        }
+
+        if (case.expectedErr) |expectedErr| {
+            try testing.expectError(expectedErr, validateTablesExist(alloc, rootPath, case.tableNames));
+        } else {
+            try validateTablesExist(alloc, rootPath, case.tableNames);
+        }
+    }
 }
 
 test "removeUnusedTables" {

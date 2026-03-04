@@ -173,7 +173,8 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
 
 // returns the first index with item[prefixLen..] >= keySuffix.
 // callers may receive items.len when keySuffix is greater than all suffixes.
-// TODO: replace to std.order.binarySearch
+// TODO: replace to std.order.binarySearch 
+// TODO: test alternative array layout
 fn lowerBoundBySuffix(items: []const []const u8, key: []const u8, prefixLen: usize) usize {
     if (items.len == 0) return 0;
 
