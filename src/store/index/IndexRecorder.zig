@@ -192,6 +192,7 @@ pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
     self.pool.deinit();
+    _ = Conf.removeDiskSpace(self.path);
     alloc.destroy(self.pool);
     alloc.destroy(self);
 }
