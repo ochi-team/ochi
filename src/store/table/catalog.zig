@@ -227,6 +227,18 @@ test "readNames returns error in validate mode when tables file is missing but t
 }
 
 test "validateTablesExist" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const tableName = "table-a";
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
+    defer alloc.free(tablePath);
+    try std.fs.makeDirAbsolute(tablePath);
+
     const Case = struct {
         tableNames: []const []const u8,
         existingTableNames: []const []const u8,
@@ -240,29 +252,16 @@ test "validateTablesExist" {
         },
         .{
             .tableNames = &.{"table-a"},
-            .existingTableNames = &.{"table-a"},
+            .existingTableNames = &.{tableName},
         },
         .{
-            .tableNames = &.{ "table-a", "table-b" },
-            .existingTableNames = &.{"table-a"},
+            .tableNames = &.{ tableName, "table-b" },
+            .existingTableNames = &.{tableName},
             .expectedErr = error.TableDoesNotExist,
         },
     };
 
-    const alloc = testing.allocator;
     for (cases) |case| {
-        var tmp = testing.tmpDir(.{});
-        defer tmp.cleanup();
-
-        const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
-        defer alloc.free(rootPath);
-
-        for (case.existingTableNames) |tableName| {
-            const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
-            defer alloc.free(tablePath);
-            try std.fs.makeDirAbsolute(tablePath);
-        }
-
         if (case.expectedErr) |expectedErr| {
             try testing.expectError(expectedErr, validateTablesExist(alloc, rootPath, case.tableNames));
         } else {

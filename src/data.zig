@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Conf = @import("Conf.zig");
 const Line = @import("store/lines.zig").Line;
@@ -13,6 +14,7 @@ const TableType = enum(u8) {
     disk = 1,
 };
 
+// TODO: move flush interval to config
 fn setFlushTime() i64 {
     // now + 1s
     return std.time.microTimestamp() + std.time.us_per_s;
@@ -20,23 +22,21 @@ fn setFlushTime() i64 {
 
 pub const DataShard = struct {
     mx: std.Thread.Mutex = .{},
-    lines: std.ArrayList(*const Line) = std.ArrayList(*const Line).empty,
+    lines: std.ArrayList(*const Line) = .empty,
+    size: u64 = 0,
     // TODO: currently there is a single background process flushing the data shards
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
 
     // threshold as 90% of a max block size
-    const flushThreshold = 9 * (TableMem.maxBlockSize / 10);
-    fn mustFlush(_: *DataShard) bool {
-        // TODO: this is calculated not very precise, could be more optimal,
-        // has to be fixed on understanding more incoming lines life time
-        // return self.size >= flushThreshold;
-        return true;
+    const flushSizeThreshold = 9 * (TableMem.maxBlockSize / 10);
+    fn mustFlush(self: *DataShard) bool {
+        return self.size >= flushSizeThreshold;
     }
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, allocator: std.mem.Allocator, sem: *std.Thread.Semaphore) !?*TableMem {
+    fn flush(self: *DataShard, allocator: Allocator, sem: *std.Thread.Semaphore) !?*TableMem {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -44,9 +44,9 @@ pub const DataShard = struct {
         sem.wait();
         errdefer sem.post();
 
-        self.flushAtUs = null;
         const memTable = try TableMem.init(allocator);
         try memTable.addLines(allocator, self.lines.items);
+        self.lines.clearRetainingCapacity();
 
         sem.post();
 
@@ -70,7 +70,7 @@ pub const Data = struct {
 
     path: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator, workersAllocator: std.mem.Allocator, path: []const u8) !*Data {
+    pub fn init(allocator: Allocator, workersAllocator: Allocator, path: []const u8) !*Data {
         const conf = Conf.getConf().server.pools;
         std.debug.assert(conf.cpus != 0);
         // 4 is a minimum amount for workers:
@@ -119,7 +119,7 @@ pub const Data = struct {
         return self;
     }
 
-    pub fn deinit(self: *Data, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Data, allocator: Allocator) void {
         self.stopped.store(true, .release);
         self.wg.wait();
         self.pool.deinit();
@@ -128,7 +128,7 @@ pub const Data = struct {
         allocator.destroy(self);
     }
 
-    fn startMemTableFlusher(self: *Data, allocator: std.mem.Allocator) void {
+    fn startMemTableFlusher(self: *Data, allocator: Allocator) void {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
 
@@ -143,7 +143,7 @@ pub const Data = struct {
         self.flushMemTable(alloc, true);
     }
 
-    fn flushMemTable(self: *Data, allocator: std.mem.Allocator, force: bool) void {
+    fn flushMemTable(self: *Data, allocator: Allocator, force: bool) void {
         const nowUs = std.time.microTimestamp();
 
         self.mx.lock();
@@ -167,7 +167,7 @@ pub const Data = struct {
     }
 
     /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
-    fn startDataShardsFlusher(self: *Data, allocator: std.mem.Allocator) void {
+    fn startDataShardsFlusher(self: *Data, allocator: Allocator) void {
         // half a sec
         const flushInterval = std.time.ns_per_s / 2;
 
@@ -183,7 +183,7 @@ pub const Data = struct {
         self.flushDataShards(alloc, true);
     }
 
-    fn flushDataShards(self: *Data, allocator: std.mem.Allocator, force: bool) void {
+    fn flushDataShards(self: *Data, allocator: Allocator, force: bool) void {
         if (force) {
             for (self.shards) |*shard| {
                 shard.mx.lock();
@@ -207,19 +207,21 @@ pub const Data = struct {
         }
     }
 
-    fn flushShard(self: *Data, allocator: std.mem.Allocator, shard: *DataShard) void {
-        const maybeMemTable = shard.flush(allocator, &self.memTableSem) catch |err| {
+    fn flushShard(self: *Data, alloc: Allocator, shard: *DataShard) void {
+        const maybeMemTable = shard.flush(alloc, &self.memTableSem) catch |err| {
             self.handleErr(err);
             return;
         };
         if (maybeMemTable) |memTable| {
             self.mx.lock();
             defer self.mx.unlock();
-            self.memTables.append(allocator, memTable) catch |err| {
+            self.memTables.append(alloc, memTable) catch |err| {
                 self.handleErr(err);
                 return;
             };
-            self.pool.spawnWg(&self.wg, startMemTableMerger, .{ self, allocator });
+
+            self.startMemTableMerger(alloc);
+            self.pool.spawnWg(&self.wg, startMemTableMerger, .{ self, alloc });
         }
     }
 
@@ -230,7 +232,11 @@ pub const Data = struct {
         return;
     }
 
-    fn startMemTableMerger(self: *Data, allocator: std.mem.Allocator) void {
+    fn startMemTableMerger(self: *Data, allocator: Allocator) void {
+        self.pool.spawnWg(&self.wg, runMemTableMerger, .{ self, allocator });
+    }
+
+    fn runMemTableMerger(self: *Data, allocator: Allocator) void {
         while (true) {
             if (self.stopped.load(.acquire)) return;
 
@@ -256,7 +262,7 @@ pub const Data = struct {
         }
     }
 
-    fn getDstTableType(self: *Data, allocator: std.mem.Allocator) TableType {
+    fn getDstTableType(self: *Data, allocator: Allocator) TableType {
         _ = self;
         _ = allocator;
 
@@ -264,7 +270,7 @@ pub const Data = struct {
         return TableType.inmemory;
     }
 
-    fn getDstTablePath(self: *Data, allocator: std.mem.Allocator, dstTableType: TableType) ![]const u8 {
+    fn getDstTablePath(self: *Data, allocator: Allocator, dstTableType: TableType) ![]const u8 {
         // In-memory tables do not have a destination path.
         if (dstTableType == .inmemory) {
             return "";
@@ -292,12 +298,12 @@ pub const Data = struct {
     }
 
     // TODO: implement it
-    fn openBlockStreamReaders(allocator: std.mem.Allocator) ![]*BlockReader {
+    fn openBlockStreamReaders(allocator: Allocator) ![]*BlockReader {
         const readers = try allocator.alloc(*BlockReader, 1);
         return readers;
     }
 
-    fn mergeTables(self: *Data, alloc: std.mem.Allocator, tables: []*TableMem, force: bool) void {
+    fn mergeTables(self: *Data, alloc: Allocator, tables: []*TableMem, force: bool) void {
         if (tables.len == 0) {
             return;
         }
@@ -338,26 +344,26 @@ pub const Data = struct {
         _ = t.lap();
     }
 
-    // FIXME: allocator must be the same as in the background workers to have same source of ownership for mem tables
-    pub fn addLines(self: *Data, allocator: std.mem.Allocator, lines: std.ArrayList(*const Line)) void {
+    pub fn addLines(self: *Data, alloc: Allocator, lines: []*const Line, size: usize) !void {
         const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
         var shard = &self.shards[i];
 
         shard.mx.lock();
 
-        if (shard.flushAtUs == null) {
-            shard.flushAtUs = setFlushTime();
-        }
-        shard.lines = lines;
+        try shard.lines.appendSlice(alloc, lines);
+        shard.size += size;
         if (shard.mustFlush()) {
-            self.flushShard(allocator, shard);
+            shard.flushAtUs = null;
+            self.flushShard(alloc, shard);
+        } else if (shard.flushAtUs == null) {
+            shard.flushAtUs = setFlushTime();
         }
 
         shard.mx.unlock();
     }
 };
 
-fn tableSliceToMerge(alloc: std.mem.Allocator, tables: *std.ArrayList(*TableMem), _: u64) !?[]*TableMem {
+fn tableSliceToMerge(alloc: Allocator, tables: *std.ArrayList(*TableMem), _: u64) !?[]*TableMem {
     var size: usize = 0;
     for (tables.items) |t| {
         if (!t.isInMerge) size += 1;
@@ -374,7 +380,7 @@ fn tableSliceToMerge(alloc: std.mem.Allocator, tables: *std.ArrayList(*TableMem)
     return slice;
 }
 
-fn filterToMerge(alloc: std.mem.Allocator, tables: []*TableMem) !?[]*TableMem {
+fn filterToMerge(alloc: Allocator, tables: []*TableMem) !?[]*TableMem {
     if (tables.len < 2) return null;
 
     // TODO: not implemented
