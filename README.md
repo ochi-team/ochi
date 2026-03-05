@@ -2,7 +2,9 @@
   <img src="logo.png" />
 </p>
 
-Ochi is a cost-effective, Loki compatible database for logs. 
+Ochi is a cost-effective, Loki compatible database for logs.
+
+&#8203;
 
 ### Build
 
