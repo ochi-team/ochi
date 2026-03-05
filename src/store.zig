@@ -80,7 +80,7 @@ pub const Partition = struct {
             try self.cache(sid);
         }
 
-        self.data.addLines(allocator, lines.items, 0);
+        try self.data.addLines(allocator, lines.items, 0);
     }
 
     fn isCached(self: *Partition, sid: SID) bool {

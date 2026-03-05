@@ -179,7 +179,7 @@ pub const ColumnData = struct {
 
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
-const TableMem = @import("TableMem.zig");
+const MemTable = @import("MemTable.zig");
 const BlockReader = @import("reader.zig").BlockReader;
 
 test "BlockData initEmpty and deinit without header" {
@@ -247,7 +247,7 @@ test "BlockData readFrom populates columnsData and celledColumns" {
         &sample.lines[2],
     };
 
-    const memTable = try TableMem.init(allocator);
+    const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 

@@ -4,10 +4,10 @@ const Allocator = std.mem.Allocator;
 const Conf = @import("Conf.zig");
 const Line = @import("store/lines.zig").Line;
 
-const TableMem = @import("store/inmem/TableMem.zig");
-const BlockReader = @import("store/inmem/reader.zig").BlockReader;
+const cap = @import("store/table/cap.zig");
 
-const maxLevelSize = 100 * 1024 * 1024 * 1024;
+const MemTable = @import("store/inmem/MemTable.zig");
+const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 
 const TableType = enum(u8) {
     inmemory = 0,
@@ -29,14 +29,14 @@ pub const DataShard = struct {
     flushAtUs: ?i64 = null,
 
     // threshold as 90% of a max block size
-    const flushSizeThreshold = 9 * (TableMem.maxBlockSize / 10);
+    const flushSizeThreshold = 9 * (MemTable.maxBlockSize / 10);
     fn mustFlush(self: *DataShard) bool {
         return self.size >= flushSizeThreshold;
     }
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, allocator: Allocator, sem: *std.Thread.Semaphore) !?*TableMem {
+    fn flush(self: *DataShard, allocator: Allocator, sem: *std.Thread.Semaphore) !?*MemTable {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -44,7 +44,7 @@ pub const DataShard = struct {
         sem.wait();
         errdefer sem.post();
 
-        const memTable = try TableMem.init(allocator);
+        const memTable = try MemTable.init(allocator);
         try memTable.addLines(allocator, self.lines.items);
         self.lines.clearRetainingCapacity();
 
@@ -60,12 +60,12 @@ pub const Data = struct {
     nextShard: std.atomic.Value(usize),
     mergeIdx: std.atomic.Value(usize),
 
-    mx: std.Thread.Mutex,
-    memTables: std.ArrayList(*TableMem),
+    mxTables: std.Thread.Mutex,
+    memTables: std.ArrayList(*MemTable),
 
     pool: *std.Thread.Pool,
     wg: std.Thread.WaitGroup,
-    memTableSem: std.Thread.Semaphore,
+    memMergeSem: std.Thread.Semaphore,
     stopped: std.atomic.Value(bool),
 
     path: []const u8,
@@ -100,12 +100,12 @@ pub const Data = struct {
             .nextShard = std.atomic.Value(usize).init(0),
             .mergeIdx = std.atomic.Value(usize).init(0),
 
-            .mx = .{},
-            .memTables = std.ArrayList(*TableMem).empty,
+            .mxTables = .{},
+            .memTables = std.ArrayList(*MemTable).empty,
 
             .pool = pool,
             .wg = wg,
-            .memTableSem = .{ .permits = conf.cpus },
+            .memMergeSem = .{ .permits = conf.cpus },
             .stopped = std.atomic.Value(bool).init(false),
             .path = path,
         };
@@ -136,20 +136,20 @@ pub const Data = struct {
         var iteration: usize = 0;
         while (!self.stopped.load(.acquire)) {
             std.Thread.sleep(std.time.ns_per_s);
-            self.flushMemTable(alloc, false);
+            self.flushMemTable(alloc, false) catch unreachable;
             _ = arena.reset(.retain_capacity);
             iteration += 1;
         }
-        self.flushMemTable(alloc, true);
+        self.flushMemTable(alloc, true) catch unreachable;
     }
 
-    fn flushMemTable(self: *Data, allocator: Allocator, force: bool) void {
+    fn flushMemTable(self: *Data, allocator: Allocator, force: bool) !void {
         const nowUs = std.time.microTimestamp();
 
-        self.mx.lock();
-        defer self.mx.unlock();
+        self.mxTables.lock();
+        defer self.mxTables.unlock();
 
-        var tables = std.ArrayList(*TableMem).initCapacity(allocator, self.memTables.items.len) catch |err| {
+        var tables = std.ArrayList(*MemTable).initCapacity(allocator, self.memTables.items.len) catch |err| {
             self.handleErr(err);
             return;
         };
@@ -161,9 +161,9 @@ pub const Data = struct {
         }
 
         // TODO: reshuffle tables to merge in order to build more effective file sizes
-        self.memTableSem.wait();
-        self.mergeTables(allocator, tables.items, force);
-        self.memTableSem.post();
+        self.memMergeSem.wait();
+        try self.mergeTables(allocator, tables.items, force, &self.stopped);
+        self.memMergeSem.post();
     }
 
     /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
@@ -208,13 +208,13 @@ pub const Data = struct {
     }
 
     fn flushShard(self: *Data, alloc: Allocator, shard: *DataShard) void {
-        const maybeMemTable = shard.flush(alloc, &self.memTableSem) catch |err| {
+        const maybeMemTable = shard.flush(alloc, &self.memMergeSem) catch |err| {
             self.handleErr(err);
             return;
         };
         if (maybeMemTable) |memTable| {
-            self.mx.lock();
-            defer self.mx.unlock();
+            self.mxTables.lock();
+            defer self.mxTables.unlock();
             self.memTables.append(alloc, memTable) catch |err| {
                 self.handleErr(err);
                 return;
@@ -233,33 +233,73 @@ pub const Data = struct {
     }
 
     fn startMemTableMerger(self: *Data, allocator: Allocator) void {
+        if (self.stopped.load(.acquire)) return;
+
         self.pool.spawnWg(&self.wg, runMemTableMerger, .{ self, allocator });
     }
 
-    fn runMemTableMerger(self: *Data, allocator: Allocator) void {
-        while (true) {
-            if (self.stopped.load(.acquire)) return;
+    fn runMemTableMerger(self: *Data, alloc: Allocator) void {
+        self.tablesMerger(alloc, &self.memTables, &self.memMergeSem) catch |err| {
+            std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
+        };
+    }
 
-            // TODO: validate it has enough space for the max amount
-            const maxSize = maxLevelSize;
-            self.mx.lock();
-            var fallbackFba = std.heap.stackFallback(1024, allocator);
-            const alloc = fallbackFba.get();
-            const maybeMemTables = tableSliceToMerge(alloc, &self.memTables, maxSize) catch |err| {
-                self.handleErr(err);
+    fn tablesMerger(
+        self: *Data,
+        alloc: Allocator,
+        tables: *std.ArrayList(*MemTable),
+        sem: *std.Thread.Semaphore,
+    ) !void {
+        var tablesToMerge = std.ArrayList(*MemTable).empty;
+        defer tablesToMerge.deinit(alloc);
+
+        while (true) {
+            const maxDiskTableSize = cap.getMaxTableSize(self.path);
+
+            self.mxTables.lock();
+            errdefer self.mxTables.unlock();
+            // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
+            const window = try filterTablesToMerge(alloc, tables.items, &tablesToMerge, maxDiskTableSize);
+            const w = window orelse {
+                self.mxTables.unlock();
                 return;
             };
-            self.mx.unlock();
+            const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
+            self.mxTables.unlock();
+            if (filteredTablesToMerge.len == 0) {
+                return;
+            }
 
-            const memTables = maybeMemTables orelse return;
-            if (memTables.len == 0) return;
-
-            defer alloc.free(memTables);
-
-            self.memTableSem.wait();
-            self.mergeTables(allocator, memTables, false);
-            self.memTableSem.post();
+            // TODO: make sure error.Stopped is handled on the upper level
+            sem.wait();
+            errdefer sem.post();
+            self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped) catch |err| {
+                switch (err) {
+                    error.Stopped => return,
+                    else => return err,
+                }
+            };
+            sem.post();
+            tablesToMerge.clearRetainingCapacity();
         }
+    }
+
+    const MergeWindowBound = struct {
+        upper: usize,
+        lower: usize,
+    };
+
+    fn filterTablesToMerge(
+        alloc: Allocator,
+        tables: []*MemTable,
+        toMerge: *std.ArrayList(*MemTable),
+        maxDiskTableSize: u64,
+    ) Allocator.Error!?MergeWindowBound {
+        _ = alloc;
+        _ = tables;
+        _ = toMerge;
+        _ = maxDiskTableSize;
+        unreachable;
     }
 
     fn getDstTableType(self: *Data, allocator: Allocator) TableType {
@@ -303,7 +343,14 @@ pub const Data = struct {
         return readers;
     }
 
-    fn mergeTables(self: *Data, alloc: Allocator, tables: []*TableMem, force: bool) void {
+    fn mergeTables(
+        self: *Data,
+        alloc: Allocator,
+        tables: []*MemTable,
+        force: bool,
+        stopped: ?*std.atomic.Value(bool),
+    ) !void {
+        _ = stopped;
         if (tables.len == 0) {
             return;
         }
@@ -313,12 +360,12 @@ pub const Data = struct {
         }
 
         defer {
-            self.mx.lock();
+            self.mxTables.lock();
             for (tables) |table| {
                 std.debug.assert(table.isInMerge);
                 table.isInMerge = false;
             }
-            self.mx.unlock();
+            self.mxTables.unlock();
         }
 
         var t = timer();
@@ -342,6 +389,7 @@ pub const Data = struct {
         }
 
         _ = t.lap();
+        unreachable;
     }
 
     pub fn addLines(self: *Data, alloc: Allocator, lines: []*const Line, size: usize) !void {
@@ -363,12 +411,12 @@ pub const Data = struct {
     }
 };
 
-fn tableSliceToMerge(alloc: Allocator, tables: *std.ArrayList(*TableMem), _: u64) !?[]*TableMem {
+fn tableSliceToMerge(alloc: Allocator, tables: *std.ArrayList(*MemTable), _: u64) !?[]*MemTable {
     var size: usize = 0;
     for (tables.items) |t| {
         if (!t.isInMerge) size += 1;
     }
-    const interSlice = try alloc.alloc(*TableMem, size);
+    const interSlice = try alloc.alloc(*MemTable, size);
     defer alloc.free(interSlice);
 
     const maybeSlice = try filterToMerge(alloc, interSlice);
@@ -380,11 +428,11 @@ fn tableSliceToMerge(alloc: Allocator, tables: *std.ArrayList(*TableMem), _: u64
     return slice;
 }
 
-fn filterToMerge(alloc: Allocator, tables: []*TableMem) !?[]*TableMem {
+fn filterToMerge(alloc: Allocator, tables: []*MemTable) !?[]*MemTable {
     if (tables.len < 2) return null;
 
     // TODO: not implemented
-    const res = try alloc.alloc(*TableMem, tables.len);
+    const res = try alloc.alloc(*MemTable, tables.len);
     for (0..tables.len) |i| {
         res[i] = tables[i];
     }

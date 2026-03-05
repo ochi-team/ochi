@@ -6,7 +6,7 @@ const SID = @import("../lines.zig").SID;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const TableHeader = @import("TableHeader.zig");
-const TableMem = @import("TableMem.zig");
+const MemTable = @import("MemTable.zig");
 const BlockData = @import("BlockData.zig").BlockData;
 const ColumnIDGen = @import("ColumnIDGen.zig");
 
@@ -30,7 +30,7 @@ pub const StreamReader = struct {
     columnsKeysBuf: []const u8,
     columnIdxsBuf: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator, tableMem: *TableMem) !*StreamReader {
+    pub fn init(allocator: std.mem.Allocator, tableMem: *MemTable) !*StreamReader {
         const r = try allocator.create(StreamReader);
         r.* = StreamReader{
             .timestampsBuf = tableMem.streamWriter.timestampsBuf.items,
@@ -103,7 +103,7 @@ pub const BlockReader = struct {
     // Block data
     blockData: BlockData,
 
-    pub fn initFromTableMem(allocator: std.mem.Allocator, tableMem: *TableMem) !*BlockReader {
+    pub fn initFromTableMem(allocator: std.mem.Allocator, tableMem: *MemTable) !*BlockReader {
         const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
             allocator,
             tableMem.streamWriter.metaIndexBuf.items,
@@ -312,7 +312,7 @@ fn testReadBlock(allocator: std.mem.Allocator) !void {
         &sample.lines[2],
     };
 
-    const memTable = try TableMem.init(allocator);
+    const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 
