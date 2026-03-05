@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 
 const fs = @import("../../fs.zig");
 
+const cap = @import("../table/cap.zig");
+
 const Entries = @import("Entries.zig");
 const MemBlock = @import("MemBlock.zig");
 const Table = @import("Table.zig");
@@ -28,9 +30,6 @@ const maxMemTables = 24;
 // we need to balance throughput and memory limits
 // this number is just a guess
 const amountOfTablesToMerge = 16;
-
-// 100 GB
-const maxTableSize = 100 * 1024 * 1024 * 1024;
 
 const IndexRecorder = @This();
 
@@ -548,7 +547,7 @@ fn tablesMerger(
     defer tablesToMerge.deinit(alloc);
 
     while (true) {
-        const maxDiskTableSize = self.getMaxTableSize();
+        const maxDiskTableSize = cap.getMaxTableSize(self.path);
 
         self.mxTables.lock();
         errdefer self.mxTables.unlock();
@@ -809,12 +808,6 @@ fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
     }
 
     return removed;
-}
-
-fn getMaxTableSize(self: *IndexRecorder) u64 {
-    const space = Conf.getFreeDiskSpace(self.path);
-    const maxSize = space / self.concurrency;
-    return @min(maxSize, maxTableSize);
 }
 
 fn filterTablesToMerge(
