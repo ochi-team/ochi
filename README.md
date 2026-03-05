@@ -4,7 +4,7 @@
 
 Ochi is a cost-effective, Loki compatible database for logs.
 
-Check out our new website
+Check out our new [website](https://ochi.dev/)
 
 ### Build
 
