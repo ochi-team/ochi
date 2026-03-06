@@ -16,8 +16,6 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
     //TODO: replace to ContenType enum and pattern matching
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
         // TODO: implement protobuf marhsalling
-        // res.status = 400;
-        // res.body = "protobuf content-type is not supported";
         return ServerError.ContentTypeNotSupported;
     }
     // TODO: consider using concurrent reader of the body,
