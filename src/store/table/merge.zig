@@ -20,64 +20,6 @@ const MergeWindowBound = struct {
 pub fn Merger(
     comptime T: type,
 ) type {
-    comptime {
-        const owner_type = switch (@typeInfo(T)) {
-            .pointer => |ptr_info| ptr_info.child,
-            .@"struct" => T,
-            else => @compileError(std.fmt.comptimePrint(
-                "{s} must be a struct or a pointer to a struct",
-                .{@typeName(T)},
-            )),
-        };
-
-        const fields = switch (@typeInfo(owner_type)) {
-            .@"struct" => |struct_info| struct_info.fields,
-            else => @compileError(std.fmt.comptimePrint(
-                "{s} must be a struct or a pointer to a struct",
-                .{@typeName(T)},
-            )),
-        };
-
-        var has_in_merge = false;
-        var has_size_field = false;
-        for (fields) |field| {
-            if (std.mem.eql(u8, field.name, "inMerge")) {
-                has_in_merge = true;
-                if (field.type != bool) {
-                    @compileError(std.fmt.comptimePrint(
-                        "{s}.inMerge must be bool, found {s}",
-                        .{ @typeName(owner_type), @typeName(field.type) },
-                    ));
-                }
-
-                continue;
-            }
-
-            if (std.mem.eql(u8, field.name, "size")) {
-                has_size_field = true;
-                if (field.type != u64) {
-                    @compileError(std.fmt.comptimePrint(
-                        "{s}.size must be u64, found {s}",
-                        .{ @typeName(owner_type), @typeName(field.type) },
-                    ));
-                }
-            }
-        }
-
-        if (!has_in_merge) {
-            @compileError(std.fmt.comptimePrint(
-                "{s} must have an inMerge field",
-                .{@typeName(owner_type)},
-            ));
-        }
-        if (!has_size_field) {
-            @compileError(std.fmt.comptimePrint(
-                "{s} must have an size field",
-                .{@typeName(owner_type)},
-            ));
-        }
-    }
-
     return struct {
         pub fn filterTablesToMerge(
             alloc: Allocator,
@@ -137,45 +79,6 @@ pub fn Merger(
         ) ?MergeWindowBound {
             comptime {
                 if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
-
-                const owner_type = switch (@typeInfo(T)) {
-                    .pointer => |ptr_info| ptr_info.child,
-                    .@"struct" => T,
-                    else => @compileError(std.fmt.comptimePrint(
-                        "{s} must be a struct or a pointer to a struct",
-                        .{
-                            @typeName(T),
-                        },
-                    )),
-                };
-
-                const owner_info = @typeInfo(owner_type);
-                const fields = switch (owner_info) {
-                    .@"struct" => |struct_info| struct_info.fields,
-                    else => @compileError(std.fmt.comptimePrint(
-                        "{s} must be a struct or a pointer to a struct",
-                        .{@typeName(T)},
-                    )),
-                };
-
-                var has_size_field = false;
-                for (fields) |field| {
-                    if (!std.mem.eql(u8, field.name, "size")) continue;
-                    has_size_field = true;
-                    if (field.type != u64) {
-                        @compileError(std.fmt.comptimePrint(
-                            "{s}.size must be u64, found {s}",
-                            .{ @typeName(owner_type), @typeName(field.type) },
-                        ));
-                    }
-                    break;
-                }
-                if (!has_size_field) {
-                    @compileError(std.fmt.comptimePrint(
-                        "{s} must have a size field",
-                        .{@typeName(owner_type)},
-                    ));
-                }
             }
 
             if (toMerge.items.len < 2) return null;
