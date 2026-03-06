@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const fs = @import("../../fs.zig");
 
 const cap = @import("../table/cap.zig");
+const merge = @import("../table/merge.zig");
 
 const Entries = @import("Entries.zig");
 const MemBlock = @import("MemBlock.zig");
@@ -26,10 +27,6 @@ const maxBlocksPerShard = 256;
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
 const maxMemTables = 24;
-
-// we need to balance throughput and memory limits
-// this number is just a guess
-const amountOfTablesToMerge = 16;
 
 const IndexRecorder = @This();
 
@@ -318,7 +315,7 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     left.items.len = memTables.items.len;
     // var left = memTables.items[0..];
     while (left.items.len > 0) {
-        const n = selectTablesToMerge(&left);
+        const n = merge.selectTablesToMerge(*Table, &left, Table.lessThan);
         const toMerge = left.items[0..n];
         const tail = left.items[n..];
         left = std.ArrayList(*Table).initBuffer(tail);
@@ -526,7 +523,7 @@ fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.A
     var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
     left.items.len = toFlush.items.len;
     while (left.items.len > 0) {
-        const n = selectTablesToMerge(&left);
+        const n = merge.selectTablesToMerge(*Table, &left, Table.lessThan);
         std.debug.assert(n > 0);
 
         // pass stopped as null since we must be able to flush data to disk
@@ -552,7 +549,14 @@ fn tablesMerger(
         self.mxTables.lock();
         errdefer self.mxTables.unlock();
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-        const window = try filterTablesToMerge(alloc, tables.items, &tablesToMerge, maxDiskTableSize);
+        const window = try merge.filterTablesToMerge(
+            alloc,
+            *Table,
+            tables.items,
+            &tablesToMerge,
+            maxDiskTableSize,
+            Table.lessThan,
+        );
         const w = window orelse {
             self.mxTables.unlock();
             return;
@@ -810,208 +814,7 @@ fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
     return removed;
 }
 
-fn filterTablesToMerge(
-    alloc: Allocator,
-    tables: []*Table,
-    toMerge: *std.ArrayList(*Table),
-    maxDiskTableSize: u64,
-) Allocator.Error!?MergeWindowBound {
-    try toMerge.ensureUnusedCapacity(alloc, tables.len);
-
-    for (tables) |table| {
-        if (!table.inMerge) {
-            toMerge.appendAssumeCapacity(table);
-        }
-    }
-
-    // tablesToMerge is a slice of toMerge ArrayList, no need to free it
-    const window = filterLeveledTables(toMerge, maxDiskTableSize, amountOfTablesToMerge);
-    if (window) |w| {
-        const tablesToMerge = toMerge.items[w.lower..w.upper];
-        for (tablesToMerge) |table| {
-            std.debug.assert(!table.inMerge);
-            table.inMerge = true;
-        }
-    }
-
-    return window;
-}
-
-// avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
-// guess based number, might be changed on the practical data
-const mergeMultiple = 2;
-
-fn sortToMerge(toMerge: []*Table) void {
-    std.mem.sortUnstable(*Table, toMerge, {}, Table.lessThan);
-}
-
-const MergeWindowBound = struct {
-    upper: usize,
-    lower: usize,
-};
-
-fn filterLeveledTables(
-    toMerge: *std.ArrayList(*Table),
-    maxDiskTableSize: u64,
-    maxTablesToMerge: comptime_int,
-) ?MergeWindowBound {
-    comptime if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
-
-    if (toMerge.items.len < 2) return null;
-
-    // TODO: concern is passing max int for mem tables might be not the most reliable option,
-    // we must pass comptime flag whether it's a mem table / force flag to skip some of the tables to merge
-    const maxSize = maxDiskTableSize / mergeMultiple;
-    var idx: usize = 0;
-    while (idx < toMerge.items.len) {
-        if (toMerge.items[idx].size > maxSize) {
-            _ = toMerge.swapRemove(idx);
-            continue;
-        }
-        idx += 1;
-    }
-
-    sortToMerge(toMerge.items);
-
-    // we want to merge at least a half of them
-    const upperBound = @min(maxTablesToMerge, toMerge.items.len);
-    const lowerBound = @max(2, (upperBound + 1) / 2);
-    var maxScore: f64 = 0;
-    var windowToMerge: ?MergeWindowBound = null;
-
-    // +1 to make upperBound inclusive
-    for (lowerBound..upperBound + 1) |i| {
-        for (0..toMerge.items.len - i + 1) |j| {
-            const bound = MergeWindowBound{ .lower = j, .upper = j + i };
-            const mergeWindow = toMerge.items[bound.lower..bound.upper];
-            const largestTableSize: u64 = mergeWindow[mergeWindow.len - 1].size;
-
-            if (mergeWindow[0].size * mergeWindow.len < largestTableSize) {
-                // too much of a difference, it's not a balanced merge, unncecessary write
-                continue;
-            }
-
-            var resultSize: u64 = 0;
-            for (mergeWindow) |table| resultSize += table.size;
-            // further iterations bring only bigger tables
-            if (resultSize > maxDiskTableSize) break;
-
-            const score: f64 = @as(f64, @floatFromInt(resultSize)) / @as(f64, @floatFromInt(largestTableSize));
-            if (score < maxScore) continue;
-
-            maxScore = score;
-            windowToMerge = bound;
-        }
-    }
-
-    const minScore: f64 = @max(@as(f64, @floatFromInt(maxTablesToMerge)) / 2, 2, mergeMultiple);
-    if (maxScore < minScore) {
-        // nothing to merge
-        return null;
-    }
-
-    return windowToMerge;
-}
-
-fn selectTablesToMerge(tables: *std.ArrayList(*Table)) usize {
-    if (tables.items.len < 2) return tables.items.len;
-
-    const maybeWindow = filterLeveledTables(tables, std.math.maxInt(u64), amountOfTablesToMerge);
-    const w = maybeWindow orelse return tables.items.len;
-    if (w.lower > 0) {
-        std.mem.reverse(*Table, tables.items[0..w.lower]);
-        std.mem.reverse(*Table, tables.items[w.lower..]);
-        std.mem.reverse(*Table, tables.items);
-    }
-    // TODO: if we can put all the edge.. items on stack it's easier to create a new slice and collect them there,
-    // so instead of a window we return a window + left slice,
-    // it can eliminate expensive sorting here
-    const edge = w.upper - w.lower;
-    std.debug.assert(edge != 0);
-    if (edge < tables.items.len) {
-        sortToMerge(tables.items[edge..]);
-    }
-
-    return edge;
-}
-
 const testing = std.testing;
-
-test "selectTablesToMerge moves selected window to the beginning and returns edge" {
-    const alloc = testing.allocator;
-
-    const Case = struct {
-        sizes: []const u16,
-        bound: MergeWindowBound,
-        expected: []const u16,
-        expectedLeft: []const u16,
-    };
-
-    const cases = [_]Case{
-        .{
-            .sizes = &.{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 },
-            .bound = .{ .lower = 0, .upper = 13 },
-            .expected = &.{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164 },
-            .expectedLeft = &.{187},
-        },
-        .{
-            .sizes = &.{ 15, 43, 51, 69, 85, 89, 89, 124, 154, 164, 168, 176, 185, 194 },
-            .bound = .{ .lower = 0, .upper = 14 },
-            .expected = &.{ 15, 43, 51, 69, 85, 89, 89, 124, 154, 164, 168, 176, 185, 194 },
-            .expectedLeft = &.{},
-        },
-        .{
-            .sizes = &.{ 12, 37, 40, 84, 90, 93, 101, 106, 135, 146, 155, 159, 171, 171 },
-            .bound = .{ .lower = 1, .upper = 14 },
-            .expected = &.{ 37, 40, 84, 90, 93, 101, 106, 135, 146, 155, 159, 171, 171 },
-            .expectedLeft = &.{12},
-        },
-        .{
-            .sizes = &.{ 1, 67, 92, 101, 104, 105, 116, 123, 132, 136, 139, 171, 189 },
-            .bound = .{ .lower = 1, .upper = 11 },
-            .expected = &.{ 67, 92, 101, 104, 105, 116, 123, 132, 136, 139 },
-            .expectedLeft = &.{ 1, 171, 189 },
-        },
-        .{
-            .sizes = &.{ 4, 20, 26, 56, 86, 97, 98, 118, 119, 122, 122, 135, 142, 168, 219, 222, 229, 231, 236, 248 },
-            .bound = .{ .lower = 4, .upper = 20 },
-            .expected = &.{ 86, 97, 98, 118, 119, 122, 122, 135, 142, 168, 219, 222, 229, 231, 236, 248 },
-            .expectedLeft = &.{ 4, 20, 26, 56 },
-        },
-    };
-
-    for (cases) |case| {
-        var tables = try std.ArrayList(*Table).initCapacity(alloc, case.sizes.len);
-        defer {
-            for (tables.items) |table| table.close();
-            tables.deinit(alloc);
-        }
-
-        for (case.sizes) |size| {
-            const table = try MemTable.empty(alloc);
-            try table.entriesBuf.resize(alloc, size);
-            const t = try Table.fromMem(alloc, table);
-            tables.appendAssumeCapacity(t);
-        }
-
-        const edge = selectTablesToMerge(&tables);
-        try testing.expectEqual(case.bound.upper - case.bound.lower, edge);
-        var actual = try alloc.alloc(u16, edge);
-        defer alloc.free(actual);
-        for (0..edge) |i| {
-            actual[i] = @intCast(tables.items[i].size);
-        }
-        try testing.expectEqualSlices(u16, case.expected, actual);
-
-        const leftLen = tables.items.len - edge;
-        var left = try alloc.alloc(u16, leftLen);
-        defer alloc.free(left);
-        for (0..leftLen) |i| {
-            left[i] = @intCast(tables.items[edge + i].size);
-        }
-        try testing.expectEqualSlices(u16, case.expectedLeft, left);
-    }
-}
 
 fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table {
     var total: u32 = 0;
@@ -1112,33 +915,6 @@ test "getDestinationTableKind rules" {
     defer disk.close();
     var mixed = [_]*Table{ small1, disk };
     try testing.expectEqual(TableKind.disk, getDestinationTableKind(mixed[0..], false));
-}
-
-test "filterTablesToMerge marks only selected tables inMerge" {
-    const alloc = testing.allocator;
-
-    const sizes = [_]u16{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 };
-    var tables = try std.ArrayList(*Table).initCapacity(alloc, sizes.len);
-    defer {
-        for (tables.items) |table| table.close();
-        tables.deinit(alloc);
-    }
-    for (sizes) |size| {
-        const table = try createSizedMemTable(alloc, size);
-        tables.appendAssumeCapacity(table);
-    }
-
-    var toMerge = std.ArrayList(*Table).empty;
-    defer toMerge.deinit(alloc);
-
-    const window = try filterTablesToMerge(alloc, tables.items, &toMerge, std.math.maxInt(u64));
-    try testing.expect(window != null);
-    const w = window.?;
-
-    for (toMerge.items, 0..) |table, i| {
-        const expected = i >= w.lower and i < w.upper;
-        try testing.expectEqual(expected, table.inMerge);
-    }
 }
 
 test "removeTables removes exact pointers" {
