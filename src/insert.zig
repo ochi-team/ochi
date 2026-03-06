@@ -6,39 +6,38 @@ const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;
 const Field = @import("store/lines.zig").Field;
 const Params = @import("process.zig").Params;
-const ServerError = @import("server/error.zig").ServerError;
-const Compress = @import("server/compress.zig").Compress;
+const InsertError = @import("server/error.zig").InsertError;
+const Compression = @import("server/compression.zig").Compression;
 
 /// insertLokiJson defines a loki json insertion operation
-pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ServerError!void {
+pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) InsertError!void {
     const contentType = r.headers.get("content-type");
 
-    //TODO: replace to ContenType enum and pattern matching
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
         // TODO: implement protobuf marhsalling
-        return ServerError.ContentTypeNotSupported;
+        return InsertError.ContentTypeNotSupported;
     }
     // TODO: consider using concurrent reader of the body,
     // currently the entire body is pre-read by the start of the API handler
-    const body = r.body() orelse return ServerError.EmptyBody;
+    const body = r.body() orelse return InsertError.EmptyBody;
     
 
     if (body.len > ctx.conf.maxRequestSize) {
-        return ServerError.MaxBodySize;
+        return InsertError.MaxBodySize;
     }
 
     // TODO: validate a disk has enough space
     const encoding = r.headers.get("content-encoding") orelse "snappy";
-    const compress = Compress.fromEncoding(encoding)
-         catch  return ServerError.ContentEncodingNotSupported;
+    const compress = Compression.fromEncoding(encoding)
+         catch  return InsertError.ContentEncodingNotSupported;
 
     const uncompressed = compress.uncompress(res.arena, body)
-         catch return ServerError.DecompressFailed;
+         catch return InsertError.DecompressFailed;
     defer res.arena.free(uncompressed);
 
     const params = Params{ .tenantID = ctx.tenantID };
     process(res.arena, uncompressed, params, ctx.processor)
-         catch return ServerError.FailedToProccess;
+         catch return InsertError.FailedToProccess;
 
     res.status = 200;
    }
