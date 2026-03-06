@@ -5,7 +5,7 @@ const Decoder = @import("encoding").Decoder;
 
 const sizing = @import("inmem/sizing.zig");
 
-pub const maxTenantIDLen = 16;
+const maxTenantIDLen = @import("tenant.zig").maxTenantIDLen;
 
 pub const SID = struct {
     tenantID: []const u8,
