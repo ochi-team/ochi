@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 const fs = @import("../../fs.zig");
 
 const cap = @import("../table/cap.zig");
-const merge = @import("../table/merge.zig");
+const merger = @import("../table/merge.zig").Merger(*Table);
 
 const Entries = @import("Entries.zig");
 const MemBlock = @import("MemBlock.zig");
@@ -315,7 +315,7 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     left.items.len = memTables.items.len;
     // var left = memTables.items[0..];
     while (left.items.len > 0) {
-        const n = merge.selectTablesToMerge(*Table, &left, Table.lessThan);
+        const n = merger.selectTablesToMerge(&left);
         const toMerge = left.items[0..n];
         const tail = left.items[n..];
         left = std.ArrayList(*Table).initBuffer(tail);
@@ -523,7 +523,7 @@ fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.A
     var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
     left.items.len = toFlush.items.len;
     while (left.items.len > 0) {
-        const n = merge.selectTablesToMerge(*Table, &left, Table.lessThan);
+        const n = merger.selectTablesToMerge(&left);
         std.debug.assert(n > 0);
 
         // pass stopped as null since we must be able to flush data to disk
@@ -549,13 +549,11 @@ fn tablesMerger(
         self.mxTables.lock();
         errdefer self.mxTables.unlock();
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-        const window = try merge.filterTablesToMerge(
+        const window = try merger.filterTablesToMerge(
             alloc,
-            *Table,
             tables.items,
             &tablesToMerge,
             maxDiskTableSize,
-            Table.lessThan,
         );
         const w = window orelse {
             self.mxTables.unlock();

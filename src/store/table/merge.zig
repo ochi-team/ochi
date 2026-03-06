@@ -17,134 +17,252 @@ const MergeWindowBound = struct {
     lower: usize,
 };
 
-pub fn filterTablesToMerge(
-    alloc: Allocator,
-    T: type,
-    tables: []T,
-    toMerge: *std.ArrayList(T),
-    maxDiskTableSize: u64,
-    comptime lessThanFn: fn (_: void, lhs: T, rhs: T) bool,
-) Allocator.Error!?MergeWindowBound {
-    comptime {}
-
-    try toMerge.ensureUnusedCapacity(alloc, tables.len);
-
-    for (tables) |table| {
-        if (!table.inMerge) {
-            toMerge.appendAssumeCapacity(table);
-        }
-    }
-
-    // tablesToMerge is a slice of toMerge ArrayList, no need to free it
-    const window = filterLeveledTables(T, toMerge, maxDiskTableSize, amountOfTablesToMerge, lessThanFn);
-    if (window) |w| {
-        const tablesToMerge = toMerge.items[w.lower..w.upper];
-        for (tablesToMerge) |table| {
-            std.debug.assert(!table.inMerge);
-            table.inMerge = true;
-        }
-    }
-
-    return window;
-}
-
-pub fn selectTablesToMerge(
+pub fn Merger(
     comptime T: type,
-    tables: *std.ArrayList(T),
-    comptime lessThanFn: fn (_: void, lhs: T, rhs: T) bool,
-) usize {
-    if (tables.items.len < 2) return tables.items.len;
+) type {
+    comptime {
+        const owner_type = switch (@typeInfo(T)) {
+            .pointer => |ptr_info| ptr_info.child,
+            .@"struct" => T,
+            else => @compileError(std.fmt.comptimePrint(
+                "{s} must be a struct or a pointer to a struct",
+                .{@typeName(T)},
+            )),
+        };
 
-    const maybeWindow = filterLeveledTables(T, tables, std.math.maxInt(u64), amountOfTablesToMerge, lessThanFn);
-    const w = maybeWindow orelse return tables.items.len;
-    if (w.lower > 0) {
-        std.mem.reverse(T, tables.items[0..w.lower]);
-        std.mem.reverse(T, tables.items[w.lower..]);
-        std.mem.reverse(T, tables.items);
-    }
-    // TODO: if we can put all the edge.. items on stack it's easier to create a new slice and collect them there,
-    // so instead of a window we return a window + left slice,
-    // it can eliminate expensive sorting here
-    const edge = w.upper - w.lower;
-    std.debug.assert(edge != 0);
-    if (edge < tables.items.len) {
-        sortToMerge(T, tables.items[edge..], lessThanFn);
-    }
+        const fields = switch (@typeInfo(owner_type)) {
+            .@"struct" => |struct_info| struct_info.fields,
+            else => @compileError(std.fmt.comptimePrint(
+                "{s} must be a struct or a pointer to a struct",
+                .{@typeName(T)},
+            )),
+        };
 
-    return edge;
-}
+        var has_in_merge = false;
+        var has_size_field = false;
+        for (fields) |field| {
+            if (std.mem.eql(u8, field.name, "inMerge")) {
+                has_in_merge = true;
+                if (field.type != bool) {
+                    @compileError(std.fmt.comptimePrint(
+                        "{s}.inMerge must be bool, found {s}",
+                        .{ @typeName(owner_type), @typeName(field.type) },
+                    ));
+                }
 
-fn filterLeveledTables(
-    comptime T: type,
-    toMerge: *std.ArrayList(T),
-    maxDiskTableSize: u64,
-    maxTablesToMerge: comptime_int,
-    comptime lessThanFn: fn (_: void, lhs: T, rhs: T) bool,
-) ?MergeWindowBound {
-    comptime if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
-
-    if (toMerge.items.len < 2) return null;
-
-    // TODO: concern is passing max int for mem tables might be not the most reliable option,
-    // we must pass comptime flag whether it's a mem table / force flag to skip some of the tables to merge
-    const maxSize = maxDiskTableSize / mergeMultiple;
-    var idx: usize = 0;
-    while (idx < toMerge.items.len) {
-        if (toMerge.items[idx].size > maxSize) {
-            _ = toMerge.swapRemove(idx);
-            continue;
-        }
-        idx += 1;
-    }
-
-    sortToMerge(T, toMerge.items, lessThanFn);
-
-    // we want to merge at least a half of them
-    const upperBound = @min(maxTablesToMerge, toMerge.items.len);
-    const lowerBound = @max(2, (upperBound + 1) / 2);
-    var maxScore: f64 = 0;
-    var windowToMerge: ?MergeWindowBound = null;
-
-    // +1 to make upperBound inclusive
-    for (lowerBound..upperBound + 1) |i| {
-        for (0..toMerge.items.len - i + 1) |j| {
-            const bound = MergeWindowBound{ .lower = j, .upper = j + i };
-            const mergeWindow = toMerge.items[bound.lower..bound.upper];
-            const largestTableSize: u64 = mergeWindow[mergeWindow.len - 1].size;
-
-            if (mergeWindow[0].size * mergeWindow.len < largestTableSize) {
-                // too much of a difference, it's not a balanced merge, unncecessary write
                 continue;
             }
 
-            var resultSize: u64 = 0;
-            for (mergeWindow) |table| resultSize += table.size;
-            // further iterations bring only bigger tables
-            if (resultSize > maxDiskTableSize) break;
+            if (std.mem.eql(u8, field.name, "size")) {
+                has_size_field = true;
+                if (field.type != u64) {
+                    @compileError(std.fmt.comptimePrint(
+                        "{s}.size must be u64, found {s}",
+                        .{ @typeName(owner_type), @typeName(field.type) },
+                    ));
+                }
+            }
+        }
 
-            const score: f64 = @as(f64, @floatFromInt(resultSize)) / @as(f64, @floatFromInt(largestTableSize));
-            if (score < maxScore) continue;
-
-            maxScore = score;
-            windowToMerge = bound;
+        if (!has_in_merge) {
+            @compileError(std.fmt.comptimePrint(
+                "{s} must have an inMerge field",
+                .{@typeName(owner_type)},
+            ));
+        }
+        if (!has_size_field) {
+            @compileError(std.fmt.comptimePrint(
+                "{s} must have an size field",
+                .{@typeName(owner_type)},
+            ));
         }
     }
 
-    const minScore: f64 = @max(@as(f64, @floatFromInt(maxTablesToMerge)) / 2, 2, mergeMultiple);
-    if (maxScore < minScore) {
-        // nothing to merge
-        return null;
-    }
+    return struct {
+        pub fn filterTablesToMerge(
+            alloc: Allocator,
+            tables: []T,
+            toMerge: *std.ArrayList(T),
+            maxDiskTableSize: u64,
+        ) Allocator.Error!?MergeWindowBound {
+            try toMerge.ensureUnusedCapacity(alloc, tables.len);
 
-    return windowToMerge;
-}
+            for (tables) |table| {
+                if (!table.inMerge) {
+                    toMerge.appendAssumeCapacity(table);
+                }
+            }
 
-fn sortToMerge(
-    comptime T: type,
-    toMerge: []T,
-    comptime lessThanFn: fn (_: void, lhs: T, rhs: T) bool,
-) void {
-    std.mem.sortUnstable(T, toMerge, {}, lessThanFn);
+            // tablesToMerge is a slice of toMerge ArrayList, no need to free it
+            const window = filterLeveledTables(toMerge, maxDiskTableSize, amountOfTablesToMerge);
+            if (window) |w| {
+                const tablesToMerge = toMerge.items[w.lower..w.upper];
+                for (tablesToMerge) |table| {
+                    std.debug.assert(!table.inMerge);
+                    table.inMerge = true;
+                }
+            }
+
+            return window;
+        }
+
+        pub fn selectTablesToMerge(
+            tables: *std.ArrayList(T),
+        ) usize {
+            if (tables.items.len < 2) return tables.items.len;
+
+            const maybeWindow = filterLeveledTables(tables, std.math.maxInt(u64), amountOfTablesToMerge);
+            const w = maybeWindow orelse return tables.items.len;
+            if (w.lower > 0) {
+                std.mem.reverse(T, tables.items[0..w.lower]);
+                std.mem.reverse(T, tables.items[w.lower..]);
+                std.mem.reverse(T, tables.items);
+            }
+            // TODO: if we can put all the edge.. items on stack it's easier to create a new slice and collect them there,
+            // so instead of a window we return a window + left slice,
+            // it can eliminate expensive sorting here
+            const edge = w.upper - w.lower;
+            std.debug.assert(edge != 0);
+            if (edge < tables.items.len) {
+                sortToMerge(tables.items[edge..]);
+            }
+
+            return edge;
+        }
+
+        fn filterLeveledTables(
+            toMerge: *std.ArrayList(T),
+            maxDiskTableSize: u64,
+            maxTablesToMerge: comptime_int,
+        ) ?MergeWindowBound {
+            comptime {
+                if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
+
+                const owner_type = switch (@typeInfo(T)) {
+                    .pointer => |ptr_info| ptr_info.child,
+                    .@"struct" => T,
+                    else => @compileError(std.fmt.comptimePrint(
+                        "{s} must be a struct or a pointer to a struct",
+                        .{
+                            @typeName(T),
+                        },
+                    )),
+                };
+
+                const owner_info = @typeInfo(owner_type);
+                const fields = switch (owner_info) {
+                    .@"struct" => |struct_info| struct_info.fields,
+                    else => @compileError(std.fmt.comptimePrint(
+                        "{s} must be a struct or a pointer to a struct",
+                        .{@typeName(T)},
+                    )),
+                };
+
+                var has_size_field = false;
+                for (fields) |field| {
+                    if (!std.mem.eql(u8, field.name, "size")) continue;
+                    has_size_field = true;
+                    if (field.type != u64) {
+                        @compileError(std.fmt.comptimePrint(
+                            "{s}.size must be u64, found {s}",
+                            .{ @typeName(owner_type), @typeName(field.type) },
+                        ));
+                    }
+                    break;
+                }
+                if (!has_size_field) {
+                    @compileError(std.fmt.comptimePrint(
+                        "{s} must have a size field",
+                        .{@typeName(owner_type)},
+                    ));
+                }
+            }
+
+            if (toMerge.items.len < 2) return null;
+
+            // TODO: concern is passing max int for mem tables might be not the most reliable option,
+            // we must pass comptime flag whether it's a mem table / force flag to skip some of the tables to merge
+            const maxSize = maxDiskTableSize / mergeMultiple;
+            var idx: usize = 0;
+            while (idx < toMerge.items.len) {
+                const tableSize: u64 = @intCast(toMerge.items[idx].size);
+                if (tableSize > maxSize) {
+                    _ = toMerge.swapRemove(idx);
+                    continue;
+                }
+                idx += 1;
+            }
+
+            sortToMerge(toMerge.items);
+
+            // we want to merge at least a half of them
+            const upperBound = @min(maxTablesToMerge, toMerge.items.len);
+            const lowerBound = @max(2, (upperBound + 1) / 2);
+            var maxScore: f64 = 0;
+            var windowToMerge: ?MergeWindowBound = null;
+
+            // +1 to make upperBound inclusive
+            for (lowerBound..upperBound + 1) |i| {
+                for (0..toMerge.items.len - i + 1) |j| {
+                    const bound = MergeWindowBound{ .lower = j, .upper = j + i };
+                    const mergeWindow = toMerge.items[bound.lower..bound.upper];
+                    const largestTableSize: u64 = @intCast(mergeWindow[mergeWindow.len - 1].size);
+
+                    const firstTableSize: u64 = @intCast(mergeWindow[0].size);
+                    if (firstTableSize * mergeWindow.len < largestTableSize) {
+                        // too much of a difference, it's not a balanced merge, unncecessary write
+                        continue;
+                    }
+
+                    var resultSize: u64 = 0;
+                    for (mergeWindow) |table| resultSize += @intCast(table.size);
+                    // further iterations bring only bigger tables
+                    if (resultSize > maxDiskTableSize) break;
+
+                    const score: f64 = @as(f64, @floatFromInt(resultSize)) / @as(f64, @floatFromInt(largestTableSize));
+                    if (score < maxScore) continue;
+
+                    maxScore = score;
+                    windowToMerge = bound;
+                }
+            }
+
+            const minScore: f64 = @max(@as(f64, @floatFromInt(maxTablesToMerge)) / 2, 2, mergeMultiple);
+            if (maxScore < minScore) {
+                // nothing to merge
+                return null;
+            }
+
+            return windowToMerge;
+        }
+
+        fn sortToMerge(
+            toMerge: []T,
+        ) void {
+            const lessThanFn = comptime blk: {
+                const owner_type = switch (@typeInfo(T)) {
+                    .pointer => |ptr_info| ptr_info.child,
+                    .@"struct" => |_| T,
+                    else => @compileError(std.fmt.comptimePrint(
+                        "{s} must be a struct or a pointer to a struct",
+                        .{
+                            @typeName(T),
+                        },
+                    )),
+                };
+
+                if (!@hasDecl(owner_type, "lessThan")) {
+                    @compileError(std.fmt.comptimePrint(
+                        "{s} must declare lessThan with signature fn(void, {s}, {s}) bool",
+                        .{ @typeName(owner_type), @typeName(T), @typeName(T) },
+                    ));
+                }
+
+                break :blk @as(fn (_: void, lhs: T, rhs: T) bool, @field(owner_type, "lessThan"));
+            };
+            std.mem.sortUnstable(T, toMerge, {}, lessThanFn);
+        }
+    };
 }
 
 const testing = std.testing;
@@ -206,7 +324,8 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
             tables.appendAssumeCapacity(t);
         }
 
-        const edge = selectTablesToMerge(*Table, &tables, Table.lessThan);
+        const merger = Merger(*Table);
+        const edge = merger.selectTablesToMerge(&tables);
         try testing.expectEqual(case.bound.upper - case.bound.lower, edge);
         var actual = try alloc.alloc(u16, edge);
         defer alloc.free(actual);
@@ -248,7 +367,8 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     var toMerge = std.ArrayList(*Table).empty;
     defer toMerge.deinit(alloc);
 
-    const window = try filterTablesToMerge(alloc, *Table, tables.items, &toMerge, std.math.maxInt(u64), Table.lessThan);
+    const merger = Merger(*Table);
+    const window = try merger.filterTablesToMerge(alloc, tables.items, &toMerge, std.math.maxInt(u64));
     try testing.expect(window != null);
     const w = window.?;
 
