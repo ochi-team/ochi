@@ -1,4 +1,4 @@
-const InsertError = error {
+pub const InsertError = error {
     EmptyBody,
     MaxBodySize,
     DecompressFailed,
@@ -6,9 +6,3 @@ const InsertError = error {
     ContentEncodingNotSupported,
     FailedToProccess,
 };
-
-const GeneralError = error {
-    InternalServerError,
-};
-
-pub const ServerError = InsertError || GeneralError;
