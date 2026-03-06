@@ -10,8 +10,13 @@ const Field = @import("store/lines.zig").Field;
 const Params = @import("process.zig").Params;
 
 /// insertLokiJson defines a loki json insertion operation
+/// TODO: change handling errors to "error" type
+/// and move general errors to common file
+/// Note:
+/// response status in httpz = u16
+/// response status enum in std.https.Status = u10
 pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
-    const contentType = r.headers.get("Content-Type");
+    const contentType = r.headers.get("content-type");
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
         // TODO: implement protobuf marhsalling
         res.status = 400;
@@ -20,30 +25,43 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
     }
     // TODO: consider using concurrent reader of the body,
     // currently the entire body is pre-read by the start of the API handler
-    const body = r.body();
-    if (body == null) {
+    const body = r.body() orelse {
         res.body = "given empty body";
         res.status = 400;
         return;
-    }
-    if (body.?.len > ctx.conf.maxRequestSize) {
+    };
+
+    if (body.len > ctx.conf.maxRequestSize) {
         res.body = "max body size is exceeded";
         res.status = 400;
         return;
     }
+
     // TODO: validate a disk has enough space
-    const encoding = r.headers.get("Content-Encoding") orelse "";
-    const uncompressed = uncompress(res.arena, body.?, encoding) catch {
+    const encoding = r.headers.get("content-encoding") orelse {
+        res.body = "header content-encoding is required";
+        res.status = 500;
+        return;
+    };
+
+    const uncompressed = uncompress(res.arena, body, encoding) catch {
         res.body = "failed to decompress body";
         res.status = 500;
         return;
     };
     // TODO: consider if arena requires defer res.arena.free(uncompressed);
-
-    const tenantStr = r.headers.get("X-Scope-OrgID") orelse "default";
+    const tenantStr = r.headers.get("X-Scope-OrgID") orelse {
+        res.body = "unauthorized";
+        res.status = 401;
+        return;
+    };
+    
     if (tenantStr.len > 16) {
-        return error.InvalidTenantID;
+        res.body = "unauthorized";
+        res.status = 401;
+        return;
     }
+
 
     const params = Params{ .tenantID = tenantStr };
 
@@ -63,6 +81,7 @@ pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) 
 }
 
 fn uncompress(allocator: std.mem.Allocator, body: []const u8, encoding: []const u8) ![]const u8 {
+
     if (std.mem.eql(u8, encoding, "snappy")) {
         const uncompressed = try allocator.alloc(u8, try snappy.uncompressedLength(body[0..body.len]));
         // TODO: consider if arena requires errdefer allocator.free(uncompressed);
@@ -73,7 +92,7 @@ fn uncompress(allocator: std.mem.Allocator, body: []const u8, encoding: []const 
     // TODO: support gzip to cover loki fully
 
     // TODO: suport the other compressions types here like zstd, datadog, etc.
-    return "";
+    return error.UndefinedEncoding;
 }
 
 fn process(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
