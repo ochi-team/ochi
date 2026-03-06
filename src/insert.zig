@@ -2,97 +2,53 @@
 const std = @import("std");
 
 const httpz = @import("httpz");
-const snappy = @import("snappy");
-
 const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;
 const Field = @import("store/lines.zig").Field;
 const Params = @import("process.zig").Params;
+const ServerError = @import("server/error.zig").ServerError;
+const Compress = @import("server/compress.zig").Compress;
 
 /// insertLokiJson defines a loki json insertion operation
-/// TODO: change handling errors to "error" type
-/// and move general errors to common file
-/// Note:
-/// response status in httpz = u16
-/// response status enum in std.https.Status = u10
-pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
+pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ServerError!void {
     const contentType = r.headers.get("content-type");
+
+    //TODO: replace to ContenType enum and pattern matching
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
         // TODO: implement protobuf marhsalling
-        res.status = 400;
-        res.body = "protobuf content-type is not supported";
-        return;
+        // res.status = 400;
+        // res.body = "protobuf content-type is not supported";
+        return ServerError.ContentTypeNotSupported;
     }
     // TODO: consider using concurrent reader of the body,
     // currently the entire body is pre-read by the start of the API handler
-    const body = r.body() orelse {
-        res.body = "given empty body";
-        res.status = 400;
-        return;
-    };
+    const body = r.body() orelse return ServerError.EmptyBody;
+    
 
     if (body.len > ctx.conf.maxRequestSize) {
-        res.body = "max body size is exceeded";
-        res.status = 400;
-        return;
+        return ServerError.MaxBodySize;
     }
 
     // TODO: validate a disk has enough space
-    const encoding = r.headers.get("content-encoding") orelse {
-        res.body = "header content-encoding is required";
-        res.status = 500;
-        return;
-    };
+    const encoding = r.headers.get("content-encoding") orelse "snappy";
+    const compress = Compress.fromEncoding(encoding)
+         catch  return ServerError.ContentEncodingNotSupported;
 
-    const uncompressed = uncompress(res.arena, body, encoding) catch {
-        res.body = "failed to decompress body";
-        res.status = 500;
-        return;
-    };
-    // TODO: consider if arena requires defer res.arena.free(uncompressed);
-    const tenantStr = r.headers.get("X-Scope-OrgID") orelse {
-        res.body = "unauthorized";
-        res.status = 401;
-        return;
-    };
-    
-    if (tenantStr.len > 16) {
-        res.body = "unauthorized";
-        res.status = 401;
-        return;
-    }
+    const uncompressed = compress.uncompress(res.arena, body)
+         catch return ServerError.DecompressFailed;
+    defer res.arena.free(uncompressed);
 
-
-    const params = Params{ .tenantID = tenantStr };
-
-    process(res.arena, uncompressed, params, ctx.processor) catch {
-        res.body = "failed to process logs";
-        res.status = 500;
-        return;
-    };
+    const params = Params{ .tenantID = ctx.tenantID };
+    process(res.arena, uncompressed, params, ctx.processor)
+         catch return ServerError.FailedToProccess;
 
     res.status = 200;
-}
+   }
 
 /// insertLokiReady defines a loki handler to signal its readiness
 pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.body = "ready";
-}
-
-fn uncompress(allocator: std.mem.Allocator, body: []const u8, encoding: []const u8) ![]const u8 {
-
-    if (std.mem.eql(u8, encoding, "snappy")) {
-        const uncompressed = try allocator.alloc(u8, try snappy.uncompressedLength(body[0..body.len]));
-        // TODO: consider if arena requires errdefer allocator.free(uncompressed);
-        _ = try snappy.uncompress(body[0..body.len], uncompressed);
-        return uncompressed;
-    }
-
-    // TODO: support gzip to cover loki fully
-
-    // TODO: suport the other compressions types here like zstd, datadog, etc.
-    return error.UndefinedEncoding;
 }
 
 fn process(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
