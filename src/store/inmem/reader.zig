@@ -92,7 +92,7 @@ pub const BlockReader = struct {
     nextBlockIdx: u32,
     nextIndexBlockIdx: u32,
 
-    tableHeader: *TableHeader,
+    tableHeader: TableHeader,
     streamReader: *StreamReader,
 
     // Global stats for validation
@@ -116,7 +116,6 @@ pub const BlockReader = struct {
         var blockHeaders = try std.ArrayList(BlockHeader).initCapacity(allocator, 64);
         errdefer blockHeaders.deinit(allocator);
 
-        const tableHeader = tableMem.tableHeader;
         const streamReader = try StreamReader.init(allocator, tableMem);
         errdefer streamReader.deinit(allocator);
 
@@ -137,7 +136,7 @@ pub const BlockReader = struct {
             .nextBlockIdx = 0,
             .nextIndexBlockIdx = 0,
 
-            .tableHeader = tableHeader,
+            .tableHeader = tableMem.tableHeader,
             .streamReader = streamReader,
 
             .globalUncompressedSizeBytes = 0,

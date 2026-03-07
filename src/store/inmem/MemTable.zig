@@ -20,36 +20,32 @@ pub const Error = error{
     EmptyLines,
 };
 
-const Self = @This();
+const MemTable = @This();
 
 streamWriter: *StreamWriter,
-tableHeader: *TableHeader,
+tableHeader: TableHeader,
 
 flushAtUs: ?i64 = null,
 isInMerge: bool = false,
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
+pub fn init(allocator: std.mem.Allocator) !*MemTable {
     const streamWriter = try StreamWriter.init(allocator, 1);
     errdefer streamWriter.deinit(allocator);
 
-    const th = try TableHeader.init(allocator);
-    errdefer th.deinit(allocator);
-
-    const p = try allocator.create(Self);
-    p.* = Self{
+    const p = try allocator.create(MemTable);
+    p.* = MemTable{
         .streamWriter = streamWriter,
-        .tableHeader = th,
+        .tableHeader = .{},
     };
 
     return p;
 }
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *MemTable, allocator: std.mem.Allocator) void {
     self.streamWriter.deinit(allocator);
-    self.tableHeader.deinit(allocator);
     allocator.destroy(self);
 }
 
-pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line) !void {
+pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []*const Line) !void {
     if (lines.len == 0) {
         return Error.EmptyLines;
     }
@@ -77,7 +73,7 @@ pub fn addLines(self: *Self, allocator: std.mem.Allocator, lines: []*const Line)
     if (streamI != lines.len) {
         try blockWriter.writeLines(allocator, prevSID, lines[streamI..], self.streamWriter);
     }
-    try blockWriter.finish(allocator, self.streamWriter, self.tableHeader);
+    try blockWriter.finish(allocator, self.streamWriter, &self.tableHeader);
 }
 
 pub fn getFilePathSharded(
@@ -93,7 +89,7 @@ pub fn getFilePathSharded(
     );
 }
 
-pub fn flushToDisk(self: *Self, alloc: std.mem.Allocator, path: []const u8) !void {
+pub fn flushToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
     if (std.fs.openDirAbsolute(path, .{})) |dir| {
         var d = dir;
@@ -174,7 +170,7 @@ pub fn flushToDisk(self: *Self, alloc: std.mem.Allocator, path: []const u8) !voi
     defer allocator.free(valuesPath);
     try fs.writeBufferValToFile(valuesPath, self.streamWriter.bloomValuesList.items[0].items);
 
-    try self.tableHeader.flushMetadata(allocator, path, Filenames.header);
+    try self.tableHeader.flush(allocator, path, Filenames.header);
 
     fs.syncPathAndParentDir(path);
 }
@@ -238,7 +234,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         &sample.lines[1],
     };
 
-    const memTable = try Self.init(allocator);
+    const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 
@@ -320,7 +316,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
 test "addLinesErrorOnEmpty" {
     var lines = [_]*const Line{};
-    const memTable = try Self.init(std.testing.allocator);
+    const memTable = try MemTable.init(std.testing.allocator);
     defer memTable.deinit(std.testing.allocator);
     const err = memTable.addLines(std.testing.allocator, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
@@ -350,7 +346,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     const flushPath = try std.fs.path.join(allocator, &.{ basePath, "flush" });
     defer allocator.free(flushPath);
 
-    const memTable = try Self.init(allocator);
+    const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
 
     try memTable.addLines(allocator, lines[0..]);

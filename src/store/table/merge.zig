@@ -162,21 +162,18 @@ pub fn Merger(
             return windowToMerge;
         }
 
-        fn sortToMerge(
-            toMerge: []T,
-        ) void {
-            const ownerType = switch (@typeInfo(T)) {
-                .pointer => |ptr_info| ptr_info.child,
-                .@"struct" => |_| T,
-                else => @compileError(std.fmt.comptimePrint(
-                    "{s} must be a struct or a pointer to a struct",
-                    .{
-                        @typeName(T),
-                    },
-                )),
-            };
-
-            const lessThanFn: lessThanFnType = @field(ownerType, "lessThan");
+        const ownerType = switch (@typeInfo(T)) {
+            .pointer => |ptr_info| ptr_info.child,
+            .@"struct" => |_| T,
+            else => @compileError(std.fmt.comptimePrint(
+                "{s} must be a struct or a pointer to a struct",
+                .{
+                    @typeName(T),
+                },
+            )),
+        };
+        const lessThanFn: lessThanFnType = @field(ownerType, "lessThan");
+        fn sortToMerge(toMerge: []T) void {
             std.mem.sortUnstable(T, toMerge, {}, lessThanFn);
         }
     };
