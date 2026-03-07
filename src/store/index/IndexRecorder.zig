@@ -24,6 +24,17 @@ const TableKind = enum {
 
 const maxBlocksPerShard = 256;
 
+fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
+    const step = 250 * std.time.ns_per_ms;
+    var remaining = ns;
+    while (remaining > 0) {
+        if (stopped.load(.acquire)) return;
+        const s = @min(remaining, step);
+        std.Thread.sleep(s);
+        remaining -= s;
+    }
+}
+
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
 const maxMemTables = 24;
@@ -391,7 +402,7 @@ fn runMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) void {
             self.stopped.store(true, .release);
             return;
         };
-        std.Thread.sleep(std.time.ns_per_s);
+        sleepOrStop(&self.stopped, std.time.ns_per_s);
     }
 }
 
@@ -427,7 +438,7 @@ fn runMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) void {
             }
         };
         blocksDestination.clearRetainingCapacity();
-        std.Thread.sleep(std.time.ns_per_s);
+        sleepOrStop(&self.stopped, std.time.ns_per_s);
     }
 }
 
@@ -439,7 +450,7 @@ fn runCacheKeyInvalidator(self: *IndexRecorder) void {
     var ticks: u8 = 0;
     while (true) {
         // invalidate every 15 secs, check stopped every 3 secs
-        std.Thread.sleep(3 * std.time.ns_per_s);
+        sleepOrStop(&self.stopped, 3 * std.time.ns_per_s);
         ticks +%= 1;
 
         if (self.stopped.load(.acquire)) {

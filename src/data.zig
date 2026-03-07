@@ -6,6 +6,17 @@ const Line = @import("store/lines.zig").Line;
 
 const cap = @import("store/table/cap.zig");
 
+fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
+    const step = 250 * std.time.ns_per_ms;
+    var remaining = ns;
+    while (remaining > 0) {
+        if (stopped.load(.acquire)) return;
+        const s = @min(remaining, step);
+        std.Thread.sleep(s);
+        remaining -= s;
+    }
+}
+
 const MemTable = @import("store/inmem/MemTable.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 
@@ -135,7 +146,7 @@ pub const Data = struct {
         const alloc = arena.allocator();
         var iteration: usize = 0;
         while (!self.stopped.load(.acquire)) {
-            std.Thread.sleep(std.time.ns_per_s);
+            sleepOrStop(&self.stopped, std.time.ns_per_s);
             self.flushMemTable(alloc, false) catch unreachable;
             _ = arena.reset(.retain_capacity);
             iteration += 1;
@@ -176,7 +187,7 @@ pub const Data = struct {
 
         const alloc = arena.allocator();
         while (!self.stopped.load(.acquire)) {
-            std.Thread.sleep(flushInterval);
+            sleepOrStop(&self.stopped, flushInterval);
             self.flushDataShards(alloc, false);
             _ = arena.reset(.retain_capacity);
         }
@@ -446,6 +457,6 @@ test "dataWorker" {
     defer Conf.deinit();
 
     var d = try Data.init(alloc, alloc, "abc"[0..]);
-    std.Thread.sleep(2 * std.time.ns_per_s);
+    std.Thread.sleep(50 * std.time.ns_per_ms);
     d.deinit(alloc);
 }
