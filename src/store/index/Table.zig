@@ -79,7 +79,6 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
     errdefer {
-        // for (tables.items) |table| table.close(parentAlloc);
         tables.deinit(parentAlloc);
     }
     for (tableNames.items) |tableName| {
@@ -146,7 +145,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .size = decodedMetaindex.compressedSize + indexSize + entriesSize + lensSize,
         .path = path,
         .metaindexRecords = decodedMetaindex.records,
-        .tableHeader = undefined,
+        .tableHeader = &table.disk.?.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
 
@@ -154,7 +153,6 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .entriesBuf = entriesBuf,
         .lensBuf = lensBuf,
     };
-    table.tableHeader = &table.disk.?.tableHeader;
 
     return table;
 }
@@ -173,6 +171,14 @@ pub fn close(self: *Table) void {
 
     for (self.metaindexRecords) |*rec| rec.deinit(self.alloc);
     if (self.metaindexRecords.len > 0) self.alloc.free(self.metaindexRecords);
+
+    const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
+    if (shouldRemove) {
+        // TODO: replace to an error log
+        std.fs.deleteTreeAbsolute(self.path) catch |err| {
+            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
+        };
+    }
 
     if (self.path.len > 0) {
         self.alloc.free(self.path);
@@ -259,13 +265,6 @@ pub fn release(self: *Table) void {
 
     if (prev != 1) return;
 
-    const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
-    if (shouldRemove) {
-        // TODO: replace to an error log
-        std.fs.deleteTreeAbsolute(self.path) catch |err| {
-            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
-        };
-    }
     self.close();
 }
 

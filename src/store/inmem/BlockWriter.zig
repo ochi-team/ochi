@@ -13,8 +13,6 @@ const encoding = @import("encoding");
 
 const Self = @This();
 
-const currentVersion = 1;
-
 pub const indexBlockSize = 16 * 1024;
 pub const indexBlockFlushThreshold = 128 * 1024;
 pub const metaIndexSize = 4 * 1024;
@@ -129,7 +127,6 @@ fn writeBlock(
 }
 
 pub fn finish(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
-    th.version = currentVersion;
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
