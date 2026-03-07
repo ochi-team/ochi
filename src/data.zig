@@ -221,7 +221,6 @@ pub const Data = struct {
             };
 
             self.startMemTableMerger(alloc);
-            self.pool.spawnWg(&self.wg, startMemTableMerger, .{ self, alloc });
         }
     }
 
