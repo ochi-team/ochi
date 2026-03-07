@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const Contract = @import("../../stds/Contract.zig");
+
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
 
@@ -12,6 +14,18 @@ const mergeMultiple = 2;
 // this number is just a guess
 const amountOfTablesToMerge = 16;
 
+pub fn TableContract(T: type) Contract {
+    return Contract{
+        .fields = &.{
+            .{ .name = "size", .type = u64 },
+            .{ .name = "inMerge", .type = bool },
+        },
+        .funcs = &.{
+            .{ .name = "lessThan", .type = fn (void, T, T) bool },
+        },
+    };
+}
+
 const MergeWindowBound = struct {
     upper: usize,
     lower: usize,
@@ -20,6 +34,14 @@ const MergeWindowBound = struct {
 pub fn Merger(
     comptime T: type,
 ) type {
+    const contract = TableContract(T);
+    comptime {
+        contract.satisfies(T, true) catch |err| {
+            @compileError("TableContract is not satisfied by " ++ @typeName(T) ++ ": " ++ @errorName(err));
+        };
+    }
+    const lessThanFnType = contract.funcs[0].type;
+
     return struct {
         pub fn filterTablesToMerge(
             alloc: Allocator,
@@ -60,7 +82,8 @@ pub fn Merger(
                 std.mem.reverse(T, tables.items[w.lower..]);
                 std.mem.reverse(T, tables.items);
             }
-            // TODO: if we can put all the edge.. items on stack it's easier to create a new slice and collect them there,
+            // TODO: if we can put all the edge.. items on stack,
+            // it's easier to create a new slice and collect them there,
             // so instead of a window we return a window + left slice,
             // it can eliminate expensive sorting here
             const edge = w.upper - w.lower;
@@ -142,27 +165,18 @@ pub fn Merger(
         fn sortToMerge(
             toMerge: []T,
         ) void {
-            const lessThanFn = comptime blk: {
-                const owner_type = switch (@typeInfo(T)) {
-                    .pointer => |ptr_info| ptr_info.child,
-                    .@"struct" => |_| T,
-                    else => @compileError(std.fmt.comptimePrint(
-                        "{s} must be a struct or a pointer to a struct",
-                        .{
-                            @typeName(T),
-                        },
-                    )),
-                };
-
-                if (!@hasDecl(owner_type, "lessThan")) {
-                    @compileError(std.fmt.comptimePrint(
-                        "{s} must declare lessThan with signature fn(void, {s}, {s}) bool",
-                        .{ @typeName(owner_type), @typeName(T), @typeName(T) },
-                    ));
-                }
-
-                break :blk @as(fn (_: void, lhs: T, rhs: T) bool, @field(owner_type, "lessThan"));
+            const ownerType = switch (@typeInfo(T)) {
+                .pointer => |ptr_info| ptr_info.child,
+                .@"struct" => |_| T,
+                else => @compileError(std.fmt.comptimePrint(
+                    "{s} must be a struct or a pointer to a struct",
+                    .{
+                        @typeName(T),
+                    },
+                )),
             };
+
+            const lessThanFn: lessThanFnType = @field(ownerType, "lessThan");
             std.mem.sortUnstable(T, toMerge, {}, lessThanFn);
         }
     };
