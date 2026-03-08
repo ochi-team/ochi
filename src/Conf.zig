@@ -72,6 +72,10 @@ pub fn getFreeDiskSpace(path: []const u8) u64 {
     return updateDiskSpace(path, nowMs).free;
 }
 
+pub fn removeDiskSpace(path: []const u8) bool {
+    return conf.sys.diskSpace.remove(path);
+}
+
 fn updateDiskSpace(path: []const u8, nowMs: u64) DiskSpace {
     const space = getDiskSpace(path, nowMs);
     // TODO: log an error and return the old value, then signal to shutdown

@@ -198,6 +198,7 @@ pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     self.blocksToFlush.deinit(alloc);
     self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
+    _ = Conf.removeDiskSpace(self.path);
     self.pool.deinit();
     alloc.destroy(self.pool);
     alloc.destroy(self);
@@ -1104,3 +1105,24 @@ test "IndexRecorder concurrent add preserves item count" {
     try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
     try testing.expectEqual(@as(u64, workers * items_per_worker), countDiskItemsInRecorder(recorder));
 }
+
+
+test "IndexRecorder deinit" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, "./");
+
+    defer alloc.free(rootPath);
+    
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    recorder.deinit(alloc);
+
+    try testing.expect(! Conf.getConf().sys.diskSpace.contains(rootPath));
+}
+
