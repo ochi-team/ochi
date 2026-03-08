@@ -44,7 +44,7 @@ test "Snappy Uncompress valid input" {
         const actual = try Compression.snappy.uncompress(allocator, compressed_slice);
         defer allocator.free(actual);
 
-        try testing.expectEqualSlices(u8, input, actual);
+        try testing.expectEqualStrings(input, actual);
     }
 }
 
