@@ -1106,7 +1106,6 @@ test "IndexRecorder concurrent add preserves item count" {
     try testing.expectEqual(@as(u64, workers * items_per_worker), countDiskItemsInRecorder(recorder));
 }
 
-
 test "IndexRecorder deinit" {
     const alloc = testing.allocator;
     _ = try Conf.default(alloc);
@@ -1117,8 +1116,11 @@ test "IndexRecorder deinit" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, "./");
 
     defer alloc.free(rootPath);
-    
+
     const recorder = try IndexRecorder.init(alloc, rootPath);
+
+    try testing.expect(Conf.getConf().sys.diskSpace.contains(rootPath));
+
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     recorder.deinit(alloc);
