@@ -35,6 +35,7 @@ const columnKeysBufferSize = 512;
 const columnIndexesBufferSize = 128;
 
 // TODO: expose metrics on len/cap relations
+// TODO: move the buffers ownership to MemTable and pass the pointers to the writer
 timestampsBuf: std.ArrayList(u8),
 indexBuf: std.ArrayList(u8),
 metaIndexBuf: std.ArrayList(u8),
