@@ -1106,7 +1106,7 @@ test "IndexRecorder concurrent add preserves item count" {
     try testing.expectEqual(@as(u64, workers * items_per_worker), countDiskItemsInRecorder(recorder));
 }
 
-test "IndexRecorder deinit" {
+test "IndexRecorder remove path after deinit" {
     const alloc = testing.allocator;
     _ = try Conf.default(alloc);
     defer Conf.deinit();
@@ -1118,6 +1118,9 @@ test "IndexRecorder deinit" {
     defer alloc.free(rootPath);
 
     const recorder = try IndexRecorder.init(alloc, rootPath);
+    var batch = [_][]const u8{stableItems[1]};
+
+    try recorder.add(alloc, &batch);
 
     try testing.expect(Conf.getConf().sys.diskSpace.contains(rootPath));
 
