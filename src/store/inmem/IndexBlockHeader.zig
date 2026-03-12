@@ -53,18 +53,18 @@ pub fn writeIndexBlock(
         return;
     }
 
+    const compressBound = try encoding.compressBound(indexBlockBuf.items.len);
+    try streamWriter.indexBuf.ensureUnusedCapacity(allocator, compressBound);
+    const compressed = streamWriter.indexBuf.unusedCapacitySlice()[0..compressBound];
+
+    const offset = try encoding.compressAuto(compressed, indexBlockBuf.items);
+
+    self.offset = streamWriter.indexBuf.items.len;
+    streamWriter.indexBuf.items.len += offset;
+    self.size = offset;
     self.sid = sid;
     self.minTs = minTs;
     self.maxTs = maxTs;
-
-    const compressBound = try encoding.compressBound(indexBlockBuf.items.len);
-    const buf = try allocator.alloc(u8, compressBound);
-    defer allocator.free(buf);
-    const offset = try encoding.compressAuto(buf, indexBlockBuf.items);
-    self.offset = streamWriter.indexBuf.items.len;
-    self.size = offset;
-
-    try streamWriter.indexBuf.appendSlice(allocator, buf[0..offset]);
 }
 
 // sid 32 + self 32 = 64
