@@ -4,6 +4,7 @@ const encoding = @import("encoding");
 
 const Self = @This();
 
+// keyIDs must use StringArrayHashMap, it's important to store the keys ordered
 keyIDs: std.StringArrayHashMap(u16),
 keysBuf: ?[]u8,
 

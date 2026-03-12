@@ -80,5 +80,5 @@ pub fn readVarIntFromBuf(data: []const u8) CompressedValue(u64) {
         shift += 7;
     }
 
-    @panic("invalid leb128");
+    std.debug.panic("invalid leb128: too many bytes", .{});
 }

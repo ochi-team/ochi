@@ -102,6 +102,7 @@ pub fn flushToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         else => return err,
     }
 
+    // for mem table it's expect to have a single bloom filter shard
     std.debug.assert(self.streamWriter.bloomTokensList.items.len == 1);
     std.debug.assert(self.streamWriter.bloomValuesList.items.len == 1);
 
@@ -163,7 +164,6 @@ pub fn flushToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
 
     const bloomPath = try getFilePathSharded(allocator, path, Filenames.values, 0);
     defer allocator.free(bloomPath);
-
     try fs.writeBufferValToFile(bloomPath, self.streamWriter.bloomTokensList.items[0].items);
 
     const valuesPath = try getFilePathSharded(allocator, path, Filenames.bloom, 0);

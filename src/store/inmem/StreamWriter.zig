@@ -300,7 +300,11 @@ fn getBloomBufferIndex(self: *Self, key: []const u8) error{MessageBloomMustBeUse
         return colI;
     }
 
-    // at the moment implemented only for an in mem table, so we assume max col i is ever 1
+    // TODO: we can get rid of colIdx, because:
+    // 1. the keys are stored in order of appearance
+    // 2. the max amount of blooms are known in advance,
+    // so we can calculate colI dynamically without storing them,
+    // but requires validation the max blooms is a known value
     const colI = self.nextColI % self.maxColI;
     self.nextColI += 1;
     self.colIdx.putAssumeCapacity(colID, colI);
