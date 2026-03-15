@@ -6,19 +6,32 @@ const Contract = @import("../../stds/Contract.zig");
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
 
+const Conf = @import("../../Conf.zig");
+
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
 // guess based number, might be changed on the practical data
 const mergeMultiple = 2;
+
+// 4mb is a minimal size for mem table,
+// technically it makes minimum requirement as 1GB for the software,
+// if edge use case comes up, we can lower it further up to 0.5-1mb, then configure it in build time
+pub const minMemTableSize: u64 = 4 * 1024 * 1024;
 
 // we need to balance throughput and memory limits
 // this number is just a guess
 const amountOfTablesToMerge = 16;
 
-pub fn TableContract(T: type) Contract {
+pub const TableKind = enum {
+    mem,
+    disk,
+};
+
+pub fn TableContract(T: type, M: type) Contract {
     return Contract{
         .fields = &.{
             .{ .name = "size", .type = u64 },
             .{ .name = "inMerge", .type = bool },
+            .{ .name = "mem", .type = ?M },
         },
         .funcs = &.{
             .{ .name = "lessThan", .type = fn (void, T, T) bool },
@@ -33,8 +46,10 @@ const MergeWindowBound = struct {
 
 pub fn Merger(
     comptime T: type,
+    comptime M: type,
+    maxMemTables: comptime_int,
 ) type {
-    const contract = TableContract(T);
+    const contract = TableContract(T, M);
     comptime {
         contract.satisfies(T, true) catch |err| {
             @compileError("TableContract is not satisfied by " ++ @typeName(T) ++ ": " ++ @errorName(err));
@@ -93,6 +108,47 @@ pub fn Merger(
             }
 
             return edge;
+        }
+
+        // TODO: we probably might define few levels of tables and
+        // split the for compaction accordingly
+        pub fn getDestinationTableKind(tables: []T, force: bool) TableKind {
+            if (force) return .disk;
+
+            const size = getTablesSize(tables);
+            if (size > getMaxInmemoryTableSize()) return .disk;
+            if (!areTablesMem(tables)) return .disk;
+
+            return .mem;
+        }
+
+        fn getTablesSize(tables: []T) u64 {
+            var n: u64 = 0;
+            for (tables) |table| {
+                n += table.size;
+            }
+            return n;
+        }
+
+        // TODO: make it as a config field instead of calculated property
+        pub fn getMaxInmemoryTableSize() u64 {
+            const conf = Conf.getConf();
+            // only 10% of cache available for mem index
+            // TODO: experiment with tuning cache size to 5%, 15%
+            const maxmem = (conf.sys.cacheSize / 10) / maxMemTables;
+            return @max(maxmem, minMemTableSize);
+        }
+
+        fn areTablesMem(tables: []T) bool {
+            for (tables) |table| {
+                if (table.mem) |_| {
+                    continue;
+                } else {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         fn filterLeveledTables(
@@ -180,6 +236,7 @@ pub fn Merger(
 }
 
 const testing = std.testing;
+const MemBlock = @import("../index/MemBlock.zig");
 
 test "selectTablesToMerge moves selected window to the beginning and returns edge" {
     const alloc = testing.allocator;
@@ -238,7 +295,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
             tables.appendAssumeCapacity(t);
         }
 
-        const merger = Merger(*Table);
+        const merger = Merger(*Table, *MemTable, 16);
         const edge = merger.selectTablesToMerge(&tables);
         try testing.expectEqual(case.bound.upper - case.bound.lower, edge);
         var actual = try alloc.alloc(u16, edge);
@@ -281,7 +338,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     var toMerge = std.ArrayList(*Table).empty;
     defer toMerge.deinit(alloc);
 
-    const merger = Merger(*Table);
+    const merger = Merger(*Table, *MemTable, 16);
     const window = try merger.filterTablesToMerge(alloc, tables.items, &toMerge, std.math.maxInt(u64));
     try testing.expect(window != null);
     const w = window.?;
@@ -290,4 +347,59 @@ test "filterTablesToMerge marks only selected tables inMerge" {
         const expected = i >= w.lower and i < w.upper;
         try testing.expectEqual(expected, table.inMerge);
     }
+}
+
+fn createDiskTableFromItems(alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
+    const memTable = try createMemTableFromItems(alloc, items);
+    defer memTable.close();
+    const mem = memTable.mem.?;
+    try mem.storeToDisk(alloc, tablePath);
+    return Table.open(alloc, tablePath);
+}
+
+fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table {
+    var total: u32 = 0;
+    for (items) |item| total += @intCast(item.len);
+    var block = try MemBlock.init(alloc, total + 16);
+    defer block.deinit(alloc);
+    for (items) |item| {
+        const ok = block.add(item);
+        try testing.expect(ok);
+    }
+    var blocks = [_]*MemBlock{block};
+    const memTable = try MemTable.init(alloc, &blocks);
+    return Table.fromMem(alloc, memTable);
+}
+
+test "getDestinationTableKind rules" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    const small1 = try createSizedMemTable(alloc, 256);
+    defer small1.close();
+    const small2 = try createSizedMemTable(alloc, 512);
+    defer small2.close();
+
+    var bothSmall = [_]*Table{ small1, small2 };
+    const merger = Merger(*Table, *MemTable, 16);
+
+    try testing.expectEqual(TableKind.mem, merger.getDestinationTableKind(bothSmall[0..], false));
+    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(bothSmall[0..], true));
+
+    const large = try createSizedMemTable(alloc, @intCast(merger.getMaxInmemoryTableSize() + 1));
+    defer large.close();
+    var onlyLarge = [_]*Table{large};
+    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(onlyLarge[0..], false));
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
+    errdefer alloc.free(diskPath);
+    const disk = try createDiskTableFromItems(alloc, diskPath, &.{ "a", "b", "c" });
+    defer disk.close();
+    var mixed = [_]*Table{ small1, disk };
+    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(mixed[0..], false));
 }
