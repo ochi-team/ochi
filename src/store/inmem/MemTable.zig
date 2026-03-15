@@ -26,7 +26,6 @@ streamWriter: *StreamWriter,
 tableHeader: TableHeader,
 
 flushAtUs: i64 = std.math.maxInt(i64),
-isInMerge: bool = false,
 
 pub fn init(allocator: std.mem.Allocator) !*MemTable {
     const streamWriter = try StreamWriter.init(allocator, 1);
@@ -89,7 +88,7 @@ pub fn getFilePathSharded(
     );
 }
 
-pub fn flushToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) !void {
+pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
     if (std.fs.openDirAbsolute(path, .{})) |dir| {
         var d = dir;
@@ -350,7 +349,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     defer memTable.deinit(allocator);
 
     try memTable.addLines(allocator, lines[0..]);
-    try memTable.flushToDisk(allocator, flushPath);
+    try memTable.storeToDisk(allocator, flushPath);
 
     const columnNamesPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.columnNames });
     defer allocator.free(columnNamesPath);
@@ -425,5 +424,5 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     defer allocator.free(metadataContent);
     try std.testing.expect(metadataContent.len > 0);
 
-    try std.testing.expectError(error.DirAlreadyExists, memTable.flushToDisk(allocator, flushPath));
+    try std.testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(allocator, flushPath));
 }

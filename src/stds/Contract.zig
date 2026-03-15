@@ -13,6 +13,7 @@ pub const VerifyError = error{
 pub const FieldSpec = struct {
     name: []const u8,
     type: type,
+    contract: ?Contract = null,
 };
 
 pub const FuncSpec = struct {
@@ -41,12 +42,22 @@ fn satisfiesStruct(self: Contract, comptime T: type) VerifyError!void {
     inline for (self.fields) |field| {
         if (!@hasField(T, field.name)) return error.MissingField;
         if (@FieldType(T, field.name) != field.type) return error.WrongFieldType;
+        if (field.contract) |nested| {
+            try satisfiesFieldContract(nested, field.type);
+        }
     }
 
     inline for (self.funcs) |func| {
         if (!@hasDecl(T, func.name)) return error.MissingFunc;
         if (@TypeOf(@field(T, func.name)) != func.type) return error.WrongFuncType;
     }
+}
+
+fn satisfiesFieldContract(contract: Contract, comptime FieldType: type) VerifyError!void {
+    return switch (@typeInfo(FieldType)) {
+        .optional => |opt| contract.satisfies(opt.child, false),
+        else => contract.satisfies(FieldType, false),
+    };
 }
 
 const Good = struct {
@@ -160,6 +171,80 @@ test "contract.satisfies returns errors for invalid shape/signature" {
 
     inline for (cases) |case| {
         const result = case.contract.satisfies(case.target, case.mutable);
+        if (case.expected_err) |expected_err| {
+            try testing.expectError(expected_err, result);
+        } else {
+            try result;
+        }
+    }
+}
+
+fn memContract() Contract {
+    return .{
+        .fields = &.{
+            .{ .name = "flushAtUs", .type = i64 },
+        },
+    };
+}
+
+fn tableContract(comptime M: type) Contract {
+    const mc = memContract();
+    return .{
+        .fields = &.{
+            .{ .name = "mem", .type = ?M, .contract = mc },
+        },
+    };
+}
+
+test "contract.satisfies applies nested field contracts" {
+    const testing = std.testing;
+    const Case = struct {
+        contract: Contract,
+        target: type,
+        expected_err: ?VerifyError = null,
+    };
+
+    const MemOk = struct {
+        flushAtUs: i64,
+    };
+
+    const MemWrongFieldType = struct {
+        flushAtUs: u64,
+    };
+
+    const MemMissingField = struct {};
+
+    const TableOk = struct {
+        mem: ?MemOk,
+    };
+
+    const TableWrongFieldType = struct {
+        mem: ?MemWrongFieldType,
+    };
+
+    const TableMissingField = struct {
+        mem: ?MemMissingField,
+    };
+
+    const cases = [_]Case{
+        .{
+            .contract = tableContract(MemOk),
+            .target = TableOk,
+        },
+        .{
+            .contract = tableContract(MemWrongFieldType),
+            .target = TableWrongFieldType,
+            .expected_err = error.WrongFieldType,
+        },
+        .{
+            .contract = tableContract(MemMissingField),
+            .target = TableMissingField,
+            .expected_err = error.MissingField,
+        },
+    };
+
+    inline for (cases) |case| {
+        const result = case.contract.satisfies(case.target, false);
         if (case.expected_err) |expected_err| {
             try testing.expectError(expected_err, result);
         } else {

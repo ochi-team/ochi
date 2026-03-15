@@ -10,6 +10,7 @@ const MemTable = @import("store/inmem/MemTable.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 
+const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
 
 const maxMemTables = 24;
@@ -286,7 +287,7 @@ pub const Data = struct {
             errdefer sem.post();
             self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped) catch |err| {
                 switch (err) {
-                    error.Stopped => return,
+                    error.Stopped => return err,
                     else => return err,
                 }
             };
@@ -349,15 +350,15 @@ pub const Data = struct {
     fn mergeTables(
         self: *Data,
         alloc: Allocator,
-        tables: []*MemTable,
+        tables: []*Table,
         force: bool,
         stopped: ?*std.atomic.Value(bool),
     ) !void {
         _ = stopped;
         std.debug.assert(tables.len > 0);
-        for (tables) |table| std.debug.assert(table.isInMerge);
+        for (tables) |table| std.debug.assert(table.inMerge);
 
-        const swapped = false;
+        var swapped = false;
         defer {
             if (!swapped) {
                 self.mxTables.lock();
@@ -367,30 +368,48 @@ pub const Data = struct {
         }
 
         const tableKind = merger.getDestinationTableKind(tables, force);
-        _ = tableKind;
-
-        var t = timer();
-        const dstTableType = merger.getDestinationTableKind(tables, force);
-        if (dstTableType != .mem) {
-            // TODO: do some disk reservations when disk type
+        // 1 for / and 16 for 16 bytes of idx representation,
+        // we can't bitcast it to [8]u8 because we need human readlable file names
+        var destinationTablePath: []u8 = "";
+        errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
+        if (tableKind == .disk) {
+            destinationTablePath = try alloc.alloc(u8, self.path.len + 1 + 16);
+            const idx = self.nextMergeIdx();
+            _ = try std.fmt.bufPrint(
+                destinationTablePath,
+                "{s}/{X:0>16}",
+                .{ self.path, idx },
+            );
         }
 
-        switch (dstTableType) {
-            // TODO: track progress
-            .mem => {},
-            .disk => {},
-        }
-        const readers = openBlockStreamReaders(alloc) catch std.debug.panic("failed to open block readers", .{});
-        _ = readers;
-        const dstPathTable = self.getDstTablePath(alloc, dstTableType) catch std.debug.panic("path problem dstPathPart", .{});
-        defer if (dstTableType != .inmemory and dstPathTable.len > 0) alloc.free(dstPathTable);
-
-        if (force and tables.len == 1 and dstTableType != .mem) {
-            tables[0].flushToDisk(alloc, dstPathTable) catch std.debug.panic("failed to flush to disk path={s}", .{dstPathTable});
+        if (force and tables.len == 1 and tables[0].mem != null) {
+            const table = tables[0].mem.?;
+            try table.storeToDisk(alloc, destinationTablePath);
+            const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
+            try self.swapTables(alloc, tables, newTable, tableKind);
+            swapped = true;
+            return;
         }
 
-        _ = t.lap();
-        unreachable;
+        // const dstTableType = merger.getDestinationTableKind(tables, force);
+        // if (dstTableType != .mem) {
+        //     // TODO: do some disk reservations when disk type
+        // }
+        //
+        // switch (dstTableType) {
+        //     // TODO: track progress
+        //     .mem => {},
+        //     .disk => {},
+        // }
+        // const readers = openBlockStreamReaders(alloc) catch std.debug.panic("failed to open block readers", .{});
+        // _ = readers;
+        // const dstPathTable = self.getDstTablePath(alloc, dstTableType) catch std.debug.panic("path problem dstPathPart", .{});
+        // defer if (dstTableType != .inmemory and dstPathTable.len > 0) alloc.free(dstPathTable);
+        //
+        // if (force and tables.len == 1 and dstTableType != .mem) {
+        //     tables[0].flushToDisk(alloc, dstPathTable) catch std.debug.panic("failed to flush to disk path={s}", .{dstPathTable});
+        // }
+        return error.Stopped;
     }
 
     pub fn addLines(self: *Data, alloc: Allocator, lines: []*const Line, size: usize) !void {
@@ -410,32 +429,35 @@ pub const Data = struct {
 
         shard.mx.unlock();
     }
+
+    fn swapTables(
+        self: *Data,
+        alloc: Allocator,
+        tables: []*Table,
+        newTable: *Table,
+        tableKind: merge.TableKind,
+    ) !void {
+        _ = self;
+        _ = alloc;
+        _ = tables;
+        _ = newTable;
+        _ = tableKind;
+        unreachable;
+    }
 };
 
-fn tableSliceToMerge(alloc: Allocator, tables: *std.ArrayList(*MemTable), _: u64) !?[]*MemTable {
-    var size: usize = 0;
-    for (tables.items) |t| {
-        if (!t.isInMerge) size += 1;
+fn openCreatedTable(
+    alloc: Allocator,
+    tablePath: []const u8,
+    tables: []*Table,
+    maybeMemTable: ?*MemTable,
+) !*Table {
+    if (maybeMemTable) |memTable| {
+        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(*Table, *MemTable, tables);
+        return Table.fromMem(alloc, memTable);
     }
-    const interSlice = try alloc.alloc(*MemTable, size);
-    defer alloc.free(interSlice);
 
-    const maybeSlice = try filterToMerge(alloc, interSlice);
-    const slice = maybeSlice orelse return null;
-    for (slice) |t| {
-        std.debug.assert(!t.isInMerge);
-        t.isInMerge = true;
-    }
-    return slice;
-}
-
-fn filterToMerge(alloc: Allocator, tables: []*MemTable) !?[]*MemTable {
-    if (tables.len < 2) return null;
-
-    // TODO: not implemented
-    const res = try alloc.alloc(*MemTable, tables.len);
-    for (0..tables.len) |i| {
-        res[i] = tables[i];
-    }
-    return tables;
+    _ = tablePath;
+    unreachable;
+    // return Table.open(alloc, tablePath);
 }

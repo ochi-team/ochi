@@ -17,7 +17,7 @@ const BlockMerger = @import("BlockMerger.zig");
 
 const MemTable = @This();
 
-const flush = @import("flush/flush.zig");
+const flush = @import("../table/flush.zig");
 
 blockHeader: BlockHeader,
 tableHeader: TableHeader,
@@ -28,14 +28,13 @@ indexBuf: std.ArrayList(u8) = .empty,
 
 metaindexBuf: std.ArrayList(u8) = .empty,
 
-flushAtUs: i64,
+flushAtUs: i64 = std.math.maxInt(i64),
 
 pub fn empty(alloc: Allocator) !*MemTable {
     const t = try alloc.create(MemTable);
     t.* = .{
         .blockHeader = undefined,
         .tableHeader = undefined,
-        .flushAtUs = undefined,
     };
     return t;
 }
@@ -81,7 +80,7 @@ pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
     const t = try empty(alloc);
     errdefer alloc.destroy(t);
 
-    const flushToDiskAtUs = flush.getFlushToDiskDeadline(memTables);
+    const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(*MemTable, memTables);
     try t.mergeIntoMemTable(alloc, &readers, flushToDiskAtUs);
     return t;
 }

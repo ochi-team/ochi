@@ -1,12 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Contract = @import("../../stds/Contract.zig");
-
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
 
 const Conf = @import("../../Conf.zig");
+
+const TableContract = @import("contract.zig").TableContract;
 
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
 // guess based number, might be changed on the practical data
@@ -25,19 +25,6 @@ pub const TableKind = enum {
     mem,
     disk,
 };
-
-pub fn TableContract(T: type, M: type) Contract {
-    return Contract{
-        .fields = &.{
-            .{ .name = "size", .type = u64 },
-            .{ .name = "inMerge", .type = bool },
-            .{ .name = "mem", .type = ?M },
-        },
-        .funcs = &.{
-            .{ .name = "lessThan", .type = fn (void, T, T) bool },
-        },
-    };
-}
 
 const MergeWindowBound = struct {
     upper: usize,
@@ -122,7 +109,7 @@ pub fn Merger(
             return .mem;
         }
 
-        fn getTablesSize(tables: []T) u64 {
+        pub fn getTablesSize(tables: []T) u64 {
             var n: u64 = 0;
             for (tables) |table| {
                 n += table.size;
