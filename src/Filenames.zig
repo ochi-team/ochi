@@ -7,10 +7,10 @@ pub const columnsHeader = "columns_header.bin";
 pub const timestamps = "timestamps.bin";
 pub const oldValues = "field_values.bin";
 pub const oldBloom = "field_bloom.bin";
-pub const values = "values.bin";
-pub const bloom = "bloom.bin";
+pub const bloomValues = "values.bin";
+pub const bloomTokens = "bloom.bin";
 pub const messageValues = "message_values.bin";
-pub const messageBloom = "message_bloom.bin";
+pub const messageTokens = "message_bloom.bin";
 
 pub const lens = "lens.bin";
 pub const entries = "entries.bin";
