@@ -12,8 +12,7 @@ const MemTable = @import("MemTable.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockReader = @import("BlockReader.zig");
 
-const flush = @import("flush/flush.zig");
-
+const flush = @import("../table/flush.zig");
 const merge = @import("../table/merge.zig");
 
 const Conf = @import("../../Conf.zig");
@@ -710,7 +709,7 @@ fn openCreatedTable(
     maybeMemTable: ?*MemTable,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = flush.getFlushToDiskDeadline(tables);
+        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(*Table, *MemTable, tables);
         return Table.fromMem(alloc, memTable);
     }
 
