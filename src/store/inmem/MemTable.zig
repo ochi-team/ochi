@@ -25,7 +25,7 @@ const MemTable = @This();
 streamWriter: *StreamWriter,
 tableHeader: TableHeader,
 
-flushAtUs: ?i64 = null,
+flushAtUs: i64 = std.math.maxInt(i64),
 isInMerge: bool = false,
 
 pub fn init(allocator: std.mem.Allocator) !*MemTable {

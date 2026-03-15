@@ -81,6 +81,8 @@ pub const Partition = struct {
         }
 
         try self.data.addLines(allocator, lines.items, 0);
+        // FIXME: size calculation is not implemented
+        unreachable;
     }
 
     fn isCached(self: *Partition, sid: SID) bool {

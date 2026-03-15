@@ -24,6 +24,7 @@ mem: ?*MemTable,
 // fields for all the tables
 indexBlockHeaders: []IndexBlockHeader,
 tableHeader: *TableHeader,
+// size is amount of bytes of compressed buffers content
 size: u64,
 path: []const u8,
 

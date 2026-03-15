@@ -6,6 +6,15 @@ const Line = @import("store/lines.zig").Line;
 
 const cap = @import("store/table/cap.zig");
 
+const MemTable = @import("store/inmem/MemTable.zig");
+const Table = @import("store/data/Table.zig");
+const BlockReader = @import("store/inmem/reader.zig").BlockReader;
+
+const merge = @import("store/table/merge.zig");
+
+const maxMemTables = 24;
+const merger = merge.Merger(*Table, *MemTable, maxMemTables);
+
 fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
     const step = 250 * std.time.ns_per_ms;
     var remaining = ns;
@@ -16,14 +25,6 @@ fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
         remaining -= s;
     }
 }
-
-const MemTable = @import("store/inmem/MemTable.zig");
-const BlockReader = @import("store/inmem/reader.zig").BlockReader;
-
-const TableType = enum(u8) {
-    inmemory = 0,
-    disk = 1,
-};
 
 // TODO: move flush interval to config
 fn setFlushTime() i64 {
@@ -47,7 +48,7 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, allocator: Allocator, sem: *std.Thread.Semaphore) !?*MemTable {
+    fn flush(self: *DataShard, alloc: Allocator, sem: *std.Thread.Semaphore) !?*Table {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -55,14 +56,14 @@ pub const DataShard = struct {
         sem.wait();
         errdefer sem.post();
 
-        const memTable = try MemTable.init(allocator);
-        try memTable.addLines(allocator, self.lines.items);
+        const memTable = try MemTable.init(alloc);
+        try memTable.addLines(alloc, self.lines.items);
         self.lines.clearRetainingCapacity();
 
         sem.post();
 
         memTable.flushAtUs = setFlushTime();
-        return memTable;
+        return Table.fromMem(alloc, memTable);
     }
 };
 
@@ -72,11 +73,11 @@ pub const Data = struct {
     mergeIdx: std.atomic.Value(usize),
 
     mxTables: std.Thread.Mutex,
-    memTables: std.ArrayList(*MemTable),
+    memTables: std.ArrayList(*Table),
 
     pool: *std.Thread.Pool,
     wg: std.Thread.WaitGroup,
-    memMergeSem: std.Thread.Semaphore,
+    memTablesSem: std.Thread.Semaphore,
     stopped: std.atomic.Value(bool),
 
     path: []const u8,
@@ -112,11 +113,11 @@ pub const Data = struct {
             .mergeIdx = std.atomic.Value(usize).init(0),
 
             .mxTables = .{},
-            .memTables = std.ArrayList(*MemTable).empty,
+            .memTables = std.ArrayList(*Table).empty,
 
             .pool = pool,
             .wg = wg,
-            .memMergeSem = .{ .permits = conf.cpus },
+            .memTablesSem = .{ .permits = conf.cpus },
             .stopped = std.atomic.Value(bool).init(false),
             .path = path,
         };
@@ -160,21 +161,21 @@ pub const Data = struct {
         self.mxTables.lock();
         defer self.mxTables.unlock();
 
-        var tables = std.ArrayList(*MemTable).initCapacity(allocator, self.memTables.items.len) catch |err| {
+        var tables = std.ArrayList(*Table).initCapacity(allocator, self.memTables.items.len) catch |err| {
             self.handleErr(err);
             return;
         };
         for (self.memTables.items) |memTable| {
-            const isTimeToMerge = if (memTable.flushAtUs) |flushAtUs| nowUs > flushAtUs else false;
-            if (!memTable.isInMerge and (force or isTimeToMerge)) {
+            const isTimeToMerge = memTable.mem.?.flushAtUs <= nowUs;
+            if (!memTable.inMerge and (force or isTimeToMerge)) {
                 tables.appendAssumeCapacity(memTable);
             }
         }
 
         // TODO: reshuffle tables to merge in order to build more effective file sizes
-        self.memMergeSem.wait();
+        self.memTablesSem.wait();
         try self.mergeTables(allocator, tables.items, force, &self.stopped);
-        self.memMergeSem.post();
+        self.memTablesSem.post();
     }
 
     /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
@@ -219,7 +220,7 @@ pub const Data = struct {
     }
 
     fn flushShard(self: *Data, alloc: Allocator, shard: *DataShard) void {
-        const maybeMemTable = shard.flush(alloc, &self.memMergeSem) catch |err| {
+        const maybeMemTable = shard.flush(alloc, &self.memTablesSem) catch |err| {
             self.handleErr(err);
             return;
         };
@@ -249,7 +250,7 @@ pub const Data = struct {
     }
 
     fn runMemTableMerger(self: *Data, alloc: Allocator) void {
-        self.tablesMerger(alloc, &self.memTables, &self.memMergeSem) catch |err| {
+        self.tablesMerger(alloc, &self.memTables, &self.memTablesSem) catch |err| {
             std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
         };
     }
@@ -257,7 +258,7 @@ pub const Data = struct {
     fn tablesMerger(
         self: *Data,
         alloc: Allocator,
-        tables: *std.ArrayList(*MemTable),
+        tables: *std.ArrayList(*Table),
         sem: *std.Thread.Semaphore,
     ) !void {
         var tablesToMerge = std.ArrayList(*MemTable).empty;
@@ -312,17 +313,9 @@ pub const Data = struct {
         unreachable;
     }
 
-    fn getDstTableType(self: *Data, allocator: Allocator) TableType {
-        _ = self;
-        _ = allocator;
-
-        // TODO: implement a decision strategy
-        return TableType.inmemory;
-    }
-
-    fn getDstTablePath(self: *Data, allocator: Allocator, dstTableType: TableType) ![]const u8 {
+    fn getDstTablePath(self: *Data, allocator: Allocator, dstTableType: merge.TableKind) ![]const u8 {
         // In-memory tables do not have a destination path.
-        if (dstTableType == .inmemory) {
+        if (dstTableType == .mem) {
             return "";
         }
 
@@ -361,32 +354,30 @@ pub const Data = struct {
         stopped: ?*std.atomic.Value(bool),
     ) !void {
         _ = stopped;
-        if (tables.len == 0) {
-            return;
-        }
+        std.debug.assert(tables.len > 0);
+        for (tables) |table| std.debug.assert(table.isInMerge);
 
-        for (tables) |table| {
-            std.debug.assert(table.isInMerge);
-        }
-
+        const swapped = false;
         defer {
-            self.mxTables.lock();
-            for (tables) |table| {
-                std.debug.assert(table.isInMerge);
-                table.isInMerge = false;
+            if (!swapped) {
+                self.mxTables.lock();
+                for (tables) |table| table.inMerge = false;
+                self.mxTables.unlock();
             }
-            self.mxTables.unlock();
         }
+
+        const tableKind = merger.getDestinationTableKind(tables, force);
+        _ = tableKind;
 
         var t = timer();
-        const dstTableType = self.getDstTableType(alloc);
-        if (dstTableType != .inmemory) {
+        const dstTableType = merger.getDestinationTableKind(tables, force);
+        if (dstTableType != .mem) {
             // TODO: do some disk reservations when disk type
         }
 
         switch (dstTableType) {
             // TODO: track progress
-            .inmemory => {},
+            .mem => {},
             .disk => {},
         }
         const readers = openBlockStreamReaders(alloc) catch std.debug.panic("failed to open block readers", .{});
@@ -394,7 +385,7 @@ pub const Data = struct {
         const dstPathTable = self.getDstTablePath(alloc, dstTableType) catch std.debug.panic("path problem dstPathPart", .{});
         defer if (dstTableType != .inmemory and dstPathTable.len > 0) alloc.free(dstPathTable);
 
-        if (force and tables.len == 1 and dstTableType != .inmemory) {
+        if (force and tables.len == 1 and dstTableType != .mem) {
             tables[0].flushToDisk(alloc, dstPathTable) catch std.debug.panic("failed to flush to disk path={s}", .{dstPathTable});
         }
 
@@ -447,16 +438,4 @@ fn filterToMerge(alloc: Allocator, tables: []*MemTable) !?[]*MemTable {
         res[i] = tables[i];
     }
     return tables;
-}
-
-const testing = std.testing;
-
-test "dataWorker" {
-    const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
-
-    var d = try Data.init(alloc, alloc, "abc"[0..]);
-    std.Thread.sleep(50 * std.time.ns_per_ms);
-    d.deinit(alloc);
 }

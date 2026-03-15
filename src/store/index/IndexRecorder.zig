@@ -4,7 +4,6 @@ const Allocator = std.mem.Allocator;
 const fs = @import("../../fs.zig");
 
 const cap = @import("../table/cap.zig");
-const merger = @import("../table/merge.zig").Merger(*Table);
 
 const Entries = @import("Entries.zig");
 const MemBlock = @import("MemBlock.zig");
@@ -15,14 +14,17 @@ const BlockReader = @import("BlockReader.zig");
 
 const flush = @import("flush/flush.zig");
 
+const merge = @import("../table/merge.zig");
+
 const Conf = @import("../../Conf.zig");
 
-const TableKind = enum {
-    mem,
-    disk,
-};
-
 const maxBlocksPerShard = 256;
+
+// TODO: worth tuning on practice
+const blocksInMemTable = 15;
+const maxMemTables = 24;
+
+const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 
 fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
     const step = 250 * std.time.ns_per_ms;
@@ -34,10 +36,6 @@ fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
         remaining -= s;
     }
 }
-
-// TODO: worth tuning on practice
-const blocksInMemTable = 15;
-const maxMemTables = 24;
 
 const IndexRecorder = @This();
 
@@ -283,7 +281,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
         memTables.appendAssumeCapacity(t);
     }
 
-    const maxSize = getMaxInmemoryTableSize();
+    const maxSize = merger.getMaxInmemoryTableSize();
 
     var left = try std.ArrayList(*Table).initCapacity(alloc, memTables.items.len);
     defer left.deinit(alloc);
@@ -614,7 +612,7 @@ pub fn mergeTables(
         }
     }
 
-    const tableKind = getDestinationTableKind(tables, force);
+    const tableKind = merger.getDestinationTableKind(tables, force);
 
     // 1 for / and 16 for 16 bytes of idx representation,
     // we can't bitcast it to [8]u8 because we need human readlable file names
@@ -678,55 +676,12 @@ pub fn mergeTables(
     swapped = true;
 }
 
-fn getDestinationTableKind(tables: []*Table, force: bool) TableKind {
-    if (force) return .disk;
-
-    const size = getTablesSize(tables);
-    if (size > getMaxInmemoryTableSize()) return .disk;
-    if (!areTablesMem(tables)) return .disk;
-
-    return .mem;
-}
-
-// 4mb is a minimal size for mem table,
-// technically it makes minimum requirement as 1GB for the software,
-// if edge use case comes up, we can lower it further up to 0.5-1mb, then configure it in build time
-const minMemTableSize: u64 = 4 * 1024 * 1024;
-// TODO: make it as a config field instead of calculated property
-fn getMaxInmemoryTableSize() u64 {
-    const conf = Conf.getConf();
-    // only 10% of cache available for mem index
-    // TODO: experiment with tuning cache size to 5%, 15%
-    const maxmem = (conf.sys.cacheSize / 10) / maxMemTables;
-    return @max(maxmem, minMemTableSize);
-}
-
-fn areTablesMem(tables: []*Table) bool {
-    for (tables) |table| {
-        if (table.mem) |_| {
-            continue;
-        } else {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-fn getTablesSize(tables: []*Table) u64 {
-    var n: u64 = 0;
-    for (tables) |table| {
-        n += table.size;
-    }
-    return n;
-}
-
 // TODO: move it to config instead of computed property
 fn maxItemsPerCachedTable() u64 {
     const sysConf = Conf.getConf().sys;
     const restMem = sysConf.maxMem - sysConf.cacheSize;
     // we anticipate 4 bytes per index item in compressed form
-    return @max(restMem / (4 * blocksInMemTable), minMemTableSize);
+    return @max(restMem / (4 * blocksInMemTable), merge.minMemTableSize);
 }
 
 fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
@@ -767,7 +722,7 @@ fn swapTables(
     alloc: Allocator,
     tables: []*Table,
     newTable: *Table,
-    tableKind: TableKind,
+    tableKind: merge.TableKind,
 ) !void {
     self.mxTables.lock();
     errdefer self.mxTables.unlock();
@@ -846,14 +801,6 @@ fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
     return Table.fromMem(alloc, memTable);
 }
 
-fn createDiskTableFromItems(alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
-    const memTable = try createMemTableFromItems(alloc, items);
-    defer memTable.close();
-    const mem = memTable.mem.?;
-    try mem.storeToDisk(alloc, tablePath);
-    return Table.open(alloc, tablePath);
-}
-
 fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
     var count: u64 = 0;
     for (recorder.memTables.items) |table| {
@@ -894,37 +841,6 @@ test "IndexRecorder init and close empty dir, trim slash" {
     try testing.expect(std.mem.eql(u8, recorder.path, rootPath));
 
     try recorder.stop(alloc);
-}
-
-test "getDestinationTableKind rules" {
-    const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
-
-    const small1 = try createSizedMemTable(alloc, 256);
-    defer small1.close();
-    const small2 = try createSizedMemTable(alloc, 512);
-    defer small2.close();
-
-    var bothSmall = [_]*Table{ small1, small2 };
-    try testing.expectEqual(TableKind.mem, getDestinationTableKind(bothSmall[0..], false));
-    try testing.expectEqual(TableKind.disk, getDestinationTableKind(bothSmall[0..], true));
-
-    const large = try createSizedMemTable(alloc, @intCast(getMaxInmemoryTableSize() + 1));
-    defer large.close();
-    var onlyLarge = [_]*Table{large};
-    try testing.expectEqual(TableKind.disk, getDestinationTableKind(onlyLarge[0..], false));
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
-    defer alloc.free(rootPath);
-    const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
-    errdefer alloc.free(diskPath);
-    const disk = try createDiskTableFromItems(alloc, diskPath, &.{ "a", "b", "c" });
-    defer disk.close();
-    var mixed = [_]*Table{ small1, disk };
-    try testing.expectEqual(TableKind.disk, getDestinationTableKind(mixed[0..], false));
 }
 
 test "removeTables removes exact pointers" {
@@ -1128,6 +1044,5 @@ test "IndexRecorder remove path after deinit" {
     recorder.wg.wait();
     recorder.deinit(alloc);
 
-    try testing.expect(! Conf.getConf().sys.diskSpace.contains(rootPath));
+    try testing.expect(!Conf.getConf().sys.diskSpace.contains(rootPath));
 }
-

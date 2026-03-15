@@ -149,6 +149,8 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
+/// size gives the amount of all the buffers bytes,
+/// the content of the buffers is compressed
 pub fn size(self: *Self) u32 {
     var res: usize = self.timestampsBuf.items.len;
     res += self.indexBuf.items.len;
