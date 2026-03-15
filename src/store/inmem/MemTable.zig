@@ -75,16 +75,19 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []*const L
     try blockWriter.finish(allocator, self.streamWriter, &self.tableHeader);
 }
 
-pub fn getFilePathSharded(
-    allocator: std.mem.Allocator,
-    part_path: []const u8,
-    values_filename: []const u8,
-    shard_idx: u64,
-) ![]u8 {
+pub fn getBloomValuesFilePath(alloc: std.mem.Allocator, partPath: []const u8, shardIdx: u64) ![]u8 {
     return std.fmt.allocPrint(
-        allocator,
+        alloc,
         "{s}/{s}{}",
-        .{ part_path, values_filename, shard_idx },
+        .{ partPath, Filenames.bloomValues, shardIdx },
+    );
+}
+
+pub fn getBloomTokensFilePath(alloc: std.mem.Allocator, partPath: []const u8, shardIdx: u64) ![]u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "{s}/{s}{}",
+        .{ partPath, Filenames.bloomTokens, shardIdx },
     );
 }
 
@@ -141,7 +144,7 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
     defer allocator.free(messageValuesPath);
 
     const messageBloomFilterPath =
-        try std.fs.path.join(allocator, &.{ path, Filenames.messageBloom });
+        try std.fs.path.join(allocator, &.{ path, Filenames.messageTokens });
     defer allocator.free(messageBloomFilterPath);
 
     try fs.writeBufferValToFile(columnNamesPath, self.streamWriter.columnKeysBuf.items);
@@ -161,15 +164,15 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         self.streamWriter.messageBloomValuesBuf.items,
     );
 
-    const bloomPath = try getFilePathSharded(allocator, path, Filenames.values, 0);
+    const bloomPath = try getBloomValuesFilePath(allocator, path, 0);
     defer allocator.free(bloomPath);
     try fs.writeBufferValToFile(bloomPath, self.streamWriter.bloomTokensList.items[0].items);
 
-    const valuesPath = try getFilePathSharded(allocator, path, Filenames.bloom, 0);
+    const valuesPath = try getBloomTokensFilePath(allocator, path, 0);
     defer allocator.free(valuesPath);
     try fs.writeBufferValToFile(valuesPath, self.streamWriter.bloomValuesList.items[0].items);
 
-    try self.tableHeader.flush(allocator, path, Filenames.header);
+    try self.tableHeader.writeFile(allocator, path);
 
     fs.syncPathAndParentDir(path);
 }
@@ -365,13 +368,13 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     defer allocator.free(columnsHeaderPath);
     const timestampsPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.timestamps });
     defer allocator.free(timestampsPath);
-    const messageBloomTokensPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.messageBloom });
+    const messageBloomTokensPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.messageTokens });
     defer allocator.free(messageBloomTokensPath);
     const messageBloomValuesPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.messageValues });
     defer allocator.free(messageBloomValuesPath);
-    const bloomTokensPath = try getFilePathSharded(allocator, flushPath, Filenames.values, 0);
+    const bloomTokensPath = try getBloomValuesFilePath(allocator, flushPath, 0);
     defer allocator.free(bloomTokensPath);
-    const bloomValuesPath = try getFilePathSharded(allocator, flushPath, Filenames.bloom, 0);
+    const bloomValuesPath = try getBloomTokensFilePath(allocator, flushPath, 0);
     defer allocator.free(bloomValuesPath);
     const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.header });
     defer allocator.free(metadataPath);

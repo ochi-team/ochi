@@ -457,7 +457,5 @@ fn openCreatedTable(
         return Table.fromMem(alloc, memTable);
     }
 
-    _ = tablePath;
-    unreachable;
-    // return Table.open(alloc, tablePath);
+    return Table.open(alloc, tablePath);
 }
