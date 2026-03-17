@@ -1,24 +1,25 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const encoding = @import("encoding");
 
-const Self = @This();
+const ColumnIDGen = @This();
 
 // keyIDs must use StringArrayHashMap, it's important to store the keys ordered
 keyIDs: std.StringArrayHashMap(u16),
 keysBuf: ?[]u8,
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
+pub fn init(allocator: Allocator) !*ColumnIDGen {
     const nameIDs = std.StringArrayHashMap(u16).init(allocator);
-    const s = try allocator.create(Self);
-    s.* = Self{
+    const s = try allocator.create(ColumnIDGen);
+    s.* = ColumnIDGen{
         .keyIDs = nameIDs,
         .keysBuf = null,
     };
     return s;
 }
 
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *ColumnIDGen, allocator: Allocator) void {
     if (self.keysBuf != null) {
         allocator.free(self.keysBuf.?);
     }
@@ -26,7 +27,7 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn genIDAssumeCapacity(self: *Self, key: []const u8) u16 {
+pub fn genIDAssumeCapacity(self: *ColumnIDGen, key: []const u8) u16 {
     const maybeID = self.keyIDs.get(key);
     if (maybeID) |id| {
         return id;
@@ -37,7 +38,7 @@ pub fn genIDAssumeCapacity(self: *Self, key: []const u8) u16 {
     return id;
 }
 
-pub fn bound(self: *Self) !usize {
+pub fn bound(self: *ColumnIDGen) !usize {
     var res: usize = 10;
     for (self.keyIDs.keys()) |key| {
         res += key.len;
@@ -46,7 +47,7 @@ pub fn bound(self: *Self) !usize {
 }
 
 // [10:len][keys]
-pub fn encode(self: *Self, alloc: std.mem.Allocator, dst: []u8) !usize {
+pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
     // TODO: consider interning strings to a list instead of collecting them from the map keys
 
     var uncompressedSize: usize = 10;
@@ -67,7 +68,7 @@ pub fn encode(self: *Self, alloc: std.mem.Allocator, dst: []u8) !usize {
     return encoding.compressAuto(dst, tmpBuf[0..enc.offset]);
 }
 
-pub fn decode(alloc: std.mem.Allocator, src: []u8) !*Self {
+pub fn decode(alloc: Allocator, src: []u8) !*ColumnIDGen {
     const size = try encoding.getFrameContentSize(src);
 
     const buf = try alloc.alloc(u8, size);
@@ -78,8 +79,7 @@ pub fn decode(alloc: std.mem.Allocator, src: []u8) !*Self {
     const keysBuf = buf[genSize.offset..offset];
     var dec = encoding.Decoder.init(keysBuf);
 
-    const gen = try Self.init(alloc);
-    gen.keysBuf = buf;
+    const gen = try ColumnIDGen.init(alloc);
     errdefer gen.deinit(alloc);
 
     try gen.keyIDs.ensureUnusedCapacity(@intCast(genSize.value));
@@ -88,12 +88,34 @@ pub fn decode(alloc: std.mem.Allocator, src: []u8) !*Self {
         _ = gen.genIDAssumeCapacity(key);
     }
 
+    gen.keysBuf = buf;
     return gen;
+}
+
+pub fn decodeColumnIdxs(columnIDGen: *ColumnIDGen, alloc: Allocator, src: []const u8) !std.StringHashMapUnmanaged(u16) {
+    var columnIdxs = std.StringHashMapUnmanaged(u16){};
+    var dec = encoding.Decoder.init(src);
+
+    const count = dec.readVarInt();
+    try columnIdxs.ensureTotalCapacity(alloc, @intCast(count));
+
+    const keys = columnIDGen.keyIDs.keys();
+    for (0..count) |_| {
+        const colID: u16 = @intCast(dec.readVarInt());
+        const shardIdx: u16 = @intCast(dec.readVarInt());
+
+        std.debug.assert(colID < keys.len);
+        const colName = keys[colID];
+        columnIdxs.putAssumeCapacity(colName, shardIdx);
+    }
+
+    std.debug.assert(dec.offset == src.len);
+    return columnIdxs;
 }
 
 test "ColumnIDGen" {
     const alloc = std.testing.allocator;
-    const gener = try Self.init(alloc);
+    const gener = try ColumnIDGen.init(alloc);
     defer gener.deinit(alloc);
 
     const keys = &[_][]const u8{ "key1", "key2", "", "_--=" };
@@ -113,7 +135,7 @@ test "ColumnIDGen" {
     defer alloc.free(encoded);
     const offset = try gener.encode(alloc, encoded);
 
-    const generDecoded = try Self.decode(alloc, encoded[0..offset]);
+    const generDecoded = try ColumnIDGen.decode(alloc, encoded[0..offset]);
     defer generDecoded.deinit(alloc);
 
     try std.testing.expectEqual(gener.keyIDs.count(), generDecoded.keyIDs.count());
