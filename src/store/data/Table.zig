@@ -55,27 +55,6 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // then readers can retain it
 refCounter: std.atomic.Value(u32),
 
-fn decodeColumnIdxs(alloc: Allocator, src: []const u8, columnIDGen: *ColumnIDGen) !std.StringHashMapUnmanaged(u16) {
-    var columnIdxs = std.StringHashMapUnmanaged(u16){};
-    var dec = encoding.Decoder.init(src);
-
-    const count = dec.readVarInt();
-    try columnIdxs.ensureTotalCapacity(alloc, @intCast(count));
-
-    const keys = columnIDGen.keyIDs.keys();
-    for (0..count) |_| {
-        const colID: u16 = @intCast(dec.readVarInt());
-        const shardIdx: u16 = @intCast(dec.readVarInt());
-
-        std.debug.assert(colID < keys.len);
-        const colName = keys[colID];
-        columnIdxs.putAssumeCapacity(colName, shardIdx);
-    }
-
-    std.debug.assert(dec.offset == src.len);
-    return columnIdxs;
-}
-
 pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     std.debug.assert(memTable.streamWriter.size() == memTable.tableHeader.compressedSize);
 
@@ -104,7 +83,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     errdefer columnIdxs.deinit(alloc);
 
     if (memTable.streamWriter.columnIdxsBuf.items.len > 0) {
-        columnIdxs = try decodeColumnIdxs(alloc, memTable.streamWriter.columnIdxsBuf.items, columnIDGen);
+        columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, memTable.streamWriter.columnIdxsBuf.items);
     }
 
     const bloomTokensList = memTable.streamWriter.bloomTokensList.items;
@@ -191,7 +170,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     const columnIdxsContent = try fs.readAll(alloc, columnIdxsPath);
     defer alloc.free(columnIdxsContent);
     if (columnIdxsContent.len > 0) {
-        columnIdxs = try decodeColumnIdxs(alloc, columnIdxsContent, columnIDGen);
+        columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, columnIdxsContent);
     }
 
     const metaindexContent = try fs.readAll(alloc, metaindexPath);
