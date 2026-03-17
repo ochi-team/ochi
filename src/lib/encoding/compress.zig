@@ -48,28 +48,12 @@ pub const DecompressError = error{
     OutOfMemory,
 };
 
-// TODO: handle ZSTD_CONTENTSIZE_UNKNOWN and ZSTD_CONTENTSIZE_ERROR properly
+//TODO: DEPRECATED Use decompressToBuf or decompressToArrayList instead 
 pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
     // ZSTD frames have a minimum size of 4 bytes (magic number)
     // but ZSTD_getFrameContentSize can determine the size with fewer bytes
     // in practice. Let ZSTD tell us if the data is invalid.
     const res = C.ZSTD_getFrameContentSize(src.ptr, src.len);
-
-    if (res == unknownSize) {
-        return DecompressError.Unknown;
-    }
-    if (res == errorSize) {
-        return DecompressError.Unknown;
-    }
-    return res;
-}
-
-// TODO: handle ZSTD_CONTENTSIZE_UNKNOWN and ZSTD_CONTENTSIZE_ERROR properly
-pub fn getFrameContentSize2(srcPtr: [*]const u8, srcLen: usize) DecompressError!usize {
-    // ZSTD frames have a minimum size of 4 bytes (magic number)
-    // but ZSTD_getFrameContentSize can determine the size with fewer bytes
-    // in practice. Let ZSTD tell us if the data is invalid.
-    const res = C.ZSTD_getFrameContentSize(srcPtr, srcLen);
 
     if (res == unknownSize) {
         return DecompressError.Unknown;
