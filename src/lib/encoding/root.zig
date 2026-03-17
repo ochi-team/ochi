@@ -14,6 +14,8 @@ pub const DecompressError = compress.DecompressError;
 pub const getFrameContentSize = compress.getFrameContentSize;
 
 pub const decompress = compress.decompress;
+pub const decompressToBuf = compress.decompressToBuf;
+pub const decompressToArrayList = compress.decompressToArrayList;
 
 // decode
 
