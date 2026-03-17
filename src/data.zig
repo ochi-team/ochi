@@ -262,7 +262,7 @@ pub const Data = struct {
         tables: *std.ArrayList(*Table),
         sem: *std.Thread.Semaphore,
     ) !void {
-        var tablesToMerge = std.ArrayList(*MemTable).empty;
+        var tablesToMerge = std.ArrayList(*Table).empty;
         defer tablesToMerge.deinit(alloc);
 
         while (true) {
@@ -271,7 +271,7 @@ pub const Data = struct {
             self.mxTables.lock();
             errdefer self.mxTables.unlock();
             // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-            const window = try filterTablesToMerge(alloc, tables.items, &tablesToMerge, maxDiskTableSize);
+            const window = try merger.filterTablesToMerge(alloc, tables.items, &tablesToMerge, maxDiskTableSize);
             const w = window orelse {
                 self.mxTables.unlock();
                 return;
@@ -285,66 +285,14 @@ pub const Data = struct {
             // TODO: make sure error.Stopped is handled on the upper level
             sem.wait();
             errdefer sem.post();
-            self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped) catch |err| {
-                switch (err) {
-                    error.Stopped => return err,
-                    else => return err,
-                }
-            };
+            try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
             sem.post();
             tablesToMerge.clearRetainingCapacity();
         }
     }
 
-    const MergeWindowBound = struct {
-        upper: usize,
-        lower: usize,
-    };
-
-    fn filterTablesToMerge(
-        alloc: Allocator,
-        tables: []*MemTable,
-        toMerge: *std.ArrayList(*MemTable),
-        maxDiskTableSize: u64,
-    ) Allocator.Error!?MergeWindowBound {
-        _ = alloc;
-        _ = tables;
-        _ = toMerge;
-        _ = maxDiskTableSize;
-        unreachable;
-    }
-
-    fn getDstTablePath(self: *Data, allocator: Allocator, dstTableType: merge.TableKind) ![]const u8 {
-        // In-memory tables do not have a destination path.
-        if (dstTableType == .mem) {
-            return "";
-        }
-
-        // For file-backed tables, allocate exact buffer and format the path into it.
-        const buf_len = self.path.len + 1 + 16; // "{path}/{mergeIdx_as_16_hex}"
-        const destinationTablePath = try allocator.alloc(u8, buf_len);
-        const mergeIdx = self.nextMergeIdx();
-        _ = try std.fmt.bufPrint(
-            destinationTablePath,
-            "{s}/{X:0>16}",
-            .{ self.path, mergeIdx },
-        );
-
-        return destinationTablePath;
-    }
-
     fn nextMergeIdx(self: *Data) usize {
         return self.mergeIdx.fetchAdd(1, .acq_rel);
-    }
-
-    fn timer() std.time.Timer {
-        return std.time.Timer.start() catch |err| std.debug.panic("failed to start timer: {s}", .{@errorName(err)});
-    }
-
-    // TODO: implement it
-    fn openBlockStreamReaders(allocator: Allocator) ![]*BlockReader {
-        const readers = try allocator.alloc(*BlockReader, 1);
-        return readers;
     }
 
     fn mergeTables(
@@ -389,6 +337,12 @@ pub const Data = struct {
             try self.swapTables(alloc, tables, newTable, tableKind);
             swapped = true;
             return;
+        }
+
+        var readers = try openTableReaders(alloc, tables);
+        defer {
+            for (readers.items) |reader| reader.deinit(alloc);
+            readers.deinit(alloc);
         }
 
         // const dstTableType = merger.getDestinationTableKind(tables, force);
@@ -458,4 +412,23 @@ fn openCreatedTable(
     }
 
     return Table.open(alloc, tablePath);
+}
+
+fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+    var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
+    errdefer {
+        for (readers.items) |reader| reader.deinit(alloc);
+        readers.deinit(alloc);
+    }
+    for (tables) |table| {
+        if (table.mem) |memTable| {
+            const reader = try BlockReader.initFromMemTable(alloc, memTable);
+            readers.appendAssumeCapacity(reader);
+        } else {
+            const reader = try BlockReader.initFromDiskTable(alloc, table.path);
+            readers.appendAssumeCapacity(reader);
+        }
+    }
+
+    return readers;
 }

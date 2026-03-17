@@ -1,3 +1,4 @@
+// TODO: find a better name
 const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
@@ -251,7 +252,7 @@ test "BlockData readFrom populates columnsData and celledColumns" {
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 
-    const blockReader = try BlockReader.initFromTableMem(allocator, memTable);
+    const blockReader = try BlockReader.initFromMemTable(allocator, memTable);
     defer blockReader.deinit(allocator);
 
     // Read first block, which should populate BlockData.

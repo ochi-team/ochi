@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const encoding = @import("encoding");
 
@@ -30,7 +31,7 @@ pub const StreamReader = struct {
     columnsKeysBuf: []const u8,
     columnIdxsBuf: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator, tableMem: *MemTable) !*StreamReader {
+    pub fn init(allocator: Allocator, tableMem: *MemTable) !*StreamReader {
         const r = try allocator.create(StreamReader);
         r.* = StreamReader{
             .timestampsBuf = tableMem.streamWriter.timestampsBuf.items,
@@ -52,7 +53,7 @@ pub const StreamReader = struct {
         return r;
     }
 
-    pub fn deinit(self: *StreamReader, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *StreamReader, allocator: Allocator) void {
         allocator.destroy(self);
     }
 
@@ -103,7 +104,7 @@ pub const BlockReader = struct {
     // Block data
     blockData: BlockData,
 
-    pub fn initFromTableMem(allocator: std.mem.Allocator, tableMem: *MemTable) !*BlockReader {
+    pub fn initFromMemTable(allocator: Allocator, tableMem: *MemTable) !*BlockReader {
         const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
             allocator,
             tableMem.streamWriter.metaIndexBuf.items,
@@ -148,7 +149,13 @@ pub const BlockReader = struct {
         return br;
     }
 
-    pub fn deinit(self: *BlockReader, allocator: std.mem.Allocator) void {
+    pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
+        _ = alloc;
+        _ = path;
+        unreachable;
+    }
+
+    pub fn deinit(self: *BlockReader, allocator: Allocator) void {
         self.blockHeaders.deinit(allocator);
         self.streamReader.deinit(allocator);
         self.blockData.deinit(allocator);
@@ -164,7 +171,7 @@ pub const BlockReader = struct {
     /// nextBlock reads the next block from the reader and puts it into blockData.
     /// Returns false if there are no more blocks.
     /// blockData is valid until the next call to NextBlock().
-    pub fn nextBlock(self: *BlockReader, allocator: std.mem.Allocator) !bool {
+    pub fn nextBlock(self: *BlockReader, allocator: Allocator) !bool {
         // Load more blocks if needed
         while (self.nextBlockIdx >= self.blockHeaders.items.len) {
             if (!try self.nextIndexBlock(allocator)) {
@@ -203,7 +210,7 @@ pub const BlockReader = struct {
         return true;
     }
 
-    fn nextIndexBlock(self: *BlockReader, allocator: std.mem.Allocator) !bool {
+    fn nextIndexBlock(self: *BlockReader, allocator: Allocator) !bool {
         if (self.nextIndexBlockIdx >= self.indexBlockHeaders.len) {
             // No more blocks left
             // Validate tableHeader
@@ -234,7 +241,7 @@ pub const BlockReader = struct {
 };
 
 fn readIndexBlock(
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     ih: *const IndexBlockHeader,
     streamReader: *StreamReader,
 ) ![]u8 {
@@ -293,7 +300,7 @@ test "readBlock reads buffers" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testReadBlock, .{});
 }
 
-fn testReadBlock(allocator: std.mem.Allocator) !void {
+fn testReadBlock(allocator: Allocator) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -323,7 +330,7 @@ fn testReadBlock(allocator: std.mem.Allocator) !void {
     try std.testing.expect(th.uncompressedSize > 0);
     try std.testing.expect(th.compressedSize > 0);
 
-    const blockReader = try BlockReader.initFromTableMem(allocator, memTable);
+    const blockReader = try BlockReader.initFromMemTable(allocator, memTable);
     defer blockReader.deinit(allocator);
 
     var blocksRead: u32 = 0;
@@ -340,7 +347,7 @@ fn testReadBlock(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(th.compressedSize, blockReader.streamReader.totalBytesRead());
 
     // Second pass: check each block's blockData (sid, rowsCount, timestamps range)
-    const blockReader2 = try BlockReader.initFromTableMem(allocator, memTable);
+    const blockReader2 = try BlockReader.initFromMemTable(allocator, memTable);
     defer blockReader2.deinit(allocator);
 
     var block1Sid1111 = false;

@@ -577,12 +577,7 @@ fn tablesMerger(
         // TODO: make sure error.Stopped is handled on the upper level
         sem.wait();
         errdefer sem.post();
-        self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped) catch |err| {
-            switch (err) {
-                error.Stopped => return,
-                else => return err,
-            }
-        };
+        try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
         sem.post();
         tablesToMerge.clearRetainingCapacity();
     }
@@ -1036,8 +1031,11 @@ test "IndexRecorder remove path after deinit" {
     var batch = [_][]const u8{stableItems[1]};
 
     try recorder.add(alloc, &batch);
+    // startMemTablesMerge is necessary to call before we stop the recorder
+    recorder.startMemTablesMerge(alloc);
 
-    try testing.expect(Conf.getConf().sys.diskSpace.contains(rootPath));
+    const space = Conf.getFreeDiskSpace(rootPath);
+    try testing.expectEqual(Conf.getConf().sys.diskSpace.get(rootPath).?.free, space);
 
     recorder.stopped.store(true, .release);
     recorder.wg.wait();

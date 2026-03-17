@@ -189,6 +189,8 @@ pub const Store = struct {
     }
 
     fn openPartition(self: *Store, allocator: Allocator, path: []const u8, day: u64) !*Partition {
+        // FIXME: understand whether the path for index and data is the same,
+        // if it is - make sure deinit doesn't remove disk space from the cache, but it does it based on the partition path or something
         const indexTable = try IndexRecorder.init(allocator, "");
         const index = try Index.init(allocator, indexTable);
 

@@ -162,6 +162,7 @@ fn mergeIntoMemTable(
     self.tableHeader = try mergeBlocks(alloc, "", &writer, readers, null);
 }
 
+// TODO: move to a better place, it's not related to mem table
 pub fn mergeBlocks(
     alloc: Allocator,
     tablePath: []const u8,
