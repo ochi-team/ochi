@@ -67,14 +67,12 @@ pub fn encode(self: *Self, alloc: std.mem.Allocator, dst: []u8) !usize {
 }
 
 pub fn decode(alloc: std.mem.Allocator, src: []u8) !*Self {
-    const size = try encoding.getFrameContentSize(src);
 
-    const buf = try alloc.alloc(u8, size);
+    const buf = try encoding.decompressToBuf(alloc, src);
     errdefer alloc.free(buf);
-    const offset = try encoding.decompress(buf, src);
 
     const genSize = encoding.Decoder.readVarIntFromBuf(buf);
-    const keysBuf = buf[genSize.offset..offset];
+    const keysBuf = buf[genSize.offset..];
     var dec = encoding.Decoder.init(keysBuf);
 
     const gen = try Self.init(alloc);

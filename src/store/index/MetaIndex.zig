@@ -78,10 +78,8 @@ pub fn readFile(alloc: Allocator, path: []const u8, blocksCount: u64) !DecodedMe
 }
 
 pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u64) !DecodedMetaIndex {
-    const metaindexBufSize = try encoding.getFrameContentSize(compressed);
-    const metaindexBuf = try alloc.alloc(u8, metaindexBufSize);
+    const metaindexBuf = try encoding.decompressToBuf(alloc, compressed);
     defer alloc.free(metaindexBuf);
-    const metaindexLen = try encoding.decompress(metaindexBuf, compressed);
 
     var records = try std.ArrayList(MetaIndex).initCapacity(alloc, @intCast(blocksCount));
     errdefer {
@@ -91,7 +89,7 @@ pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u
         records.deinit(alloc);
     }
 
-    var slice = metaindexBuf[0..metaindexLen];
+    var slice = metaindexBuf[0..];
     var totalBlockHeaders: u64 = 0;
     while (slice.len > 0) {
         var rec: MetaIndex = undefined;

@@ -253,10 +253,8 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
     // Validate block header
     {
-        const decompressedSize = try encoding.getFrameContentSize(indexContent);
-        const decompressedBuf = try allocator.alloc(u8, decompressedSize);
+        const decompressedBuf = try encoding.decompressToBuf(allocator, indexContent);
         defer allocator.free(decompressedBuf);
-        _ = try encoding.decompress(decompressedBuf, indexContent);
 
         const decodedBlockHeader = BlockHeader.decode(decompressedBuf);
         const blockHeader = decodedBlockHeader.header;
@@ -279,10 +277,8 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         const metaIndexContent = memTable.streamWriter.metaIndexBuf.items;
         try std.testing.expect(metaIndexContent.len > 0);
 
-        const decompressedSize = try encoding.getFrameContentSize(metaIndexContent);
-        const decompressedBuf = try allocator.alloc(u8, decompressedSize);
+        const decompressedBuf = try encoding.decompressToBuf(allocator, metaIndexContent);
         defer allocator.free(decompressedBuf);
-        _ = try encoding.decompress(decompressedBuf, metaIndexContent);
 
         const decodedIndexBlockHeader = IndexBlockHeader.decode(decompressedBuf);
 

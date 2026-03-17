@@ -115,7 +115,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
 // but if we can identify it's not used by readers we could lock them here,
 // most likely it will require tracking of the usages of those files/buffers
 //
-// TODO: we must use Reader interface here instead of plain reading in order to 
+// TODO: we must use Reader interface here instead of plain reading in order to
 // save required RAM to hold the content til it's merged, it lets us opening files one by one
 pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
     const tableHeader = try TableHeader.readFile(alloc, path);
@@ -262,13 +262,7 @@ fn readNextBlockHeaders(self: *BlockReader, alloc: Allocator) !bool {
     self.compressedBuf.items.len = self.indexBuf.items.len;
 
     self.uncompressedBuf.clearRetainingCapacity();
-    const uncompressedSize = try encoding.getFrameContentSize(self.compressedBuf.items);
-    try self.uncompressedBuf.ensureUnusedCapacity(alloc, uncompressedSize);
-    const bufOffset = try encoding.decompress(
-        self.uncompressedBuf.unusedCapacitySlice(),
-        self.compressedBuf.items,
-    );
-    self.uncompressedBuf.items.len = bufOffset;
+    try encoding.decompressToArrayList(alloc, &self.uncompressedBuf, self.compressedBuf.items);
 
     if (self.blockHeaders.len > 0) alloc.free(self.blockHeaders);
     self.blockHeaders = try BlockHeader.decodeMany(alloc, self.uncompressedBuf.items, mi.blockHeadersCount);

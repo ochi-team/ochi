@@ -118,20 +118,17 @@ pub fn readIndexBlockHeaders(
     allocator: std.mem.Allocator,
     compressed: []const u8,
 ) ![]Self {
-    const decompressedSize = try encoding.getFrameContentSize(compressed);
 
-    var decompressedBuf = try allocator.alloc(u8, decompressedSize);
-    defer allocator.free(decompressedBuf);
-
-    const n = try encoding.decompress(
-        decompressedBuf,
+    const decompressedBuf = try encoding.decompressToBuf(
+        allocator,
         compressed,
     );
-    const decompressed = decompressedBuf[0..n];
 
-    std.debug.assert(decompressed.len % encodeExpectedSize == 0);
+    defer allocator.free(decompressedBuf);
 
-    const count = decompressed.len / encodeExpectedSize;
+    std.debug.assert(decompressedBuf.len % encodeExpectedSize == 0);
+
+    const count = decompressedBuf.len / encodeExpectedSize;
 
     var dst = try allocator.alloc(Self, count);
     var i: usize = 0;
@@ -141,11 +138,11 @@ pub fn readIndexBlockHeaders(
     }
 
     var off: usize = 0;
-    while (off < decompressed.len) : ({
+    while (off < decompressedBuf.len) : ({
         off += encodeExpectedSize;
         i += 1;
     }) {
-        dst[i] = try decodeAlloc(allocator, decompressed[off .. off + encodeExpectedSize]);
+        dst[i] = try decodeAlloc(allocator, decompressedBuf[off .. off + encodeExpectedSize]);
     }
 
     validateIndexBlockHeaders(dst);

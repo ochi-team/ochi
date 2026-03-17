@@ -284,15 +284,13 @@ pub fn decode(
     const fbaAlloc = fba.get();
 
     // decompress prefix lens
-    const size = try encoding.getFrameContentSize(entriesBlock.lensBuf.items);
-    const decompressedLensBuf = try alloc.alloc(u8, size);
+    var decompressedLensBuf = try encoding.decompressToBuf(alloc, entriesBlock.lensBuf.items);
     defer alloc.free(decompressedLensBuf);
-    var n = try encoding.decompress(decompressedLensBuf, entriesBlock.lensBuf.items);
 
     // decode prefix lens
     const decodedLens = try fbaAlloc.alloc(u64, itemsCount - 1);
     defer fbaAlloc.free(decodedLens);
-    var dec = encoding.Decoder.init(decompressedLensBuf[0..n]);
+    var dec = encoding.Decoder.init(decompressedLensBuf[0..]);
     dec.readVarInts(decodedLens);
     std.debug.assert(dec.offset <= dec.buf.len);
 
@@ -324,17 +322,15 @@ pub fn decode(
     }
 
     // read items data
-    const decompressedItemsSize = try encoding.getFrameContentSize(entriesBlock.entriesBuf.items);
-    const decompressedItemsBuf = try alloc.alloc(u8, decompressedItemsSize);
+    const decompressedItemsBuf = try encoding.decompressToBuf(alloc, entriesBlock.entriesBuf.items);
     defer alloc.free(decompressedItemsBuf);
-    n = try encoding.decompress(decompressedItemsBuf, entriesBlock.entriesBuf.items);
 
     try self.items.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
     self.buf.appendSliceAssumeCapacity(firstItem);
     self.items.appendAssumeCapacity(self.buf.items[0..firstItem.len]);
 
-    var decompressedItemsSlice = decompressedItemsBuf[0..n];
+    var decompressedItemsSlice = decompressedItemsBuf[0..];
     var prevItem = self.buf.items[prefix.len..];
     for (1..itemsCount) |i| {
         const itemLen = lens[i];

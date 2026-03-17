@@ -239,12 +239,8 @@ fn readIndexBlock(
     streamReader: *StreamReader,
 ) ![]u8 {
     const compressed = streamReader.indexBuf[ih.offset..][0..ih.size];
-    const decompressedSize = try encoding.getFrameContentSize(compressed);
-    const decompressed = try allocator.alloc(u8, decompressedSize);
-    errdefer allocator.free(decompressed);
 
-    _ = try encoding.decompress(decompressed, compressed);
-    return decompressed;
+    return try encoding.decompressToBuf(allocator, compressed);
 }
 
 const Line = @import("../lines.zig").Line;
