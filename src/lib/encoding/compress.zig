@@ -1,5 +1,4 @@
 const std = @import("std");
-
 const C = @import("c").C;
 
 pub const CompressError = error{
@@ -48,7 +47,7 @@ pub const DecompressError = error{
     OutOfMemory,
 };
 
-//TODO: DEPRECATED Use decompressToBuf or decompressToArrayList instead 
+//TODO: DEPRECATED Use decompressToBuf or decompressToArrayList instead
 pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
     // ZSTD frames have a minimum size of 4 bytes (magic number)
     // but ZSTD_getFrameContentSize can determine the size with fewer bytes
@@ -64,7 +63,7 @@ pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
     return res;
 }
 
-//TODO: DEPRECATED Use decompressToBuf or decompressToArrayList instead 
+//TODO: DEPRECATED Use decompressToBuf or decompressToArrayList instead
 pub fn decompress(dst: []u8, src: []const u8) DecompressError!usize {
     const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
     if (C.ZSTD_isError(res) == 1) {
@@ -82,61 +81,38 @@ pub fn decompressToArrayList(
     dst: *std.ArrayList(u8),
     src: []const u8,
 ) DecompressError!void {
-    const dstStream = C.ZSTD_createDStream() orelse return DecompressError.OutOfMemory;
-    defer _ = C.ZSTD_freeDStream(dstStream);
+    const dstSize = try getFrameContentSize(src);
+    try dst.ensureUnusedCapacity(allocator, dstSize);
+    const res = C.ZSTD_decompress(dst.items.ptr, dst.items.len, src.ptr, src.len);
 
-    var res = C.ZSTD_initDStream(dstStream);
     if (C.ZSTD_isError(res) == 1) {
         const errCode = C.ZSTD_getErrorCode(res);
+        const msg = C.ZSTD_getErrorName(res);
+        std.debug.print("decompress error: {d}, msg={s}\n", .{ errCode, msg });
+        // TODO: log an error to understand the exact error code
         return handleErrCode(errCode);
     }
 
-    dst.clearRetainingCapacity();
-
-    const contentSize = C.ZSTD_getFrameContentSize(src.ptr, src.len);
-    const outChunk: usize = C.ZSTD_DStreamOutSize();
-    if (contentSize != unknownSize and contentSize != errorSize and contentSize <= std.math.maxInt(usize)) {
-        try dst.ensureTotalCapacity(allocator, @intCast(contentSize));
-    } else {
-        try dst.ensureTotalCapacity(allocator, outChunk);
-    }
-
-    var input = C.ZSTD_inBuffer{ .src = src.ptr, .size = src.len, .pos = 0 };
-
-    while (true) {
-        try dst.ensureUnusedCapacity(allocator, outChunk);
-        var outSlice = dst.unusedCapacitySlice();
-        if (outSlice.len > outChunk) {
-            outSlice = outSlice[0..outChunk];
-        }
-        var output = C.ZSTD_outBuffer{ .dst = outSlice.ptr, .size = outSlice.len, .pos = 0 };
-
-        res = C.ZSTD_decompressStream(dstStream, &output, &input);
-
-        if (C.ZSTD_isError(res) == 1) {
-            const errCode = C.ZSTD_getErrorCode(res);
-            return handleErrCode(errCode);
-        }
-
-        dst.items.len += output.pos;
-
-        if (res == 0) {
-            break;
-        }
-        if (input.pos == input.size and output.pos == 0) {
-            return DecompressError.Unknown;
-        }
-    }
-
-    return;
+    // If ZSTD reports a smaller size, reflect the actual length.
+    dst.items.len = res;
 }
 
-pub fn decompressToBuf(allocator: std.mem.Allocator, src: []const u8) DecompressError![]u8 {
-    var dst: std.ArrayList(u8) = .empty;
-    defer dst.deinit(allocator);
+pub fn decompressGetBuf(allocator: std.mem.Allocator, src: []const u8) DecompressError![]u8 {
+    const dstSize = try getFrameContentSize(src);
+    const dst = allocator.alloc(u8, dstSize) catch return DecompressError.OutOfMemory;
+    errdefer allocator.free(dst);
 
-    try decompressToArrayList(allocator, &dst, src);
-    return try dst.toOwnedSlice(allocator);
+    const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
+
+    if (C.ZSTD_isError(res) == 1) {
+        const errCode = C.ZSTD_getErrorCode(res);
+        const msg = C.ZSTD_getErrorName(res);
+        std.debug.print("decompress error: {d}, msg={s}\n", .{ errCode, msg });
+        // TODO: log an error to understand the exact error code
+        return handleErrCode(errCode);
+    }
+
+    return dst;
 }
 
 fn handleErrCode(code: C.ZSTD_ErrorCode) DecompressError {
@@ -146,7 +122,7 @@ fn handleErrCode(code: C.ZSTD_ErrorCode) DecompressError {
     };
 }
 
-test "decompressToBuf" {
+test "decompressGetBuf" {
     const alloc = std.testing.allocator;
     const sizeUncompressed = 10 * 1024 * 1024; //10 Mb
     const cases = [_][]const u8{"a" ** sizeUncompressed} ** 5; //5 cases
@@ -158,7 +134,7 @@ test "decompressToBuf" {
 
         const compressedLen = try compressAuto(compressed, case);
 
-        const decompressed = try decompressToBuf(alloc, compressed[0..compressedLen]);
+        const decompressed = try decompressGetBuf(alloc, compressed[0..compressedLen]);
         defer alloc.free(decompressed);
 
         try std.testing.expectEqualSlices(u8, case, decompressed);
