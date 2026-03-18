@@ -182,7 +182,19 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
             }
             const compressedData = rest[0..compressedLen.value];
 
-            return try encoding.decompressToBuf(allocator, compressedData);
+            const decompressedSize = try encoding.getFrameContentSize(compressedData);
+
+            const decompressed = try allocator.alloc(u8, decompressedSize);
+            errdefer allocator.free(decompressed);
+
+            const actualSize = try encoding.decompress(decompressed, compressedData);
+
+            if (actualSize != decompressedSize) {
+                allocator.free(decompressed);
+                return UnpackError.DecompressionFailed;
+            }
+
+            return decompressed;
         },
         else => return UnpackError.InvalidCompressionKind,
     }

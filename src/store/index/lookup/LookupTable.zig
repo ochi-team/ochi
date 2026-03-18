@@ -259,7 +259,11 @@ fn readBlockHeaders(self: *LookupTable, alloc: Allocator, metaIndex: MetaIndex) 
     const end = metaIndex.indexBlockOffset + metaIndex.indexBlockSize;
     const compressedIndex = self.table.indexBuf[metaIndex.indexBlockOffset..end];
 
-    try encoding.decompressToArrayList(alloc, &self.indexBuf, compressedIndex);
+    const indexSize = try encoding.getFrameContentSize(compressedIndex);
+    try self.indexBuf.ensureUnusedCapacity(alloc, indexSize);
+    const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), compressedIndex);
+    std.debug.assert(n == indexSize);
+    self.indexBuf.items.len = n;
 
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
 }
