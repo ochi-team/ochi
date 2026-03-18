@@ -172,8 +172,6 @@ fn handleErrCode(code: C.ZSTD_ErrorCode) DecompressError {
 }
 
 test "compress decompressGetBuf" {
-    std.debug.print("decompressGetBuf", .{});
-
     const alloc = std.testing.allocator;
     const sizeUncompressed = 10 * 1024 * 1024; //10 Mb
     const cases = [_][]const u8{"a" ** sizeUncompressed} ** 5; //5 cases
