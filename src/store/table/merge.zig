@@ -19,7 +19,7 @@ pub const minMemTableSize: u64 = 4 * 1024 * 1024;
 
 // we need to balance throughput and memory limits
 // this number is just a guess
-const amountOfTablesToMerge = 16;
+pub const amountOfTablesToMerge = 16;
 
 pub const TableKind = enum {
     mem,
@@ -136,6 +136,20 @@ pub fn Merger(
             }
 
             return true;
+        }
+
+        const tablePageCacheSize = 8 * 1024 * 1024;
+        // TODO: move it to config instead of computed property
+        // TODO: ideally we move the division per table to availble mem calculation side,
+        // to make the operation rarely happen and keep the calculated value ready
+        // TODO: we must experiment with different min sizes like 4 and 2 mb
+        pub fn maxCachableTableSize() u64 {
+            const sysConf = Conf.getConf().sys;
+            const restMem = sysConf.maxMem - sysConf.cacheSize;
+            // 8mb min page cache size
+            // TODO: better to make it configurable
+            const freePerTable = @max(restMem / amountOfTablesToMerge, tablePageCacheSize);
+            return freePerTable;
         }
 
         fn filterLeveledTables(

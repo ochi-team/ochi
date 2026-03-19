@@ -7,6 +7,7 @@ const Line = @import("store/lines.zig").Line;
 const cap = @import("store/table/cap.zig");
 
 const MemTable = @import("store/inmem/MemTable.zig");
+const BlockWriter = @import("store/inmem/BlockWriter.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 
@@ -343,6 +344,21 @@ pub const Data = struct {
         defer {
             for (readers.items) |reader| reader.deinit(alloc);
             readers.deinit(alloc);
+        }
+
+        var newMemTable: ?*MemTable = null;
+        var blockWriter: BlockWriter = undefined;
+        defer blockWriter.deinit(alloc);
+        if (tableKind == .mem) {
+            newMemTable = try MemTable.init(alloc);
+            // blockWriter = BlockWriter.initFromMemTable(newMemTable.?);
+        } else {
+            var sourceCompressedSizeTotal: u64 = 0;
+            for (tables) |table| {
+                sourceCompressedSizeTotal += table.tableHeader.compressedSize;
+            }
+            // const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
+            // blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
         }
 
         // const dstTableType = merger.getDestinationTableKind(tables, force);

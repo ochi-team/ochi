@@ -1,6 +1,7 @@
 /// Block writer is created once per ingestion request cycle,
 /// it expects sorted chunks of data broken by streams (stream id + tenant)
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
@@ -27,12 +28,14 @@ size: u32,
 globalMinTimestamp: u64,
 globalMaxTimestamp: u64,
 blocksCount: u32,
-//
+
+// TODO: refactor this garbage to work with Wrter interface
 indexBlockBuf: std.ArrayList(u8),
+// TODO: make IndexBlockHeader as a value type
 indexBlockHeader: *IndexBlockHeader,
 metaIndexBuf: std.ArrayList(u8),
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
+pub fn init(allocator: Allocator) !*Self {
     var indexBlockBuf = try std.ArrayList(u8).initCapacity(allocator, indexBlockSize);
     errdefer indexBlockBuf.deinit(allocator);
     var indexBlockHeader = try IndexBlockHeader.init(allocator);
@@ -59,7 +62,14 @@ pub fn init(allocator: std.mem.Allocator) !*Self {
     return bw;
 }
 
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitstInCache: bool) !*Self {
+    _ = alloc;
+    _ = path;
+    _ = fitstInCache;
+    unreachable;
+}
+
+pub fn deinit(self: *Self, allocator: Allocator) void {
     self.indexBlockBuf.deinit(allocator);
     self.indexBlockHeader.deinit(allocator);
     self.metaIndexBuf.deinit(allocator);
@@ -68,7 +78,7 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 
 pub fn writeLines(
     self: *Self,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     sid: SID,
     lines: []*const Line,
     streamWriter: *StreamWriter,
@@ -80,7 +90,7 @@ pub fn writeLines(
 
 fn writeBlock(
     self: *Self,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     block: *Block,
     sid: SID,
     streamWriter: *StreamWriter,
@@ -126,7 +136,7 @@ fn writeBlock(
     }
 }
 
-pub fn finish(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
+pub fn finish(self: *Self, allocator: Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
@@ -144,7 +154,7 @@ pub fn finish(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWr
     th.compressedSize = streamWriter.size();
 }
 
-fn flushIndexBlock(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
+fn flushIndexBlock(self: *Self, allocator: Allocator, streamWriter: *StreamWriter) !void {
     defer self.indexBlockBuf.clearRetainingCapacity();
     if (self.indexBlockBuf.items.len > 0) {
         try self.indexBlockHeader.writeIndexBlock(
@@ -161,12 +171,13 @@ fn flushIndexBlock(self: *Self, allocator: std.mem.Allocator, streamWriter: *Str
         const offset = self.indexBlockHeader.encode(slice);
         self.metaIndexBuf.items.len += offset;
     }
+
     self.sid = null;
     self.minTimestamp = 0;
     self.maxTimestamp = 0;
 }
 
-fn writeIndexBlockHeaders(self: *Self, allocator: std.mem.Allocator, streamWriter: *StreamWriter) !void {
+fn writeIndexBlockHeaders(self: *Self, allocator: Allocator, streamWriter: *StreamWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
     try streamWriter.metaIndexBuf.ensureUnusedCapacity(allocator, bound);
     const slice = streamWriter.metaIndexBuf.unusedCapacitySlice()[0..bound];

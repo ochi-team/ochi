@@ -88,6 +88,7 @@ pub fn decode(alloc: Allocator, src: []u8) !*ColumnIDGen {
         _ = gen.genIDAssumeCapacity(key);
     }
 
+    // assign the buf ownership only after all the potential errors
     gen.keysBuf = buf;
     return gen;
 }
