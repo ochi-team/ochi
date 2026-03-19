@@ -5,8 +5,7 @@ import Footer from "../components/Footer.astro";
 import BlogBackground from "../components/BlogBackground.astro";
 import { getCollection } from 'astro:content';
 
-// const posts = await getCollection('blog');
-const posts = [];
+const posts = await getCollection('blog');
 ---
 
 <!DOCTYPE html>
