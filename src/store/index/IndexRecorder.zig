@@ -648,6 +648,7 @@ pub fn mergeTables(
         for (tables) |table| {
             sourceItemsCount += table.tableHeader.itemsCount;
         }
+        // TODO: test if we can record compressed size and make caching more reliable
         const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable();
         blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
     }
@@ -674,8 +675,8 @@ pub fn mergeTables(
 fn maxItemsPerCachedTable() u64 {
     const sysConf = Conf.getConf().sys;
     const restMem = sysConf.maxMem - sysConf.cacheSize;
-    // we anticipate 4 bytes per index item in compressed form
-    return @max(restMem / (4 * blocksInMemTable), merge.minMemTableSize);
+    // we anticipate 6 bytes per index item in compressed form
+    return @max(restMem / (6 * blocksInMemTable), merge.minMemTableSize);
 }
 
 fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
