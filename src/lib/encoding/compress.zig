@@ -1,6 +1,5 @@
 const std = @import("std");
 const C = @import("c").C;
-
 pub const CompressError = error{
     Unknown,
 };
@@ -9,7 +8,11 @@ pub const CompressError = error{
 // ZSTD_CONTENTSIZE_ERROR = 0xfffffffffffffffe
 const unknownSize: c_ulonglong = 0xffffffffffffffff;
 const errorSize: c_ulonglong = 0xfffffffffffffffe;
-const limitStreamChunks = std.math.maxInt(u32) - 1;
+
+//TODO: Need to more research about what value to choose for limiting the loop.
+// Min one chunk block size = 4 KB
+// maxItrationsDecompressStream = 10 GB / 4KB
+const maxItrationsDecompressStream = 2_621_440; 
 
 pub fn compressAuto(dst: []u8, src: []const u8) CompressError!usize {
     const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
@@ -78,18 +81,21 @@ pub fn decompress(dst: []u8, src: []const u8) DecompressError!usize {
     return res;
 }
 
-pub fn decompressToArrayList(
+pub fn decompressArray(
     allocator: std.mem.Allocator,
     dst: *std.ArrayList(u8),
     src: []const u8,
 ) DecompressError!void {
-    const buf = try decompressGetBuf(allocator, src);
-    defer allocator.free(buf);
-
-    dst.appendSlice(allocator, buf) catch return DecompressError.OutOfMemory;
+    const addCount = try getFrameContentSize(src);
+    const oldLen = dst.items.len;
+    const newLen = oldLen + addCount;
+    dst.ensureUnusedCapacity(allocator, addCount) catch return DecompressError.OutOfMemory;
+    std.debug.assert(newLen <= dst.capacity);
+    dst.items.len = newLen;
+    _ = try decompress(dst.items[oldLen..newLen], src);
 }
 
-pub fn decompressGetBuf(allocator: std.mem.Allocator, src: []const u8) DecompressError![]u8 {
+pub fn decompressBuffer(allocator: std.mem.Allocator, src: []const u8) DecompressError![]u8 {
     const dstSize = try getFrameContentSize(src);
     const dst = allocator.alloc(u8, dstSize) catch return DecompressError.OutOfMemory;
     errdefer allocator.free(dst);
@@ -124,7 +130,7 @@ pub fn decompressUnknownSizeToArrayList(
     const contentSize = C.ZSTD_getFrameContentSize(src.ptr, src.len);
     const outChunk: usize = C.ZSTD_DStreamOutSize();
     if (contentSize != unknownSize and contentSize != errorSize and contentSize <= std.math.maxInt(usize)) {
-        return decompressToArrayList(allocator, dst, src);
+        return decompressArray(allocator, dst, src);
     }
 
     var chunk = try allocator.alloc(u8, outChunk);
@@ -134,7 +140,7 @@ pub fn decompressUnknownSizeToArrayList(
     var countChunks: u32 = 0;
 
     while (true): (countChunks += 1) {
-        if (countChunks >= limitStreamChunks) {
+        if (countChunks >= maxItrationsDecompressStream) {
             return DecompressError.OutOfLimitChunks;
         }
 
@@ -171,7 +177,7 @@ fn handleErrCode(code: C.ZSTD_ErrorCode) DecompressError {
     };
 }
 
-test "compress decompressGetBuf" {
+test "compress decompressBuffer" {
     const alloc = std.testing.allocator;
     const sizeUncompressed = 10 * 1024 * 1024; //10 Mb
     const cases = [_][]const u8{"a" ** sizeUncompressed} ** 5; //5 cases
@@ -183,14 +189,14 @@ test "compress decompressGetBuf" {
 
         const compressedLen = try compressAuto(compressed, case);
 
-        const decompressed = try decompressGetBuf(alloc, compressed[0..compressedLen]);
+        const decompressed = try decompressBuffer(alloc, compressed[0..compressedLen]);
         defer alloc.free(decompressed);
 
         try std.testing.expectEqualSlices(u8, case, decompressed);
     }
 }
 
-test "compress decompressToArrayList empty dst" {
+test "compress decompressArray empty dst" {
     const alloc = std.testing.allocator;
     var dst: std.ArrayList(u8) = .empty;
     defer dst.deinit(alloc);
@@ -202,12 +208,12 @@ test "compress decompressToArrayList empty dst" {
     defer alloc.free(compressed);
 
     const compressedLen = try compressAuto(compressed, case);
-    try decompressToArrayList(alloc, &dst, compressed[0..compressedLen]);
+    try decompressArray(alloc, &dst, compressed[0..compressedLen]);
 
     try std.testing.expectEqualSlices(u8, case, dst.items);
 }
 
-test "compress decompressToArrayList dst with elements" {
+test "compress decompressArray dst with elements" {
     const alloc = std.testing.allocator;
     var dst: std.ArrayList(u8) = .empty;
     const existsSlice = "aaa";
@@ -224,7 +230,7 @@ test "compress decompressToArrayList dst with elements" {
         defer alloc.free(compressed);
 
         const compressedLen = try compressAuto(compressed, case);
-        try decompressToArrayList(alloc, &dst, compressed[0..compressedLen]);
+        try decompressArray(alloc, &dst, compressed[0..compressedLen]);
 
         try std.testing.expectEqualSlices(u8, case, dst.items[nextPosition..]);
     }
