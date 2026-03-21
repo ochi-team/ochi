@@ -330,12 +330,14 @@ fn getBloomBufferIndex(self: *Self, alloc: Allocator, key: []const u8) !u16 {
         std.debug.assert(colI == self.bloomValuesList.items.len);
         // path if empty for mem table
         if (self.path.len == 0) {
-            const valuesBuf = try createBloomBuf(alloc);
+            var valuesBuf = try createBloomBuf(alloc);
+            errdefer valuesBuf.deinit(alloc);
             const tokensBuf = try createBloomBuf(alloc);
             self.bloomValuesList.appendAssumeCapacity(valuesBuf);
             self.bloomTokensList.appendAssumeCapacity(tokensBuf);
         } else {
-            const valuesDst = try createBloomValuesFile(alloc, self.path, colI);
+            var valuesDst = try createBloomValuesFile(alloc, self.path, colI);
+            errdefer valuesDst.deinit(alloc);
             const tokensDst = try createBloomTokensValues(alloc, self.path, colI);
             self.bloomValuesList.appendAssumeCapacity(valuesDst);
             self.bloomTokensList.appendAssumeCapacity(tokensDst);
@@ -350,14 +352,24 @@ fn createBloomBuf(alloc: Allocator) !StreamDestination {
 }
 
 fn createBloomValuesFile(alloc: Allocator, tablePath: []const u8, i: usize) !StreamDestination {
-    const path = try MemTable.getBloomValuesFilePath(alloc, tablePath, i);
+    var stackFba = std.heap.stackFallback(128, alloc);
+    const fba = stackFba.get();
+
+    const path = try MemTable.getBloomValuesFilePath(fba, tablePath, i);
+    defer fba.free(path);
     const file = try std.fs.cwd().createFile(path, .{});
+    errdefer file.close();
     return StreamDestination.initFile(file);
 }
 
 fn createBloomTokensValues(alloc: Allocator, tablePath: []const u8, i: usize) !StreamDestination {
-    const path = try MemTable.getBloomTokensFilePath(alloc, tablePath, i);
+    var stackFba = std.heap.stackFallback(128, alloc);
+    const fba = stackFba.get();
+
+    const path = try MemTable.getBloomTokensFilePath(fba, tablePath, i);
+    defer fba.free(path);
     const file = try std.fs.cwd().createFile(path, .{});
+    errdefer file.close();
     return StreamDestination.initFile(file);
 }
 
