@@ -61,6 +61,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .imports = &imports,
+            // TODO: keep it only for debug mode
+            .sanitize_c = .full,
+            .sanitize_thread = true,
         }),
     });
     b.installArtifact(exe);

@@ -40,7 +40,7 @@ pub const StreamReader = struct {
     pub fn init(allocator: Allocator, tableMem: *MemTable) !*StreamReader {
         const r = try allocator.create(StreamReader);
         r.* = StreamReader{
-            .timestampsBuf = tableMem.streamWriter.timestampsBuf.items,
+            .timestampsBuf = tableMem.streamWriter.timestampsDst.asSliceAssumeBuffer(),
             .indexBuf = tableMem.streamWriter.indexBuf.items,
             .metaIndexBuf = tableMem.streamWriter.metaIndexBuf.items,
             .columnsHeaderBuf = tableMem.streamWriter.columnsHeaderBuf.items,

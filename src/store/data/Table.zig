@@ -109,7 +109,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .indexBuf = memTable.streamWriter.indexBuf.items,
         .columnsHeaderIndexBuf = memTable.streamWriter.columnsHeaderIndexBuf.items,
         .columnsHeaderBuf = memTable.streamWriter.columnsHeaderBuf.items,
-        .timestampsBuf = memTable.streamWriter.timestampsBuf.items,
+        .timestampsBuf = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(),
         .messageBloomTokens = memTable.streamWriter.messageBloomTokensBuf.items,
         .messageBloomValues = memTable.streamWriter.messageBloomValuesBuf.items,
         .bloomTokensShards = bloomTokensShards,
@@ -393,7 +393,7 @@ test "fromMem creates proper table from mem table with populated data" {
     try testing.expectEqual(memTable.streamWriter.indexBuf.items.len, table.indexBuf.len);
     try testing.expectEqual(memTable.streamWriter.columnsHeaderIndexBuf.items.len, table.columnsHeaderIndexBuf.len);
     try testing.expectEqual(memTable.streamWriter.columnsHeaderBuf.items.len, table.columnsHeaderBuf.len);
-    try testing.expectEqual(memTable.streamWriter.timestampsBuf.items.len, table.timestampsBuf.len);
+    try testing.expectEqual(memTable.streamWriter.timestampsDst.asSliceAssumeBuffer().len, table.timestampsBuf.len);
 }
 
 test "open reads table from disk" {
@@ -442,7 +442,7 @@ test "open reads table from disk" {
     try testing.expectEqualSlices(u8, memTable.streamWriter.indexBuf.items, table.indexBuf);
     try testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderIndexBuf.items, table.columnsHeaderIndexBuf);
     try testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderBuf.items, table.columnsHeaderBuf);
-    try testing.expectEqualSlices(u8, memTable.streamWriter.timestampsBuf.items, table.timestampsBuf);
+    try testing.expectEqualSlices(u8, memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(), table.timestampsBuf);
     try testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomTokensBuf.items, table.messageBloomTokens);
     try testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomValuesBuf.items, table.messageBloomValues);
 
