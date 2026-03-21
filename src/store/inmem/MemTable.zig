@@ -153,7 +153,7 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
     try fs.writeBufferValToFile(indexPath, self.streamWriter.indexBuf.items);
     try fs.writeBufferValToFile(columnsHeaderIndexPath, self.streamWriter.columnsHeaderIndexBuf.items);
     try fs.writeBufferValToFile(columnsHeaderPath, self.streamWriter.columnsHeaderBuf.items);
-    try fs.writeBufferValToFile(timestampsPath, self.streamWriter.timestampsBuf.items);
+    try fs.writeBufferValToFile(timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
 
     try fs.writeBufferValToFile(
         messageBloomFilterPath,
@@ -240,7 +240,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 
-    const timestampsContent = memTable.streamWriter.timestampsBuf.items;
+    const timestampsContent = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer();
     const indexContent = memTable.streamWriter.indexBuf.items;
 
     // Validate timestamps
@@ -405,7 +405,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
 
     const timestampsContent = try readFileAll(allocator, timestampsPath);
     defer allocator.free(timestampsContent);
-    try std.testing.expectEqualSlices(u8, memTable.streamWriter.timestampsBuf.items, timestampsContent);
+    try std.testing.expectEqualSlices(u8, memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(), timestampsContent);
 
     const msgBloomTokensContent = try readFileAll(allocator, messageBloomTokensPath);
     defer allocator.free(msgBloomTokensContent);

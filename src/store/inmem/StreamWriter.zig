@@ -12,6 +12,7 @@ const Packer = @import("Packer.zig");
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
+const StreamDestination = @import("StreamDestination.zig").StreamDestination;
 const HashTokenizer = @import("bloom.zig").HashTokenizer;
 const encodeBloomHashes = @import("bloom.zig").encodeBloomHashes;
 const encoding = @import("encoding");
@@ -36,7 +37,7 @@ const columnIndexesBufferSize = 128;
 
 // TODO: expose metrics on len/cap relations
 // TODO: move the buffers ownership to MemTable and pass the pointers to the writer
-timestampsBuf: std.ArrayList(u8),
+timestampsDst: StreamDestination,
 indexBuf: std.ArrayList(u8),
 metaIndexBuf: std.ArrayList(u8),
 
@@ -59,8 +60,8 @@ columnIdxsBuf: std.ArrayList(u8),
 timestampsEncoder: *TimestampsEncoder,
 
 pub fn init(allocator: std.mem.Allocator, maxColI: u16) !*Self {
-    var timestampsBuffer = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
-    errdefer timestampsBuffer.deinit(allocator);
+    var timestampsDst = try StreamDestination.initBuffer(allocator, tsBufferSize);
+    errdefer timestampsDst.deinit(allocator);
     var indexBuffer = try std.ArrayList(u8).initCapacity(allocator, indexBufferSize);
     errdefer indexBuffer.deinit(allocator);
     var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexBufferSize);
@@ -94,7 +95,7 @@ pub fn init(allocator: std.mem.Allocator, maxColI: u16) !*Self {
 
     const w = try allocator.create(Self);
     w.* = Self{
-        .timestampsBuf = timestampsBuffer,
+        .timestampsDst = timestampsDst,
         .indexBuf = indexBuffer,
         .metaIndexBuf = metaIndexBuf,
 
@@ -120,7 +121,7 @@ pub fn init(allocator: std.mem.Allocator, maxColI: u16) !*Self {
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-    self.timestampsBuf.deinit(allocator);
+    self.timestampsDst.deinit(allocator);
     self.indexBuf.deinit(allocator);
     self.metaIndexBuf.deinit(allocator);
 
@@ -152,7 +153,7 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 /// size gives the amount of all the buffers bytes,
 /// the content of the buffers is compressed
 pub fn size(self: *Self) u32 {
-    var res: usize = self.timestampsBuf.items.len;
+    var res: usize = self.timestampsDst.len();
     res += self.indexBuf.items.len;
     res += self.metaIndexBuf.items.len;
     res += self.columnsHeaderBuf.items.len;
@@ -235,11 +236,11 @@ fn writeTimestamps(
 
     tsHeader.min = timestamps[0];
     tsHeader.max = timestamps[timestamps.len - 1];
-    tsHeader.offset = self.timestampsBuf.items.len;
+    tsHeader.offset = self.timestampsDst.len();
     tsHeader.size = encodedTimestampsBuf.len;
     tsHeader.encodingType = encodedTimestamps.encodingType;
 
-    try self.timestampsBuf.appendSlice(allocator, encodedTimestampsBuf);
+    try self.timestampsDst.appendSlice(allocator, encodedTimestampsBuf);
 }
 
 fn writeColumnHeader(self: *Self, allocator: std.mem.Allocator, col: Column, ch: *ColumnHeader) !void {
