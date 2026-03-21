@@ -60,7 +60,7 @@ pub fn varIntBound(value: u64) usize {
     return 10;
 }
 
-pub inline fn varIntsBound(comptime T: type, values: []T) usize {
+pub fn varIntsBound(comptime T: type, values: []T) usize {
     var res: usize = 0;
     for (values) |v| {
         res += varIntBound(v);

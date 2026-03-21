@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 pub const FileDestination = struct {
     file: std.fs.File,
@@ -17,7 +18,7 @@ pub const StreamDestination = union(Tag) {
 
     const Self = @This();
 
-    pub fn initBuffer(allocator: std.mem.Allocator, capacity: usize) !Self {
+    pub fn initBuffer(allocator: Allocator, capacity: usize) !Self {
         return .{ .buffer = try std.ArrayList(u8).initCapacity(allocator, capacity) };
     }
 
@@ -28,7 +29,7 @@ pub const StreamDestination = union(Tag) {
         return .{ .file = .{ .file = file, .len = initialLen } };
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Self, allocator: Allocator) void {
         switch (self.*) {
             .buffer => |*buf| buf.deinit(allocator),
             .file => |*f| f.file.close(),
@@ -42,7 +43,7 @@ pub const StreamDestination = union(Tag) {
         };
     }
 
-    pub fn appendSlice(self: *Self, allocator: std.mem.Allocator, src: []const u8) !void {
+    pub fn appendSlice(self: *Self, allocator: Allocator, src: []const u8) !void {
         switch (self.*) {
             .buffer => |*buf| try buf.appendSlice(allocator, src),
             .file => |*f| {
@@ -52,7 +53,7 @@ pub const StreamDestination = union(Tag) {
         }
     }
 
-    fn readAll(self: *Self, allocator: std.mem.Allocator) ![]u8 {
+    fn readAll(self: *Self, allocator: Allocator) ![]u8 {
         switch (self.*) {
             .buffer => |*buf| return allocator.dupe(u8, buf.items),
             .file => |*f| {
@@ -69,11 +70,42 @@ pub const StreamDestination = union(Tag) {
         }
     }
 
-    pub fn asSliceAssumeBuffer(self: *Self) []u8 {
+    pub fn asSliceAssumeBuffer(self: *const Self) []const u8 {
         return switch (self.*) {
             .buffer => |buf| buf.items,
             .file => unreachable,
         };
+    }
+
+    pub fn allocSlice(self: *Self, alloc: Allocator, cap: usize) ![]u8 {
+        return switch (self.*) {
+            .buffer => |*buf| {
+                try buf.ensureUnusedCapacity(alloc, cap);
+                return buf.unusedCapacitySlice()[0..cap];
+            },
+            .file => |_| {
+                // TODO: this is broken,
+                // it returns a slice and if we return an error in between allocSLice and appendAllocated
+                // we leak the memory:
+                // 1. create a state to hold allocated buffer, it allows to reuse it across write operations
+                // and reliably free
+                // 2. reuse the buffer across different write destinations,
+                // it doesn't make much sense have different buffered writes since we write everything sequentially
+                return alloc.alloc(u8, cap);
+            },
+        };
+    }
+
+    /// moves items for a buffer, assumes writing to unused capacity slice happened via allocSlice
+    pub fn appendAllocated(self: *Self, alloc: Allocator, slice: []const u8, cap: usize) !void {
+        switch (self.*) {
+            .buffer => |*buf| buf.items.len += cap,
+            .file => |*f| {
+                defer alloc.free(slice);
+                try f.file.writeAll(slice[0..cap]);
+                f.len += cap;
+            },
+        }
     }
 };
 
