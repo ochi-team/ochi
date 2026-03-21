@@ -153,13 +153,13 @@ pub const ColumnData = struct {
         const valuesSize = ch.size;
         std.debug.assert(valuesSize <= maxValuesBlockSize);
 
-        const bloomValuesBuf = sr.bloomValuesList.items[bloomBufI].asSliceAssumeBuffer();
+        const bloomValuesBuf = sr.bloomValuesList.items[bloomBufI];
         const valuesData = bloomValuesBuf[ch.offset..][0..valuesSize];
 
         var bloomFilterData: ?[]const u8 = null;
 
         if (ch.type != .dict) {
-            const bloomTokensBuf = sr.bloomTokensList.items[bloomBufI].asSliceAssumeBuffer();
+            const bloomTokensBuf = sr.bloomTokensList.items[bloomBufI];
             bloomFilterData = bloomTokensBuf[ch.bloomFilterOffset..][0..ch.bloomFilterSize];
         }
 
