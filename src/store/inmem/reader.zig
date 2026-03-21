@@ -12,6 +12,7 @@ const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
 const BlockData = @import("BlockData.zig").BlockData;
 const ColumnIDGen = @import("ColumnIDGen.zig");
+const StreamDestination = @import("StreamDestination.zig").StreamDestination;
 
 // TODO: check maybe i don't need allocator.create
 pub const StreamReader = struct {
@@ -24,8 +25,8 @@ pub const StreamReader = struct {
 
     messageBloomValuesBuf: []const u8,
     messageBloomTokensBuf: []const u8,
-    bloomValuesList: *std.ArrayList(std.ArrayList(u8)),
-    bloomTokensList: *std.ArrayList(std.ArrayList(u8)),
+    bloomValuesList: *std.ArrayList(StreamDestination),
+    bloomTokensList: *std.ArrayList(StreamDestination),
 
     // TODO: decode manually when it comes to file reader
     columnIDGen: *const ColumnIDGen,
@@ -41,20 +42,20 @@ pub const StreamReader = struct {
         const r = try allocator.create(StreamReader);
         r.* = StreamReader{
             .timestampsBuf = tableMem.streamWriter.timestampsDst.asSliceAssumeBuffer(),
-            .indexBuf = tableMem.streamWriter.indexBuf.items,
-            .metaIndexBuf = tableMem.streamWriter.metaIndexBuf.items,
-            .columnsHeaderBuf = tableMem.streamWriter.columnsHeaderBuf.items,
-            .columnsHeaderIndexBuf = tableMem.streamWriter.columnsHeaderIndexBuf.items,
+            .indexBuf = tableMem.streamWriter.indexDst.asSliceAssumeBuffer(),
+            .metaIndexBuf = tableMem.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
+            .columnsHeaderBuf = tableMem.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(),
+            .columnsHeaderIndexBuf = tableMem.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(),
 
-            .messageBloomValuesBuf = tableMem.streamWriter.messageBloomValuesBuf.items,
-            .messageBloomTokensBuf = tableMem.streamWriter.messageBloomTokensBuf.items,
+            .messageBloomValuesBuf = tableMem.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
+            .messageBloomTokensBuf = tableMem.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
             .bloomValuesList = &tableMem.streamWriter.bloomValuesList,
             .bloomTokensList = &tableMem.streamWriter.bloomTokensList,
 
             .columnIDGen = tableMem.streamWriter.columnIDGen,
             .colIdx = &tableMem.streamWriter.colIdx,
-            .columnsKeysBuf = tableMem.streamWriter.columnKeysBuf.items,
-            .columnIdxsBuf = tableMem.streamWriter.columnIdxsBuf.items,
+            .columnsKeysBuf = tableMem.streamWriter.columnKeysBuf.asSliceAssumeBuffer(),
+            .columnIdxsBuf = tableMem.streamWriter.columnIdxsBuf.asSliceAssumeBuffer(),
         };
         return r;
     }
@@ -107,23 +108,23 @@ pub const StreamReader = struct {
 
         const shardCount: usize = @intCast(tableHeader.bloomValuesBuffersAmount);
 
-        const bloomValuesList = try alloc.create(std.ArrayList(std.ArrayList(u8)));
+        const bloomValuesList = try alloc.create(std.ArrayList(StreamDestination));
         errdefer alloc.destroy(bloomValuesList);
-        bloomValuesList.* = try std.ArrayList(std.ArrayList(u8)).initCapacity(alloc, shardCount);
+        bloomValuesList.* = try std.ArrayList(StreamDestination).initCapacity(alloc, shardCount);
         errdefer bloomValuesList.deinit(alloc);
 
-        const bloomTokensList = try alloc.create(std.ArrayList(std.ArrayList(u8)));
+        const bloomTokensList = try alloc.create(std.ArrayList(StreamDestination));
         errdefer alloc.destroy(bloomTokensList);
-        bloomTokensList.* = try std.ArrayList(std.ArrayList(u8)).initCapacity(alloc, shardCount);
+        bloomTokensList.* = try std.ArrayList(StreamDestination).initCapacity(alloc, shardCount);
         errdefer bloomTokensList.deinit(alloc);
 
         var shardIdx: usize = 0;
         errdefer {
-            for (bloomValuesList.items) |buf| {
-                alloc.free(buf.items);
+            for (bloomValuesList.items) |*buf| {
+                buf.deinit(alloc);
             }
-            for (bloomTokensList.items) |buf| {
-                alloc.free(buf.items);
+            for (bloomTokensList.items) |*buf| {
+                buf.deinit(alloc);
             }
         }
         while (shardIdx < shardCount) : (shardIdx += 1) {
@@ -145,8 +146,13 @@ pub const StreamReader = struct {
             valuesShard.items = bloomValuesBuf;
             valuesShard.capacity = bloomValuesBuf.len;
 
-            try bloomTokensList.append(alloc, tokensShard);
-            try bloomValuesList.append(alloc, valuesShard);
+            if (self.mem) {
+                try bloomTokensList.append(alloc, .{ .buffer = tokensShard });
+                try bloomValuesList.append(alloc, .{ .buffer = valuesShard });
+            } else {
+                try bloomTokensList.append(alloc, .{ .file = tokensCopy });
+                try bloomValuesList.append(alloc, .{ .file = valuesCopy });
+            }
         }
 
         var columnIDGen: *ColumnIDGen = undefined;
@@ -194,15 +200,15 @@ pub const StreamReader = struct {
             allocator.free(self.messageBloomValuesBuf);
             allocator.free(self.messageBloomTokensBuf);
 
-            for (self.bloomValuesList.items) |buf| {
-                allocator.free(buf.items);
+            for (self.bloomValuesList.items) |*buf| {
+                buf.deinit(allocator);
             }
             self.bloomValuesList.deinit(allocator);
             allocator.destroy(self.bloomValuesList);
 
             const bloomTokensList = @constCast(self.bloomTokensList);
-            for (bloomTokensList.items) |buf| {
-                allocator.free(buf.items);
+            for (bloomTokensList.items) |*buf| {
+                buf.deinit(allocator);
             }
             bloomTokensList.deinit(allocator);
             allocator.destroy(bloomTokensList);
@@ -232,10 +238,10 @@ pub const StreamReader = struct {
         total += self.messageBloomValuesBuf.len;
         total += self.messageBloomTokensBuf.len;
         for (self.bloomValuesList.items) |buf| {
-            total += buf.items.len;
+            total += buf.len();
         }
         for (self.bloomTokensList.items) |buf| {
-            total += buf.items.len;
+            total += buf.len();
         }
         total += self.columnsKeysBuf.len;
         total += self.columnIdxsBuf.len;
@@ -296,7 +302,7 @@ pub const BlockReader = struct {
     pub fn initFromMemTable(allocator: Allocator, tableMem: *MemTable) !*BlockReader {
         const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
             allocator,
-            tableMem.streamWriter.metaIndexBuf.items,
+            tableMem.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
         );
         errdefer {
             for (indexBlockHeaders) |*h| h.deinitRead(allocator);

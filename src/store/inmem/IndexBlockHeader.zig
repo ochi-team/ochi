@@ -54,13 +54,13 @@ pub fn writeIndexBlock(
     }
 
     const compressBound = try encoding.compressBound(indexBlockBuf.items.len);
-    try streamWriter.indexBuf.ensureUnusedCapacity(allocator, compressBound);
-    const compressed = streamWriter.indexBuf.unusedCapacitySlice()[0..compressBound];
+    const compressed = try streamWriter.indexDst.allocSlice(allocator, compressBound);
 
     const offset = try encoding.compressAuto(compressed, indexBlockBuf.items);
+    const len = streamWriter.indexDst.len();
+    try streamWriter.indexDst.appendAllocated(allocator, compressed, offset);
 
-    self.offset = streamWriter.indexBuf.items.len;
-    streamWriter.indexBuf.items.len += offset;
+    self.offset = len;
     self.size = offset;
     self.sid = sid;
     self.minTs = minTs;

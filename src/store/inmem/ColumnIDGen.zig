@@ -68,7 +68,7 @@ pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
     return encoding.compressAuto(dst, tmpBuf[0..enc.offset]);
 }
 
-pub fn decode(alloc: Allocator, src: []u8) !*ColumnIDGen {
+pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
     const size = try encoding.getFrameContentSize(src);
 
     const buf = try alloc.alloc(u8, size);

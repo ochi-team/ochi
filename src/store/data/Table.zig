@@ -61,7 +61,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     // TODO: move ownership of the original meta index to the table, not only the buffers,
     // but it requires index collecting during ingestion
     var indexBlockHeaders: []IndexBlockHeader = &.{};
-    const metaIndexBuf = memTable.streamWriter.metaIndexBuf.items;
+    const metaIndexBuf = memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer();
     if (metaIndexBuf.len > 0) {
         indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaIndexBuf);
     }
@@ -72,8 +72,8 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
 
     // TODO: avoid decoding column ids, we can simply assign what we have from the stream writer
     var columnIDGen: *ColumnIDGen = undefined;
-    if (memTable.streamWriter.columnKeysBuf.items.len > 0) {
-        columnIDGen = try ColumnIDGen.decode(alloc, memTable.streamWriter.columnKeysBuf.items);
+    if (memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer().len > 0) {
+        columnIDGen = try ColumnIDGen.decode(alloc, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
     } else {
         columnIDGen = try ColumnIDGen.init(alloc);
     }
@@ -82,8 +82,8 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
     errdefer columnIdxs.deinit(alloc);
 
-    if (memTable.streamWriter.columnIdxsBuf.items.len > 0) {
-        columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, memTable.streamWriter.columnIdxsBuf.items);
+    if (memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer().len > 0) {
+        columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
     }
 
     const bloomTokensList = memTable.streamWriter.bloomTokensList.items;
@@ -94,8 +94,8 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     errdefer alloc.free(bloomValuesShards);
 
     for (0..bloomValuesList.len) |i| {
-        bloomTokensShards[i] = bloomTokensList[i].items;
-        bloomValuesShards[i] = bloomValuesList[i].items;
+        bloomTokensShards[i] = bloomTokensList[i].asSliceAssumeBuffer();
+        bloomValuesShards[i] = bloomValuesList[i].asSliceAssumeBuffer();
     }
 
     const table = try alloc.create(Table);
@@ -106,12 +106,12 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .path = "",
         .indexBlockHeaders = indexBlockHeaders,
         .tableHeader = &memTable.tableHeader,
-        .indexBuf = memTable.streamWriter.indexBuf.items,
-        .columnsHeaderIndexBuf = memTable.streamWriter.columnsHeaderIndexBuf.items,
-        .columnsHeaderBuf = memTable.streamWriter.columnsHeaderBuf.items,
+        .indexBuf = memTable.streamWriter.indexDst.asSliceAssumeBuffer(),
+        .columnsHeaderIndexBuf = memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(),
+        .columnsHeaderBuf = memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(),
         .timestampsBuf = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(),
-        .messageBloomTokens = memTable.streamWriter.messageBloomTokensBuf.items,
-        .messageBloomValues = memTable.streamWriter.messageBloomValuesBuf.items,
+        .messageBloomTokens = memTable.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
+        .messageBloomValues = memTable.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
         .bloomTokensShards = bloomTokensShards,
         .bloomValuesShards = bloomValuesShards,
         .columnIDGen = columnIDGen,
@@ -390,9 +390,9 @@ test "fromMem creates proper table from mem table with populated data" {
     try testing.expect(table.columnIdxs.count() > 0);
     try testing.expect(table.columnIDGen.keyIDs.count() > 0);
 
-    try testing.expectEqual(memTable.streamWriter.indexBuf.items.len, table.indexBuf.len);
-    try testing.expectEqual(memTable.streamWriter.columnsHeaderIndexBuf.items.len, table.columnsHeaderIndexBuf.len);
-    try testing.expectEqual(memTable.streamWriter.columnsHeaderBuf.items.len, table.columnsHeaderBuf.len);
+    try testing.expectEqual(memTable.streamWriter.indexDst.asSliceAssumeBuffer().len, table.indexBuf.len);
+    try testing.expectEqual(memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer().len, table.columnsHeaderIndexBuf.len);
+    try testing.expectEqual(memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer().len, table.columnsHeaderBuf.len);
     try testing.expectEqual(memTable.streamWriter.timestampsDst.asSliceAssumeBuffer().len, table.timestampsBuf.len);
 }
 
@@ -438,13 +438,13 @@ test "open reads table from disk" {
     defer table.release();
 
     try testing.expect(table.disk != null);
-    try testing.expectEqual(memTable.streamWriter.indexBuf.items.len, table.indexBuf.len);
-    try testing.expectEqualSlices(u8, memTable.streamWriter.indexBuf.items, table.indexBuf);
-    try testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderIndexBuf.items, table.columnsHeaderIndexBuf);
-    try testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderBuf.items, table.columnsHeaderBuf);
+    try testing.expectEqual(memTable.streamWriter.indexDst.asSliceAssumeBuffer().len, table.indexBuf.len);
+    try testing.expectEqualSlices(u8, memTable.streamWriter.indexDst.asSliceAssumeBuffer(), table.indexBuf);
+    try testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(), table.columnsHeaderIndexBuf);
+    try testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(), table.columnsHeaderBuf);
     try testing.expectEqualSlices(u8, memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(), table.timestampsBuf);
-    try testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomTokensBuf.items, table.messageBloomTokens);
-    try testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomValuesBuf.items, table.messageBloomValues);
+    try testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(), table.messageBloomTokens);
+    try testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(), table.messageBloomValues);
 
     try testing.expectEqual(
         memTable.tableHeader.bloomValuesBuffersAmount,
@@ -452,8 +452,8 @@ test "open reads table from disk" {
     );
     try testing.expectEqual(@as(usize, memTable.streamWriter.bloomValuesList.items.len), table.bloomValuesShards.len);
     for (table.bloomValuesShards, 0..) |shard, i| {
-        try testing.expectEqualSlices(u8, memTable.streamWriter.bloomTokensList.items[i].items, table.bloomTokensShards[i]);
-        try testing.expectEqualSlices(u8, memTable.streamWriter.bloomValuesList.items[i].items, shard);
+        try testing.expectEqualSlices(u8, memTable.streamWriter.bloomTokensList.items[i].asSliceAssumeBuffer(), table.bloomTokensShards[i]);
+        try testing.expectEqualSlices(u8, memTable.streamWriter.bloomValuesList.items[i].asSliceAssumeBuffer(), shard);
     }
 
     try testing.expect(table.columnIDGen.keyIDs.count() > 0);
@@ -461,7 +461,7 @@ test "open reads table from disk" {
 
     const expectedHeaders = try IndexBlockHeader.readIndexBlockHeaders(
         alloc,
-        memTable.streamWriter.metaIndexBuf.items,
+        memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
     );
     defer {
         for (expectedHeaders) |*hdr| hdr.deinitRead(alloc);

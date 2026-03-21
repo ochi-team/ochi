@@ -179,8 +179,8 @@ fn flushIndexBlock(self: *Self, allocator: Allocator, streamWriter: *StreamWrite
 
 fn writeIndexBlockHeaders(self: *Self, allocator: Allocator, streamWriter: *StreamWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
-    try streamWriter.metaIndexBuf.ensureUnusedCapacity(allocator, bound);
-    const slice = streamWriter.metaIndexBuf.unusedCapacitySlice()[0..bound];
+    const slice = try streamWriter.metaIndexDst.allocSlice(allocator, bound);
     const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
-    streamWriter.metaIndexBuf.items.len += offset;
+
+    try streamWriter.metaIndexDst.appendAllocated(allocator, slice, offset);
 }

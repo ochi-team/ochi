@@ -44,7 +44,7 @@ pub fn encode(self: *Self, allocator: std.mem.Allocator, tss: []u64) !EncodedTim
         .offset = compressed_size,
     };
 }
-pub fn decode(self: *Self, dst: []u64, src: []u8) !void {
+pub fn decode(self: *Self, dst: []u64, src: []const u8) !void {
     _ = try zType.deltapack_decompress(self.ctx, src, dst);
 }
 
