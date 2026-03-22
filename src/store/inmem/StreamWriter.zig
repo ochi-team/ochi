@@ -6,6 +6,8 @@ const ValuesEncoder = @import("ValuesEncoder.zig");
 const Block = @import("Block.zig");
 const Column = @import("Column.zig");
 const MemTable = @import("MemTable.zig");
+const Filenames = @import("../../Filenames.zig");
+const fs = @import("../../fs.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
 const ColumnHeader = @import("block_header.zig").ColumnHeader;
@@ -21,6 +23,7 @@ const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
 const maxPackedValuesSize = 8 * 1024 * 1024;
+const bloomValuesMaxShardsCount: u16 = 128;
 
 pub const Error = error{
     EmptyTimestamps,
@@ -46,7 +49,6 @@ const columnKeysBufferSize = 512;
 const columnIndexesBufferSize = 128;
 
 // TODO: expose metrics on len/cap relations
-// TODO: move the buffers ownership to MemTable and pass the pointers to the writer
 timestampsDst: StreamDestination,
 indexDst: StreamDestination,
 metaIndexDst: StreamDestination,
@@ -141,10 +143,115 @@ pub fn initDisk(alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
     // TODO: implement page cache support
     _ = fitsInCache;
 
+    fs.makeDirAssert(path);
+
+    var stack = std.heap.stackFallback(2048, alloc);
+    const fba = stack.get();
+
+    // TODO: open files in parallel
+
+    // TODO: banch of openings are duplicated across index and data file,
+    // it's better to have them all together as DataBuffers, DataFiles, etc.
+    const columnKeysPath = try std.fs.path.join(fba, &.{ path, Filenames.columnKeys });
+    defer fba.free(columnKeysPath);
+    const columnIdxsPath = try std.fs.path.join(fba, &.{ path, Filenames.columnIdxs });
+    defer fba.free(columnIdxsPath);
+    const metaindexPath = try std.fs.path.join(fba, &.{ path, Filenames.metaindex });
+    defer fba.free(metaindexPath);
+    const indexPath = try std.fs.path.join(fba, &.{ path, Filenames.index });
+    defer fba.free(indexPath);
+    const columnsHeaderIndexPath = try std.fs.path.join(fba, &.{ path, Filenames.columnsHeaderIndex });
+    defer fba.free(columnsHeaderIndexPath);
+    const columnsHeaderPath = try std.fs.path.join(fba, &.{ path, Filenames.columnsHeader });
+    defer fba.free(columnsHeaderPath);
+    const timestampsPath = try std.fs.path.join(fba, &.{ path, Filenames.timestamps });
+    defer fba.free(timestampsPath);
+    const messageBloomTokensPath = try std.fs.path.join(fba, &.{ path, Filenames.messageTokens });
+    defer fba.free(messageBloomTokensPath);
+    const messageBloomValuesPath = try std.fs.path.join(fba, &.{ path, Filenames.messageValues });
+    defer fba.free(messageBloomValuesPath);
+
+    var columnKeysFile = try std.fs.createFileAbsolute(columnKeysPath, .{ .truncate = true, .read = true });
+    errdefer columnKeysFile.close();
+    var columnKeysBuf = try StreamDestination.initFile(columnKeysFile);
+    errdefer columnKeysBuf.deinit(alloc);
+
+    var columnIdxsFile = try std.fs.createFileAbsolute(columnIdxsPath, .{ .truncate = true, .read = true });
+    errdefer columnIdxsFile.close();
+    var columnIdxsBuf = try StreamDestination.initFile(columnIdxsFile);
+    errdefer columnIdxsBuf.deinit(alloc);
+
+    var metaindexFile = try std.fs.createFileAbsolute(metaindexPath, .{ .truncate = true, .read = true });
+    errdefer metaindexFile.close();
+    var metaIndexDst = try StreamDestination.initFile(metaindexFile);
+    errdefer metaIndexDst.deinit(alloc);
+
+    var indexFile = try std.fs.createFileAbsolute(indexPath, .{ .truncate = true, .read = true });
+    errdefer indexFile.close();
+    var indexDst = try StreamDestination.initFile(indexFile);
+    errdefer indexDst.deinit(alloc);
+
+    var columnsHeaderIndexFile = try std.fs.createFileAbsolute(columnsHeaderIndexPath, .{ .truncate = true, .read = true });
+    errdefer columnsHeaderIndexFile.close();
+    var columnsHeaderIndexDst = try StreamDestination.initFile(columnsHeaderIndexFile);
+    errdefer columnsHeaderIndexDst.deinit(alloc);
+
+    var columnsHeaderFile = try std.fs.createFileAbsolute(columnsHeaderPath, .{ .truncate = true, .read = true });
+    errdefer columnsHeaderFile.close();
+    var columnsHeaderDst = try StreamDestination.initFile(columnsHeaderFile);
+    errdefer columnsHeaderDst.deinit(alloc);
+
+    var timestampsFile = try std.fs.createFileAbsolute(timestampsPath, .{ .truncate = true, .read = true });
+    errdefer timestampsFile.close();
+    var timestampsDst = try StreamDestination.initFile(timestampsFile);
+    errdefer timestampsDst.deinit(alloc);
+
+    var messageBloomTokensFile = try std.fs.createFileAbsolute(messageBloomTokensPath, .{ .truncate = true, .read = true });
+    errdefer messageBloomTokensFile.close();
+    var msgBloomTokensDst = try StreamDestination.initFile(messageBloomTokensFile);
+    errdefer msgBloomTokensDst.deinit(alloc);
+
+    var messageBloomValuesFile = try std.fs.createFileAbsolute(messageBloomValuesPath, .{ .truncate = true, .read = true });
+    errdefer messageBloomValuesFile.close();
+    var msgBloomValuesDst = try StreamDestination.initFile(messageBloomValuesFile);
+    errdefer msgBloomValuesDst.deinit(alloc);
+    var bloomValuesList = try std.ArrayList(StreamDestination).initCapacity(alloc, bloomValuesMaxShardsCount);
+    errdefer bloomValuesList.deinit(alloc);
+    var bloomTokensList = try std.ArrayList(StreamDestination).initCapacity(alloc, bloomValuesMaxShardsCount);
+    errdefer bloomTokensList.deinit(alloc);
+
+    const columnIDGen = try ColumnIDGen.init(alloc);
+    errdefer columnIDGen.deinit(alloc);
+    const colIdx = std.AutoHashMap(u16, u16).init(alloc);
+
+    const timestampsEncoder = try TimestampsEncoder.init(alloc);
+    errdefer timestampsEncoder.deinit(alloc);
+
     const w = try alloc.create(Self);
-    // w.* = Self{
-    //     .path = path,
-    // };
+    w.* = Self{
+        .timestampsDst = timestampsDst,
+        .indexDst = indexDst,
+        .metaIndexDst = metaIndexDst,
+
+        .columnsHeaderDst = columnsHeaderDst,
+        .columnsHeaderIndexDst = columnsHeaderIndexDst,
+
+        .messageBloomValuesDst = msgBloomValuesDst,
+        .messageBloomTokensDst = msgBloomTokensDst,
+        .bloomValuesList = bloomValuesList,
+        .bloomTokensList = bloomTokensList,
+
+        .columnIDGen = columnIDGen,
+        .colIdx = colIdx,
+        .nextColI = 0,
+        .maxColI = bloomValuesMaxShardsCount,
+
+        .columnKeysBuf = columnKeysBuf,
+        .columnIdxsBuf = columnIdxsBuf,
+
+        .timestampsEncoder = timestampsEncoder,
+        .path = path,
+    };
     return w;
 }
 

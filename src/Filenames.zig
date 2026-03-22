@@ -1,23 +1,20 @@
-pub const columnNames = "column_names.bin";
-pub const columnIdxs = "column_idxs.bin";
+pub const columnKeys = "columnKeys.bin";
+pub const columnIdxs = "columnIdxs.bin";
 pub const metaindex = "metaindex.bin";
 pub const index = "index.bin";
-pub const columnsHeaderIndex = "columns_header_index.bin";
-pub const columnsHeader = "columns_header.bin";
+pub const columnsHeaderIndex = "columnsHeaderIndex.bin";
+pub const columnsHeader = "columnsHeader.bin";
 pub const timestamps = "timestamps.bin";
-pub const oldValues = "field_values.bin";
-pub const oldBloom = "field_bloom.bin";
 pub const bloomValues = "values.bin";
-pub const bloomTokens = "bloom.bin";
-pub const messageValues = "message_values.bin";
-pub const messageTokens = "message_bloom.bin";
+pub const bloomTokens = "tokens.bin";
+pub const messageValues = "messageValues.bin";
+pub const messageTokens = "messageTokens.bin";
 
 pub const lens = "lens.bin";
 pub const entries = "entries.bin";
 
 pub const header = "header.json";
 pub const tables = "tables.json";
-pub const deleteTasks = "delete_tasks.json";
 
 pub const tableIndex = "index";
 pub const tableData = "data";

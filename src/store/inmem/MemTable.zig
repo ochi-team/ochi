@@ -113,9 +113,9 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
     var stack = std.heap.stackFallback(2048, alloc);
     const allocator = stack.get();
 
-    const columnNamesPath =
-        try std.fs.path.join(allocator, &.{ path, Filenames.columnNames });
-    defer allocator.free(columnNamesPath);
+    const columnKeysPath =
+        try std.fs.path.join(allocator, &.{ path, Filenames.columnKeys });
+    defer allocator.free(columnKeysPath);
 
     const columnIdxsPath =
         try std.fs.path.join(allocator, &.{ path, Filenames.columnIdxs });
@@ -149,7 +149,7 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         try std.fs.path.join(allocator, &.{ path, Filenames.messageTokens });
     defer allocator.free(messageBloomFilterPath);
 
-    try fs.writeBufferValToFile(columnNamesPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(columnKeysPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
     try fs.writeBufferValToFile(columnIdxsPath, self.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
     try fs.writeBufferValToFile(metaindexPath, self.streamWriter.metaIndexDst.asSliceAssumeBuffer());
     try fs.writeBufferValToFile(indexPath, self.streamWriter.indexDst.asSliceAssumeBuffer());
@@ -356,8 +356,8 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     try memTable.addLines(allocator, lines[0..]);
     try memTable.storeToDisk(allocator, flushPath);
 
-    const columnNamesPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.columnNames });
-    defer allocator.free(columnNamesPath);
+    const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.columnKeys });
+    defer allocator.free(columnKeysPath);
     const columnIdxsPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.columnIdxs });
     defer allocator.free(columnIdxsPath);
     const metaindexPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.metaindex });
@@ -381,9 +381,9 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.header });
     defer allocator.free(metadataPath);
 
-    const columnNamesContent = try readFileAll(allocator, columnNamesPath);
-    defer allocator.free(columnNamesContent);
-    try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer(), columnNamesContent);
+    const columnKeysContent = try readFileAll(allocator, columnKeysPath);
+    defer allocator.free(columnKeysContent);
+    try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer(), columnKeysContent);
 
     const columnIdxsContent = try readFileAll(allocator, columnIdxsPath);
     defer allocator.free(columnIdxsContent);
