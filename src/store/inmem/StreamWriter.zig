@@ -183,7 +183,7 @@ pub fn writeColumnKeys(self: *Self, allocator: Allocator) !void {
     const encodingBound = try self.columnIDGen.bound();
     const slice = try self.columnKeysBuf.allocSlice(allocator, encodingBound);
     const offset = try self.columnIDGen.encode(allocator, slice);
-    try self.columnKeysBuf.appendAllocated(allocator, slice, offset);
+    try self.columnKeysBuf.appendAllocated(slice, offset);
 }
 
 // [10:len][20 * len:key value pair]
@@ -206,7 +206,7 @@ pub fn writeColumnIndexes(self: *Self, allocator: Allocator) !void {
         enc.writeVarInt(entry.key_ptr.*);
         enc.writeVarInt(entry.value_ptr.*);
     }
-    try self.columnIdxsBuf.appendAllocated(allocator, slice, enc.offset);
+    try self.columnIdxsBuf.appendAllocated(slice, enc.offset);
 }
 
 pub fn writeBlock(
