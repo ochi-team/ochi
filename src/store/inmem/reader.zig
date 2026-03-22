@@ -23,6 +23,9 @@ pub const StreamReader = struct {
     columnsHeaderBuf: []const u8,
     columnsHeaderIndexBuf: []const u8,
 
+    columnsKeysBuf: []const u8,
+    columnIdxsBuf: []const u8,
+
     messageBloomValuesBuf: []const u8,
     messageBloomTokensBuf: []const u8,
     // TODO: consider making it as a value, not a pointer
@@ -32,8 +35,6 @@ pub const StreamReader = struct {
     // TODO: decode manually when it comes to file reader
     columnIDGen: *const ColumnIDGen,
     colIdx: *const std.AutoHashMap(u16, u16),
-    columnsKeysBuf: []const u8,
-    columnIdxsBuf: []const u8,
 
     // TODO: this flag doesn't look smart,
     // there must be a better idea to track ownership
