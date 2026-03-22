@@ -135,8 +135,8 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .tableHeader = header,
     };
 
-    const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnNames });
-    defer fbaAlloc.free(columnNamesPath);
+    const columnKeysPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnKeys });
+    defer fbaAlloc.free(columnKeysPath);
     const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnIdxs });
     defer fbaAlloc.free(columnIdxsPath);
     const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
@@ -154,11 +154,11 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageValues });
     defer fbaAlloc.free(messageBloomValuesPath);
 
-    const columnNamesContent = try fs.readAll(alloc, columnNamesPath);
-    defer alloc.free(columnNamesContent);
+    const columnKeysContent = try fs.readAll(alloc, columnKeysPath);
+    defer alloc.free(columnKeysContent);
     var columnIDGen: *ColumnIDGen = undefined;
-    if (columnNamesContent.len > 0) {
-        columnIDGen = try ColumnIDGen.decode(alloc, columnNamesContent);
+    if (columnKeysContent.len > 0) {
+        columnIDGen = try ColumnIDGen.decode(alloc, columnKeysContent);
     } else {
         columnIDGen = try ColumnIDGen.init(alloc);
     }
