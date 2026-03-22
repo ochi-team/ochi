@@ -182,5 +182,5 @@ fn writeIndexBlockHeaders(self: *Self, allocator: Allocator, streamWriter: *Stre
     const slice = try streamWriter.metaIndexDst.allocSlice(allocator, bound);
     const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
 
-    try streamWriter.metaIndexDst.appendAllocated(allocator, slice, offset);
+    try streamWriter.metaIndexDst.appendAllocated(slice, offset);
 }

@@ -4,6 +4,8 @@ const Allocator = std.mem.Allocator;
 pub const FileDestination = struct {
     file: std.fs.File,
     len: usize,
+    /// buffer holds allocated chunk to reuse between write operations
+    buf: std.ArrayList(u8) = .empty,
 };
 
 pub const Tag = enum {
@@ -32,7 +34,10 @@ pub const StreamDestination = union(Tag) {
     pub fn deinit(self: *Self, allocator: Allocator) void {
         switch (self.*) {
             .buffer => |*buf| buf.deinit(allocator),
-            .file => |*f| f.file.close(),
+            .file => |*f| {
+                f.buf.deinit(allocator);
+                f.file.close();
+            },
         }
     }
 
@@ -83,25 +88,21 @@ pub const StreamDestination = union(Tag) {
                 try buf.ensureUnusedCapacity(alloc, cap);
                 return buf.unusedCapacitySlice()[0..cap];
             },
-            .file => |_| {
-                // TODO: this is broken,
-                // it returns a slice and if we return an error in between allocSLice and appendAllocated
-                // we leak the memory:
-                // 1. create a state to hold allocated buffer, it allows to reuse it across write operations
-                // and reliably free
-                // 2. reuse the buffer across different write destinations,
+            .file => |*f| {
+                // TODO: reuse the buffer across different write destinations,
                 // it doesn't make much sense have different buffered writes since we write everything sequentially
-                return alloc.alloc(u8, cap);
+                f.buf.clearRetainingCapacity();
+                try f.buf.ensureUnusedCapacity(alloc, cap);
+                return f.buf.unusedCapacitySlice()[0..cap];
             },
         };
     }
 
     /// moves items for a buffer, assumes writing to unused capacity slice happened via allocSlice
-    pub fn appendAllocated(self: *Self, alloc: Allocator, slice: []const u8, cap: usize) !void {
+    pub fn appendAllocated(self: *Self, slice: []const u8, cap: usize) !void {
         switch (self.*) {
             .buffer => |*buf| buf.items.len += cap,
             .file => |*f| {
-                defer alloc.free(slice);
                 try f.file.writeAll(slice[0..cap]);
                 f.len += cap;
             },
