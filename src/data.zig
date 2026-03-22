@@ -8,6 +8,7 @@ const cap = @import("store/table/cap.zig");
 
 const MemTable = @import("store/inmem/MemTable.zig");
 const BlockWriter = @import("store/inmem/BlockWriter.zig");
+const StreamWriter = @import("store/inmem/StreamWriter.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 
@@ -347,18 +348,19 @@ pub const Data = struct {
         }
 
         var newMemTable: ?*MemTable = null;
-        var blockWriter: BlockWriter = undefined;
+        const blockWriter = try BlockWriter.init(alloc);
         defer blockWriter.deinit(alloc);
+        var streamWriter: *StreamWriter = undefined;
         if (tableKind == .mem) {
             newMemTable = try MemTable.init(alloc);
-            // blockWriter = BlockWriter.initFromMemTable(newMemTable.?);
+            streamWriter = try StreamWriter.initMem(alloc, 1);
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
                 sourceCompressedSizeTotal += table.tableHeader.compressedSize;
             }
-            // const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
-            // blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
+            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
+            streamWriter = try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
 
         // const dstTableType = merger.getDestinationTableKind(tables, force);

@@ -26,6 +26,13 @@ pub const Error = error{
     EmptyTimestamps,
 };
 
+// TODO: consider a better name:
+// - MemTableWriter
+// - LinesWriter
+// - ColumnsWriter
+// - TypedWriter
+// or find a better one,
+// then rename Self accordingly
 const Self = @This();
 
 const tsBufferSize = 2 * 1024;
@@ -128,6 +135,19 @@ pub fn initMem(allocator: Allocator, maxColI: u16) !*Self {
     return w;
 }
 
+pub fn initDisk(alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
+    std.debug.assert(path.len != 0);
+
+    // TODO: implement page cache support
+    _ = fitsInCache;
+
+    const w = try alloc.create(Self);
+    // w.* = Self{
+    //     .path = path,
+    // };
+    return w;
+}
+
 pub fn deinit(self: *Self, allocator: Allocator) void {
     self.timestampsDst.deinit(allocator);
     self.indexDst.deinit(allocator);
@@ -186,7 +206,6 @@ pub fn writeColumnKeys(self: *Self, allocator: Allocator) !void {
     try self.columnKeysBuf.appendAllocated(slice, offset);
 }
 
-// [10:len][20 * len:key value pair]
 pub fn writeColumnIndexes(self: *Self, allocator: Allocator) !void {
     const count = self.colIdx.count();
 
