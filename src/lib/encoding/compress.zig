@@ -1,4 +1,5 @@
 const std = @import("std");
+const AllocError = std.mem.Allocator.Error;
 const C = @import("c").C;
 pub const CompressError = error{
     Unknown,
@@ -48,7 +49,6 @@ pub fn compressBound(size: usize) BoundError!usize {
 pub const DecompressError = error{
     Unknown,
     InsufficientCapacity,
-    OutOfMemory,
     BadChunkAdded,
     OutOfLimitChunks,
 };
@@ -85,19 +85,19 @@ pub fn decompressArray(
     allocator: std.mem.Allocator,
     dst: *std.ArrayList(u8),
     src: []const u8,
-) DecompressError!void {
+) (DecompressError || AllocError)!void {
     const addCount = try getFrameContentSize(src);
     const oldLen = dst.items.len;
     const newLen = oldLen + addCount;
-    dst.ensureUnusedCapacity(allocator, addCount) catch return DecompressError.OutOfMemory;
+    try dst.ensureUnusedCapacity(allocator, addCount);
     std.debug.assert(newLen <= dst.capacity);
     dst.items.len = newLen;
     _ = try decompress(dst.items[oldLen..newLen], src);
 }
 
-pub fn decompressBuffer(allocator: std.mem.Allocator, src: []const u8) DecompressError![]u8 {
+pub fn decompressBuffer(allocator: std.mem.Allocator, src: []const u8) (DecompressError || AllocError)![]u8 {
     const dstSize = try getFrameContentSize(src);
-    const dst = allocator.alloc(u8, dstSize) catch return DecompressError.OutOfMemory;
+    const dst = try allocator.alloc(u8, dstSize);
     errdefer allocator.free(dst);
 
     const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
@@ -117,8 +117,8 @@ pub fn decompressUnknownSizeToArrayList(
     allocator: std.mem.Allocator,
     dst: *std.ArrayList(u8),
     src: []const u8,
-) DecompressError!void {
-    const dstStream = C.ZSTD_createDStream() orelse return DecompressError.OutOfMemory;
+) (DecompressError || AllocError)!void {
+    const dstStream = C.ZSTD_createDStream() orelse return DecompressError.Unknown;
     defer _ = C.ZSTD_freeDStream(dstStream);
 
     var res = C.ZSTD_initDStream(dstStream);
@@ -158,7 +158,7 @@ pub fn decompressUnknownSizeToArrayList(
         }
 
         if (output.pos > 0) {
-            dst.appendSlice(allocator, chunk[0..output.pos]) catch return DecompressError.OutOfMemory;
+            try dst.appendSlice(allocator, chunk[0..output.pos]);
         }
 
         if (res == 0) {
