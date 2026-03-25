@@ -103,7 +103,7 @@ pub const StreamReader = struct {
         defer fbaAlloc.free(messageBloomTokensPath);
         const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageValues });
         defer fbaAlloc.free(messageBloomValuesPath);
-        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnNames });
+        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnKeys });
         defer fbaAlloc.free(columnNamesPath);
 
         const columnIdxsBuf = try fs.readAll(alloc, columnIdxsPath);
