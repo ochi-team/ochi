@@ -206,13 +206,16 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
-    const shard = self.entries.next();
-    const blocksList = try shard.add(alloc, entries, self.maxMemBlockSize);
-    if (blocksList == null) return;
-
-    var blocks = blocksList.?;
-    defer blocks.deinit(alloc);
-    try self.flushBlocks(alloc, blocks.items);
+   const shard = self.entries.next();
+   var blocksListResult = try shard.add(alloc, entries, self.maxMemBlockSize);
+    if (blocksListResult) |*blocksList| {
+        defer blocksList.blocksToFlush.deinit(alloc);
+        try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
+        if (blocksList.entryTailIndex > 0) {
+            //TODO: Need to limit the number of recursive call attempts
+            try self.add(alloc, entries[blocksList.entryTailIndex..]);
+        }
+    }
 }
 
 pub fn getTables(self: *IndexRecorder, alloc: Allocator) !std.ArrayList(*Table) {
