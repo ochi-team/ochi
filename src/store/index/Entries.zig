@@ -9,8 +9,8 @@ const EntriesShardAddResult = struct {
     blocksToFlush: std.ArrayList(*MemBlock),
     entryTailIndex: usize,
     pub fn deinit(self: *EntriesShardAddResult, alloc: Allocator) void {
-         for (self.blocksToFlush.items) |b| b.deinit(alloc);
-         self.blocksToFlush.deinit(alloc);
+        for (self.blocksToFlush.items) |b| b.deinit(alloc);
+        self.blocksToFlush.deinit(alloc);
     }
 };
 
@@ -92,7 +92,7 @@ const EntriesShard = struct {
             // OR preallocate a pool of such arrays in a single segment
             const result: EntriesShardAddResult = .{
                 .blocksToFlush = self.blocks,
-                .entryTailIndex =  if (entryTailIndex >= entries.len) 0 else entryTailIndex,
+                .entryTailIndex = if (entryTailIndex >= entries.len) 0 else entryTailIndex,
             };
 
             self.blocks = try std.ArrayList(*MemBlock).initCapacity(alloc, maxBlocksPerShard);
@@ -280,20 +280,14 @@ test "EntriesShard.add" {
         .{
             .setup_blocks_count = maxBlocksPerShard - 1,
             .fill_block_after_setup = true,
-            .test_entries = &.{theLargest, theLargest},
+            .test_entries = &.{ theLargest, theLargest },
             .expected_flush = true,
             .expected_block_count = 0,
             .expected_last_block_entries_count = 0,
             .expected_entries_tail_index = 1,
         },
         // flush when already at threshold (entry goes into flushed blocks)
-        .{
-            .setup_blocks_count = maxBlocksPerShard,
-            .test_entries = &.{"trigger_immediate_flush"},
-            .expected_flush = true,
-            .expected_block_count = 0,
-            .expected_last_block_entries_count = 0
-        },
+        .{ .setup_blocks_count = maxBlocksPerShard, .test_entries = &.{"trigger_immediate_flush"}, .expected_flush = true, .expected_block_count = 0, .expected_last_block_entries_count = 0 },
         // no flush when below threshold (entry fits in last block)
         .{
             .setup_blocks_count = maxBlocksPerShard - 2,
