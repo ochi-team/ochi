@@ -17,11 +17,10 @@ const merge = @import("../table/merge.zig");
 
 const Conf = @import("../../Conf.zig");
 
-const maxBlocksPerShard = 256;
-
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
 const maxMemTables = 24;
+const maxAttemtsAddEntry = 10;
 
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 
@@ -88,7 +87,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     const entries = try Entries.init(alloc, concurrency);
     errdefer entries.deinit(alloc);
 
-    const blocksThresholdToFlush: u32 = @intCast(entries.shards.len * maxBlocksPerShard);
+    const blocksThresholdToFlush: u32 = @intCast(entries.shards.len * Entries.maxBlocksPerShard);
 
     // TODO: try using list of lists instead in order not to copy data from blocks to blocksToFlush
     var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksThresholdToFlush);
@@ -206,15 +205,24 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
-   const shard = self.entries.next();
-   var blocksListResult = try shard.add(alloc, entries, self.maxMemBlockSize);
-    if (blocksListResult) |*blocksList| {
-        defer blocksList.blocksToFlush.deinit(alloc);
-        try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
-        if (blocksList.entryTailIndex > 0) {
-            //TODO: Need to limit the number of recursive call attempts
-            try self.add(alloc, entries[blocksList.entryTailIndex..]);
+    var entryIndex: usize = 0;
+    var attemps: u8 = 1;
+    while (attemps <= maxAttemtsAddEntry): (attemps += 1) {
+        const shard = self.entries.next();
+
+        var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+        
+        if (blocksListResult) |*blocksList| {
+            defer blocksList.deinit(alloc);
+            try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
+
+            if (blocksList.entryTailIndex > 0) {
+                entryIndex = blocksList.entryTailIndex;
+                continue;
+            }
         }
+
+        break;
     }
 }
 
@@ -939,6 +947,7 @@ test "IndexRecorder add and reopen preserves item count" {
     const inserted: usize = 128;
     {
         const recorder = try IndexRecorder.init(alloc, rootPath);
+        defer recorder.deinit(alloc);
 
         for (0..inserted) |i| {
             const item = stableItems[i % stableItems.len];
@@ -953,17 +962,16 @@ test "IndexRecorder add and reopen preserves item count" {
         try testing.expect(recorder.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(recorder));
-        recorder.deinit(alloc);
     }
 
     {
         const reopened = try IndexRecorder.init(alloc, rootPath);
+        defer reopened.deinit(alloc);
         reopened.stopped.store(true, .release);
         reopened.wg.wait();
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(reopened));
-        reopened.deinit(alloc);
     }
 }
 
