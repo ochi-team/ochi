@@ -207,8 +207,9 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
     var entryIndex: usize = 0;
     var attemps: u8 = 1;
+    const shard = self.entries.next();
+
     while (attemps <= maxAttemtsAddEntry): (attemps += 1) {
-        const shard = self.entries.next();
 
         var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
         
