@@ -99,3 +99,10 @@ test "serverWithSIGTERM" {
     // Wait for the server thread to finish
     thread.join();
 }
+
+test "tidy" {
+    const alloc = std.testing.allocator;
+    const lint = @import("lint.zig");
+    const noMergeCommits = lint.gitHasNoMergeCommits(alloc);
+    try std.testing.expect(noMergeCommits);
+}

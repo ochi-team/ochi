@@ -52,9 +52,3 @@ fn runServer() !void {
 
     try server.startServer(std.heap.page_allocator, std.heap.page_allocator, config);
 }
-
-test "lint" {
-    const lint = @import("lint.zig");
-    const noMergeCommits = lint.gitHasNoMergeCommits();
-    std.testing.assert(noMergeCommits);
-}

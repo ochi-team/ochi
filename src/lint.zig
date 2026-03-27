@@ -1,7 +1,8 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
-pub fn gitHasNoMergeCommits() bool {
-    const result = std.process.exec(&.{
+pub fn gitHasNoMergeCommits(alloc: Allocator) bool {
+    const result = std.process.execv(alloc, &.{
         "git",
         "log",
         "--merges",
