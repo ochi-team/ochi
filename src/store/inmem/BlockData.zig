@@ -112,7 +112,6 @@ pub const TimestampsData = struct {
     encodingType: EncodingType = .Undefined,
 
     minTimestamp: u64 = 0,
-
     maxTimestamp: u64 = 0,
 
     pub fn readFrom(

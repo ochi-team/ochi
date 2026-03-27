@@ -35,7 +35,7 @@ pub const Error = error{
 // - ColumnsWriter
 // - TypedWriter
 // or find a better one,
-// then rename Self accordingly
+// then rename Self, StreamMerger and StreamReader accordingly
 const Self = @This();
 
 const tsBufferSize = 2 * 1024;

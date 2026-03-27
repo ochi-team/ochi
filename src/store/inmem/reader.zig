@@ -103,7 +103,7 @@ pub const StreamReader = struct {
         defer fbaAlloc.free(messageBloomTokensPath);
         const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageValues });
         defer fbaAlloc.free(messageBloomValuesPath);
-        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnNames });
+        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnKeys });
         defer fbaAlloc.free(columnNamesPath);
 
         const columnIdxsBuf = try fs.readAll(alloc, columnIdxsPath);
@@ -294,6 +294,8 @@ pub const BlockReader = struct {
     globalBlocksCount: u64,
 
     // Block data
+    // TODO: find a better name
+    // TODO: make it a pointer, seems it holds a lot of fields
     blockData: BlockData,
 
     pub fn initFromMemTable(allocator: Allocator, tableMem: *MemTable) !*BlockReader {
@@ -470,6 +472,18 @@ pub const BlockReader = struct {
         self.nextIndexBlockIdx += 1;
         self.nextBlockIdx = 0;
         return true;
+    }
+
+    pub fn blockReaderLessThan(one: *const BlockReader, another: *const BlockReader) bool {
+        const firstIsLess = one.blockData.sid.lessThan(&another.blockData.sid);
+        if (firstIsLess) {
+            return true;
+        } else if (one.blockData.sid.eql(&another.blockData.sid)) {
+            return one.blockData.timestampsData.minTimestamp < another.blockData.timestampsData.minTimestamp;
+        } else {
+            // not equal and not firstIsLess then the second is larger
+            return false;
+        }
     }
 };
 

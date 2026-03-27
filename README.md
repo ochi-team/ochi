@@ -50,9 +50,10 @@ Nice to have:
     7. object storage complexity
     8. ARM matters
     9. opencost integration with Grafana
-    10. why we must stay opensource forever
+    [[DONE]] 10. why we must stay opensource forever
     11. tripwire
     12. why we don't use inverted index and full text search
+    13. configuration distribution in zig
 
 ### tiny package movements
 - extract structs from store/inmem/block_header.zig
