@@ -34,8 +34,8 @@ const BlockMerger = @This();
 
 heap: Heap(*BlockReader, BlockReader.blockReaderLessThan),
 block: *MemBlock,
-firstItem: []const u8 = &[_]u8{},
-lastItem: []const u8 = &[_]u8{},
+firstItem: []const u8 = "",
+lastItem: []const u8 = "",
 
 /// init creates a BlockMerger instance from the readers
 /// be aware it mutates readers list inside

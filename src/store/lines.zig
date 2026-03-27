@@ -18,6 +18,7 @@ pub const SID = struct {
             self.id == another.id;
     }
 
+    // TODO: pass it by value maybe?
     pub fn lessThan(self: *const SID, another: *const SID) bool {
         // tenant is less
         return std.mem.lessThan(u8, self.tenantID, another.tenantID) or

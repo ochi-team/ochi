@@ -11,6 +11,7 @@ const BlockWriter = @import("store/inmem/BlockWriter.zig");
 const StreamWriter = @import("store/inmem/StreamWriter.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
+const mergeData = @import("store/data/merge.zig").mergeData;
 
 const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
@@ -304,7 +305,6 @@ pub const Data = struct {
         force: bool,
         stopped: ?*std.atomic.Value(bool),
     ) !void {
-        _ = stopped;
         std.debug.assert(tables.len > 0);
         for (tables) |table| std.debug.assert(table.inMerge);
 
@@ -362,6 +362,9 @@ pub const Data = struct {
             const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
             streamWriter = try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
+
+        const tableHeader = try mergeData(alloc, destinationTablePath, streamWriter, &readers, stopped);
+        _ = tableHeader;
 
         // const dstTableType = merger.getDestinationTableKind(tables, force);
         // if (dstTableType != .mem) {
