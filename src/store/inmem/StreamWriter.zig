@@ -493,7 +493,9 @@ fn writeColumnData(self: *Self, alloc: Allocator, col: ColumnData, ch: *ColumnHe
 
     ch.min = col.min;
     ch.max = col.max;
-    ch.dict = col.dict.*;
+
+    // move the dict ownership to ch in order to avoid double free
+    std.mem.swap(std.ArrayList([]const u8), &ch.dict.values, &col.dict.values);
     ch.size = dataLen;
 
     const bloomBufI = self.getBloomBufferIndex(alloc, ch.key);
@@ -610,4 +612,103 @@ fn writeColumnsHeader(
     bh.columnsHeaderIndexOffset = self.columnsHeaderIndexDst.len();
     bh.columnsHeaderIndexSize = cshIdxOffset;
     try self.columnsHeaderIndexDst.appendSlice(allocator, dst[cshOffset .. cshOffset + cshIdxOffset]);
+}
+
+const testing = std.testing;
+const Line = @import("../lines.zig").Line;
+const Field = @import("../lines.zig").Field;
+const SID = @import("../lines.zig").SID;
+const StreamReader = @import("reader.zig").StreamReader;
+
+test "writeBlock and writeData produce identical buffer output" {
+    const alloc = testing.allocator;
+
+    var fields1 = [_]Field{
+        .{ .key = "app", .value = "seq" },
+        .{ .key = "level", .value = "info" },
+    };
+    var fields2 = [_]Field{
+        .{ .key = "app", .value = "seq" },
+        .{ .key = "level", .value = "warn" },
+    };
+    var fields3 = [_]Field{
+        .{ .key = "app", .value = "seq" },
+        .{ .key = "level", .value = "warn" },
+    };
+    const sid = SID{ .id = 1, .tenantID = "1111" };
+    var line1 = Line{ .timestampNs = 1, .sid = sid, .fields = &fields1 };
+    var line2 = Line{ .timestampNs = 2, .sid = sid, .fields = &fields2 };
+    var line3 = Line{ .timestampNs = 3, .sid = sid, .fields = &fields3 };
+    var lines = [_]*const Line{ &line1, &line2, &line3 };
+
+    // Writer 1: encode via writeBlock
+    const maxColI = 128;
+    const writer1 = try Self.initMem(alloc, maxColI);
+    defer writer1.deinit(alloc);
+
+    const block = try Block.init(alloc, &lines);
+    defer block.deinit(alloc);
+
+    var bh1 = BlockHeader.initFromBlock(block, sid);
+    try writer1.writeBlock(alloc, block, &bh1);
+
+    // Build StreamReader from writer1's buffers to populate BlockData
+    var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomValuesList.items.len);
+    defer bloomValuesList.deinit(alloc);
+    for (writer1.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+
+    var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomTokensList.items.len);
+    defer bloomTokensList.deinit(alloc);
+    for (writer1.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+
+    const sr = StreamReader{
+        .timestampsBuf = writer1.timestampsDst.asSliceAssumeBuffer(),
+        .indexBuf = writer1.indexDst.asSliceAssumeBuffer(),
+        .metaIndexBuf = writer1.metaIndexDst.asSliceAssumeBuffer(),
+        .columnsHeaderBuf = writer1.columnsHeaderDst.asSliceAssumeBuffer(),
+        .columnsHeaderIndexBuf = writer1.columnsHeaderIndexDst.asSliceAssumeBuffer(),
+        .columnsKeysBuf = writer1.columnKeysBuf.asSliceAssumeBuffer(),
+        .columnIdxsBuf = writer1.columnIdxsBuf.asSliceAssumeBuffer(),
+        .messageBloomValuesBuf = writer1.messageBloomValuesDst.asSliceAssumeBuffer(),
+        .messageBloomTokensBuf = writer1.messageBloomTokensDst.asSliceAssumeBuffer(),
+        .bloomValuesList = bloomValuesList,
+        .bloomTokensList = bloomTokensList,
+        .columnIDGen = writer1.columnIDGen,
+        .colIdx = &writer1.colIdx,
+    };
+
+    var bd = BlockData.initEmpty();
+    defer bd.deinit(alloc);
+    bd.sid = sid;
+    try bd.readFrom(alloc, &bh1, &sr);
+
+    // Writer 2: re-encode the same data via writeData
+    const writer2 = try Self.initMem(alloc, maxColI);
+    defer writer2.deinit(alloc);
+
+    var bh2 = BlockHeader.initFromData(&bd, sid);
+    try writer2.writeData(alloc, &bh2, &bd);
+
+    // Finalize both writers
+    try writer1.writeColumnKeys(alloc);
+    try writer1.writeColumnIndexes(alloc);
+    try writer2.writeColumnKeys(alloc);
+    try writer2.writeColumnIndexes(alloc);
+
+    // Compare all data buffers
+    try testing.expectEqualSlices(u8, writer1.timestampsDst.asSliceAssumeBuffer(), writer2.timestampsDst.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.columnsHeaderDst.asSliceAssumeBuffer(), writer2.columnsHeaderDst.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.columnsHeaderIndexDst.asSliceAssumeBuffer(), writer2.columnsHeaderIndexDst.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.messageBloomValuesDst.asSliceAssumeBuffer(), writer2.messageBloomValuesDst.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.messageBloomTokensDst.asSliceAssumeBuffer(), writer2.messageBloomTokensDst.asSliceAssumeBuffer());
+    try testing.expectEqual(writer1.bloomValuesList.items.len, writer2.bloomValuesList.items.len);
+    for (writer1.bloomValuesList.items, writer2.bloomValuesList.items) |b1, b2| {
+        try testing.expectEqualSlices(u8, b1.asSliceAssumeBuffer(), b2.asSliceAssumeBuffer());
+    }
+    try testing.expectEqual(writer1.bloomTokensList.items.len, writer2.bloomTokensList.items.len);
+    for (writer1.bloomTokensList.items, writer2.bloomTokensList.items) |b1, b2| {
+        try testing.expectEqualSlices(u8, b1.asSliceAssumeBuffer(), b2.asSliceAssumeBuffer());
+    }
+    try testing.expectEqualSlices(u8, writer1.columnKeysBuf.asSliceAssumeBuffer(), writer2.columnKeysBuf.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.columnIdxsBuf.asSliceAssumeBuffer(), writer2.columnIdxsBuf.asSliceAssumeBuffer());
 }

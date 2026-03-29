@@ -67,7 +67,7 @@ pub const BlockData = struct {
         self: *BlockData,
         allocator: std.mem.Allocator,
         bh: *const BlockHeader,
-        sr: *StreamReader,
+        sr: *const StreamReader,
     ) !void {
         self.reset(allocator);
 
@@ -146,15 +146,17 @@ pub const ColumnData = struct {
     max: u64,
 
     // TODO: try making it a value, it stores a single array and used mostly as a value in the headers,
-    // or the other way around
-    dict: *const ColumnDict,
+    // or the other way around,
+    // it's important to note writeColumnData uses *ColumnDict in order to move ownership,
+    // therefore it may require passing  a ColumndData as a pointer
+    dict: *ColumnDict,
     data: []const u8,
 
     // TODO: try making it non optional, default as an empty string
     bloomFilterData: ?[]const u8,
 
     pub fn readFrom(
-        ch: *const ColumnHeader,
+        ch: *ColumnHeader,
         sr: *const StreamReader,
     ) !ColumnData {
         const colID = sr.columnIDGen.keyIDs.get(ch.key).?;

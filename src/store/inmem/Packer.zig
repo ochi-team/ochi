@@ -230,6 +230,7 @@ test "Packer.packValuesRoundtrip" {
         const encoder = try Self.init(allocator);
         defer encoder.deinit();
 
+        // TODO: audit all constCast usage and get rid of them
         const packedValues = try encoder.packValues(@constCast(case.strings));
         defer allocator.free(packedValues);
 
