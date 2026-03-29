@@ -1,7 +1,9 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const SID = @import("../lines.zig").SID;
 const Block = @import("Block.zig");
+const BlockData = @import("BlockData.zig").BlockData;
 const Column = @import("Column.zig");
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
@@ -21,11 +23,30 @@ pub const BlockHeader = struct {
     columnsHeaderIndexOffset: usize,
     columnsHeaderIndexSize: usize,
 
-    pub fn init(block: *Block, sid: SID) BlockHeader {
+    pub fn initFromBlock(block: *Block, sid: SID) BlockHeader {
         return .{
             .sid = sid,
             .size = block.size(),
             .len = @intCast(block.len()),
+            .timestampsHeader = .{
+                .offset = 0,
+                .size = 0,
+                .min = 0,
+                .max = 0,
+                .encodingType = EncodingType.Undefined,
+            },
+            .columnsHeaderOffset = 0,
+            .columnsHeaderSize = 0,
+            .columnsHeaderIndexOffset = 0,
+            .columnsHeaderIndexSize = 0,
+        };
+    }
+
+    pub fn initFromData(data: *const BlockData, sid: SID) BlockHeader {
+        return .{
+            .sid = sid,
+            .size = @intCast(data.uncompressedSizeBytes),
+            .len = data.len,
             .timestampsHeader = .{
                 .offset = 0,
                 .size = 0,
@@ -92,7 +113,7 @@ pub const BlockHeader = struct {
     }
 
     pub fn decodeFew(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         dst: *std.ArrayList(BlockHeader),
         src: []const u8,
     ) !void {
@@ -169,35 +190,40 @@ pub const ColumnsHeader = struct {
     /// TODO: find a workaround for clear ownership instead of a flag
     owns_celled_columns: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, block: *Block) !*ColumnsHeader {
-        const cols = block.getColumns();
-        const headers = try allocator.alloc(ColumnHeader, cols.len);
-        errdefer allocator.free(headers);
+    pub fn initFromBlock(alloc: Allocator, block: *Block) !*ColumnsHeader {
+        return init(alloc, block.getColumns().len, block.getCelledColumns());
+    }
+
+    pub fn initFromData(alloc: Allocator, data: *BlockData) !*ColumnsHeader {
+        return init(alloc, data.columnsData.items.len, data.celledColumns orelse &[_]Column{});
+    }
+
+    fn init(alloc: Allocator, colsLen: usize, cells: []Column) !*ColumnsHeader {
+        const headers = try alloc.alloc(ColumnHeader, colsLen);
+        errdefer alloc.free(headers);
         var inited: u16 = 0;
         errdefer {
             for (0..inited) |i| {
-                headers[i].dict.deinit(allocator);
+                headers[i].dict.deinit(alloc);
             }
         }
         {
             for (0..headers.len) |i| {
-                headers[i].dict = try ColumnDict.init(allocator);
+                headers[i].dict = try ColumnDict.init(alloc);
                 inited += 1;
             }
         }
 
-        const celledCols = block.getCelledColumns();
-
-        const ch = try allocator.create(ColumnsHeader);
+        const ch = try alloc.create(ColumnsHeader);
         ch.* = .{
             .headers = headers,
-            .celledColumns = celledCols,
+            .celledColumns = cells,
         };
 
         return ch;
     }
 
-    pub fn deinit(self: *ColumnsHeader, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *ColumnsHeader, allocator: Allocator) void {
         for (0..self.headers.len) |i| {
             self.headers[i].dict.deinit(allocator);
         }
@@ -268,7 +294,7 @@ pub const ColumnsHeader = struct {
     }
 
     pub fn decode(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         buf: []const u8,
         cshIdx: *const ColumnsHeaderIndex,
         columnIDGen: *const ColumnIDGen,
@@ -408,7 +434,7 @@ pub const ColumnHeader = struct {
         enc.writeVarInt(self.bloomFilterSize);
     }
 
-    pub fn decode(dec: *Decoder, key: []const u8, allocator: std.mem.Allocator) !ColumnHeader {
+    pub fn decode(dec: *Decoder, key: []const u8, allocator: Allocator) !ColumnHeader {
         const columnType: ColumnType = @enumFromInt(dec.readInt(u8));
 
         var header = ColumnHeader{
@@ -724,7 +750,7 @@ test "ColumnHeaderEncode" {
         header: ColumnHeader,
         description: []const u8,
 
-        fn makeDict(allocator: std.mem.Allocator, values: []const []const u8) !ColumnDict {
+        fn makeDict(allocator: Allocator, values: []const []const u8) !ColumnDict {
             if (values.len == 0) {
                 // For empty dict (non-dict column types), match what decode produces
                 return ColumnDict{ .values = std.ArrayList([]const u8).empty };

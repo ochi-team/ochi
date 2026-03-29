@@ -230,6 +230,7 @@ pub const Field = struct {
 // Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
+    // TODO: having sid in the line seems wrong, it must go away
     sid: SID,
     // field.key can be empty meaning it's a message field (_msg by fefault in the API)
     // can't be const because we reorder fields
@@ -238,6 +239,12 @@ pub const Line = struct {
     pub fn fieldsSize(self: *const Line) u32 {
         return sizing.fieldsJsonSize(self);
     }
+};
+
+// TODO: FIXME, remove it and use Line instead, it requires getting rid of sid in the Line
+pub const Line2 = struct {
+    timestampNs: u64,
+    fields: []Field,
 };
 
 pub fn lineLessThan(_: void, one: *const Line, another: *const Line) bool {

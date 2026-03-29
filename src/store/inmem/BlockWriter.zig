@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 const Block = @import("Block.zig");
+const BlockData = @import("../inmem/BlockData.zig").BlockData;
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const StreamWriter = @import("StreamWriter.zig");
@@ -17,6 +18,11 @@ const Self = @This();
 pub const indexBlockSize = 16 * 1024;
 pub const indexBlockFlushThreshold = 128 * 1024;
 pub const metaIndexSize = 4 * 1024;
+
+const Content = union(enum) {
+    block: *Block,
+    data: *BlockData,
+};
 
 // state to the latestBlocks til not flushed
 sid: ?SID,
@@ -62,13 +68,6 @@ pub fn init(allocator: Allocator) !*Self {
     return bw;
 }
 
-pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitstInCache: bool) !*Self {
-    _ = alloc;
-    _ = path;
-    _ = fitstInCache;
-    unreachable;
-}
-
 pub fn deinit(self: *Self, allocator: Allocator) void {
     self.indexBlockBuf.deinit(allocator);
     self.indexBlockHeader.deinit(allocator);
@@ -85,30 +84,43 @@ pub fn writeLines(
 ) !void {
     const block = try Block.init(allocator, lines);
     defer block.deinit(allocator);
-    try self.writeBlock(allocator, block, sid, streamWriter);
+
+    if (block.len() == 0) {
+        return;
+    }
+
+    const c = Content{ .block = block };
+    try self.writeBlock(allocator, c, sid, streamWriter);
+}
+
+pub fn writeData(
+    self: *Self,
+    allocator: Allocator,
+    data: *BlockData,
+    streamWriter: *StreamWriter,
+) !void {
+    const c = Content{ .data = data };
+    try self.writeBlock(allocator, c, data.sid, streamWriter);
 }
 
 fn writeBlock(
     self: *Self,
-    allocator: Allocator,
-    block: *Block,
+    alloc: Allocator,
+    // block: *Block,
+    content: Content,
     sid: SID,
     streamWriter: *StreamWriter,
 ) !void {
     // TODO: assert incoming sid is growing,
     // because it expects the caller passes blocks ordered by sid,
     // assert in builting.is_test
-    if (block.len() == 0) {
-        return;
-    }
 
     const hasState = self.sid != null;
     if (!hasState) {
         self.sid = sid;
     }
 
-    var blockHeader = BlockHeader.init(block, sid);
-    try streamWriter.writeBlock(allocator, block, &blockHeader);
+    const blockHeader = try writeContent(alloc, content, sid, streamWriter);
 
     if (self.len == 0 or blockHeader.timestampsHeader.min < self.globalMinTimestamp) {
         self.globalMinTimestamp = blockHeader.timestampsHeader.min;
@@ -127,12 +139,27 @@ fn writeBlock(
     self.len += blockHeader.len;
     self.blocksCount += 1;
 
-    try self.indexBlockBuf.ensureUnusedCapacity(allocator, BlockHeader.encodeExpectedSize);
+    try self.indexBlockBuf.ensureUnusedCapacity(alloc, BlockHeader.encodeExpectedSize);
     const slice = self.indexBlockBuf.unusedCapacitySlice()[0..BlockHeader.encodeExpectedSize];
     const offset = blockHeader.encode(slice);
     self.indexBlockBuf.items.len += offset;
     if (self.indexBlockBuf.items.len > indexBlockFlushThreshold) {
-        try self.flushIndexBlock(allocator, streamWriter);
+        try self.flushIndexBlock(alloc, streamWriter);
+    }
+}
+
+fn writeContent(alloc: Allocator, content: Content, sid: SID, streamWriter: *StreamWriter) !BlockHeader {
+    switch (content) {
+        .block => |block| {
+            var blockHeader = BlockHeader.initFromBlock(block, sid);
+            try streamWriter.writeBlock(alloc, block, &blockHeader);
+            return blockHeader;
+        },
+        .data => |data| {
+            var blockHeader = BlockHeader.initFromData(data, sid);
+            try streamWriter.writeData(alloc, &blockHeader, data);
+            return blockHeader;
+        },
     }
 }
 

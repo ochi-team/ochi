@@ -1,28 +1,35 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
+const Line2 = @import("../lines.zig").Line2;
 const Column = @import("Column.zig");
+const BlockData = @import("BlockData.zig").BlockData;
+const Unpacker = @import("Unpacker.zig");
+const ValuesDecoder = @import("ValuesDecoder.zig");
 
 const sizing = @import("sizing.zig");
 
-const maxColumns = 2000;
+// TODO: no idea if it's a good number, must be tested with high cardinality logs,
+// adjust the number and see what's best we can do
+pub const maxColumns = 2000;
 
 fn columnLessThan(_: void, one: Column, another: Column) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }
 
-const Self = @This();
+const Block = @This();
 
 firstCelled: u32,
 columns: []Column,
 timestamps: []u64,
 
-pub fn init(allocator: std.mem.Allocator, lines: []*const Line) !*Self {
-    const b = try allocator.create(Self);
+pub fn init(allocator: Allocator, lines: []*const Line) !*Block {
+    const b = try allocator.create(Block);
     errdefer allocator.destroy(b);
 
-    b.* = Self{
+    b.* = Block{
         .firstCelled = undefined,
         .columns = undefined,
         .timestamps = undefined,
@@ -34,7 +41,21 @@ pub fn init(allocator: std.mem.Allocator, lines: []*const Line) !*Self {
     return b;
 }
 
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
+    _ = alloc;
+    _ = data;
+    _ = unpacker;
+    _ = decoder;
+    unreachable;
+}
+
+pub fn gatherLines(self: *const Block, line: *std.ArrayList(Line2)) void {
+    _ = self;
+    _ = line;
+    unreachable;
+}
+
+pub fn deinit(self: *Block, allocator: Allocator) void {
     for (self.columns) |col| {
         allocator.free(col.values);
     }
@@ -43,23 +64,23 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub inline fn getColumns(self: *const Self) []Column {
+pub fn getColumns(self: *const Block) []Column {
     return self.columns[0..self.firstCelled];
 }
 // celledColumns hold columns with a single value
-pub inline fn getCelledColumns(self: *const Self) []Column {
+pub fn getCelledColumns(self: *const Block) []Column {
     return self.columns[self.firstCelled..];
 }
 
-pub inline fn len(self: *Self) usize {
+pub fn len(self: *Block) usize {
     return self.timestamps.len;
 }
 
-pub fn size(self: *Self) u32 {
+pub fn size(self: *Block) u32 {
     return sizing.blockJsonSize(self);
 }
 
-fn put(self: *Self, allocator: std.mem.Allocator, lines: []*const Line) !void {
+fn put(self: *Block, allocator: Allocator, lines: []*const Line) !void {
     std.debug.assert(lines.len > 0);
 
     // Fast path if all lines have the same fields
@@ -70,7 +91,7 @@ fn put(self: *Self, allocator: std.mem.Allocator, lines: []*const Line) !void {
     return self.putDynamicFields(allocator, lines);
 }
 
-fn putSameFields(self: *Self, allocator: std.mem.Allocator, lines: []*const Line) !void {
+fn putSameFields(self: *Block, allocator: Allocator, lines: []*const Line) !void {
     self.timestamps = try allocator.alloc(u64, lines.len);
     errdefer allocator.free(self.timestamps);
     for (lines, 0..) |line, i| {
@@ -134,7 +155,7 @@ fn putSameFields(self: *Self, allocator: std.mem.Allocator, lines: []*const Line
     self.columns = columns;
 }
 
-fn putDynamicFields(self: *Self, allocator: std.mem.Allocator, lines: []*const Line) !void {
+fn putDynamicFields(self: *Block, allocator: Allocator, lines: []*const Line) !void {
     // Builds hash map of unique column keys to their index
     var columnI = std.StringHashMap(usize).init(allocator);
     defer columnI.deinit();
@@ -207,7 +228,7 @@ fn putDynamicFields(self: *Self, allocator: std.mem.Allocator, lines: []*const L
     self.columns = columns;
 }
 
-fn sort(self: *Self) void {
+fn sort(self: *Block) void {
     std.mem.sortUnstable(Column, self.getColumns(), {}, columnLessThan);
     std.mem.sortUnstable(Column, self.getCelledColumns(), {}, columnLessThan);
 }
@@ -418,7 +439,7 @@ test "SelfInitMaxColumns" {
             };
             lines[i] = line;
         }
-        const b = try Self.init(alloc, lines);
+        const b = try Block.init(alloc, lines);
         defer b.deinit(alloc);
 
         try std.testing.expectEqual(case.expectedLen, b.len());
@@ -677,7 +698,7 @@ test "Self.put" {
     };
 
     for (cases) |case| {
-        var block = try Self.init(allocator, case.lines);
+        var block = try Block.init(allocator, case.lines);
         defer block.deinit(allocator);
 
         for (case.expectedTimestamps, 0..) |expectedTs, i| {

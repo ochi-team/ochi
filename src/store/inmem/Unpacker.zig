@@ -155,12 +155,13 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
 }
 
 fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u8 {
-    if (data.len < 1) {
+    if (data.len == 0) {
         return UnpackError.InsufficientData;
     }
 
     const compressionKind = data[0];
 
+    // TODO: memory copies are crap here
     switch (compressionKind) {
         Packer.compressionKindPlain => {
             // plain format: [kind:u8][len:u8][data]

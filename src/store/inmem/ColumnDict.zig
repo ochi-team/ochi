@@ -6,6 +6,8 @@ const Decoder = @import("encoding").Decoder;
 pub const maxDictColumnValueSize = 256;
 pub const maxDictColumnValuesLen = 8;
 
+// TODO: first candidate to init from a mem pool
+// TODO: rename all Self's to its name
 const Self = @This();
 
 values: std.ArrayList([]const u8),

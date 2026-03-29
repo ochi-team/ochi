@@ -14,6 +14,7 @@ const Filenames = @import("../../Filenames.zig");
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better
+// TODO: move to a better place, it's used in the merger (disk table)
 pub const maxBlockSize = 2 * 1024 * 1024;
 
 pub const Error = error{

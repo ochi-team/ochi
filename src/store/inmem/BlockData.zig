@@ -14,17 +14,25 @@ const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const StreamReader = @import("reader.zig").StreamReader;
 
 // TODO: make it gloabal, potentially it can be used as a global constant by others
-const maxTimestampsBlockSize = 8 * 1024 * 1024;
-const maxValuesBlockSize = 8 * 1024 * 1024;
-const maxColumnsHeaderSize = 8 * 1024 * 1024;
-const maxColumnsHeaderIndexSize = 8 * 1024 * 1024;
+// TODO: perhaps we should apply equal limits to every file type and name it like maxBlockSegmentSize
+// meaning it's a segment of a block we plan to store in its file
+pub const maxTimestampsBlockSize = 8 * 1024 * 1024;
+pub const maxValuesBlockSize = 8 * 1024 * 1024;
+pub const maxBloomTokensBlockSize = 8 * 1024 * 1024;
+pub const maxColumnsHeaderSize = 8 * 1024 * 1024;
+pub const maxColumnsHeaderIndexSize = 8 * 1024 * 1024;
 
+// TODO: move data segments to its file in the /data package
 pub const BlockData = struct {
     sid: SID = undefined,
+    // TODO: audit in the codebase the usage of compressed and uncompressed sizes,
+    // find a better name for both to refleect the data lifecycle (e.g. content size and data size,
+    // when a content is given request from the ingestor, data is what we write to the tables)
     uncompressedSizeBytes: u64 = 0,
-    rowsCount: u32 = 0,
+    len: u32 = 0,
 
     timestampsData: TimestampsData,
+    // TODO: try making it non nullable
     columnsHeader: ?*ColumnsHeader = null,
     columnsData: std.ArrayList(ColumnData),
     celledColumns: ?[]Column = null,
@@ -36,7 +44,7 @@ pub const BlockData = struct {
     pub fn reset(self: *BlockData, allocator: std.mem.Allocator) void {
         self.sid = undefined;
         self.uncompressedSizeBytes = 0;
-        self.rowsCount = 0;
+        self.len = 0;
 
         self.timestampsData = .{};
         self.columnsData.clearRetainingCapacity();
@@ -65,7 +73,7 @@ pub const BlockData = struct {
 
         self.sid = bh.sid;
         self.uncompressedSizeBytes = bh.size;
-        self.rowsCount = bh.len;
+        self.len = bh.len;
 
         self.timestampsData = try TimestampsData.readFrom(&bh.timestampsHeader, sr);
 
@@ -131,15 +139,18 @@ pub const TimestampsData = struct {
 };
 
 pub const ColumnData = struct {
-    name: []const u8,
-    valueType: ColumnType,
+    key: []const u8,
+    type: ColumnType,
 
-    minValue: u64,
-    maxValue: u64,
+    min: u64,
+    max: u64,
 
-    valuesDict: *const ColumnDict,
-    valuesData: []const u8,
+    // TODO: try making it a value, it stores a single array and used mostly as a value in the headers,
+    // or the other way around
+    dict: *const ColumnDict,
+    data: []const u8,
 
+    // TODO: try making it non optional, default as an empty string
     bloomFilterData: ?[]const u8,
 
     pub fn readFrom(
@@ -163,14 +174,14 @@ pub const ColumnData = struct {
         }
 
         return .{
-            .name = ch.key,
-            .valueType = ch.type,
+            .key = ch.key,
+            .type = ch.type,
 
-            .minValue = ch.min,
-            .maxValue = ch.max,
+            .min = ch.min,
+            .max = ch.max,
 
-            .valuesDict = &ch.dict,
-            .valuesData = valuesData,
+            .dict = &ch.dict,
+            .data = valuesData,
 
             .bloomFilterData = bloomFilterData,
         };
@@ -266,10 +277,10 @@ test "BlockData readFrom populates columnsData and celledColumns" {
 
     // When there are any column headers, each ColumnData should correspond to its ColumnHeader.
     for (ch.headers, bd.columnsData.items) |*header, col| {
-        try std.testing.expectEqualStrings(header.key, col.name);
-        try std.testing.expectEqual(header.type, col.valueType);
-        try std.testing.expectEqual(header.size, col.valuesData.len);
-        try std.testing.expectEqual(&header.dict, col.valuesDict);
+        try std.testing.expectEqualStrings(header.key, col.key);
+        try std.testing.expectEqual(header.type, col.type);
+        try std.testing.expectEqual(header.size, col.data.len);
+        try std.testing.expectEqual(&header.dict, col.dict);
     }
 
     // Second call to nextBlock exercises BlockData reuse path (columnsHeader deinit + re-decode).

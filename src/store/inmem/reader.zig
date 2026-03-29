@@ -606,19 +606,19 @@ fn testReadBlock(allocator: Allocator) !void {
     var blocksWithFullData: u32 = 0;
     while (try blockReader2.nextBlock(allocator)) {
         const bd = &blockReader2.blockData;
-        try std.testing.expect(bd.rowsCount >= 1);
+        try std.testing.expect(bd.len >= 1);
         try std.testing.expect(bd.uncompressedSizeBytes > 0);
         try std.testing.expect(bd.timestampsData.minTimestamp <= bd.timestampsData.maxTimestamp);
         // columnsData may be empty in allocation-failure runs from checkAllocationFailures
         if (bd.columnsData.items.len >= 2) {
             blocksWithFullData += 1;
             if (std.mem.eql(u8, bd.sid.tenantID, "1111") and bd.sid.id == 1) {
-                try std.testing.expectEqual(@as(u32, 2), bd.rowsCount);
+                try std.testing.expectEqual(@as(u32, 2), bd.len);
                 try std.testing.expectEqual(@as(u64, 2), bd.timestampsData.minTimestamp);
                 try std.testing.expectEqual(@as(u64, 3), bd.timestampsData.maxTimestamp);
                 block1Sid1111 = true;
             } else if (std.mem.eql(u8, bd.sid.tenantID, "2222") and bd.sid.id == 2) {
-                try std.testing.expectEqual(@as(u32, 1), bd.rowsCount);
+                try std.testing.expectEqual(@as(u32, 1), bd.len);
                 try std.testing.expectEqual(@as(u64, 1), bd.timestampsData.minTimestamp);
                 try std.testing.expectEqual(@as(u64, 1), bd.timestampsData.maxTimestamp);
                 block2Sid2222 = true;

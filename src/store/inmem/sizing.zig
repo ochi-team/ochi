@@ -11,10 +11,11 @@ const msgKey = "_msg";
 
 const Block = @import("Block.zig");
 const Line = @import("../lines.zig").Line;
+const Line2 = @import("../lines.zig").Line2;
 
 // gives size in resulted json object
 // TODO: test against real resulted log record
-pub inline fn blockJsonSize(self: *const Block) u32 {
+pub fn blockJsonSize(self: *const Block) u32 {
     if (self.timestamps.len == 0) {
         return 0;
     }
@@ -49,7 +50,15 @@ pub inline fn blockJsonSize(self: *const Block) u32 {
     return res;
 }
 
-pub inline fn fieldsJsonSize(self: *const Line) u32 {
+pub fn linesJsonSize(lines: []const Line2) u32 {
+    var res: u32 = 0;
+    for (lines) |line| {
+        res += fieldsJsonSize2(line);
+    }
+    return res;
+}
+
+pub fn fieldsJsonSize2(self: Line2) u32 {
     var res: u32 = lineTsSize;
     for (self.fields) |f| {
         if (f.value.len == 0) continue;
@@ -60,7 +69,18 @@ pub inline fn fieldsJsonSize(self: *const Line) u32 {
     return res;
 }
 
-inline fn keyValSize(key: []const u8, val: []const u8) u32 {
+pub fn fieldsJsonSize(self: *const Line) u32 {
+    var res: u32 = lineTsSize;
+    for (self.fields) |f| {
+        if (f.value.len == 0) continue;
+
+        res += keyValSize(f.key, f.value);
+    }
+
+    return res;
+}
+
+fn keyValSize(key: []const u8, val: []const u8) u32 {
     const keySize = if (key.len == 0) msgKey.len else key.len;
     return @intCast(lineSurroundSize + keySize + val.len);
 }

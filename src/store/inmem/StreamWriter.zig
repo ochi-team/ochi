@@ -4,6 +4,12 @@ const Allocator = std.mem.Allocator;
 const ValuesEncoder = @import("ValuesEncoder.zig");
 
 const Block = @import("Block.zig");
+const BlockData = @import("BlockData.zig").BlockData;
+const TimestampsData = @import("BlockData.zig").TimestampsData;
+const ColumnData = @import("BlockData.zig").ColumnData;
+const maxTimestampsBlockSize = @import("BlockData.zig").maxTimestampsBlockSize;
+const maxValuesBlockSize = @import("BlockData.zig").maxValuesBlockSize;
+const maxBloomTokensBlockSize = @import("BlockData.zig").maxBloomTokensBlockSize;
 const Column = @import("Column.zig");
 const MemTable = @import("MemTable.zig");
 const Filenames = @import("../../Filenames.zig");
@@ -341,21 +347,47 @@ pub fn writeBlock(
     block: *Block,
     blockHeader: *BlockHeader,
 ) !void {
+    // TODO: assert block
     try self.writeTimestamps(allocator, &blockHeader.timestampsHeader, block.timestamps);
 
-    const columnsHeader = try ColumnsHeader.init(allocator, block);
+    const columnsHeader = try ColumnsHeader.initFromBlock(allocator, block);
     defer columnsHeader.deinit(allocator);
     const columns = block.getColumns();
+
     try self.columnIDGen.keyIDs.ensureUnusedCapacity(columns.len);
     try self.colIdx.ensureUnusedCapacity(@intCast(columns.len));
     try self.bloomValuesList.ensureUnusedCapacity(allocator, columns.len);
     try self.bloomTokensList.ensureUnusedCapacity(allocator, columns.len);
 
     for (columns, 0..) |col, i| {
-        try self.writeColumnHeader(allocator, col, &columnsHeader.headers[i]);
+        try self.writeColumn(allocator, col, &columnsHeader.headers[i]);
     }
 
     try self.writeColumnsHeader(allocator, columnsHeader, blockHeader);
+}
+
+pub fn writeData(
+    self: *Self,
+    alloc: Allocator,
+    blockHeader: *BlockHeader,
+    data: *BlockData,
+) !void {
+    try self.writeTimestampsData(alloc, &blockHeader.timestampsHeader, data.timestampsData);
+
+    const columnsHeader = try ColumnsHeader.initFromData(alloc, data);
+    defer columnsHeader.deinit(alloc);
+    const columns = data.columnsData.items;
+
+    try self.columnIDGen.keyIDs.ensureUnusedCapacity(columns.len);
+    try self.colIdx.ensureUnusedCapacity(@intCast(columns.len));
+    try self.bloomValuesList.ensureUnusedCapacity(alloc, columns.len);
+    try self.bloomTokensList.ensureUnusedCapacity(alloc, columns.len);
+
+    for (columns, 0..) |col, i| {
+        try self.writeColumnData(alloc, col, &columnsHeader.headers[i]);
+    }
+
+    try self.writeColumnsHeader(alloc, columnsHeader, blockHeader);
 }
 
 fn writeTimestamps(
@@ -369,21 +401,41 @@ fn writeTimestamps(
     }
 
     var fba = std.heap.stackFallback(2048, allocator);
-    var staticAllocator = fba.get();
-    const encodedTimestamps = try self.timestampsEncoder.encode(staticAllocator, timestamps);
-    defer staticAllocator.free(encodedTimestamps.buf);
+    var fbaAlloc = fba.get();
+    const encodedTimestamps = try self.timestampsEncoder.encode(fbaAlloc, timestamps);
+    defer fbaAlloc.free(encodedTimestamps.buf);
     const encodedTimestampsBuf = encodedTimestamps.buf[0..encodedTimestamps.offset];
 
-    tsHeader.min = timestamps[0];
-    tsHeader.max = timestamps[timestamps.len - 1];
-    tsHeader.offset = self.timestampsDst.len();
-    tsHeader.size = encodedTimestampsBuf.len;
-    tsHeader.encodingType = encodedTimestamps.encodingType;
+    tsHeader.* = .{
+        .min = timestamps[0],
+        .max = timestamps[timestamps.len - 1],
+        .offset = self.timestampsDst.len(),
+        .size = encodedTimestampsBuf.len,
+        .encodingType = encodedTimestamps.encodingType,
+    };
 
     try self.timestampsDst.appendSlice(allocator, encodedTimestampsBuf);
 }
 
-fn writeColumnHeader(self: *Self, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
+fn writeTimestampsData(
+    self: *Self,
+    alloc: Allocator,
+    tsHeader: *TimestampsHeader,
+    timestampsData: TimestampsData,
+) !void {
+    std.debug.assert(timestampsData.data.len <= maxTimestampsBlockSize);
+
+    tsHeader.* = .{
+        .min = timestampsData.minTimestamp,
+        .max = timestampsData.maxTimestamp,
+        .offset = self.timestampsDst.len(),
+        .size = timestampsData.data.len,
+        .encodingType = timestampsData.encodingType,
+    };
+    try self.timestampsDst.appendSlice(alloc, timestampsData.data);
+}
+
+fn writeColumn(self: *Self, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
     ch.key = col.key;
 
     const valuesEncoder = try ValuesEncoder.init(allocator);
@@ -430,6 +482,38 @@ fn writeColumnHeader(self: *Self, allocator: Allocator, col: Column, ch: *Column
     ch.bloomFilterSize = bloomHash.len;
     ch.bloomFilterOffset = bloomTokensBuf.len();
     try bloomTokensBuf.appendSlice(allocator, bloomHash);
+}
+
+fn writeColumnData(self: *Self, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
+    const dataLen = col.data.len;
+    std.debug.assert(dataLen <= maxValuesBlockSize);
+
+    ch.key = col.key;
+    ch.type = col.type;
+
+    ch.min = col.min;
+    ch.max = col.max;
+    ch.dict = col.dict.*;
+    ch.size = dataLen;
+
+    const bloomBufI = self.getBloomBufferIndex(alloc, ch.key);
+    const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
+        error.MessageBloomMustBeUsed => &self.messageBloomValuesDst,
+        else => return err,
+    };
+    const bloomTokensBuf = if (bloomBufI) |i| &self.bloomTokensList.items[i] else |err| switch (err) {
+        error.MessageBloomMustBeUsed => &self.messageBloomTokensDst,
+        else => return err,
+    };
+
+    ch.offset = bloomValuesBuf.len();
+    try bloomValuesBuf.appendSlice(alloc, col.data);
+
+    const bloomFilterSize = bloomTokensBuf.len();
+    std.debug.assert(bloomFilterSize <= maxBloomTokensBlockSize);
+    ch.bloomFilterSize = if (col.bloomFilterData) |d| d.len else 0;
+    ch.bloomFilterOffset = bloomTokensBuf.len();
+    if (col.bloomFilterData) |d| try bloomTokensBuf.appendSlice(alloc, d);
 }
 
 fn getBloomBufferIndex(self: *Self, alloc: Allocator, key: []const u8) !u16 {

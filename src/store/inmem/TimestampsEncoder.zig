@@ -3,6 +3,7 @@ const std = @import("std");
 const zint = @import("zint");
 
 pub const EncodingType = enum(u8) {
+    // Unedfined means it's not initialized and not expected to be as a real value
     Undefined = 0,
     ZDeltapack = 1,
 };
