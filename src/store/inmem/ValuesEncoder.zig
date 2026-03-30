@@ -489,7 +489,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         defer decoder.deinit();
 
         // create mutable values array pointing to encoded bytes (before we transfer encoder.values)
-        var decodedValues = try allocator.alloc([]u8, encoder.values.items.len);
+        var decodedValues = try allocator.alloc([]const u8, encoder.values.items.len);
         defer allocator.free(decodedValues);
         for (encoder.values.items, 0..) |encodedValue, i| {
             decodedValues[i] = @constCast(encodedValue);

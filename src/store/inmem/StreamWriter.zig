@@ -646,7 +646,7 @@ test "writeBlock and writeData produce identical buffer output" {
     const writer1 = try Self.initMem(alloc, maxColI);
     defer writer1.deinit(alloc);
 
-    const block = try Block.init(alloc, &lines);
+    const block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);
 
     var bh1 = BlockHeader.initFromBlock(block, sid);

@@ -82,7 +82,7 @@ pub fn writeLines(
     lines: []*const Line,
     streamWriter: *StreamWriter,
 ) !void {
-    const block = try Block.init(allocator, lines);
+    const block = try Block.initFromLines(allocator, lines);
     defer block.deinit(allocator);
 
     if (block.len() == 0) {

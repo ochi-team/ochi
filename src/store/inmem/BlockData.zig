@@ -35,6 +35,8 @@ pub const BlockData = struct {
     // TODO: try making it non nullable
     columnsHeader: ?*ColumnsHeader = null,
     columnsData: std.ArrayList(ColumnData),
+    // TODO: consider making it as a Field,
+    // it might make ingestion more copies, but reading is lighter
     celledColumns: ?[]Column = null,
 
     pub fn initEmpty() BlockData {

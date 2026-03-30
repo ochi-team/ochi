@@ -8,12 +8,19 @@ const Column = @import("Column.zig");
 const BlockData = @import("BlockData.zig").BlockData;
 const Unpacker = @import("Unpacker.zig");
 const ValuesDecoder = @import("ValuesDecoder.zig");
+const TimestampsEncoder = @import("TimestampsEncoder.zig");
 
 const sizing = @import("sizing.zig");
 
 // TODO: no idea if it's a good number, must be tested with high cardinality logs,
 // adjust the number and see what's best we can do
 pub const maxColumns = 2000;
+// maxLines is a max amount of lines that we can put into a block,
+// it's mostly for sanity check assuming the maxBlockSize
+// TODO: we should log blocks meta data if there are more than 64 * 1024 lines
+// it requires make it as a soft limit,
+// it means every line is less than 32 bytes
+pub const maxLines = 1024 * 1024;
 
 fn columnLessThan(_: void, one: Column, another: Column) bool {
     return std.mem.lessThan(u8, one.key, another.key);
@@ -25,11 +32,11 @@ firstCelled: u32,
 columns: []Column,
 timestamps: []u64,
 
-pub fn init(allocator: Allocator, lines: []*const Line) !*Block {
+pub fn initFromLines(allocator: Allocator, lines: []*const Line) !*Block {
     const b = try allocator.create(Block);
     errdefer allocator.destroy(b);
 
-    b.* = Block{
+    b.* = .{
         .firstCelled = undefined,
         .columns = undefined,
         .timestamps = undefined,
@@ -42,11 +49,41 @@ pub fn init(allocator: Allocator, lines: []*const Line) !*Block {
 }
 
 pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
-    _ = alloc;
-    _ = data;
-    _ = unpacker;
-    _ = decoder;
-    unreachable;
+    std.debug.assert(data.len <= maxLines);
+
+    const tsEncoder = try TimestampsEncoder.init(alloc);
+    defer tsEncoder.deinit(alloc);
+
+    const tss = try alloc.alloc(u64, data.len);
+    errdefer alloc.free(tss);
+    try tsEncoder.decode(tss, data.timestampsData.data);
+
+    const firstCelled: u32 = @intCast(data.columnsData.items.len);
+    const celledColsLen = if (data.celledColumns) |cells| cells.len else 0;
+    const columns = try alloc.alloc(Column, data.columnsData.items.len + celledColsLen);
+
+    for (0..data.columnsData.items.len) |i| {
+        const colData = &data.columnsData.items[i];
+        var col = &columns[i];
+        col.key = colData.key;
+        col.values = try unpacker.unpackValues(alloc, colData.data, data.len);
+        try decoder.decode(col.values, colData.type, colData.dict.values.items);
+    }
+
+    if (data.celledColumns) |cells| {
+        const cellsSlice = columns[firstCelled .. firstCelled + cells.len];
+        std.debug.assert(cellsSlice.len == cells.len);
+        @memcpy(cellsSlice, cells);
+    }
+
+    const b = try alloc.create(Block);
+
+    b.* = .{
+        .firstCelled = firstCelled,
+        .columns = columns,
+        .timestamps = tss,
+    };
+    return b;
 }
 
 pub fn gatherLines(self: *const Block, line: *std.ArrayList(Line2)) void {
@@ -439,7 +476,7 @@ test "SelfInitMaxColumns" {
             };
             lines[i] = line;
         }
-        const b = try Block.init(alloc, lines);
+        const b = try Block.initFromLines(alloc, lines);
         defer b.deinit(alloc);
 
         try std.testing.expectEqual(case.expectedLen, b.len());
@@ -698,7 +735,7 @@ test "Self.put" {
     };
 
     for (cases) |case| {
-        var block = try Block.init(allocator, case.lines);
+        var block = try Block.initFromLines(allocator, case.lines);
         defer block.deinit(allocator);
 
         for (case.expectedTimestamps, 0..) |expectedTs, i| {

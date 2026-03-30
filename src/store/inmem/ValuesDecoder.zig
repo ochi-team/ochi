@@ -32,7 +32,7 @@ pub fn deinit(self: *Self) void {
 
 pub fn decode(
     self: *Self,
-    values: [][]u8,
+    values: [][]const u8,
     vt: ColumnType,
     dictValues: []const []const u8,
 ) !void {

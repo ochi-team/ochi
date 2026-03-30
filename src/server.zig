@@ -102,7 +102,7 @@ test "serverWithSIGTERM" {
 
 test "tidy" {
     const alloc = std.testing.allocator;
-    const lint = @import("lint.zig");
+    const lint = @import("tidy.zig");
     const noMergeCommits = try lint.gitHasNoMergeCommits(alloc);
     try std.testing.expect(noMergeCommits);
 }

@@ -199,7 +199,7 @@ test "sizingBlockAndFieldsMatch" {
         for (0..case.lines.len) |i| {
             blockLines[i] = &case.lines[i];
         }
-        const block = try Block.init(alloc, blockLines);
+        const block = try Block.initFromLines(alloc, blockLines);
         defer block.deinit(alloc);
         const blockSize = block.size();
 
