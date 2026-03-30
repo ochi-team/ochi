@@ -19,3 +19,4 @@ pub fn gitHasNoMergeCommits(alloc: Allocator) !bool {
 // TODO: add linter
 // TODO: validate git history has no large files (256kb+)
 // TODO: ensure the licenses are ok and there are no AGPL
+// TODO: restrict TODO / FIXME comments, must be the last rule to fix them all
