@@ -14,36 +14,38 @@ const UnpackError = error{
 };
 
 const Self = @This();
+// TODO: get rid of collecting garbage
+garbage: std.ArrayList([]u8) = .empty,
 
-buf: []u8,
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const s = try allocator.create(Self);
-    s.* = Self{
-        .buf = undefined,
-    };
+    s.* = .{};
     return s;
 }
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-    if (self.buf.len > 0) {
-        allocator.free(self.buf);
+    for (self.garbage.items) |buf| {
+        allocator.free(buf);
     }
+    self.garbage.deinit(allocator);
     allocator.destroy(self);
 }
 
 pub fn unpackValues(self: *Self, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
     var offset: usize = 0;
+    // TODO: avoid repeated allocations of the unpacked buffers, both length and buf
     const lengths = try unpackU64(allocator, encoded, count, &offset);
     defer allocator.free(lengths);
 
     const tail = encoded[offset..];
-    self.buf = try unpackBytes(allocator, tail, &offset);
+    const buf = try unpackBytes(allocator, tail, &offset);
+    try self.garbage.append(allocator, buf);
     std.debug.assert(offset == encoded.len);
 
     var res = try allocator.alloc([]const u8, lengths.len);
     // same values first
-    if (lengths.len >= 2 and self.buf.len == lengths[0] and areNumbersSame(lengths)) {
+    if (lengths.len >= 2 and buf.len == lengths[0] and areNumbersSame(lengths)) {
         for (0..res.len) |i| {
-            res[i] = self.buf;
+            res[i] = buf;
         }
         return res;
     }
@@ -51,8 +53,8 @@ pub fn unpackValues(self: *Self, allocator: std.mem.Allocator, encoded: []const 
     offset = 0;
     for (0..res.len) |i| {
         const len = lengths[i];
-        std.debug.assert(self.buf[offset..].len >= len);
-        res[i] = self.buf[offset .. offset + len];
+        std.debug.assert(buf[offset..].len >= len);
+        res[i] = buf[offset .. offset + len];
         offset += len;
     }
     return res;

@@ -173,6 +173,8 @@ fn areValuesSame(values: []const []const u8) bool {
     return true;
 }
 
+// TODO: there must be more properties besides rount-trippness,
+// e.g. size of the output is less
 test "Packer.packValuesRoundtrip" {
     const allocator = std.testing.allocator;
 

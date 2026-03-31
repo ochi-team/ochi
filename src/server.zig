@@ -106,3 +106,5 @@ test "tidy" {
     const noMergeCommits = try lint.gitHasNoMergeCommits(alloc);
     try std.testing.expect(noMergeCommits);
 }
+
+// TODO: e2e / API tests using snapshot testing

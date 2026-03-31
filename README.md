@@ -37,49 +37,10 @@ app:
 1. https://zigistry.dev/
 2. https://ziglist.org/
 
-
-Nice to have:
-- Design landing page
-- Drop a couple blog posts in there on:
-    1. why static allocation is not the best 
-    2. what is the alternative to static allocations? 
-    3. chunked buffers as an alternative to ArrayList
-    4. write logs effectively
-    5. key value store for a logging database
-    6. storing index for logs
-    7. object storage complexity
-    8. ARM matters
-    9. opencost integration with Grafana
-    [[DONE]] 10. why we must stay opensource forever
-    11. tripwire
-    12. why we don't use inverted index and full text search
-    13. configuration distribution in zig
-
 ### tiny package movements
 - extract structs from store/inmem/block_header.zig
 - move data.zig to data/Data.zig
+- extract components from BlockData
 - separate data and data/MemTable packages
 - separate index and index/Memtable packages
-
-###  tests todos
-
-##### index
-
-- index
-- index table
-- writer
-- mem block
-- mem table
-- meta index
-- table header
-- meta index record
-
-##### data
-
-- block writer
-- columns header index
-- stream writer
-- table header
-- mem table
-- data
 

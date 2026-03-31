@@ -71,9 +71,12 @@ pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, dec
     }
 
     if (data.celledColumns) |cells| {
-        const cellsSlice = columns[firstCelled .. firstCelled + cells.len];
-        std.debug.assert(cellsSlice.len == cells.len);
-        @memcpy(cellsSlice, cells);
+        for (cells, 0..) |*cell, i| {
+            columns[firstCelled + i].key = cell.key;
+            // move the values to the block instead of copying them
+            columns[firstCelled + i].values = &[_][]const u8{};
+            std.mem.swap([][]const u8, &columns[firstCelled + i].values, &cell.values);
+        }
     }
 
     const b = try alloc.create(Block);
@@ -313,6 +316,124 @@ fn canBeSavedAsCelled(lines: []*const Line, index: usize) bool {
     }
 
     return true;
+}
+
+const SID = @import("../lines.zig").SID;
+const StreamWriter = @import("StreamWriter.zig");
+const StreamReader = @import("reader.zig").StreamReader;
+const BlockHeader = @import("block_header.zig").BlockHeader;
+
+fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
+    try std.testing.expectEqualSlices(u64, a.timestamps, b.timestamps);
+    try std.testing.expectEqual(a.firstCelled, b.firstCelled);
+
+    const colsA = a.getColumns();
+    const colsB = b.getColumns();
+    try std.testing.expectEqual(colsA.len, colsB.len);
+    for (colsA, colsB) |ca, cb| {
+        try std.testing.expectEqualStrings(ca.key, cb.key);
+        try std.testing.expectEqual(ca.values.len, cb.values.len);
+        for (ca.values, cb.values) |va, vb| {
+            try std.testing.expectEqualStrings(va, vb);
+        }
+    }
+
+    const cellsA = a.getCelledColumns();
+    const cellsB = b.getCelledColumns();
+    try std.testing.expectEqual(cellsA.len, cellsB.len);
+    for (cellsA, cellsB) |ca, cb| {
+        try std.testing.expectEqualStrings(ca.key, cb.key);
+        try std.testing.expectEqual(ca.values.len, 1);
+        try std.testing.expectEqual(cb.values.len, 1);
+        try std.testing.expectEqualStrings(ca.values[0], cb.values[0]);
+    }
+}
+
+test "initFromLines and initFromData produce identical blocks" {
+    const alloc = std.testing.allocator;
+    const sid = SID{ .id = 1, .tenantID = "1111" };
+
+    var f1 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
+    var f2 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
+    var f3 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
+    var f4 = [_]Field{ .{ .key = "cpu", .value = "0.8" }, .{ .key = "memory", .value = "512MB" } };
+    var lines1 = [_]*const Line{
+        &.{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        &.{ .timestampNs = 2, .sid = sid, .fields = &f1 },
+    };
+    var lines2 = [_]*const Line{
+        &.{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        &.{ .timestampNs = 2, .sid = sid, .fields = &f2 },
+        &.{ .timestampNs = 3, .sid = sid, .fields = &f3 },
+    };
+    var lines3 = [_]*const Line{
+        &.{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        &.{ .timestampNs = 2, .sid = sid, .fields = &f4 },
+    };
+
+    const Case = struct {
+        lines: []*const Line,
+    };
+    const cases = &[_]Case{
+        .{
+            .lines = &lines1,
+        },
+        .{
+            .lines = &lines2,
+        },
+        .{
+            .lines = &lines3,
+        },
+    };
+
+    for (cases) |case| {
+        const blockA = try Block.initFromLines(alloc, case.lines);
+        defer blockA.deinit(alloc);
+
+        const writer = try StreamWriter.initMem(alloc, 128);
+        defer writer.deinit(alloc);
+
+        var bh = BlockHeader.initFromBlock(blockA, sid);
+        try writer.writeBlock(alloc, blockA, &bh);
+
+        var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomValuesList.items.len);
+        defer bloomValuesList.deinit(alloc);
+        for (writer.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+
+        var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomTokensList.items.len);
+        defer bloomTokensList.deinit(alloc);
+        for (writer.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+
+        const sr = StreamReader{
+            .timestampsBuf = writer.timestampsDst.asSliceAssumeBuffer(),
+            .indexBuf = writer.indexDst.asSliceAssumeBuffer(),
+            .metaIndexBuf = writer.metaIndexDst.asSliceAssumeBuffer(),
+            .columnsHeaderBuf = writer.columnsHeaderDst.asSliceAssumeBuffer(),
+            .columnsHeaderIndexBuf = writer.columnsHeaderIndexDst.asSliceAssumeBuffer(),
+            .columnsKeysBuf = writer.columnKeysBuf.asSliceAssumeBuffer(),
+            .columnIdxsBuf = writer.columnIdxsBuf.asSliceAssumeBuffer(),
+            .messageBloomValuesBuf = writer.messageBloomValuesDst.asSliceAssumeBuffer(),
+            .messageBloomTokensBuf = writer.messageBloomTokensDst.asSliceAssumeBuffer(),
+            .bloomValuesList = bloomValuesList,
+            .bloomTokensList = bloomTokensList,
+            .columnIDGen = writer.columnIDGen,
+            .colIdx = &writer.colIdx,
+        };
+
+        var bd = BlockData.initEmpty();
+        defer bd.deinit(alloc);
+        try bd.readFrom(alloc, &bh, &sr);
+
+        const unpacker = try Unpacker.init(alloc);
+        const decoder = try ValuesDecoder.init(alloc);
+
+        const blockB = try Block.initFromData(alloc, &bd, unpacker, decoder);
+        defer blockB.deinit(alloc);
+        defer unpacker.deinit(alloc);
+        defer decoder.deinit();
+
+        try expectEqualBlocks(blockA, blockB);
+    }
 }
 
 test "areSameFields: happy path" {
