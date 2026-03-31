@@ -3,7 +3,6 @@ const Allocator = std.mem.Allocator;
 
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
-const Line2 = @import("../lines.zig").Line2;
 const Column = @import("Column.zig");
 const BlockData = @import("BlockData.zig").BlockData;
 const Unpacker = @import("Unpacker.zig");
@@ -89,10 +88,46 @@ pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, dec
     return b;
 }
 
-pub fn gatherLines(self: *const Block, line: *std.ArrayList(Line2)) void {
-    _ = self;
-    _ = line;
-    unreachable;
+pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(Line)) !void {
+    const cols = self.getColumns();
+    const cells = self.getCelledColumns();
+
+    try lines.ensureUnusedCapacity(alloc, self.timestamps.len);
+
+    const initialLen = lines.items.len;
+    var appendedCount: usize = 0;
+    errdefer {
+        for (lines.items[initialLen .. initialLen + appendedCount]) |line| alloc.free(line.fields);
+        lines.shrinkRetainingCapacity(initialLen);
+    }
+
+    for (self.timestamps, 0..) |ts, i| {
+        var fieldCount: usize = cells.len;
+        for (cols) |col| {
+            if (col.values[i].len > 0) fieldCount += 1;
+        }
+
+        const fields = try alloc.alloc(Field, fieldCount);
+        var fi: usize = 0;
+
+        for (cells) |cell| {
+            fields[fi] = .{ .key = cell.key, .value = cell.values[0] };
+            fi += 1;
+        }
+        for (cols) |col| {
+            const value = col.values[i];
+            if (value.len == 0) continue;
+            fields[fi] = .{ .key = col.key, .value = value };
+            fi += 1;
+        }
+
+        lines.appendAssumeCapacity(.{
+            .timestampNs = ts,
+            .sid = undefined,
+            .fields = fields,
+        });
+        appendedCount += 1;
+    }
 }
 
 pub fn deinit(self: *Block, allocator: Allocator) void {
@@ -433,6 +468,22 @@ test "initFromLines and initFromData produce identical blocks" {
         defer decoder.deinit();
 
         try expectEqualBlocks(blockA, blockB);
+
+        var gatheredLines = std.ArrayList(Line).empty;
+        defer {
+            for (gatheredLines.items) |line| alloc.free(line.fields);
+            gatheredLines.deinit(alloc);
+        }
+        try blockA.gatherLines(alloc, &gatheredLines);
+        try std.testing.expectEqual(case.lines.len, gatheredLines.items.len);
+        for (case.lines, gatheredLines.items) |origLine, gatheredLine| {
+            try std.testing.expectEqual(origLine.timestampNs, gatheredLine.timestampNs);
+            try std.testing.expectEqual(origLine.fields.len, gatheredLine.fields.len);
+            for (origLine.fields, gatheredLine.fields) |of, gf| {
+                try std.testing.expectEqualStrings(of.key, gf.key);
+                try std.testing.expectEqualStrings(of.value, gf.value);
+            }
+        }
     }
 }
 

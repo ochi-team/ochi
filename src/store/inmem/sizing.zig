@@ -50,22 +50,11 @@ pub fn blockJsonSize(self: *const Block) u32 {
     return res;
 }
 
-pub fn linesJsonSize(lines: []const Line2) u32 {
+pub fn linesJsonSize(lines: []const Line) u32 {
     var res: u32 = 0;
     for (lines) |line| {
-        res += fieldsJsonSize2(line);
+        res += fieldsJsonSize(&line);
     }
-    return res;
-}
-
-pub fn fieldsJsonSize2(self: Line2) u32 {
-    var res: u32 = lineTsSize;
-    for (self.fields) |f| {
-        if (f.value.len == 0) continue;
-
-        res += keyValSize(f.key, f.value);
-    }
-
     return res;
 }
 

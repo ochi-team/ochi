@@ -241,7 +241,12 @@ pub const Line = struct {
     }
 };
 
-// TODO: FIXME, remove it and use Line instead, it requires getting rid of sid in the Line
+// TODO: we might want to introduce BlockLines type that holds a struct similar to
+// Block state: slice of timestamps, slice of columns, and slice of all the fields,
+// it allows us to allocate slice of fields all at once instead of per Line,
+// if this type gets wider usage worth naming it Lines instead
+
+// TODO: remove it and use Line instead, it requires getting rid of sid in the Line
 pub const Line2 = struct {
     timestampNs: u64,
     fields: []Field,

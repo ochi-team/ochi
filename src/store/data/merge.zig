@@ -7,7 +7,7 @@ const sizing = @import("../inmem/sizing.zig");
 
 const TableHeader = @import("../inmem/TableHeader.zig");
 const SID = @import("../lines.zig").SID;
-const Line = @import("../lines.zig").Line2;
+const Line = @import("../lines.zig").Line;
 
 const StreamWriter = @import("../inmem/StreamWriter.zig");
 const BlockWriter = @import("../inmem/BlockWriter.zig");
@@ -156,7 +156,7 @@ pub const StreamMerger = struct {
         defer block.deinit(alloc);
 
         const offset = self.lines.items.len;
-        block.gatherLines(&self.lines);
+        try block.gatherLines(alloc, &self.lines);
 
         // TODO: understand whether I can use sizing.blockJsonSize,
         // (test is implemented to confirm it, good to have it for merger),
