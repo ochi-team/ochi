@@ -20,7 +20,6 @@ const Conf = @import("../../Conf.zig");
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
 const maxMemTables = 24;
-const maxAttemtsAddEntry = 10;
 
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 
@@ -206,21 +205,17 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
     var entryIndex: usize = 0;
-    var attemps: u8 = 1;
     const shard = self.entries.next();
-
-    while (attemps <= maxAttemtsAddEntry): (attemps += 1) {
-
-        var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+    //TODO: need to restrict max count added to shard
+    while (true) {
+        const blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
         
         if (blocksListResult) |*blocksList| {
-            defer blocksList.deinit(alloc);
             try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
-
-            if (blocksList.entryTailIndex > 0) {
-                entryIndex = blocksList.entryTailIndex;
-                continue;
+            if (blocksList.gatheredEntriesCount == entries.len) {
+                return;
             }
+            entryIndex += blocksList.gatheredEntriesCount;
         }
 
         break;
