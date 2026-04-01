@@ -119,7 +119,7 @@ const EntriesShard = struct {
     }
 };
 
-pub const maxBlocksPerShard = 256;
+pub const maxBlocksPerShard = 3;
 
 const Entries = @This();
 
@@ -225,7 +225,7 @@ test "EntriesShard.add" {
         .{
             .setup_blocks_count = maxBlocksPerShard - 1,
             .fill_block_after_setup = true,
-            .test_entries = &.{theLargest},
+            .test_entries = &.{ theLargest, theLargest },
             .expected_flush = true,
             .expected_block_count = 0,
             .expected_last_block_entries_count = 0,
