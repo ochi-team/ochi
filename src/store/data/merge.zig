@@ -8,6 +8,7 @@ const sizing = @import("../inmem/sizing.zig");
 const TableHeader = @import("../inmem/TableHeader.zig");
 const SID = @import("../lines.zig").SID;
 const Line = @import("../lines.zig").Line;
+const Field = @import("../lines.zig").Field;
 
 const StreamWriter = @import("../inmem/StreamWriter.zig");
 const BlockWriter = @import("../inmem/BlockWriter.zig");
@@ -208,5 +209,171 @@ fn mergeLines(dst: *std.ArrayList(Line), left: []const Line, right: []const Line
     }
     if (j < right.len) {
         dst.appendSliceAssumeCapacity(right[j..]);
+    }
+}
+
+test "mergeLines" {
+    const alloc = std.testing.allocator;
+    const Case = struct {
+        left: []const Line,
+        right: []const Line,
+        expected: []const Line,
+    };
+
+    const cases = [_]Case{
+        .{
+            .left = &.{},
+            .right = &.{},
+            .expected = &.{},
+        },
+        .{
+            .left = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
+                },
+            },
+            .right = &.{},
+            .expected = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
+                },
+            },
+        },
+        .{
+            .left = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
+                },
+            },
+            .right = &[_]Line{
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
+                },
+            },
+            .expected = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
+                },
+            },
+        },
+        .{
+            .left = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
+                },
+            },
+            .right = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
+                },
+            },
+            .expected = &[_]Line{
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
+                },
+                .{
+                    .timestampNs = 123,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
+                },
+            },
+        },
+        .{
+            .left = &[_]Line{
+                .{
+                    .timestampNs = 12,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
+                },
+                .{
+                    .timestampNs = 123456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
+                },
+            },
+            .right = &[_]Line{
+                .{
+                    .timestampNs = 1,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
+                },
+            },
+            .expected = &[_]Line{
+                .{
+                    .timestampNs = 1,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
+                },
+                .{
+                    .timestampNs = 12,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
+                },
+                .{
+                    .timestampNs = 456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
+                },
+                .{
+                    .timestampNs = 123456,
+                    .sid = .{ .tenantID = "", .id = 1 },
+                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
+                },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var merged = try std.ArrayList(Line).initCapacity(alloc, case.left.len + case.right.len);
+        defer merged.deinit(alloc);
+
+        mergeLines(&merged, case.left, case.right);
+        try std.testing.expectEqualDeep(case.expected, merged.items);
     }
 }
