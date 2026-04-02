@@ -236,7 +236,7 @@ pub const Line = struct {
     // can't be const because we reorder fields
     fields: []Field,
 
-    pub fn fieldsSize(self: *const Line) u32 {
+    pub fn fieldsSize(self: Line) u32 {
         return sizing.fieldsJsonSize(self);
     }
 };
@@ -252,7 +252,7 @@ pub const Line2 = struct {
     fields: []Field,
 };
 
-pub fn lineLessThan(_: void, one: *const Line, another: *const Line) bool {
+pub fn lineLessThan(_: void, one: Line, another: Line) bool {
     // sid is less
     return one.sid.lessThan(&another.sid) or
         // or sid is eq, but timestamp is less

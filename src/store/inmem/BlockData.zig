@@ -259,10 +259,10 @@ test "BlockData readFrom populates columnsData and celledColumns" {
     };
     populateSampleLines(&sample);
 
-    var lines = [3]*const Line{
-        &sample.lines[0],
-        &sample.lines[1],
-        &sample.lines[2],
+    var lines = [3]Line{
+        sample.lines[0],
+        sample.lines[1],
+        sample.lines[2],
     };
 
     const memTable = try MemTable.init(allocator);

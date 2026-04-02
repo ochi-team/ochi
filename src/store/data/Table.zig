@@ -371,7 +371,7 @@ test "fromMem creates proper table from mem table with populated data" {
         .fields = fields2[0..],
     };
 
-    var lines = [_]*const Line{ &line1, &line2 };
+    var lines = [_]Line{ line1, line2 };
 
     try memTable.addLines(alloc, lines[0..]);
 
@@ -429,7 +429,7 @@ test "open reads table from disk" {
         .fields = fields2[0..],
     };
 
-    var lines = [_]*const Line{ &line1, &line2 };
+    var lines = [_]Line{ line1, line2 };
     try memTable.addLines(alloc, lines[0..]);
     try memTable.storeToDisk(alloc, tablePath);
 

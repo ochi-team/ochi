@@ -563,10 +563,10 @@ fn testReadBlock(allocator: Allocator) !void {
     // Unordered timestamps in lines so that it tests sorting.
     // line[0]: ts=1, sid=(2,"2222"); line[1]: ts=2, sid=(1,"1111"); line[2]: ts=3, sid=(1,"1111")
     // After sort by (sid, ts): first block (1111,1) 2 rows (ts 2,3), second block (2222,2) 1 row (ts 1).
-    var lines = [3]*const Line{
-        &sample.lines[0],
-        &sample.lines[1],
-        &sample.lines[2],
+    var lines = [3]Line{
+        sample.lines[0],
+        sample.lines[1],
+        sample.lines[2],
     };
 
     const memTable = try MemTable.init(allocator);
@@ -653,7 +653,7 @@ fn testInitFromDiskTable(allocator: Allocator) !void {
         .fields = fields2[0..],
     };
 
-    var lines = [_]*const Line{ &line1, &line2 };
+    var lines = [_]Line{ line1, line2 };
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

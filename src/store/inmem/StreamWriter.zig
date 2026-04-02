@@ -636,10 +636,10 @@ test "writeBlock and writeData produce identical buffer output" {
         .{ .key = "level", .value = "warn" },
     };
     const sid = SID{ .id = 1, .tenantID = "1111" };
-    var line1 = Line{ .timestampNs = 1, .sid = sid, .fields = &fields1 };
-    var line2 = Line{ .timestampNs = 2, .sid = sid, .fields = &fields2 };
-    var line3 = Line{ .timestampNs = 3, .sid = sid, .fields = &fields3 };
-    var lines = [_]*const Line{ &line1, &line2, &line3 };
+    const line1 = Line{ .timestampNs = 1, .sid = sid, .fields = &fields1 };
+    const line2 = Line{ .timestampNs = 2, .sid = sid, .fields = &fields2 };
+    const line3 = Line{ .timestampNs = 3, .sid = sid, .fields = &fields3 };
+    var lines = [_]Line{ line1, line2, line3 };
 
     // Writer 1: encode via writeBlock
     const maxColI = 128;

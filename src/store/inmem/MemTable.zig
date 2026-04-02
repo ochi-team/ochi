@@ -45,7 +45,7 @@ pub fn deinit(self: *MemTable, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []*const Line) !void {
+pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !void {
     if (lines.len == 0) {
         return Error.EmptyLines;
     }
@@ -56,7 +56,7 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []*const L
     var streamI: usize = 0;
     var blockSize: u32 = 0;
 
-    std.mem.sortUnstable(*const Line, lines, {}, lineLessThan);
+    std.mem.sortUnstable(Line, lines, {}, lineLessThan);
     var prevSID: SID = lines[0].sid;
 
     for (lines, 0..) |line, i| {
@@ -234,9 +234,9 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
     populateSampleLines(&sample);
 
     // unordered timestamps in lines so that it tests its sorting
-    var lines = [2]*const Line{
-        &sample.lines[0],
-        &sample.lines[1],
+    var lines = [2]Line{
+        sample.lines[0],
+        sample.lines[1],
     };
 
     const memTable = try MemTable.init(allocator);
@@ -320,7 +320,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 }
 
 test "addLinesErrorOnEmpty" {
-    var lines = [_]*const Line{};
+    var lines = [_]Line{};
     const memTable = try MemTable.init(std.testing.allocator);
     defer memTable.deinit(std.testing.allocator);
     const err = memTable.addLines(std.testing.allocator, lines[0..]);
@@ -338,9 +338,9 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
         .lines = undefined,
     };
     populateSampleLines(&sample);
-    var lines = [2]*const Line{
-        &sample.lines[0],
-        &sample.lines[1],
+    var lines = [2]Line{
+        sample.lines[0],
+        sample.lines[1],
     };
 
     var tmp = std.testing.tmpDir(.{});

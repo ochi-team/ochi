@@ -100,6 +100,17 @@ pub const StreamMerger = struct {
         };
     }
 
+    fn reset(self: *StreamMerger, alloc: Allocator) void {
+        self.blockData = null;
+        self.totalKeys = 0;
+        self.size = 0;
+        self.sid = .{ .tenantID = "", .id = 0 };
+
+        // TODO: if Lines holds all the fields slice we can reuse the array capacity
+        for (self.lines.items) |line| alloc.free(line.fields);
+        self.lines.clearRetainingCapacity();
+    }
+
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
         for (self.lines.items) |line| alloc.free(line.fields);
         self.lines.deinit(alloc);
@@ -119,7 +130,7 @@ pub const StreamMerger = struct {
 
         if (!blockData.sid.eql(&self.sid)) {
             // it means next stream begins, we have to flush the data
-            self.flushStream();
+            try self.flushStream(alloc, blockWriter, writer);
             self.sid = blockData.sid;
 
             if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
@@ -130,7 +141,7 @@ pub const StreamMerger = struct {
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
             // we have to flush the data before we can add more
-            self.flushStream();
+            try self.flushStream(alloc, blockWriter, writer);
             if (totalKeys > Block.maxColumns) {
                 try blockWriter.writeData(alloc, blockData, writer);
             } else {
@@ -138,20 +149,33 @@ pub const StreamMerger = struct {
                 self.totalKeys = totalKeys;
             }
         } else if (self.size >= MemTable.maxBlockSize) {
-            self.flushStream();
+            try self.flushStream(alloc, blockWriter, writer);
             try blockWriter.writeData(alloc, blockData, writer);
         } else {
-            try self.merge(alloc, blockData);
+            try self.merge(alloc, blockData, blockWriter, writer);
             self.totalKeys += totalKeys;
         }
     }
 
-    fn flushStream(self: *const StreamMerger) void {
-        _ = self;
-        unreachable;
+    // TODO: this and many more demonstartes obvious dependece of block and stream writers,
+    // they always go together, I have to inject one into another probably
+    fn flushStream(self: *StreamMerger, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
+        if (self.lines.items.len > 0) {
+            try writer.writeLines(alloc, self.sid, self.lines.items, streamWriter);
+        } else if (self.blockData) |blockData| {
+            try writer.writeData(alloc, blockData, streamWriter);
+        }
+
+        self.reset(alloc);
     }
 
-    fn merge(self: *StreamMerger, alloc: Allocator, blockData: *BlockData) !void {
+    fn merge(
+        self: *StreamMerger,
+        alloc: Allocator,
+        blockData: *BlockData,
+        blockWriter: *BlockWriter,
+        writer: *StreamWriter,
+    ) !void {
         if (self.blockData) |current| {
             if (current.len > 0) {
                 try self.decodeLines(alloc, current);
@@ -169,7 +193,7 @@ pub const StreamMerger = struct {
         mergeLines(&self.mergeBufferLines, self.lines.items[0..len], self.lines.items[len..]);
 
         if (self.size >= MemTable.maxBlockSize) {
-            self.flushStream();
+            try self.flushStream(alloc, blockWriter, writer);
         }
     }
 

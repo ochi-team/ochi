@@ -133,7 +133,7 @@ pub const Processor = struct {
         const now: u64 = @intCast(std.time.nanoTimestamp());
         const minDay = (now - retention) / dayNs;
 
-        var linesByInterval = std.AutoHashMap(u64, std.ArrayList(*const Line)).init(allocator);
+        var linesByInterval = std.AutoHashMap(u64, std.ArrayList(Line)).init(allocator);
 
         for (self.lines) |line| {
             const day = line.timestampNs / dayNs;
@@ -145,12 +145,12 @@ pub const Processor = struct {
             }
 
             if (linesByInterval.getPtr(day)) |list| {
-                try list.append(allocator, &line);
+                try list.append(allocator, line);
                 continue;
             }
-            var list = try std.ArrayList(*const Line).initCapacity(allocator, self.lines.len);
+            var list = try std.ArrayList(Line).initCapacity(allocator, self.lines.len);
             try linesByInterval.put(day, list);
-            try list.append(allocator, &line);
+            try list.append(allocator, line);
         }
 
         try self.store.addLines(allocator, linesByInterval, self.tags[0], self.encodedTags.buf[0..self.encodedTags.offset]);

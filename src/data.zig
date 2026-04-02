@@ -38,7 +38,7 @@ fn setFlushTime() i64 {
 
 pub const DataShard = struct {
     mx: std.Thread.Mutex = .{},
-    lines: std.ArrayList(*const Line) = .empty,
+    lines: std.ArrayList(Line) = .empty,
     size: u64 = 0,
     // TODO: currently there is a single background process flushing the data shards
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
@@ -387,7 +387,7 @@ pub const Data = struct {
         return error.Stopped;
     }
 
-    pub fn addLines(self: *Data, alloc: Allocator, lines: []*const Line, size: usize) !void {
+    pub fn addLines(self: *Data, alloc: Allocator, lines: []const Line, size: usize) !void {
         const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
         var shard = &self.shards[i];
 

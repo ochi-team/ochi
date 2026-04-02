@@ -31,7 +31,7 @@ firstCelled: u32,
 columns: []Column,
 timestamps: []u64,
 
-pub fn initFromLines(allocator: Allocator, lines: []*const Line) !*Block {
+pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     const b = try allocator.create(Block);
     errdefer allocator.destroy(b);
 
@@ -155,7 +155,7 @@ pub fn size(self: *Block) u32 {
     return sizing.blockJsonSize(self);
 }
 
-fn put(self: *Block, allocator: Allocator, lines: []*const Line) !void {
+fn put(self: *Block, allocator: Allocator, lines: []const Line) !void {
     std.debug.assert(lines.len > 0);
 
     // Fast path if all lines have the same fields
@@ -166,7 +166,7 @@ fn put(self: *Block, allocator: Allocator, lines: []*const Line) !void {
     return self.putDynamicFields(allocator, lines);
 }
 
-fn putSameFields(self: *Block, allocator: Allocator, lines: []*const Line) !void {
+fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void {
     self.timestamps = try allocator.alloc(u64, lines.len);
     errdefer allocator.free(self.timestamps);
     for (lines, 0..) |line, i| {
@@ -230,7 +230,7 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []*const Line) !void
     self.columns = columns;
 }
 
-fn putDynamicFields(self: *Block, allocator: Allocator, lines: []*const Line) !void {
+fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !void {
     // Builds hash map of unique column keys to their index
     var columnI = std.StringHashMap(usize).init(allocator);
     defer columnI.deinit();
@@ -309,7 +309,7 @@ fn sort(self: *Block) void {
 }
 
 // TODO: Investigate if we need to check for unique/duplicated fields keys as well.
-fn areSameFields(lines: []*const Line) bool {
+fn areSameFields(lines: []const Line) bool {
     if (lines.len < 2) {
         return true;
     }
@@ -330,7 +330,7 @@ fn areSameFields(lines: []*const Line) bool {
     return true;
 }
 
-fn canBeSavedAsCelled(lines: []*const Line, index: usize) bool {
+fn canBeSavedAsCelled(lines: []const Line, index: usize) bool {
     // If len is zero, then there's nothing to do.
     if (lines.len == 0) {
         return true;
@@ -392,22 +392,22 @@ test "initFromLines and initFromData produce identical blocks" {
     var f2 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
     var f3 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
     var f4 = [_]Field{ .{ .key = "cpu", .value = "0.8" }, .{ .key = "memory", .value = "512MB" } };
-    var lines1 = [_]*const Line{
-        &.{ .timestampNs = 1, .sid = sid, .fields = &f1 },
-        &.{ .timestampNs = 2, .sid = sid, .fields = &f1 },
+    var lines1 = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        .{ .timestampNs = 2, .sid = sid, .fields = &f1 },
     };
-    var lines2 = [_]*const Line{
-        &.{ .timestampNs = 1, .sid = sid, .fields = &f1 },
-        &.{ .timestampNs = 2, .sid = sid, .fields = &f2 },
-        &.{ .timestampNs = 3, .sid = sid, .fields = &f3 },
+    var lines2 = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        .{ .timestampNs = 2, .sid = sid, .fields = &f2 },
+        .{ .timestampNs = 3, .sid = sid, .fields = &f3 },
     };
-    var lines3 = [_]*const Line{
-        &.{ .timestampNs = 1, .sid = sid, .fields = &f1 },
-        &.{ .timestampNs = 2, .sid = sid, .fields = &f4 },
+    var lines3 = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        .{ .timestampNs = 2, .sid = sid, .fields = &f4 },
     };
 
     const Case = struct {
-        lines: []*const Line,
+        lines: []Line,
     };
     const cases = &[_]Case{
         .{
@@ -496,13 +496,13 @@ test "areSameFields: happy path" {
         .{ .key = "level", .value = "warn" },
         .{ .key = "app", .value = "seq" },
     };
-    var lines = [_]*const Line{
-        &.{
+    var lines = [_]Line{
+        .{
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
         },
-        &.{
+        .{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
@@ -521,13 +521,13 @@ test "areSameFields: unhappy path" {
         .{ .key = "level", .value = "warn" },
         .{ .key = "app", .value = "seq" },
     };
-    var lines = [_]*const Line{
-        &.{
+    var lines = [_]Line{
+        .{
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
         },
-        &.{
+        .{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
@@ -546,13 +546,13 @@ test "areSameValuesWithinColumn: happy path" {
         .{ .key = "level", .value = "info" },
         .{ .key = "app", .value = "seq" },
     };
-    var lines = [_]*const Line{
-        &.{
+    var lines = [_]Line{
+        .{
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
         },
-        &.{
+        .{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
@@ -572,13 +572,13 @@ test "areSameValuesWithinColumn: unhappy path" {
         .{ .key = "level", .value = "info" },
         .{ .key = "app", .value = "seq" },
     };
-    var lines = [_]*const Line{
-        &.{
+    var lines = [_]Line{
+        .{
             .timestampNs = 1,
             .sid = undefined,
             .fields = fields1[0..],
         },
-        &.{
+        .{
             .timestampNs = 2,
             .sid = undefined,
             .fields = fields2[0..],
@@ -619,7 +619,7 @@ test "SelfInitMaxColumns" {
     };
     for (cases) |case| {
         const alloc = std.testing.allocator;
-        const lines = try alloc.alloc(*const Line, case.lines);
+        const lines = try alloc.alloc(Line, case.lines);
 
         var keyNum: usize = 0;
         defer {
@@ -629,7 +629,6 @@ test "SelfInitMaxColumns" {
                     alloc.free(f.value);
                 }
                 alloc.free(l.fields);
-                alloc.destroy(l);
             }
             alloc.free(lines);
         }
@@ -640,13 +639,11 @@ test "SelfInitMaxColumns" {
                 fields[j].value = try std.fmt.allocPrint(alloc, "value_{d}", .{keyNum});
                 keyNum += 1;
             }
-            const line = try alloc.create(Line);
-            line.* = Line{
+            lines[i] = Line{
                 .fields = fields,
                 .sid = undefined,
                 .timestampNs = 1,
             };
-            lines[i] = line;
         }
         const b = try Block.initFromLines(alloc, lines);
         defer b.deinit(alloc);
@@ -659,7 +656,7 @@ test "Self.put" {
     const allocator = std.testing.allocator;
 
     const Case = struct {
-        lines: []*const Line,
+        lines: []Line,
         expectedTimestamps: []const u64,
         expectedCols: []const Column,
         expectedCells: []const Column,
@@ -683,17 +680,15 @@ test "Self.put" {
             .{ .key = "level", .value = "info" },
             .{ .key = "app", .value = "seq" },
         };
-        const line1 = Line{
+        var arr = [_]Line{ .{
             .timestampNs = 100,
             .sid = undefined,
             .fields = &fields1,
-        };
-        const line2 = Line{
+        }, .{
             .timestampNs = 200,
             .sid = undefined,
             .fields = &fields2,
-        };
-        var arr = [_]*const Line{ &line1, &line2 };
+        } };
         break :blk &arr;
     };
     const expectedCols2 = blk: {
@@ -728,18 +723,18 @@ test "Self.put" {
             .{ .key = "app", .value = "seq" },
             .{ .key = "host", .value = "server1" },
         };
-        var lines = [_]*const Line{
-            &.{
+        var lines = [_]Line{
+            .{
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
             },
-            &.{
+            .{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
             },
-            &.{
+            .{
                 .timestampNs = 300,
                 .sid = undefined,
                 .fields = fields3[0..],
@@ -756,13 +751,13 @@ test "Self.put" {
             .{ .key = "cpu", .value = "0.8" },
             .{ .key = "memory", .value = "512MB" },
         };
-        var lines = [_]*const Line{
-            &.{
+        var lines = [_]Line{
+            .{
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
             },
-            &.{
+            .{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
@@ -797,18 +792,18 @@ test "Self.put" {
             .{ .key = "app", .value = "seq" },
             .{ .key = "memory", .value = "512MB" },
         };
-        var lines = [_]*const Line{
-            &.{
+        var lines = [_]Line{
+            .{
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
             },
-            &.{
+            .{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],
             },
-            &.{
+            .{
                 .timestampNs = 300,
                 .sid = undefined,
                 .fields = fields3[0..],
@@ -843,13 +838,13 @@ test "Self.put" {
             .{ .key = "level", .value = "info" },
             .{ .key = "message", .value = &largeValue },
         };
-        var lines = [_]*const Line{
-            &.{
+        var lines = [_]Line{
+            .{
                 .timestampNs = 100,
                 .sid = undefined,
                 .fields = fields1[0..],
             },
-            &.{
+            .{
                 .timestampNs = 200,
                 .sid = undefined,
                 .fields = fields2[0..],

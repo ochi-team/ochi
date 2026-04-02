@@ -12,7 +12,7 @@ const Cache = @import("stds/Cache.zig");
 
 const Encoder = @import("encoding").Encoder;
 
-fn streamIndexLess(lines: std.ArrayList(*const Line), i: u32, j: u32) bool {
+fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
     return lines.items[i].sid.lessThan(&lines.items[j].sid);
 }
 
@@ -32,7 +32,7 @@ pub const Partition = struct {
     pub fn addLines(
         self: *Partition,
         allocator: Allocator,
-        lines: std.ArrayList(*const Line),
+        lines: std.ArrayList(Line),
         tags: []Field,
         encodedTags: []const u8,
     ) !void {
@@ -135,7 +135,7 @@ pub const Store = struct {
     pub fn addLines(
         self: *Store,
         allocator: Allocator,
-        lines: std.AutoHashMap(u64, std.ArrayList(*const Line)),
+        lines: std.AutoHashMap(u64, std.ArrayList(Line)),
         tags: []Field,
         encodedTags: []const u8,
     ) !void {

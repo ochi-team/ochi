@@ -53,12 +53,12 @@ pub fn blockJsonSize(self: *const Block) u32 {
 pub fn linesJsonSize(lines: []const Line) u32 {
     var res: u32 = 0;
     for (lines) |line| {
-        res += fieldsJsonSize(&line);
+        res += fieldsJsonSize(line);
     }
     return res;
 }
 
-pub fn fieldsJsonSize(self: *const Line) u32 {
+pub fn fieldsJsonSize(self: Line) u32 {
     var res: u32 = lineTsSize;
     for (self.fields) |f| {
         if (f.value.len == 0) continue;
@@ -183,12 +183,7 @@ test "sizingBlockAndFieldsMatch" {
             fieldsSize += line.fieldsSize();
         }
 
-        const blockLines = try alloc.alloc(*const Line, case.lines.len);
-        defer alloc.free(blockLines);
-        for (0..case.lines.len) |i| {
-            blockLines[i] = &case.lines[i];
-        }
-        const block = try Block.initFromLines(alloc, blockLines);
+        const block = try Block.initFromLines(alloc, case.lines);
         defer block.deinit(alloc);
         const blockSize = block.size();
 
