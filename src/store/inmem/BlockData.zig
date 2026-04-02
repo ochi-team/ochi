@@ -44,7 +44,7 @@ pub const BlockData = struct {
     }
 
     pub fn reset(self: *BlockData, allocator: std.mem.Allocator) void {
-        self.sid = undefined;
+        self.sid = .{ .tenantID = "", .id = 0 };
         self.uncompressedSizeBytes = 0;
         self.len = 0;
 
@@ -53,6 +53,7 @@ pub const BlockData = struct {
         self.celledColumns = null;
 
         if (self.columnsHeader) |ch| {
+            // TODO: make it reset instead
             ch.deinit(allocator);
             self.columnsHeader = null;
         }
@@ -65,6 +66,7 @@ pub const BlockData = struct {
         }
     }
 
+    // TODO: assign this API to a reader instead so we could have data as a pure data models
     pub fn readFrom(
         self: *BlockData,
         allocator: std.mem.Allocator,
@@ -116,6 +118,7 @@ pub const BlockData = struct {
     }
 };
 
+// TODO: move TimestampsData and ColumnData inside BlockData
 pub const TimestampsData = struct {
     data: []const u8 = undefined,
 

@@ -27,6 +27,8 @@ pub fn mergeData(
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
     var merger = try StreamMerger.init(alloc, readers);
+    defer merger.deinit(alloc);
+
     const blockWriter = try BlockWriter.init(alloc);
     defer blockWriter.deinit(alloc);
 
@@ -52,10 +54,12 @@ pub const StreamMerger = struct {
 
     // state
     sid: SID = .{ .tenantID = "", .id = 0 },
+    // TODO: find out why it's nullable
     blockData: ?*BlockData = null,
     totalKeys: usize = 0,
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
+    mergeBufferLines: std.ArrayList(Line) = .empty,
 
     unpacker: *Unpacker,
     decoder: *ValuesDecoder,
@@ -93,6 +97,12 @@ pub const StreamMerger = struct {
             .unpacker = unpacker,
             .decoder = decoder,
         };
+    }
+
+    fn deinit(self: *StreamMerger, alloc: Allocator) void {
+        for (self.lines.items) |line| alloc.free(line.fields);
+        self.lines.deinit(alloc);
+        self.mergeBufferLines.deinit(alloc);
     }
 
     pub fn writeBlock(
@@ -147,8 +157,19 @@ pub const StreamMerger = struct {
                 current.reset(alloc);
             }
         }
-        _ = blockData;
-        unreachable;
+
+        const len = self.lines.items.len;
+        try self.decodeLines(alloc, blockData);
+        std.debug.assert(self.lines.items.len > len);
+
+        try self.mergeBufferLines.ensureTotalCapacity(alloc, self.lines.items.len);
+        defer self.mergeBufferLines.clearRetainingCapacity();
+
+        mergeLines(&self.mergeBufferLines, self.lines.items[0..len], self.lines.items[len..]);
+
+        if (self.size >= MemTable.maxBlockSize) {
+            self.flushStream();
+        }
     }
 
     fn decodeLines(self: *StreamMerger, alloc: Allocator, blockData: *BlockData) !void {
@@ -164,3 +185,28 @@ pub const StreamMerger = struct {
         self.size += sizing.linesJsonSize(self.lines.items[offset..]);
     }
 };
+
+/// expects dst as a preallocated array,
+/// merges left and right into dst
+// TODO: find a way to make a merge inplace if possible
+fn mergeLines(dst: *std.ArrayList(Line), left: []const Line, right: []const Line) void {
+    var i: usize = 0;
+    var j: usize = 0;
+
+    while (i < left.len and j < right.len) {
+        if (left[i].timestampNs <= right[j].timestampNs) {
+            dst.appendAssumeCapacity(left[i]);
+            i += 1;
+        } else {
+            dst.appendAssumeCapacity(right[j]);
+            j += 1;
+        }
+    }
+
+    if (i < left.len) {
+        dst.appendSliceAssumeCapacity(left[i..]);
+    }
+    if (j < right.len) {
+        dst.appendSliceAssumeCapacity(right[j..]);
+    }
+}
