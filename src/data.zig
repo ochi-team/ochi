@@ -363,7 +363,7 @@ pub const Data = struct {
             streamWriter = try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
 
-        const tableHeader = try mergeData(alloc, destinationTablePath, streamWriter, &readers, stopped);
+        const tableHeader = try mergeData(alloc, streamWriter, &readers, stopped);
         _ = tableHeader;
 
         // const dstTableType = merger.getDestinationTableKind(tables, force);

@@ -22,7 +22,6 @@ const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
 // TODO: rename this crap
 pub fn mergeData(
     alloc: Allocator,
-    tablePath: []const u8,
     writer: *StreamWriter,
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
@@ -43,11 +42,17 @@ pub fn mergeData(
 
         const reader = merger.heap.peek().?;
         try merger.writeBlock(alloc, blockWriter, writer, &reader.blockData);
-        // const block = reader.blockData;
+        if (try reader.nextBlock(alloc)) {
+            merger.heap.fix(0);
+        } else {
+            _ = merger.heap.pop();
+        }
     }
 
-    _ = tablePath;
-    unreachable;
+    try merger.flushStream(alloc, blockWriter, writer);
+    var tableHeader = TableHeader{};
+    try blockWriter.finish(alloc, writer, &tableHeader);
+    return tableHeader;
 }
 
 pub const StreamMerger = struct {
