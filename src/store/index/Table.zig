@@ -50,6 +50,8 @@ refCounter: std.atomic.Value(u32),
 
 pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
     std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+        // TODO: if the foler already exists we must read it's content and log an error
+        // in case the tables on the disk are missing in the tables list
         std.posix.MakeDirError.PathAlreadyExists => {},
         else => std.debug.panic(
             "failed to create a table dir '{s}': {s}",

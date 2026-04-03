@@ -53,17 +53,6 @@ blocksThresholdToFlush: u32,
 // TODO: make it as a config access instead of a field
 maxMemBlockSize: u32,
 
-stopped: std.atomic.Value(bool) = .init(false),
-// limits amount of mem tables in order to handle too high ingestion rate,
-// when mem tables are not merged fast enough
-// TODO: find an optimal way to handle ingestion rate higher than merge rate
-// 1. throttle ingestion: sub optimal
-// 2. extend limit of inmemory tables
-// 3. find a way to make flushing / merging more optimal
-// 4. more aggresive memory merging
-memTablesSem: std.Thread.Semaphore = .{
-    .permits = maxMemTables,
-},
 mxTables: std.Thread.Mutex = .{},
 diskTables: std.ArrayList(*Table),
 memTables: std.ArrayList(*Table),
@@ -75,6 +64,17 @@ memMergeSem: std.Thread.Semaphore,
 pool: *std.Thread.Pool,
 // wg holds all the running jobs
 wg: std.Thread.WaitGroup = .{},
+// limits amount of mem tables in order to handle too high ingestion rate,
+// when mem tables are not merged fast enough
+// TODO: find an optimal way to handle ingestion rate higher than merge rate
+// 1. throttle ingestion: sub optimal
+// 2. extend limit of inmemory tables
+// 3. find a way to make flushing / merging more optimal
+// 4. more aggresive memory merging
+memTablesSem: std.Thread.Semaphore = .{
+    .permits = maxMemTables,
+},
+stopped: std.atomic.Value(bool) = .init(false),
 
 needInvalidate: std.atomic.Value(bool) = .init(false),
 indexCacheKeyVersion: std.atomic.Value(u64) = .init(0),
@@ -102,6 +102,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
         .allocator = alloc,
         .n_jobs = conf.server.pools.workerThreads,
     });
+    errdefer pool.deinit();
 
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);

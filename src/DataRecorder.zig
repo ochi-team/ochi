@@ -24,6 +24,8 @@ const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
 
 fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
+    // TODO: make this interval configurable,
+    // it must be shorter for tests and longer for production
     const step = 250 * std.time.ns_per_ms;
     var remaining = ns;
     while (remaining > 0) {
@@ -79,56 +81,83 @@ pub const DataShard = struct {
 
 shards: []DataShard,
 nextShard: std.atomic.Value(usize),
-mergeIdx: std.atomic.Value(usize),
 
 mxTables: std.Thread.Mutex,
 memTables: std.ArrayList(*Table),
 diskTables: std.ArrayList(*Table),
 
-pool: *std.Thread.Pool,
-wg: std.Thread.WaitGroup,
-memTablesSem: std.Thread.Semaphore,
-stopped: std.atomic.Value(bool),
+concurrency: u16,
+diskMergeSem: std.Thread.Semaphore,
+memMergeSem: std.Thread.Semaphore,
 
+pool: *std.Thread.Pool,
+wg: std.Thread.WaitGroup = .{},
+memTablesSem: std.Thread.Semaphore = .{
+    .permits = maxMemTables,
+},
+stopped: std.atomic.Value(bool) = .init(false),
+mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 
-pub fn init(allocator: Allocator, workersAllocator: Allocator, path: []const u8) !*DataRecorder {
-    const conf = Conf.getConf().server.pools;
-    std.debug.assert(conf.cpus != 0);
+pub fn init(alloc: Allocator, workersAllocator: Allocator, path: []const u8) !*DataRecorder {
+    const conf = Conf.getConf();
+    const concurrency = conf.server.pools.cpus;
+
+    std.debug.assert(conf.server.pools.cpus != 0);
     // 4 is a minimum amount for workers:
     // data shards flushare, mem table flusher, mem table merger, disk table merger
-    std.debug.assert(conf.workerThreads >= 4);
+    // TODO: move basic validation to the config
+    std.debug.assert(conf.server.pools.workerThreads >= 4);
 
-    const shards = try allocator.alloc(DataShard, conf.cpus);
-    errdefer allocator.free(shards);
+    const shards = try alloc.alloc(DataShard, concurrency);
+    errdefer alloc.free(shards);
     for (shards) |*shard| {
         shard.* = .{};
     }
 
-    var pool = try allocator.create(std.Thread.Pool);
-    errdefer allocator.destroy(pool);
+    var pool = try alloc.create(std.Thread.Pool);
+    errdefer alloc.destroy(pool);
     try pool.init(.{
-        .allocator = allocator,
-        .n_jobs = conf.workerThreads,
+        .allocator = alloc,
+        .n_jobs = conf.server.pools.workerThreads,
     });
     errdefer pool.deinit();
 
-    const wg: std.Thread.WaitGroup = .{};
+    var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
+    errdefer memTables.deinit(alloc);
 
-    const self = try allocator.create(DataRecorder);
+    // TODO: move it to the config level and pass path as trimmed
+    var trimmedPath = path[0..];
+    if (std.fs.path.isSep(path[path.len - 1])) {
+        trimmedPath = trimmedPath[0 .. trimmedPath.len - 1];
+    }
+    std.debug.assert(std.fs.path.isAbsolute(trimmedPath));
 
+    var tables = try Table.openAll(alloc, trimmedPath);
+    errdefer {
+        for (tables.items) |table| table.close();
+        tables.deinit(alloc);
+    }
+
+    const self = try alloc.create(DataRecorder);
     self.* = DataRecorder{
         .shards = shards,
         .nextShard = std.atomic.Value(usize).init(0),
         .mergeIdx = std.atomic.Value(usize).init(0),
 
         .mxTables = .{},
-        .memTables = std.ArrayList(*Table).empty,
-        .diskTables = std.ArrayList(*Table).empty,
+        .concurrency = concurrency,
+        .memTables = memTables,
+        .diskTables = tables,
+        .diskMergeSem = .{
+            .permits = @max(4, concurrency),
+        },
+        .memMergeSem = .{
+            .permits = @max(4, concurrency),
+        },
 
         .pool = pool,
-        .wg = wg,
-        .memTablesSem = .{ .permits = conf.cpus },
+        .memTablesSem = .{ .permits = concurrency },
         .stopped = std.atomic.Value(bool).init(false),
         .path = path,
     };
@@ -192,6 +221,7 @@ fn flushMemTable(self: *DataRecorder, allocator: Allocator, force: bool) !void {
 /// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
 fn startDataShardsFlusher(self: *DataRecorder, allocator: Allocator) void {
     // half a sec
+    // TODO: test it with 1 sec
     const flushInterval = std.time.ns_per_s / 2;
 
     var arena = std.heap.ArenaAllocator.init(allocator);

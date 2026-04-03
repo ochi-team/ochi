@@ -10,6 +10,8 @@ const TableHeader = @import("../inmem/TableHeader.zig");
 const ColumnIDGen = @import("../inmem/ColumnIDGen.zig");
 const encoding = @import("encoding");
 
+const catalog = @import("../table/catalog.zig");
+
 const Table = @This();
 
 // either one has to be available
@@ -55,72 +57,50 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // then readers can retain it
 refCounter: std.atomic.Value(u32),
 
-pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
-    std.debug.assert(memTable.streamWriter.size() == memTable.tableHeader.compressedSize);
-
-    // TODO: move ownership of the original meta index to the table, not only the buffers,
-    // but it requires index collecting during ingestion
-    var indexBlockHeaders: []IndexBlockHeader = &.{};
-    const metaIndexBuf = memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer();
-    if (metaIndexBuf.len > 0) {
-        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaIndexBuf);
-    }
-    errdefer {
-        for (indexBlockHeaders) |*hdr| hdr.deinitRead(alloc);
-        if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
-    }
-
-    // TODO: avoid decoding column ids, we can simply assign what we have from the stream writer
-    var columnIDGen: *ColumnIDGen = undefined;
-    if (memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer().len > 0) {
-        columnIDGen = try ColumnIDGen.decode(alloc, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
-    } else {
-        columnIDGen = try ColumnIDGen.init(alloc);
-    }
-    errdefer columnIDGen.deinit(alloc);
-
-    var columnIdxs = std.StringHashMapUnmanaged(u16){};
-    errdefer columnIdxs.deinit(alloc);
-
-    if (memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer().len > 0) {
-        columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
-    }
-
-    const bloomTokensList = memTable.streamWriter.bloomTokensList.items;
-    const bloomValuesList = memTable.streamWriter.bloomValuesList.items;
-    var bloomTokensShards = try alloc.alloc([]const u8, bloomTokensList.len);
-    errdefer alloc.free(bloomTokensShards);
-    var bloomValuesShards = try alloc.alloc([]const u8, bloomValuesList.len);
-    errdefer alloc.free(bloomValuesShards);
-
-    for (0..bloomValuesList.len) |i| {
-        bloomTokensShards[i] = bloomTokensList[i].asSliceAssumeBuffer();
-        bloomValuesShards[i] = bloomValuesList[i].asSliceAssumeBuffer();
-    }
-
-    const table = try alloc.create(Table);
-    table.* = .{
-        .mem = memTable,
-        .disk = null,
-        .size = memTable.tableHeader.compressedSize,
-        .path = "",
-        .indexBlockHeaders = indexBlockHeaders,
-        .tableHeader = &memTable.tableHeader,
-        .indexBuf = memTable.streamWriter.indexDst.asSliceAssumeBuffer(),
-        .columnsHeaderIndexBuf = memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(),
-        .columnsHeaderBuf = memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(),
-        .timestampsBuf = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(),
-        .messageBloomTokens = memTable.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
-        .messageBloomValues = memTable.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
-        .bloomTokensShards = bloomTokensShards,
-        .bloomValuesShards = bloomValuesShards,
-        .columnIDGen = columnIDGen,
-        .columnIdxs = columnIdxs,
-        .refCounter = .init(1),
-        .alloc = alloc,
+pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
+    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+        // TODO: if the foler already exists we must read it's content and log an error
+        // in case the tables on the disk are missing in the tables list
+        std.posix.MakeDirError.PathAlreadyExists => {},
+        else => std.debug.panic(
+            "failed to create a table dir '{s}': {s}",
+            .{ path, @errorName(err) },
+        ),
     };
 
-    return table;
+    // fsync after opening tables because it creates the files
+    defer fs.syncPathAndParentDir(path);
+
+    var fba = std.heap.stackFallback(2048, parentAlloc);
+    const alloc = fba.get();
+
+    // read table names,
+    // they are given either from a file or listed directories in the path
+    const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, Filenames.tables });
+    defer alloc.free(tablesFilePath);
+    var tableNames = try catalog.readNames(alloc, tablesFilePath, true);
+    defer tableNames.deinit(alloc);
+
+    // syncing tables with a json, make sure all the listed dirs exist
+    try catalog.validateTablesExist(alloc, path, tableNames.items);
+
+    // syncing tables with the given names remove all the not listed dirs
+    try catalog.removeUnusedTables(alloc, path, tableNames.items);
+
+    // open tables
+    var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
+    errdefer {
+        tables.deinit(parentAlloc);
+    }
+    for (tableNames.items) |tableName| {
+        // don't clean tablePath, Table owns it
+        const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
+        errdefer parentAlloc.free(tablePath);
+        const table = try Table.open(parentAlloc, tablePath);
+        tables.appendAssumeCapacity(table);
+    }
+
+    return tables;
 }
 
 pub fn open(alloc: Allocator, path: []const u8) !*Table {
@@ -300,6 +280,74 @@ pub fn close(self: *Table) void {
     }
 
     self.alloc.destroy(self);
+}
+
+pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
+    std.debug.assert(memTable.streamWriter.size() == memTable.tableHeader.compressedSize);
+
+    // TODO: move ownership of the original meta index to the table, not only the buffers,
+    // but it requires index collecting during ingestion
+    var indexBlockHeaders: []IndexBlockHeader = &.{};
+    const metaIndexBuf = memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer();
+    if (metaIndexBuf.len > 0) {
+        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaIndexBuf);
+    }
+    errdefer {
+        for (indexBlockHeaders) |*hdr| hdr.deinitRead(alloc);
+        if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
+    }
+
+    // TODO: avoid decoding column ids, we can simply assign what we have from the stream writer
+    var columnIDGen: *ColumnIDGen = undefined;
+    if (memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer().len > 0) {
+        columnIDGen = try ColumnIDGen.decode(alloc, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
+    } else {
+        columnIDGen = try ColumnIDGen.init(alloc);
+    }
+    errdefer columnIDGen.deinit(alloc);
+
+    var columnIdxs = std.StringHashMapUnmanaged(u16){};
+    errdefer columnIdxs.deinit(alloc);
+
+    if (memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer().len > 0) {
+        columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
+    }
+
+    const bloomTokensList = memTable.streamWriter.bloomTokensList.items;
+    const bloomValuesList = memTable.streamWriter.bloomValuesList.items;
+    var bloomTokensShards = try alloc.alloc([]const u8, bloomTokensList.len);
+    errdefer alloc.free(bloomTokensShards);
+    var bloomValuesShards = try alloc.alloc([]const u8, bloomValuesList.len);
+    errdefer alloc.free(bloomValuesShards);
+
+    for (0..bloomValuesList.len) |i| {
+        bloomTokensShards[i] = bloomTokensList[i].asSliceAssumeBuffer();
+        bloomValuesShards[i] = bloomValuesList[i].asSliceAssumeBuffer();
+    }
+
+    const table = try alloc.create(Table);
+    table.* = .{
+        .mem = memTable,
+        .disk = null,
+        .size = memTable.tableHeader.compressedSize,
+        .path = "",
+        .indexBlockHeaders = indexBlockHeaders,
+        .tableHeader = &memTable.tableHeader,
+        .indexBuf = memTable.streamWriter.indexDst.asSliceAssumeBuffer(),
+        .columnsHeaderIndexBuf = memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(),
+        .columnsHeaderBuf = memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(),
+        .timestampsBuf = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(),
+        .messageBloomTokens = memTable.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
+        .messageBloomValues = memTable.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
+        .bloomTokensShards = bloomTokensShards,
+        .bloomValuesShards = bloomValuesShards,
+        .columnIDGen = columnIDGen,
+        .columnIdxs = columnIdxs,
+        .refCounter = .init(1),
+        .alloc = alloc,
+    };
+
+    return table;
 }
 
 pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
