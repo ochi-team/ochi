@@ -305,6 +305,12 @@ fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
     try header.writeFile(alloc, tablePath);
 }
 
+fn readTestTableFile(alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
+    const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
+    defer alloc.free(filePath);
+    return fs.readAll(alloc, filePath);
+}
+
 test "release keeps table unless toRemove is set, then removes table dir" {
     const alloc = testing.allocator;
 
@@ -352,4 +358,89 @@ test "release fromMem does not affect filesystem path" {
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
     table.release();
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
+}
+
+test "fromMem creates proper table from mem table with populated data" {
+    const alloc = testing.allocator;
+
+    const items = [_][]const u8{ "item-c", "item-a", "item-b" };
+    var block = try createTestMemBlock(alloc, &items);
+    defer block.deinit(alloc);
+
+    var blocks = [_]*MemBlock{block};
+    const memTable = try MemTable.init(alloc, blocks[0..]);
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.release();
+
+    try testing.expect(table.mem != null);
+    try testing.expect(table.disk == null);
+    try testing.expect(table.entriesBuf.len > 0);
+    try testing.expect(table.lensBuf.len > 0);
+    try testing.expect(table.indexBuf.len > 0);
+
+    try testing.expectEqual(memTable.size(), table.size);
+    try testing.expectEqualSlices(u8, memTable.entriesBuf.items, table.entriesBuf);
+    try testing.expectEqualSlices(u8, memTable.lensBuf.items, table.lensBuf);
+    try testing.expectEqualSlices(u8, memTable.indexBuf.items, table.indexBuf);
+
+    const expectedMetaindex = try MetaIndex.decodeDecompress(
+        alloc,
+        memTable.metaindexBuf.items,
+        memTable.tableHeader.blocksCount,
+    );
+    defer {
+        for (expectedMetaindex.records) |*rec| rec.deinit(alloc);
+        if (expectedMetaindex.records.len > 0) alloc.free(expectedMetaindex.records);
+    }
+
+    try testing.expectEqualDeep(expectedMetaindex.records, table.metaindexRecords);
+}
+
+test "open reads table from disk" {
+    const alloc = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
+    defer alloc.free(tablePath);
+
+    try createTestTableDir(alloc, tablePath);
+
+    const tablePathOwned = try alloc.dupe(u8, tablePath);
+    const table = try Table.open(alloc, tablePathOwned);
+    defer table.release();
+
+    try testing.expect(table.disk != null);
+
+    const expectedIndex = try readTestTableFile(alloc, tablePath, Filenames.index);
+    defer alloc.free(expectedIndex);
+    const expectedEntries = try readTestTableFile(alloc, tablePath, Filenames.entries);
+    defer alloc.free(expectedEntries);
+    const expectedLens = try readTestTableFile(alloc, tablePath, Filenames.lens);
+    defer alloc.free(expectedLens);
+    const expectedMetaindexCompressed = try readTestTableFile(alloc, tablePath, Filenames.metaindex);
+    defer alloc.free(expectedMetaindexCompressed);
+
+    try testing.expectEqualSlices(u8, expectedIndex, table.indexBuf);
+    try testing.expectEqualSlices(u8, expectedEntries, table.entriesBuf);
+    try testing.expectEqualSlices(u8, expectedLens, table.lensBuf);
+
+    const expectedMetaindex = try MetaIndex.decodeDecompress(
+        alloc,
+        expectedMetaindexCompressed,
+        table.tableHeader.blocksCount,
+    );
+    defer {
+        for (expectedMetaindex.records) |*rec| rec.deinit(alloc);
+        if (expectedMetaindex.records.len > 0) alloc.free(expectedMetaindex.records);
+    }
+
+    try testing.expectEqualDeep(expectedMetaindex.records, table.metaindexRecords);
+
+    const expectedSize = @as(u64, expectedMetaindexCompressed.len + expectedIndex.len + expectedEntries.len + expectedLens.len);
+    try testing.expectEqual(expectedSize, table.size);
 }

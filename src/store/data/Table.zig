@@ -394,6 +394,55 @@ pub fn lessThan(_: void, one: *Table, another: *Table) bool {
 
 const testing = std.testing;
 
+test "release keeps table unless toRemove is set, then removes table dir" {
+    const alloc = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
+    defer alloc.free(tablePath);
+
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+
+    var fields1 = [_]Field{
+        .{ .key = "level", .value = "info" },
+        .{ .key = "app", .value = "seq" },
+    };
+    var fields2 = [_]Field{
+        .{ .key = "level", .value = "warn" },
+        .{ .key = "app", .value = "seq" },
+    };
+    const line1 = Line{
+        .timestampNs = 1,
+        .sid = .{ .id = 1, .tenantID = "1234" },
+        .fields = fields1[0..],
+    };
+    const line2 = Line{
+        .timestampNs = 2,
+        .sid = .{ .id = 1, .tenantID = "1234" },
+        .fields = fields2[0..],
+    };
+
+    var lines = [_]Line{ line1, line2 };
+    try memTable.addLines(alloc, lines[0..]);
+    try memTable.storeToDisk(alloc, tablePath);
+
+    const table1Path = try alloc.dupe(u8, tablePath);
+    const table1 = try Table.open(alloc, table1Path);
+    table1.release();
+    try std.fs.accessAbsolute(tablePath, .{});
+
+    const table2Path = try alloc.dupe(u8, tablePath);
+    const table2 = try Table.open(alloc, table2Path);
+    table2.toRemove.store(true, .release);
+    table2.release();
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
+}
+
 test "release fromMem does not affect filesystem path" {
     const alloc = testing.allocator;
 
