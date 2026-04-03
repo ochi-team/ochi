@@ -80,3 +80,40 @@ pub fn Swapper(
         }
     };
 }
+
+const testing = std.testing;
+
+const Table = @import("../index/Table.zig");
+const MemTable = @import("../index/MemTable.zig");
+const IndexRecorder = @import("../index/IndexRecorder.zig");
+
+fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
+    const memTable = try MemTable.empty(alloc);
+    try memTable.entriesBuf.resize(alloc, size);
+    return Table.fromMem(alloc, memTable);
+}
+
+test "removeTables removes exact pointers" {
+    const alloc = testing.allocator;
+    const one = try createSizedMemTable(alloc, 100);
+    const two = try createSizedMemTable(alloc, 100);
+    const three = try createSizedMemTable(alloc, 100);
+    defer one.close();
+    defer two.close();
+    defer three.close();
+
+    const swapper = Swapper(IndexRecorder, Table);
+
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, 3);
+    defer tables.deinit(alloc);
+    tables.appendAssumeCapacity(one);
+    tables.appendAssumeCapacity(two);
+    tables.appendAssumeCapacity(three);
+
+    var removeList = [_]*Table{two};
+    const removed = swapper.removeTables(&tables, removeList[0..]);
+    try testing.expectEqual(@as(u32, 1), removed);
+    try testing.expectEqual(@as(usize, 2), tables.items.len);
+    try testing.expect(tables.items[0] != two);
+    try testing.expect(tables.items[1] != two);
+}

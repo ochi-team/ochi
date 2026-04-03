@@ -228,7 +228,7 @@ pub fn lessThan(_: void, one: *Table, another: *Table) bool {
     return one.size < another.size;
 }
 
-pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) !void {
+pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
     var tableNames = try std.ArrayList([]const u8).initCapacity(alloc, tables.len);
     defer tableNames.deinit(alloc);
 

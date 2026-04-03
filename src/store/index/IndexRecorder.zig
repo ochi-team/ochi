@@ -14,6 +14,7 @@ const BlockReader = @import("BlockReader.zig");
 
 const flush = @import("../table/flush.zig");
 const merge = @import("../table/merge.zig");
+const swap = @import("../table/swap.zig");
 
 const Conf = @import("../../Conf.zig");
 
@@ -24,6 +25,7 @@ const blocksInMemTable = 15;
 const maxMemTables = 24;
 
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
+const swapper = swap.Swapper(IndexRecorder, Table);
 
 fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
     const step = 250 * std.time.ns_per_ms;
@@ -626,7 +628,7 @@ pub fn mergeTables(
         const table = tables[0].mem.?;
         try table.storeToDisk(alloc, destinationTablePath);
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
-        try self.swapTables(alloc, tables, newTable, tableKind);
+        try swapper.swapTables(self, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
     }
@@ -670,7 +672,7 @@ pub fn mergeTables(
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
-    try self.swapTables(alloc, tables, openTable, tableKind);
+    try swapper.swapTables(self, alloc, tables, openTable, tableKind);
     swapped = true;
 }
 
@@ -715,68 +717,6 @@ fn openCreatedTable(
     return Table.open(alloc, tablePath);
 }
 
-fn swapTables(
-    self: *IndexRecorder,
-    alloc: Allocator,
-    tables: []*Table,
-    newTable: *Table,
-    tableKind: merge.TableKind,
-) !void {
-    self.mxTables.lock();
-    errdefer self.mxTables.unlock();
-
-    const removedMemTables = removeTables(&self.memTables, tables);
-    const removedDiskTables = removeTables(&self.diskTables, tables);
-
-    switch (tableKind) {
-        .disk => {
-            try self.diskTables.append(alloc, newTable);
-            self.startDiskTablesMerge(alloc);
-        },
-        .mem => {
-            try self.memTables.append(alloc, newTable);
-            self.startMemTablesMerge(alloc);
-        },
-    }
-
-    if (removedDiskTables > 0 or tableKind == .disk) {
-        try Table.writeNames(alloc, self.path, self.diskTables.items);
-    }
-    self.mxTables.unlock();
-
-    for (0..removedMemTables) |_| self.memTablesSem.post();
-    if (tableKind == .mem) self.memTablesSem.wait();
-
-    std.debug.assert(tables.len == removedDiskTables + removedMemTables);
-
-    for (tables) |table| {
-        // remove via reference counter,
-        // it could have been open by a client.
-        // order flag doesn't matter, we don't expect any other part to change it back to
-        table.toRemove.store(true, .unordered);
-        table.release();
-    }
-}
-
-fn removeTables(tables: *std.ArrayList(*Table), remove: []*Table) u32 {
-    var removed: u32 = 0;
-    var i: usize = 0;
-    while (i < tables.items.len) {
-        var isRemoved = false;
-        for (remove) |r| {
-            if (tables.items[i] == r) {
-                _ = tables.swapRemove(i);
-                removed += 1;
-                isRemoved = true;
-                break;
-            }
-        }
-        if (!isRemoved) i += 1;
-    }
-
-    return removed;
-}
-
 const testing = std.testing;
 
 fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table {
@@ -790,12 +730,6 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
     }
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(alloc, &blocks);
-    return Table.fromMem(alloc, memTable);
-}
-
-fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
-    const memTable = try MemTable.empty(alloc);
-    try memTable.entriesBuf.resize(alloc, size);
     return Table.fromMem(alloc, memTable);
 }
 
@@ -839,29 +773,6 @@ test "IndexRecorder init and close empty dir, trim slash" {
     try testing.expect(std.mem.eql(u8, recorder.path, rootPath));
 
     try recorder.stop(alloc);
-}
-
-test "removeTables removes exact pointers" {
-    const alloc = testing.allocator;
-    const one = try createSizedMemTable(alloc, 100);
-    const two = try createSizedMemTable(alloc, 100);
-    const three = try createSizedMemTable(alloc, 100);
-    defer one.close();
-    defer two.close();
-    defer three.close();
-
-    var tables = try std.ArrayList(*Table).initCapacity(alloc, 3);
-    defer tables.deinit(alloc);
-    tables.appendAssumeCapacity(one);
-    tables.appendAssumeCapacity(two);
-    tables.appendAssumeCapacity(three);
-
-    var removeList = [_]*Table{two};
-    const removed = removeTables(&tables, removeList[0..]);
-    try testing.expectEqual(@as(u32, 1), removed);
-    try testing.expectEqual(@as(usize, 2), tables.items.len);
-    try testing.expect(tables.items[0] != two);
-    try testing.expect(tables.items[1] != two);
 }
 
 test "flushMemEntries non-force respects flush deadline" {
