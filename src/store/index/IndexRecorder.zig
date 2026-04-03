@@ -206,6 +206,9 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
+    self.mxBlocks.lock();
+    defer self.mxBlocks.unlock();
+
     var entryIndex: usize = 0;
 
     while (entryIndex <= entries.len) {
