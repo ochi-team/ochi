@@ -204,18 +204,20 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
+    self.mxBlocks.lock();
+    defer self.mxBlocks.unlock();
+
     var entryIndex: usize = 0;
-    const shard = self.entries.next();
-    //TODO: need to restrict max count added to shard
-    while (true) {
-        const blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+
+    while (entryIndex <= entries.len) {
+        const shard = self.entries.next();
+        var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
 
         if (blocksListResult) |*blocksList| {
-            std.debug.print("=========All entries processed{any}\n", .{blocksListResult});
+            defer blocksList.blocksToFlush.deinit(alloc);
 
             try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
             if (entryIndex >= entries.len) {
-                std.debug.print("=========All entries processed\n", .{});
                 std.debug.assert(entryIndex == entries.len);
                 return;
             }
@@ -1098,4 +1100,44 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         blocksInShards += shard.blocks.items.len;
     }
     try testing.expectEqual(@as(usize, countAdditionalEntries), blocksInShards);
+}
+
+test "IndexRecorder large entries write to 3 shards" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const maxIndexMemBlockSize = 32 * 1024;
+    //countAdditionalEntries < Entries.maxBlocksPerShard
+    const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
+    //2 shards full-filled and third shard is not completely filled
+    const totalEntries = (2 * Entries.maxBlocksPerShard) + countAdditionalEntries;
+    const theLargest = "x" ** (maxIndexMemBlockSize);
+    var testEntries: [][]const u8 = try alloc.alloc([]const u8, totalEntries);
+    defer alloc.free(testEntries);
+
+    for (0..totalEntries) |i| {
+        testEntries[i] = theLargest;
+    }
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    defer recorder.deinit(alloc);
+
+    try recorder.add(alloc, testEntries);
+
+    try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
+
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+
+    try recorder.flushForce(alloc);
+
+    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+    try testing.expect(recorder.diskTables.items.len > 0);
+    try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
+    try testing.expectEqual(@as(u64, totalEntries), countDiskItemsInRecorder(recorder));
 }

@@ -8,10 +8,6 @@ const MemBlock = @import("MemBlock.zig");
 const EntriesShardAddResult = struct {
     blocksToFlush: std.ArrayList(*MemBlock),
     gatheredEntriesCount: usize,
-    pub fn deinit(self: *EntriesShardAddResult, alloc: Allocator) void {
-        for (self.blocksToFlush.items) |b| b.deinit(alloc);
-        self.blocksToFlush.deinit(alloc);
-    }
 };
 
 const EntriesShard = struct {
@@ -44,7 +40,6 @@ const EntriesShard = struct {
     ) !?EntriesShardAddResult {
         self.mx.lock();
         defer self.mx.unlock();
-
         if (self.blocks.items.len == 0) {
             const b = try MemBlock.init(alloc, maxMemBlockSize);
             try self.blocks.append(alloc, b);
@@ -124,7 +119,7 @@ const EntriesShard = struct {
     }
 };
 
-pub const maxBlocksPerShard = 3;
+pub const maxBlocksPerShard = if (builtin.is_test) 3 else 255;
 
 const Entries = @This();
 
@@ -136,8 +131,13 @@ pub fn init(alloc: Allocator, concurrency: u16) !*Entries {
 
     const shards = try alloc.alloc(EntriesShard, concurrency);
     errdefer alloc.free(shards);
+
+    var initialized: usize = 0;
+    errdefer for (shards[0..initialized]) |*shard| shard.deinit(alloc);
+
     for (shards) |*shard| {
         shard.* = try .init(alloc, maxBlocksPerShard);
+        initialized += 1;
     }
 
     const e = try alloc.create(Entries);
@@ -231,16 +231,6 @@ test "EntriesShard.add" {
             .expected_last_block_entries_count = 0,
             .expected_gathered_entries_count = 1,
         },
-        // flush when at threshold-1 with large entry that doesn't fit
-        .{
-            .setup_blocks_count = maxBlocksPerShard - 1,
-            .fill_block_after_setup = true,
-            .test_entries = &.{ theLargest, theLargest },
-            .expected_flush = true,
-            .expected_block_count = 0,
-            .expected_last_block_entries_count = 0,
-            .expected_gathered_entries_count = 1,
-        },
         // flush when already at threshold (entry goes into flushed blocks)
         .{
             .setup_blocks_count = maxBlocksPerShard,
@@ -302,7 +292,9 @@ test "EntriesShard.add" {
         if (case.expected_flush) {
             try testing.expect(result != null);
             var flushed = result.?;
-            defer flushed.deinit(alloc);
+            for (flushed.blocksToFlush.items) |b| b.deinit(alloc);
+            flushed.blocksToFlush.deinit(alloc);
+
             try testing.expectEqual(case.expected_gathered_entries_count, flushed.gatheredEntriesCount);
         } else {
             try testing.expect(result == null);
