@@ -24,6 +24,7 @@ pub const FuncSpec = struct {
 fields: []const FieldSpec = &.{},
 funcs: []const FuncSpec = &.{},
 
+// TODO: implement a comptime API to give comptime error, it must produce take an error message to a static buffer
 pub fn satisfies(self: Contract, comptime T: type, comptime mutable: bool) VerifyError!void {
     return switch (@typeInfo(T)) {
         .@"struct" => blk: {

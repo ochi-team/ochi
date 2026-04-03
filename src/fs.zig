@@ -59,7 +59,6 @@ pub fn writeBufferValToFile(
 }
 
 pub fn writeBufferToFileAtomic(
-    alloc: Allocator,
     path: []const u8,
     bufferVal: []const u8,
     truncate: bool,
@@ -75,8 +74,8 @@ pub fn writeBufferToFileAtomic(
 
     const n = tmpFileNum.fetchAdd(1, .monotonic);
     // keep the temp path absolute to use createFileAbsolute/openFileAbsolute
-    const tmpPath = try std.fmt.allocPrint(alloc, "{s}-tmp-{d}", .{ path, n });
-    defer alloc.free(tmpPath);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmpPath = try std.fmt.bufPrint(&buf, "{s}-tmp-{d}", .{ path, n });
 
     try writeBufferValToFile(tmpPath, bufferVal);
     errdefer std.fs.deleteFileAbsolute(tmpPath) catch {};
@@ -165,14 +164,14 @@ test "writeBufferValToFileAtomic writes and overwrites atomically" {
     defer std.testing.allocator.free(absPath);
 
     {
-        try writeBufferToFileAtomic(std.testing.allocator, absPath, "first", false);
+        try writeBufferToFileAtomic(absPath, "first", false);
         const actual = try readAll(std.testing.allocator, absPath);
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings("first", actual);
     }
 
     {
-        try writeBufferToFileAtomic(std.testing.allocator, absPath, "second", true);
+        try writeBufferToFileAtomic(absPath, "second", true);
         const actual = try readAll(std.testing.allocator, absPath);
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings("second", actual);

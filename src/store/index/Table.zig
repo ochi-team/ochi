@@ -252,7 +252,7 @@ pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) !void {
     const tablesFilePath = try std.fs.path.join(fba, &.{ path, Filenames.tables });
     defer fba.free(tablesFilePath);
 
-    try fs.writeBufferToFileAtomic(alloc, tablesFilePath, data, true);
+    try fs.writeBufferToFileAtomic(tablesFilePath, data, true);
 }
 
 pub fn retain(self: *Table) void {

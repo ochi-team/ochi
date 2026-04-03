@@ -302,6 +302,31 @@ pub fn close(self: *Table) void {
     self.alloc.destroy(self);
 }
 
+pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
+    var stackFba = std.heap.stackFallback(1024, alloc);
+    const fba = stackFba.get();
+
+    var tableNames = try std.ArrayList([]const u8).initCapacity(fba, tables.len);
+    defer tableNames.deinit(fba);
+
+    for (tables) |table| {
+        std.debug.assert(table.disk != null);
+        tableNames.appendAssumeCapacity(std.fs.path.basename(table.path));
+    }
+
+    // TODO: worth migrating json to names suparated by new line \n
+    // since they are limited to 16 symbols hex symbols [0-9A-F]
+    const data = try std.json.Stringify.valueAlloc(fba, tableNames.items, .{
+        .whitespace = .minified,
+    });
+    defer fba.free(data);
+
+    const tablesFilePath = try std.fs.path.join(fba, &.{ path, Filenames.tables });
+    defer fba.free(tablesFilePath);
+
+    try fs.writeBufferToFileAtomic(tablesFilePath, data, true);
+}
+
 pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }

@@ -159,13 +159,12 @@ fn mergeIntoMemTable(
 
     var writer = BlockWriter.initFromMemTable(self);
     defer writer.deinit(alloc);
-    self.tableHeader = try mergeBlocks(alloc, "", &writer, readers, null);
+    self.tableHeader = try mergeBlocks(alloc, &writer, readers, null);
 }
 
 // TODO: move to a better place, it's not related to mem table
 pub fn mergeBlocks(
     alloc: Allocator,
-    tablePath: []const u8,
     writer: *BlockWriter,
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
@@ -175,12 +174,6 @@ pub fn mergeBlocks(
 
     const tableHeader = try merger.merge(alloc, writer, stopped);
     try writer.close(alloc);
-
-    if (tablePath.len != 0) {
-        var fbaFallback = std.heap.stackFallback(512, alloc);
-        const fba = fbaFallback.get();
-        try tableHeader.writeFile(fba, tablePath);
-    }
 
     return tableHeader;
 }

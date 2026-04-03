@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Filenames = @import("Filenames.zig");
-const Data = @import("data.zig").Data;
+const DataRecorder = @import("DataRecorder.zig");
 const Index = @import("store/index/Index.zig");
 const IndexRecorder = @import("store/index/IndexRecorder.zig");
 const Line = @import("store/lines.zig").Line;
@@ -23,7 +23,7 @@ pub const Partition = struct {
     path: []const u8,
     name: []const u8,
     index: *Index,
-    data: *Data,
+    data: *DataRecorder,
 
     streamCache: *Cache.StreamCache,
 
@@ -195,7 +195,7 @@ pub const Store = struct {
         const index = try Index.init(allocator, indexTable);
 
         // TODO: replace abc to path from config file
-        const data = try Data.init(allocator, self.backgroundAllocator, "abc"[0..]);
+        const data = try DataRecorder.init(allocator, self.backgroundAllocator, "abc"[0..]);
         // TODO: remove unused parts directories
 
         const cache = try Cache.StreamCache.init(allocator);

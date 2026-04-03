@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const Contract = @import("../../stds/Contract.zig");
 
 pub const FlushableTableContract = Contract{
@@ -7,6 +9,7 @@ pub const FlushableTableContract = Contract{
     .funcs = &.{},
 };
 
+// TODO: this package requires a solution, it doesn't seem either useful or reliable
 pub fn TableContract(comptime T: type, comptime M: type) Contract {
     return Contract{
         .fields = &.{
@@ -16,6 +19,18 @@ pub fn TableContract(comptime T: type, comptime M: type) Contract {
         },
         .funcs = &.{
             .{ .name = "lessThan", .type = fn (void, T, T) bool },
+        },
+    };
+}
+
+pub fn TableRefCountContract(comptime T: type) Contract {
+    return Contract{
+        .fields = &.{
+            .{ .name = "toRemove", .type = std.atomic.Value(bool) },
+        },
+        .funcs = &.{
+            .{ .name = "release", .type = fn (*T) void },
+            .{ .name = "writeNames", .type = fn (std.mem.Allocator, []const u8, []*T) anyerror!void },
         },
     };
 }

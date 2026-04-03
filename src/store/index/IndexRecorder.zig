@@ -371,7 +371,7 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
 // 2. runX - runs a given task that MUST be able to complete without stopped signal,
 // it has a specific error handling and stopped signal
 
-fn startDiskTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
+pub fn startDiskTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
     if (self.stopped.load(.acquire)) {
         return;
     }
@@ -469,7 +469,7 @@ fn runCacheKeyInvalidator(self: *IndexRecorder) void {
 
 /// it's not supposed to run at the beginning in backrgound,
 /// we run it only on demand
-fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
+pub fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
     if (self.stopped.load(.acquire)) return;
 
     self.pool.spawnWg(&self.wg, runMemTablesMerger, .{ self, alloc });
@@ -655,7 +655,6 @@ pub fn mergeTables(
 
     const tableHeader = try MemTable.mergeBlocks(
         alloc,
-        destinationTablePath,
         &blockWriter,
         &readers,
         stopped,
@@ -663,6 +662,10 @@ pub fn mergeTables(
     if (newMemTable) |memTable| {
         memTable.tableHeader = tableHeader;
     } else {
+        std.debug.assert(destinationTablePath.len > 0);
+        var fbaFallback = std.heap.stackFallback(256, alloc);
+        try tableHeader.writeFile(fbaFallback.get(), destinationTablePath);
+
         fs.syncPathAndParentDir(destinationTablePath);
     }
 
