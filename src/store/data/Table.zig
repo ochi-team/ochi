@@ -451,20 +451,26 @@ test "release fromMem does not affect filesystem path" {
 
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
-    const missingPath = try std.fs.path.join(alloc, &.{ rootPath, "never-created" });
-    defer alloc.free(missingPath);
+    const sentinelPath = try std.fs.path.join(alloc, &.{ rootPath, "sentinel" });
+    defer alloc.free(sentinelPath);
+    // create a real directory to verify it remains
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(sentinelPath, .{}));
+    try std.fs.makeDirAbsolute(sentinelPath);
 
     const memTable = try MemTable.init(alloc);
 
     const table = try Table.fromMem(alloc, memTable);
+    // eve if set we expect it to keep the created path when disk == null,
+    // so close must not delete it
+    table.toRemove.store(true, .release);
     // we expected only second release close cleans the table, otherwise it's a memory leak
     table.retain();
 
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
+    try std.fs.accessAbsolute(sentinelPath, .{});
     table.release();
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
+    try std.fs.accessAbsolute(sentinelPath, .{});
     table.release();
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(missingPath, .{}));
+    try std.fs.accessAbsolute(sentinelPath, .{});
 }
 
 const Line = @import("../lines.zig").Line;
