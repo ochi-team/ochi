@@ -209,16 +209,20 @@ pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void 
     //TODO: need to restrict max count added to shard
     while (true) {
         const blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
-        
+
         if (blocksListResult) |*blocksList| {
+            std.debug.print("=========All entries processed{any}\n", .{blocksListResult});
+
             try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
-            if (blocksList.gatheredEntriesCount == entries.len) {
+            if (entryIndex >= entries.len) {
+                std.debug.print("=========All entries processed\n", .{});
+                std.debug.assert(entryIndex == entries.len);
                 return;
             }
             entryIndex += blocksList.gatheredEntriesCount;
+        } else {
+            return;
         }
-
-        break;
     }
 }
 
