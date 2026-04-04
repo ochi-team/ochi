@@ -204,9 +204,6 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
-    self.mxBlocks.lock();
-    defer self.mxBlocks.unlock();
-
     var entryIndex: usize = 0;
     
     while (entryIndex <= entries.len) {
@@ -249,6 +246,9 @@ pub fn getTables(self: *IndexRecorder, alloc: Allocator) !std.ArrayList(*Table) 
 
 fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !void {
     if (blocks.len == 0) return;
+
+    self.mxBlocks.lock();
+    defer self.mxBlocks.unlock();
 
     if (self.blocksToFlush.items.len == 0) {
         self.flushEntriesAtUs = std.time.microTimestamp() + std.time.us_per_s;
