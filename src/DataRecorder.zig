@@ -99,7 +99,9 @@ stopped: std.atomic.Value(bool) = .init(false),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 
-pub fn init(alloc: Allocator, workersAllocator: Allocator, path: []const u8) !*DataRecorder {
+// TODO: investigate the ownership of the Lines and background jobs,
+// identify whether they match the data
+pub fn init(alloc: Allocator, path: []const u8) !*DataRecorder {
     const conf = Conf.getConf();
     const concurrency = conf.server.pools.cpus;
 
@@ -139,11 +141,11 @@ pub fn init(alloc: Allocator, workersAllocator: Allocator, path: []const u8) !*D
         tables.deinit(alloc);
     }
 
-    const self = try alloc.create(DataRecorder);
-    self.* = DataRecorder{
+    const t = try alloc.create(DataRecorder);
+    t.* = DataRecorder{
         .shards = shards,
         .nextShard = std.atomic.Value(usize).init(0),
-        .mergeIdx = std.atomic.Value(usize).init(0),
+        .mergeIdx = .init(@intCast(std.time.nanoTimestamp())),
 
         .mxTables = .{},
         .concurrency = concurrency,
@@ -162,13 +164,14 @@ pub fn init(alloc: Allocator, workersAllocator: Allocator, path: []const u8) !*D
         .path = path,
     };
 
-    // the allocator is different from http life cycle,
-    // but shared between all the background jobs
-    // TODO: find a better allocator, perhaps an arena with regular reset
-    self.pool.spawnWg(&self.wg, startMemTableFlusher, .{ self, workersAllocator });
-    self.pool.spawnWg(&self.wg, startDataShardsFlusher, .{ self, workersAllocator });
+    for (0..concurrency) |_| {
+        t.startDiskTablesMerge(alloc);
+    }
 
-    return self;
+    t.startMemTablesFlusher(alloc);
+    t.startDataShardsFlusher(alloc);
+
+    return t;
 }
 
 pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
@@ -180,68 +183,77 @@ pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-fn startMemTableFlusher(self: *DataRecorder, allocator: Allocator) void {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const alloc = arena.allocator();
-    var iteration: usize = 0;
-    while (!self.stopped.load(.acquire)) {
-        sleepOrStop(&self.stopped, std.time.ns_per_s);
-        self.flushMemTable(alloc, false) catch unreachable;
-        _ = arena.reset(.retain_capacity);
-        iteration += 1;
-    }
-    self.flushMemTable(alloc, true) catch unreachable;
+fn startMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
+    self.pool.spawnWg(&self.wg, runMemTablesFlusher, .{ self, alloc });
 }
 
-fn flushMemTable(self: *DataRecorder, allocator: Allocator, force: bool) !void {
+fn startDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
+    self.pool.spawnWg(&self.wg, runDataShardsFlusher, .{ self, alloc });
+}
+
+fn runMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
+    while (!self.stopped.load(.acquire)) {
+        // TODO: setup a diagnostic pattern to inject more context about the error and log messages
+        self.flushMemTables(alloc, false) catch |err| {
+            std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
+            self.stopped.store(true, .release);
+            return;
+        };
+
+        sleepOrStop(&self.stopped, std.time.ns_per_s);
+    }
+}
+
+fn runDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
+    // half a sec
+    // TODO: test it with 1 sec
+    const flushInterval = std.time.ns_per_s / 2;
+
+    while (!self.stopped.load(.acquire)) {
+        self.flushDataShards(alloc, false) catch |err| {
+            std.debug.print("failed to run data shards flusher: {s}\n", .{@errorName(err)});
+            self.stopped.store(true, .release);
+            return;
+        };
+
+        sleepOrStop(&self.stopped, flushInterval);
+    }
+
+    self.flushDataShards(alloc, true) catch |err| {
+        std.debug.print("failed to run force data shards flusher: {s}\n", .{@errorName(err)});
+        self.stopped.store(true, .release);
+        return;
+    };
+}
+
+fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void {
     const nowUs = std.time.microTimestamp();
 
     self.mxTables.lock();
-    defer self.mxTables.unlock();
+    errdefer self.mxTables.unlock();
 
-    var tables = std.ArrayList(*Table).initCapacity(allocator, self.memTables.items.len) catch |err| {
-        self.handleErr(err);
-        return;
-    };
-    for (self.memTables.items) |memTable| {
+    var tables = try std.ArrayList(*Table).initCapacity(allocator, self.memTables.items.len);
+    for (self.memTables.items) |*memTable| {
         const isTimeToMerge = memTable.mem.?.flushAtUs <= nowUs;
         if (!memTable.inMerge and (force or isTimeToMerge)) {
+            memTable.inMerge = true;
             tables.appendAssumeCapacity(memTable);
         }
     }
 
-    // TODO: reshuffle tables to merge in order to build more effective file sizes
+    self.mxTables.unlock();
+
     self.memTablesSem.wait();
     try self.mergeTables(allocator, tables.items, force, &self.stopped);
     self.memTablesSem.post();
 }
 
-/// startDataShardsFlusher runs a worker to flush DataShard on flushAtUs
-fn startDataShardsFlusher(self: *DataRecorder, allocator: Allocator) void {
-    // half a sec
-    // TODO: test it with 1 sec
-    const flushInterval = std.time.ns_per_s / 2;
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const alloc = arena.allocator();
-    while (!self.stopped.load(.acquire)) {
-        sleepOrStop(&self.stopped, flushInterval);
-        self.flushDataShards(alloc, false);
-        _ = arena.reset(.retain_capacity);
-    }
-    self.flushDataShards(alloc, true);
-}
-
-fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) void {
+fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void {
     if (force) {
         for (self.shards) |*shard| {
             shard.mx.lock();
-            self.flushShard(allocator, shard);
-            shard.mx.unlock();
+            defer shard.mx.unlock();
+            try self.flushShard(allocator, shard);
         }
         return;
     }
@@ -249,61 +261,52 @@ fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) void 
     const nowUs = std.time.microTimestamp();
     for (self.shards) |*shard| {
         // if it's not locked we are adding lines just know, makes no sense to lock it yet
+        // TODO: find out whether it's possible never flush them due to tryLock,
+        // requires adding a debug log here
         if (shard.mx.tryLock()) {
+            defer shard.mx.unlock();
             if (shard.flushAtUs) |flushAtUs| {
                 if (flushAtUs < nowUs) {
-                    self.flushShard(allocator, shard);
+                    try self.flushShard(allocator, shard);
                 }
             }
-            shard.mx.unlock();
         }
     }
 }
 
-fn flushShard(self: *DataRecorder, alloc: Allocator, shard: *DataShard) void {
-    const maybeMemTable = shard.flush(alloc, &self.memTablesSem) catch |err| {
-        self.handleErr(err);
-        return;
-    };
+fn flushShard(self: *DataRecorder, alloc: Allocator, shard: *DataShard) !void {
+    const maybeMemTable = try shard.flush(alloc, &self.memTablesSem);
     if (maybeMemTable) |memTable| {
         self.mxTables.lock();
         defer self.mxTables.unlock();
-        self.memTables.append(alloc, memTable) catch |err| {
-            self.handleErr(err);
-            return;
-        };
+        try self.memTables.append(alloc, memTable);
 
         self.startMemTableMerger(alloc);
     }
 }
 
-fn handleErr(self: *DataRecorder, err: anyerror) void {
-    std.debug.print("ERROR: failed to flush a data shard, err={}\n", .{err});
-    self.stopped.store(true, .release);
-    // TODO: broadcast the app must close
-    return;
-}
-
-fn startMemTableMerger(self: *DataRecorder, allocator: Allocator) void {
+pub fn startDiskTablesMerge(self: *DataRecorder, alloc: Allocator) void {
     if (self.stopped.load(.acquire)) return;
 
-    self.pool.spawnWg(&self.wg, runMemTableMerger, .{ self, allocator });
+    self.pool.spawnWg(&self.wg, runDiskTablesMerger, .{ self, alloc });
+}
+
+pub fn startMemTablesMerge(self: *DataRecorder, alloc: Allocator) void {
+    if (self.stopped.load(.acquire)) return;
+
+    self.pool.spawnWg(&self.wg, runMemTableMerger, .{ self, alloc });
+}
+
+fn runDiskTablesMerger(self: *DataRecorder, alloc: Allocator) void {
+    self.tablesMerger(alloc, &self.memTables, &self.memTablesSem) catch |err| {
+        std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
+    };
 }
 
 fn runMemTableMerger(self: *DataRecorder, alloc: Allocator) void {
     self.tablesMerger(alloc, &self.memTables, &self.memTablesSem) catch |err| {
         std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
     };
-}
-
-pub fn startDiskTablesMerge(self: *DataRecorder, alloc: Allocator) void {
-    _ = self;
-    _ = alloc;
-}
-
-pub fn startMemTablesMerge(self: *DataRecorder, alloc: Allocator) void {
-    _ = self;
-    _ = alloc;
 }
 
 fn tablesMerger(
@@ -315,7 +318,7 @@ fn tablesMerger(
     var tablesToMerge = std.ArrayList(*Table).empty;
     defer tablesToMerge.deinit(alloc);
 
-    while (true) {
+    while (!self.stopped.load(.acquire)) {
         const maxDiskTableSize = cap.getMaxTableSize(self.path);
 
         self.mxTables.lock();
@@ -332,7 +335,6 @@ fn tablesMerger(
             return;
         }
 
-        // TODO: make sure error.Stopped is handled on the upper level
         sem.wait();
         errdefer sem.post();
         try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
@@ -437,7 +439,7 @@ pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size
     shard.size += size;
     if (shard.mustFlush()) {
         shard.flushAtUs = null;
-        self.flushShard(alloc, shard);
+        try self.flushShard(alloc, shard);
     } else if (shard.flushAtUs == null) {
         shard.flushAtUs = setFlushTime();
     }

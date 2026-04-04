@@ -891,7 +891,9 @@ fn addWorker(ctx: *AddWorkerCtx) void {
     while (i < ctx.items) : (i += 1) {
         const item = stableItems[(ctx.workerID + i) % stableItems.len];
         var batch = [_][]const u8{item};
-        ctx.recorder.add(ctx.alloc, &batch) catch unreachable;
+        ctx.recorder.add(ctx.alloc, &batch) catch |err| {
+            std.debug.panic("failed to add item in worker {d}: {s}", .{ ctx.workerID, @errorName(err) });
+        };
     }
 }
 

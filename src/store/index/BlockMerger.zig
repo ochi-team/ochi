@@ -160,9 +160,7 @@ fn flush(
     // TODO: move this validation to tests and test the block is sorted
     std.debug.assert(std.mem.order(u8, self.block.items.items[0], self.firstItem) != .lt);
     std.debug.assert(std.mem.order(u8, blockLastItem, self.lastItem) != .gt);
-    if (builtin.is_test) {
-        std.debug.assert(std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst));
-    }
+    std.debug.assert(std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst));
 
     tableHeader.itemsCount += self.block.items.items.len;
     if (tableHeader.firstItem.len == 0) {

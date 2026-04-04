@@ -78,7 +78,7 @@ pub const StreamDestination = union(Tag) {
     pub fn asSliceAssumeBuffer(self: *const Self) []const u8 {
         return switch (self.*) {
             .buffer => |buf| buf.items,
-            .file => unreachable,
+            .file => std.debug.panic("not a buffer destination", .{}),
         };
     }
 
