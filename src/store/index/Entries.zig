@@ -119,7 +119,7 @@ const EntriesShard = struct {
     }
 };
 
-pub const maxBlocksPerShard = if (builtin.is_test) 3 else 255;
+pub const maxBlocksPerShard = 256;
 
 const Entries = @This();
 
