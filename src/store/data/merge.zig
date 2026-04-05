@@ -61,8 +61,6 @@ pub const StreamMerger = struct {
 
     // state
     sid: SID = .{ .tenantID = "", .id = 0 },
-    // TODO: find out why it's nullable
-    blockData: ?*BlockData = null,
     totalKeys: usize = 0,
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
@@ -107,7 +105,6 @@ pub const StreamMerger = struct {
     }
 
     fn reset(self: *StreamMerger, alloc: Allocator) void {
-        self.blockData = null;
         self.totalKeys = 0;
         self.size = 0;
         self.sid = .{ .tenantID = "", .id = 0 };
@@ -144,7 +141,7 @@ pub const StreamMerger = struct {
             if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
                 try blockWriter.writeData(alloc, blockData, writer);
             } else {
-                self.blockData = blockData;
+                try self.decodeLines(alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
@@ -153,7 +150,7 @@ pub const StreamMerger = struct {
             if (totalKeys > Block.maxColumns) {
                 try blockWriter.writeData(alloc, blockData, writer);
             } else {
-                self.blockData = blockData;
+                try self.decodeLines(alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.size >= MemTable.maxBlockSize) {
@@ -170,8 +167,6 @@ pub const StreamMerger = struct {
     fn flushStream(self: *StreamMerger, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
         if (self.lines.items.len > 0) {
             try writer.writeLines(alloc, self.sid, self.lines.items, streamWriter);
-        } else if (self.blockData) |blockData| {
-            try writer.writeData(alloc, blockData, streamWriter);
         }
 
         self.reset(alloc);
@@ -184,13 +179,6 @@ pub const StreamMerger = struct {
         blockWriter: *BlockWriter,
         writer: *StreamWriter,
     ) !void {
-        if (self.blockData) |current| {
-            if (current.len > 0) {
-                try self.decodeLines(alloc, current);
-                current.reset(alloc);
-            }
-        }
-
         const len = self.lines.items.len;
         try self.decodeLines(alloc, blockData);
         std.debug.assert(self.lines.items.len > len);
