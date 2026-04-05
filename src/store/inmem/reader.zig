@@ -80,9 +80,6 @@ pub const StreamReader = struct {
     }
 
     fn initFromDisk(alloc: Allocator, path: []const u8, tableHeader: TableHeader) !*StreamReader {
-        const streamReader = try alloc.create(StreamReader);
-        errdefer streamReader.deinit(alloc);
-
         var fba = std.heap.stackFallback(2048, alloc);
         const fbaAlloc = fba.get();
 
@@ -143,9 +140,9 @@ pub const StreamReader = struct {
             }
         }
         while (shardIdx < shardCount) : (shardIdx += 1) {
-            const bloomTokensPath = try MemTable.getBloomValuesFilePath(fbaAlloc, path, @intCast(shardIdx));
+            const bloomTokensPath = try MemTable.getBloomTokensFilePath(fbaAlloc, path, @intCast(shardIdx));
             defer fbaAlloc.free(bloomTokensPath);
-            const bloomValuesPath = try MemTable.getBloomTokensFilePath(fbaAlloc, path, @intCast(shardIdx));
+            const bloomValuesPath = try MemTable.getBloomValuesFilePath(fbaAlloc, path, @intCast(shardIdx));
             defer fbaAlloc.free(bloomValuesPath);
 
             const bloomTokensBuf = try fs.readAll(alloc, bloomTokensPath);
@@ -168,6 +165,8 @@ pub const StreamReader = struct {
             colIdx.deinit();
             alloc.destroy(colIdx);
         }
+
+        const streamReader = try alloc.create(StreamReader);
 
         streamReader.* = .{
             .timestampsBuf = timestampsBuf,

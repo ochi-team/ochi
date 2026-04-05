@@ -168,21 +168,21 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         self.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
     );
 
-    const bloomPath = try getBloomValuesFilePath(allocator, path, 0);
-    defer allocator.free(bloomPath);
-    const bloomContent = if (self.streamWriter.bloomTokensList.items.len > 0)
+    const bloomTokensPath = try getBloomTokensFilePath(allocator, path, 0);
+    defer allocator.free(bloomTokensPath);
+    const bloomTokensContent = if (self.streamWriter.bloomTokensList.items.len > 0)
         self.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer()
     else
         "";
-    try fs.writeBufferValToFile(bloomPath, bloomContent);
+    try fs.writeBufferValToFile(bloomTokensPath, bloomTokensContent);
 
-    const valuesPath = try getBloomTokensFilePath(allocator, path, 0);
-    defer allocator.free(valuesPath);
-    const valuesContent = if (self.streamWriter.bloomValuesList.items.len > 0)
+    const bloomValuesPath = try getBloomValuesFilePath(allocator, path, 0);
+    defer allocator.free(bloomValuesPath);
+    const bloomValuesContent = if (self.streamWriter.bloomValuesList.items.len > 0)
         self.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer()
     else
         "";
-    try fs.writeBufferValToFile(valuesPath, valuesContent);
+    try fs.writeBufferValToFile(bloomValuesPath, bloomValuesContent);
 
     try self.tableHeader.writeFile(allocator, path);
 
@@ -384,9 +384,9 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     defer allocator.free(messageBloomTokensPath);
     const messageBloomValuesPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.messageValues });
     defer allocator.free(messageBloomValuesPath);
-    const bloomTokensPath = try getBloomValuesFilePath(allocator, flushPath, 0);
+    const bloomTokensPath = try getBloomTokensFilePath(allocator, flushPath, 0);
     defer allocator.free(bloomTokensPath);
-    const bloomValuesPath = try getBloomTokensFilePath(allocator, flushPath, 0);
+    const bloomValuesPath = try getBloomValuesFilePath(allocator, flushPath, 0);
     defer allocator.free(bloomValuesPath);
     const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, Filenames.header });
     defer allocator.free(metadataPath);

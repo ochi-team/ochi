@@ -196,13 +196,13 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         }
     }
     while (shardIdx < shardCount) : (shardIdx += 1) {
-        const bloomTokensPath = try MemTable.getBloomValuesFilePath(
+        const bloomTokensPath = try MemTable.getBloomTokensFilePath(
             fbaAlloc,
             path,
             @intCast(shardIdx),
         );
         defer fbaAlloc.free(bloomTokensPath);
-        const bloomValuesPath = try MemTable.getBloomTokensFilePath(
+        const bloomValuesPath = try MemTable.getBloomValuesFilePath(
             fbaAlloc,
             path,
             @intCast(shardIdx),
