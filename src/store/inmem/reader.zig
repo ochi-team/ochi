@@ -189,37 +189,43 @@ pub const StreamReader = struct {
     }
 
     pub fn deinit(self: *StreamReader, allocator: Allocator) void {
-        if (self.ownsBuffers) {
-            allocator.free(self.timestampsBuf);
-            allocator.free(self.indexBuf);
-            allocator.free(self.metaIndexBuf);
-
-            allocator.free(self.columnsHeaderBuf);
-            allocator.free(self.columnsHeaderIndexBuf);
-
-            allocator.free(self.messageBloomValuesBuf);
-            allocator.free(self.messageBloomTokensBuf);
-
-            for (self.bloomValuesList.items) |buf| {
-                allocator.free(buf);
-            }
+        if (!self.ownsBuffers) {
             self.bloomValuesList.deinit(allocator);
-
-            for (self.bloomTokensList.items) |buf| {
-                allocator.free(buf);
-            }
             self.bloomTokensList.deinit(allocator);
-
-            allocator.free(@constCast(self.columnsKeysBuf));
-            allocator.free(@constCast(self.columnIdxsBuf));
-
-            const columnIDGen = @constCast(self.columnIDGen);
-            columnIDGen.deinit(allocator);
-
-            const colIdx = @constCast(self.colIdx);
-            colIdx.deinit();
-            allocator.destroy(colIdx);
+            allocator.destroy(self);
+            return;
         }
+
+        allocator.free(self.timestampsBuf);
+        allocator.free(self.indexBuf);
+        allocator.free(self.metaIndexBuf);
+
+        allocator.free(self.columnsHeaderBuf);
+        allocator.free(self.columnsHeaderIndexBuf);
+
+        allocator.free(self.messageBloomValuesBuf);
+        allocator.free(self.messageBloomTokensBuf);
+
+        for (self.bloomValuesList.items) |buf| {
+            allocator.free(buf);
+        }
+        self.bloomValuesList.deinit(allocator);
+
+        for (self.bloomTokensList.items) |buf| {
+            allocator.free(buf);
+        }
+        self.bloomTokensList.deinit(allocator);
+
+        // TODO: audit and get rid of all @constCast
+        allocator.free(@constCast(self.columnsKeysBuf));
+        allocator.free(@constCast(self.columnIdxsBuf));
+
+        const columnIDGen = @constCast(self.columnIDGen);
+        columnIDGen.deinit(allocator);
+
+        const colIdx = @constCast(self.colIdx);
+        colIdx.deinit();
+        allocator.destroy(colIdx);
 
         allocator.destroy(self);
     }
