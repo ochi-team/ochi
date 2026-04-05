@@ -23,6 +23,7 @@ pub const Error = error{
 
 const MemTable = @This();
 
+// TODO: decouple this relation, writer must not be here
 streamWriter: *StreamWriter,
 tableHeader: TableHeader,
 
@@ -108,8 +109,8 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
     }
 
     // for mem table it's expect to have a single bloom filter shard
-    std.debug.assert(self.streamWriter.bloomTokensList.items.len == 1);
-    std.debug.assert(self.streamWriter.bloomValuesList.items.len == 1);
+    std.debug.assert(self.streamWriter.bloomTokensList.items.len <= 1);
+    std.debug.assert(self.streamWriter.bloomValuesList.items.len <= 1);
 
     var stack = std.heap.stackFallback(2048, alloc);
     const allocator = stack.get();
@@ -169,11 +170,19 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
 
     const bloomPath = try getBloomValuesFilePath(allocator, path, 0);
     defer allocator.free(bloomPath);
-    try fs.writeBufferValToFile(bloomPath, self.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer());
+    const bloomContent = if (self.streamWriter.bloomTokensList.items.len > 0)
+        self.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer()
+    else
+        "";
+    try fs.writeBufferValToFile(bloomPath, bloomContent);
 
     const valuesPath = try getBloomTokensFilePath(allocator, path, 0);
     defer allocator.free(valuesPath);
-    try fs.writeBufferValToFile(valuesPath, self.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer());
+    const valuesContent = if (self.streamWriter.bloomValuesList.items.len > 0)
+        self.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer()
+    else
+        "";
+    try fs.writeBufferValToFile(valuesPath, valuesContent);
 
     try self.tableHeader.writeFile(allocator, path);
 

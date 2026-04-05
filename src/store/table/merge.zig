@@ -45,24 +45,22 @@ pub fn Merger(
     const lessThanFnType = contract.funcs[0].type;
 
     return struct {
+        // assumes toMerge destination has preallocated capacity
         pub fn filterTablesToMerge(
-            alloc: Allocator,
             tables: []T,
-            toMerge: *std.ArrayList(T),
+            dst: *std.ArrayList(T),
             maxDiskTableSize: u64,
-        ) Allocator.Error!?MergeWindowBound {
-            try toMerge.ensureUnusedCapacity(alloc, tables.len);
-
+        ) ?MergeWindowBound {
             for (tables) |table| {
                 if (!table.inMerge) {
-                    toMerge.appendAssumeCapacity(table);
+                    dst.appendAssumeCapacity(table);
                 }
             }
 
             // tablesToMerge is a slice of toMerge ArrayList, no need to free it
-            const window = filterLeveledTables(toMerge, maxDiskTableSize, amountOfTablesToMerge);
+            const window = filterLeveledTables(dst, maxDiskTableSize, amountOfTablesToMerge);
             if (window) |w| {
-                const tablesToMerge = toMerge.items[w.lower..w.upper];
+                const tablesToMerge = dst.items[w.lower..w.upper];
                 for (tablesToMerge) |table| {
                     std.debug.assert(!table.inMerge);
                     table.inMerge = true;
@@ -336,11 +334,11 @@ test "filterTablesToMerge marks only selected tables inMerge" {
         tables.appendAssumeCapacity(table);
     }
 
-    var toMerge = std.ArrayList(*Table).empty;
+    var toMerge = try std.ArrayList(*Table).initCapacity(alloc, tables.items.len);
     defer toMerge.deinit(alloc);
 
     const merger = Merger(*Table, *MemTable, 16);
-    const window = try merger.filterTablesToMerge(alloc, tables.items, &toMerge, std.math.maxInt(u64));
+    const window = merger.filterTablesToMerge(tables.items, &toMerge, std.math.maxInt(u64));
     try testing.expect(window != null);
     const w = window.?;
 

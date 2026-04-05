@@ -79,7 +79,10 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
     const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, Filenames.tables });
     defer alloc.free(tablesFilePath);
     var tableNames = try catalog.readNames(alloc, tablesFilePath, true);
-    defer tableNames.deinit(alloc);
+    defer {
+        for (tableNames.items) |tableName| alloc.free(tableName);
+        tableNames.deinit(alloc);
+    }
 
     // syncing tables with a json, make sure all the listed dirs exist
     try catalog.validateTablesExist(alloc, path, tableNames.items);

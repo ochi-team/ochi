@@ -50,5 +50,5 @@ fn runServer() !void {
     // TODO: introduce structured logger
     std.debug.print("Ochi in mono mode starting at port={d}, time={s}\n", .{ config.server.port, nowStr });
 
-    try server.startServer(std.heap.page_allocator, std.heap.page_allocator, config);
+    try server.startServer(std.heap.page_allocator, config);
 }

@@ -161,6 +161,8 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
 // TODO: find an approach to make it never fail,
 // the only option it fails is OOM, so cleaning more memory in advance might be more reliable
 // another problem it's hard to test it via checkAllAllocationFailures
+// Then audit all deinits and use it instead
+// TODO: make using this API instead of directly managing stopped state
 pub fn stop(self: *IndexRecorder, alloc: Allocator) !void {
     self.stopped.store(true, .release);
     self.wg.wait();
@@ -172,7 +174,6 @@ pub fn stop(self: *IndexRecorder, alloc: Allocator) !void {
 
 pub fn flushForce(self: *IndexRecorder, alloc: Allocator) !void {
     // pass empty destination because we don't plan to push more data in
-    //     var blocksDestination = try std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush);
     var blocksDestination = std.ArrayList(*MemBlock).empty;
     defer blocksDestination.deinit(alloc);
 
@@ -183,6 +184,9 @@ pub fn flushForce(self: *IndexRecorder, alloc: Allocator) !void {
 // TODO: this must assert there is no data inmemory or it flushes it immediately
 // entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
+    // make sure deinit is never called outside of stop
+    std.debug.assert(self.memTables.items.len == 0);
+
     for (self.blocksToFlush.items) |block| {
         block.deinit(alloc);
     }
@@ -384,6 +388,9 @@ pub fn startDiskTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
 
 fn runDiskTablesMerger(self: *IndexRecorder, alloc: Allocator) void {
     self.tablesMerger(alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
+        if (err == error.Stopped) return;
+
+        self.stopped.store(true, .release);
         std.debug.print("failed to run disk tables merger: {s}\n", .{@errorName(err)});
     };
 }
@@ -399,6 +406,8 @@ fn runMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) void {
         }
 
         self.flushMemTables(alloc, false) catch |err| {
+            if (err == error.Stopped) return;
+
             std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
             self.stopped.store(true, .release);
             return;
@@ -414,6 +423,7 @@ fn startMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) void {
 fn runMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) void {
     var blocksDestination = std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush) catch {
         std.debug.print("failed to start mem blocks flusher, OOM", .{});
+        self.stopped.store(true, .release);
         return;
     };
     defer blocksDestination.deinit(alloc);
@@ -424,19 +434,11 @@ fn runMemBlockFlusher(self: *IndexRecorder, alloc: Allocator) void {
         }
 
         self.flushMemEntries(alloc, &blocksDestination, false) catch |err| {
-            switch (err) {
-                error.OutOfMemory => {
-                    std.debug.print("failed to run mem blocks flusher: OOM", .{});
-                    return;
-                },
-                error.Stopped => {
-                    return;
-                },
-                else => {
-                    std.debug.print("unexpected error on running mem blocks flusher, {s}", .{@errorName(err)});
-                    return;
-                },
-            }
+            if (err == error.Stopped) return;
+
+            self.stopped.store(true, .release);
+            std.debug.print("unexpected error on running mem blocks flusher, {s}", .{@errorName(err)});
+            return;
         };
         blocksDestination.clearRetainingCapacity();
         sleepOrStop(&self.stopped, std.time.ns_per_s);
@@ -480,6 +482,9 @@ pub fn startMemTablesMerge(self: *IndexRecorder, alloc: Allocator) void {
 
 fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) void {
     self.tablesMerger(alloc, &self.memTables, &self.memMergeSem) catch |err| {
+        if (err == error.Stopped) return;
+
+        self.stopped.store(true, .release);
         std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
     };
 }
@@ -552,30 +557,24 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *std.Thread.Semaphore,
 ) anyerror!void {
-    var tablesToMerge = std.ArrayList(*Table).empty;
+    var tablesToMerge = try std.ArrayList(*Table).initCapacity(alloc, tables.items.len);
     defer tablesToMerge.deinit(alloc);
 
     while (true) {
         const maxDiskTableSize = cap.getMaxTableSize(self.path);
 
         self.mxTables.lock();
-        errdefer self.mxTables.unlock();
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-        const window = try merger.filterTablesToMerge(
-            alloc,
+        const window = merger.filterTablesToMerge(
             tables.items,
             &tablesToMerge,
             maxDiskTableSize,
         );
-        const w = window orelse {
-            self.mxTables.unlock();
-            return;
-        };
-        const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
         self.mxTables.unlock();
-        if (filteredTablesToMerge.len == 0) {
-            return;
-        }
+
+        const w = window orelse return;
+        const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
+        if (filteredTablesToMerge.len == 0) return;
 
         // TODO: make sure error.Stopped is handled on the upper level
         sem.wait();

@@ -21,8 +21,8 @@ fn handleSigterm(_: c_int) callconv(.c) void {
     }
 }
 
-pub fn startServer(allocator: std.mem.Allocator, backgroundAllocator: std.mem.Allocator, conf: Conf) !void {
-    const store = try Store.init(allocator, backgroundAllocator, ".ochi");
+pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
+    const store = try Store.init(allocator, ".ochi");
     defer store.deinit(allocator);
     const processor = try Processor.init(allocator, store);
     defer processor.deinit(allocator);
@@ -80,7 +80,7 @@ test "serverWithSIGTERM" {
     // Start the server in a separate thread
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            startServer(threadAllocator, threadAllocator, threadConf) catch |err| {
+            startServer(threadAllocator, threadConf) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }

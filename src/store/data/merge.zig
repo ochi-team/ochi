@@ -45,7 +45,8 @@ pub fn mergeData(
         if (try reader.nextBlock(alloc)) {
             merger.heap.fix(0);
         } else {
-            _ = merger.heap.pop();
+            const exhaustedReader = merger.heap.pop();
+            exhaustedReader.deinit(alloc);
         }
     }
 
@@ -120,6 +121,8 @@ pub const StreamMerger = struct {
         for (self.lines.items) |line| alloc.free(line.fields);
         self.lines.deinit(alloc);
         self.mergeBufferLines.deinit(alloc);
+        self.unpacker.deinit(alloc);
+        self.decoder.deinit();
     }
 
     pub fn writeBlock(
@@ -196,6 +199,7 @@ pub const StreamMerger = struct {
         defer self.mergeBufferLines.clearRetainingCapacity();
 
         mergeLines(&self.mergeBufferLines, self.lines.items[0..len], self.lines.items[len..]);
+        std.mem.swap(std.ArrayList(Line), &self.mergeBufferLines, &self.lines);
 
         if (self.size >= MemTable.maxBlockSize) {
             try self.flushStream(alloc, blockWriter, writer);
