@@ -60,6 +60,12 @@ pub const StreamMerger = struct {
     heap: Heap(*BlockReader, BlockReader.blockReaderLessThan),
 
     // state
+
+    // TODO: add block data as a merger state in order to do less decoding to lines,
+    // reference to:
+    // commit 0d6a3a45f7c4095101726ef1945c6988ea265fed
+    // remove block content from data merger state
+
     sid: SID = .{ .tenantID = "", .id = 0 },
     totalKeys: usize = 0,
     size: usize = 0,
