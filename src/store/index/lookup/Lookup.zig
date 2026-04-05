@@ -285,4 +285,5 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
             try testing.expect(actual == null);
         }
     }
+    try recorder.flushForce(alloc);
 }

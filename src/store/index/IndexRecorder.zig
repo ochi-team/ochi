@@ -808,6 +808,8 @@ test "flushMemEntries non-force respects flush deadline" {
     try recorder.flushMemEntries(alloc, &dst, false);
     try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
     try testing.expect(recorder.memTables.items.len > 0);
+
+    try recorder.flushForce(alloc);
 }
 
 test "mergeTables force single mem table creates disk table" {
