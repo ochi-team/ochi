@@ -36,10 +36,6 @@ exhaustedReaders: std.ArrayList(*BlockReader),
 block: *MemBlock,
 firstItem: []const u8 = "",
 lastItem: []const u8 = "",
-firstItemOwned: std.ArrayList(u8) = .empty,
-lastItemOwned: std.ArrayList(u8) = .empty,
-flushFirstItemOwned: std.ArrayList(u8) = .empty,
-flushLastItemOwned: std.ArrayList(u8) = .empty,
 
 /// init creates a BlockMerger instance from the readers
 /// be aware it mutates readers list inside
@@ -75,11 +71,6 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
 }
 
 pub fn deinit(self: *BlockMerger, alloc: Allocator) void {
-    self.firstItemOwned.deinit(alloc);
-    self.lastItemOwned.deinit(alloc);
-    self.flushFirstItemOwned.deinit(alloc);
-    self.flushLastItemOwned.deinit(alloc);
-
     for (self.exhaustedReaders.items) |reader| {
         reader.deinit(alloc);
     }
@@ -97,7 +88,7 @@ pub fn merge(
     while (true) {
         if (self.heap.len() == 0) {
             // done, exit path
-            try self.flush(alloc, writer, &tableHeader, false);
+            try self.flush(alloc, writer, &tableHeader);
             return tableHeader;
         }
 
@@ -131,7 +122,7 @@ pub fn merge(
             }
 
             if (!self.block.add(item)) {
-                try self.flush(alloc, writer, &tableHeader, true);
+                try self.flush(alloc, writer, &tableHeader);
                 continue;
             }
             reader.currentI += 1;
@@ -160,16 +151,15 @@ fn flush(
     alloc: Allocator,
     writer: *BlockWriter,
     tableHeader: *TableHeader,
-    hasFutureItems: bool,
 ) !void {
     const items = self.block.items.items;
     if (items.len == 0) {
         return;
     }
 
-    self.firstItem = try self.stableHeaderItem(alloc, &self.flushFirstItemOwned, items[0]);
-    self.lastItem = try self.stableHeaderItem(alloc, &self.flushLastItemOwned, items[items.len - 1]);
-    try self.mergeTagsRecords(alloc, hasFutureItems);
+    self.firstItem = items[0];
+    self.lastItem = items[items.len - 1];
+    try self.mergeTagsRecords(alloc);
 
     if (self.block.items.items.len == 0) {
         // nothing to flush
@@ -180,94 +170,76 @@ fn flush(
 
     // TODO: move this validation to tests and test the block is sorted
     std.debug.assert(std.mem.order(u8, self.block.items.items[0], self.firstItem) != .lt);
-    if (hasFutureItems) {
-        std.debug.assert(std.mem.order(u8, blockLastItem, self.lastItem) != .gt);
-    }
+    std.debug.assert(std.mem.order(u8, blockLastItem, self.lastItem) != .gt);
     std.debug.assert(std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst));
 
     tableHeader.itemsCount += self.block.items.items.len;
     if (tableHeader.firstItem.len == 0) {
-        tableHeader.firstItem = try self.stableHeaderItem(alloc, &self.firstItemOwned, self.block.items.items[0]);
+        tableHeader.firstItem = self.block.items.items[0];
     }
-    tableHeader.lastItem = try self.stableHeaderItem(alloc, &self.lastItemOwned, blockLastItem);
+    tableHeader.lastItem = blockLastItem;
     try writer.writeBlock(alloc, self.block);
     tableHeader.blocksCount += 1;
     self.block.reset();
 }
 
-fn stableHeaderItem(_: *BlockMerger, alloc: Allocator, owned: *std.ArrayList(u8), item: []const u8) ![]const u8 {
-    owned.clearRetainingCapacity();
-    try owned.appendSlice(alloc, item);
-    return owned.items;
-}
-
-fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator, hasFutureItems: bool) !void {
+// TODO: the implementation is very error prone:
+// 1. it copies block from the beginning and mutates original input,
+// therefore on the fallback case it removes copy and returns the original array,
+// but creating another destination array is memory consuming
+// 2. writeState takes 2 buffers instead of a block, it manages the entire memory ownership,
+// not just 2 buffers
+fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     const items = self.block.items.items;
 
     if (items.len <= 2) {
         return;
     }
 
-    var totalBytes: usize = 0;
-    for (items) |item| {
-        totalBytes += item.len;
-    }
-
-    var sourceBuf = try std.ArrayList(u8).initCapacity(alloc, totalBytes);
-    defer sourceBuf.deinit(alloc);
-
-    var blockCopy = try std.ArrayList([]const u8).initCapacity(alloc, items.len);
-    defer blockCopy.deinit(alloc);
-    for (items) |item| {
-        const start = sourceBuf.items.len;
-        sourceBuf.appendSliceAssumeCapacity(item);
-        blockCopy.appendAssumeCapacity(sourceBuf.items[start..sourceBuf.items.len]);
-    }
-
-    var workingBuf = try std.ArrayList(u8).initCapacity(alloc, totalBytes);
-    defer workingBuf.deinit(alloc);
-    var workingCopy = try std.ArrayList([]const u8).initCapacity(alloc, items.len);
-    defer workingCopy.deinit(alloc);
-    for (blockCopy.items) |item| {
-        const start = workingBuf.items.len;
-        workingBuf.appendSliceAssumeCapacity(item);
-        workingCopy.appendAssumeCapacity(workingBuf.items[start..workingBuf.items.len]);
-    }
-
-    const originalFirstItem = blockCopy.items[0];
-    if (originalFirstItem.len > 0 and originalFirstItem[0] > @intFromEnum(IndexKind.tagToSids)) {
+    const firstItem = items[0];
+    if (firstItem.len > 0 and firstItem[0] > @intFromEnum(IndexKind.tagToSids)) {
         return;
     }
 
-    const originalLastItem = blockCopy.items[blockCopy.items.len - 1];
-    if (originalLastItem.len > 0 and originalLastItem[0] < @intFromEnum(IndexKind.tagToSids)) {
+    const lastItem = items[items.len - 1];
+    if (lastItem.len > 0 and lastItem[0] < @intFromEnum(IndexKind.tagToSids)) {
         // nothing to merge, there are no tags -> stream records
         return;
     }
 
+    // TODO: review concurrent writing model whether it's possible to optimize further
+    // and avoid block copy
+    var blockCopy = try std.ArrayList([]const u8).initCapacity(alloc, items.len);
+    defer blockCopy.deinit(alloc);
+    blockCopy.appendSliceAssumeCapacity(items);
+
+    var maxMergedBytes: usize = 0;
+    for (blockCopy.items) |item| {
+        maxMergedBytes += item.len;
+    }
+
+    try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
     // can start mutating the original array after copying
     self.block.items.clearRetainingCapacity();
-
     self.block.buf.clearRetainingCapacity();
-    try self.block.buf.ensureUnusedCapacity(alloc, totalBytes);
     const stateBuf = &self.block.buf;
 
     var tagRecordsMerger = try TagRecordsMerger.init(alloc);
     defer tagRecordsMerger.deinit(alloc);
 
     // use block copy because we override block itself from the beginning
-    for (0..workingCopy.items.len) |i| {
-        const item = workingCopy.items[i];
-        if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == workingCopy.items.len - 1) {
+    for (0..blockCopy.items.len) |i| {
+        const item = blockCopy.items[i];
+        if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == blockCopy.items.len - 1) {
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
-            try appendOwnedItem(alloc, stateBuf, &self.block.items, item);
+            try self.block.items.append(alloc, item);
             continue;
         }
 
         try tagRecordsMerger.state.setup(item);
         if (tagRecordsMerger.state.streamsLen() > maxStreamsPerRecord) {
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
-            try appendOwnedItem(alloc, stateBuf, &self.block.items, item);
+            try self.block.items.append(alloc, item);
             continue;
         }
 
@@ -284,35 +256,15 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator, hasFutureItems: bool) 
     }
 
     std.debug.assert(tagRecordsMerger.streamIDs.items.len == 0);
-    const mergedItems = self.block.items.items;
-    const isSorted = std.sort.isSorted([]const u8, mergedItems, {}, MemOrder(u8).lessThanConst);
-    const isWithinBounds =
-        mergedItems.len == 0 or
-        (std.mem.order(u8, mergedItems[0], originalFirstItem) != .lt and
-            (!hasFutureItems or std.mem.order(u8, mergedItems[mergedItems.len - 1], originalLastItem) != .gt));
-    if (!isSorted or !isWithinBounds) {
+    const isSorted = std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst);
+    if (!isSorted) {
         // defend against parallel writing leaving the state unmerged,
-        // or merged records changing block ordering; fallback to the original data
+        // fallback to the original data
         self.block.buf.clearRetainingCapacity();
         self.block.items.clearRetainingCapacity();
-        try self.block.buf.ensureUnusedCapacity(alloc, totalBytes);
         try self.block.items.ensureUnusedCapacity(alloc, blockCopy.items.len);
-        for (blockCopy.items) |item| {
-            try appendOwnedItem(alloc, &self.block.buf, &self.block.items, item);
-        }
+        self.block.items.appendSliceAssumeCapacity(blockCopy.items);
     }
-}
-
-fn appendOwnedItem(
-    alloc: Allocator,
-    buf: *std.ArrayList(u8),
-    items: *std.ArrayList([]const u8),
-    item: []const u8,
-) !void {
-    try buf.ensureUnusedCapacity(alloc, item.len);
-    const start = buf.items.len;
-    buf.appendSliceAssumeCapacity(item);
-    try items.append(alloc, buf.items[start..buf.items.len]);
 }
 
 // Tests
