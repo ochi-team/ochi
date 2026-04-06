@@ -184,6 +184,7 @@ pub fn flushForce(self: *IndexRecorder, alloc: Allocator) !void {
 // entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     // make sure deinit is never called outside of stop
+    std.debug.assert(self.blocksToFlush.items.len == 0);
     std.debug.assert(self.memTables.items.len == 0);
 
     for (self.blocksToFlush.items) |block| {
@@ -214,7 +215,7 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
     var entryIndex: usize = 0;
 
-    while (entryIndex <= entries.len) {
+    while (entryIndex < entries.len) {
         const shard = self.entries.next();
         var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
 
@@ -277,12 +278,9 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
-    var fba = std.heap.stackFallback(2048, alloc);
-    const fbaAlloc = fba.get();
-
     const tablesSize = (blocks.len + blocksInMemTable - 1) / blocksInMemTable;
-    var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
-    defer memTables.deinit(fbaAlloc);
+    var memTables = try std.ArrayList(*Table).initCapacity(alloc, tablesSize);
+    defer memTables.deinit(alloc);
     errdefer {
         for (memTables.items) |memTable| memTable.close();
     }
@@ -341,7 +339,6 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
 
     var left = std.ArrayList(*Table).initBuffer(memTables.items[0..]);
     left.items.len = memTables.items.len;
-    // var left = memTables.items[0..];
     while (left.items.len > 0) {
         const n = merger.selectTablesToMerge(&left);
         const toMerge = left.items[0..n];
@@ -349,7 +346,16 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
         left = std.ArrayList(*Table).initBuffer(tail);
         left.items.len = tail.len;
 
-        const res = try MemTable.mergeMemTables(alloc, toMerge);
+        var memToMerge = try std.ArrayList(*MemTable).initCapacity(alloc, toMerge.len);
+        defer memToMerge.deinit(alloc);
+        for (toMerge) |table| {
+            const mem = table.mem orelse {
+                std.debug.panic("mergeMemTables expects mem tables only", .{});
+            };
+            memToMerge.appendAssumeCapacity(mem);
+        }
+
+        const res = try MemTable.mergeMemTables(alloc, memToMerge.items);
         for (toMerge) |t| t.close();
         const t = try Table.fromMem(alloc, res);
         try mergedTables.append(fbaAlloc, t);
@@ -667,7 +673,7 @@ pub fn mergeTables(
         blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
     }
 
-    const tableHeader = try MemTable.mergeBlocks(
+    var tableHeader = try MemTable.mergeBlocks(
         alloc,
         &blockWriter,
         &readers,
@@ -678,7 +684,9 @@ pub fn mergeTables(
     } else {
         std.debug.assert(destinationTablePath.len > 0);
         var fbaFallback = std.heap.stackFallback(256, alloc);
+        errdefer tableHeader.deinit(alloc);
         try tableHeader.writeFile(fbaFallback.get(), destinationTablePath);
+        tableHeader.deinit(alloc);
 
         fs.syncPathAndParentDir(destinationTablePath);
     }
@@ -1031,7 +1039,7 @@ test "IndexRecorder large entries write to 3 shards" {
     const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
     //2 shards full-filled and third shard is not completely filled
     const totalEntries = (2 * Entries.maxBlocksPerShard) + countAdditionalEntries;
-    const theLargest = "x" ** (maxIndexMemBlockSize);
+    const theLargest = "x" ** maxIndexMemBlockSize;
     var testEntries: [][]const u8 = try alloc.alloc([]const u8, totalEntries);
     defer alloc.free(testEntries);
 

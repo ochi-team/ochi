@@ -115,7 +115,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
 // but if we can identify it's not used by readers we could lock them here,
 // most likely it will require tracking of the usages of those files/buffers
 //
-// TODO: we must use Reader interface here instead of plain reading in order to 
+// TODO: we must use Reader interface here instead of plain reading in order to
 // save required RAM to hold the content til it's merged, it lets us opening files one by one
 pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
     const tableHeader = try TableHeader.readFile(alloc, path);

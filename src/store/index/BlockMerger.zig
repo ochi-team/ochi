@@ -91,7 +91,7 @@ pub fn merge(
         }
 
         const reader = self.heap.array.items[0];
-        var nextItem: []const u8 = undefined;
+        var nextItem: []const u8 = "";
         var hasNextItem = false;
 
         if (self.heap.len() > 1) {
@@ -121,6 +121,10 @@ pub fn merge(
         }
 
         if (reader.currentI == items.len) {
+            // Reader.next() rewrites its decoded block buffer. Keep currently
+            // buffered items valid by owning their bytes before advancing.
+            try self.materializeBlockItems(alloc);
+
             if (try reader.next(alloc)) {
                 self.heap.fix(0);
                 continue;
@@ -132,6 +136,49 @@ pub fn merge(
         }
 
         self.heap.fix(0);
+    }
+}
+
+fn materializeBlockItems(self: *BlockMerger, alloc: Allocator) !void {
+    if (self.block.items.items.len == 0) return;
+
+    var totalBytes: usize = 0;
+    for (self.block.items.items) |item| totalBytes += item.len;
+
+    const bufStart = @intFromPtr(self.block.buf.items.ptr);
+    const bufEnd = bufStart + self.block.buf.capacity;
+    var needsTemp = false;
+    if (self.block.buf.capacity > 0) {
+        for (self.block.items.items) |item| {
+            const itemStart = @intFromPtr(item.ptr);
+            const itemEnd = itemStart + item.len;
+            if (itemStart < bufEnd and itemEnd > bufStart) {
+                needsTemp = true;
+                break;
+            }
+        }
+    }
+
+    if (needsTemp) {
+        var tmp = try std.ArrayList(u8).initCapacity(alloc, totalBytes);
+        for (0..self.block.items.items.len) |i| {
+            const item = self.block.items.items[i];
+            const start = tmp.items.len;
+            tmp.appendSliceAssumeCapacity(item);
+            self.block.items.items[i] = tmp.items[start..tmp.items.len];
+        }
+        self.block.buf.deinit(alloc);
+        self.block.buf = tmp;
+        return;
+    }
+
+    self.block.buf.clearRetainingCapacity();
+    try self.block.buf.ensureUnusedCapacity(alloc, totalBytes);
+    for (0..self.block.items.items.len) |i| {
+        const item = self.block.items.items[i];
+        const start = self.block.buf.items.len;
+        self.block.buf.appendSliceAssumeCapacity(item);
+        self.block.items.items[i] = self.block.buf.items[start..self.block.buf.items.len];
     }
 }
 
