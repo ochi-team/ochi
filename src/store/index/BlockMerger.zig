@@ -32,6 +32,7 @@ const maxStreamsPerRecord = 32;
 const BlockMerger = @This();
 
 heap: Heap(*BlockReader, BlockReader.blockReaderLessThan),
+exhaustedReaders: std.ArrayList(*BlockReader),
 block: *MemBlock,
 firstItem: []const u8 = "",
 lastItem: []const u8 = "",
@@ -47,6 +48,9 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
 
     // TODO: experiment with Loser tree intead of heap:
     // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
+
+    var exhaustedReaders = try std.ArrayList(*BlockReader).initCapacity(alloc, readers.items.len);
+    errdefer exhaustedReaders.deinit(alloc);
 
     var i: usize = 0;
     while (i < readers.items.len) {
@@ -65,6 +69,7 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
 
     return .{
         .heap = heap,
+        .exhaustedReaders = exhaustedReaders,
         .block = try MemBlock.init(alloc, Conf.getConf().app.maxIndexMemBlockSize),
     };
 }
@@ -74,6 +79,11 @@ pub fn deinit(self: *BlockMerger, alloc: Allocator) void {
     self.lastItemOwned.deinit(alloc);
     self.flushFirstItemOwned.deinit(alloc);
     self.flushLastItemOwned.deinit(alloc);
+
+    for (self.exhaustedReaders.items) |reader| {
+        reader.deinit(alloc);
+    }
+    self.exhaustedReaders.deinit(alloc);
     self.block.deinit(alloc);
 }
 
@@ -128,64 +138,20 @@ pub fn merge(
         }
 
         if (reader.currentI == items.len) {
-            // Reader.next() rewrites its decoded block buffer. Keep currently
-            // buffered items valid by owning their bytes before advancing.
-            try self.materializeBlockItems(alloc);
-
             if (try reader.next(alloc)) {
                 self.heap.fix(0);
                 continue;
             }
 
-            const popped = self.heap.pop();
-            popped.deinit(alloc);
+            // Reader.next() rewrites its decoded block buffer. Keep currently
+            // buffered items valid by owning keeping bytes before advancing,
+            // clean them in the end on deinit
+            const exhausted = self.heap.pop();
+            self.exhaustedReaders.appendAssumeCapacity(exhausted);
             continue;
         }
 
         self.heap.fix(0);
-    }
-}
-
-fn materializeBlockItems(self: *BlockMerger, alloc: Allocator) !void {
-    if (self.block.items.items.len == 0) return;
-
-    var totalBytes: usize = 0;
-    for (self.block.items.items) |item| totalBytes += item.len;
-
-    const bufStart = @intFromPtr(self.block.buf.items.ptr);
-    const bufEnd = bufStart + self.block.buf.capacity;
-    var needsTemp = false;
-    if (self.block.buf.capacity > 0) {
-        for (self.block.items.items) |item| {
-            const itemStart = @intFromPtr(item.ptr);
-            const itemEnd = itemStart + item.len;
-            if (itemStart < bufEnd and itemEnd > bufStart) {
-                needsTemp = true;
-                break;
-            }
-        }
-    }
-
-    if (needsTemp) {
-        var tmp = try std.ArrayList(u8).initCapacity(alloc, totalBytes);
-        for (0..self.block.items.items.len) |i| {
-            const item = self.block.items.items[i];
-            const start = tmp.items.len;
-            tmp.appendSliceAssumeCapacity(item);
-            self.block.items.items[i] = tmp.items[start..tmp.items.len];
-        }
-        self.block.buf.deinit(alloc);
-        self.block.buf = tmp;
-        return;
-    }
-
-    self.block.buf.clearRetainingCapacity();
-    try self.block.buf.ensureUnusedCapacity(alloc, totalBytes);
-    for (0..self.block.items.items.len) |i| {
-        const item = self.block.items.items[i];
-        const start = self.block.buf.items.len;
-        self.block.buf.appendSliceAssumeCapacity(item);
-        self.block.items.items[i] = self.block.buf.items[start..self.block.buf.items.len];
     }
 }
 
@@ -718,19 +684,16 @@ test "BlockMerger.merge tag records" {
                         for (entries.items) |entry| a.free(entry);
                         entries.deinit(a);
                     }
-
                     entries.appendAssumeCapacity(try createSidEntry(a, "tenant0", 5));
                     var i: usize = 0;
                     while (i < 32) : (i += 1) {
                         const tenantID = try std.fmt.allocPrint(a, "tenant-{d:0>2}", .{i});
                         defer a.free(tenantID);
-
                         var streamIDs = try std.ArrayList(u128).initCapacity(a, 16);
                         defer streamIDs.deinit(a);
                         for (0..16) |j| {
                             streamIDs.appendAssumeCapacity(i * 100 + j);
                         }
-
                         entries.appendAssumeCapacity(
                             try TagRecordsMerger.createTagRecord(a, tenantID, t, streamIDs.items),
                         );
