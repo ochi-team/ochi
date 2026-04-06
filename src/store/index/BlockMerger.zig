@@ -36,6 +36,8 @@ heap: Heap(*BlockReader, BlockReader.blockReaderLessThan),
 block: *MemBlock,
 firstItem: []const u8 = "",
 lastItem: []const u8 = "",
+firstItemOwned: std.ArrayList(u8) = .empty,
+lastItemOwned: std.ArrayList(u8) = .empty,
 
 /// init creates a BlockMerger instance from the readers
 /// be aware it mutates readers list inside
@@ -67,6 +69,8 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
 }
 
 pub fn deinit(self: *BlockMerger, alloc: Allocator) void {
+    self.firstItemOwned.deinit(alloc);
+    self.lastItemOwned.deinit(alloc);
     self.block.deinit(alloc);
 }
 
@@ -211,12 +215,30 @@ fn flush(
 
     tableHeader.itemsCount += self.block.items.items.len;
     if (tableHeader.firstItem.len == 0) {
-        tableHeader.firstItem = self.block.items.items[0];
+        tableHeader.firstItem = try self.stableHeaderItem(alloc, &self.firstItemOwned, self.block.items.items[0]);
     }
-    tableHeader.lastItem = blockLastItem;
+    tableHeader.lastItem = try self.stableHeaderItem(alloc, &self.lastItemOwned, blockLastItem);
     try writer.writeBlock(alloc, self.block);
     tableHeader.blocksCount += 1;
     self.block.reset();
+}
+
+fn stableHeaderItem(self: *BlockMerger, alloc: Allocator, owned: *std.ArrayList(u8), item: []const u8) ![]const u8 {
+    if (!self.isBlockBufItem(item)) return item;
+
+    owned.clearRetainingCapacity();
+    try owned.appendSlice(alloc, item);
+    return owned.items;
+}
+
+fn isBlockBufItem(self: *const BlockMerger, item: []const u8) bool {
+    if (self.block.buf.capacity == 0 or item.len == 0) return false;
+
+    const bufStart = @intFromPtr(self.block.buf.items.ptr);
+    const bufEnd = bufStart + self.block.buf.capacity;
+    const itemStart = @intFromPtr(item.ptr);
+    const itemEnd = itemStart + item.len;
+    return itemStart >= bufStart and itemEnd <= bufEnd;
 }
 
 fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
@@ -418,7 +440,7 @@ test "BlockMerger.mergeBasicScenarios" {
 
         const tableHeader = try merger.merge(alloc, &writer, null);
 
-        try testing.expectEqual(case.expectedTableHeader, tableHeader);
+        try testing.expectEqualDeep(case.expectedTableHeader, tableHeader);
     }
 }
 
