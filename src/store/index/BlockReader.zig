@@ -257,9 +257,12 @@ fn readNextBlockHeaders(self: *BlockReader, alloc: Allocator) !bool {
 
     self.compressedBuf.clearRetainingCapacity();
     try self.compressedBuf.ensureUnusedCapacity(alloc, mi.indexBlockSize);
+
     const indexDest = self.compressedBuf.unusedCapacitySlice()[0..mi.indexBlockSize];
-    @memmove(indexDest, self.indexBuf.items);
-    self.compressedBuf.items.len = self.indexBuf.items.len;
+    const indexStart: usize = @intCast(mi.indexBlockOffset);
+    const indexEnd = indexStart + mi.indexBlockSize;
+    @memcpy(indexDest, self.indexBuf.items[indexStart..indexEnd]);
+    self.compressedBuf.items.len = mi.indexBlockSize;
 
     self.uncompressedBuf.clearRetainingCapacity();
     const uncompressedSize = try encoding.getFrameContentSize(self.compressedBuf.items);

@@ -244,8 +244,9 @@ pub fn getTables(self: *IndexRecorder, alloc: Allocator) !std.ArrayList(*Table) 
 fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !void {
     if (blocks.len == 0) return;
 
+    // TODO: make a more narrow locking
     self.mxBlocks.lock();
-    errdefer self.mxBlocks.unlock();
+    defer self.mxBlocks.unlock();
     if (self.blocksToFlush.items.len == 0) {
         self.flushEntriesAtUs = std.time.microTimestamp() + std.time.us_per_s;
     }
@@ -257,7 +258,6 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
         // and pops on demand
         var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksToFlush.items.len);
         std.mem.swap(std.ArrayList(*MemBlock), &blocksToFlush, &self.blocksToFlush);
-        self.mxBlocks.unlock();
         defer blocksToFlush.deinit(alloc);
 
         try self.flushBlocksToMemTables(alloc, blocksToFlush.items, false);
@@ -961,4 +961,48 @@ test "IndexRecorder remove path after deinit" {
     recorder.deinit(alloc);
 
     try testing.expect(!Conf.getConf().sys.diskSpace.contains(rootPath));
+}
+
+test "IndexRecorder large entries write to 3 shards sequentially" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const maxIndexMemBlockSize = 32 * 1024;
+    const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
+    const theLargest = "x" ** (maxIndexMemBlockSize);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    defer {
+        recorder.stopped.store(true, .release);
+        recorder.wg.wait();
+        recorder.deinit(alloc);
+    }
+
+    const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
+    defer alloc.free(firstShardEntries);
+    const secondShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
+    defer alloc.free(secondShardEntries);
+    const thirdShardEntries = try alloc.alloc([]const u8, countAdditionalEntries);
+    defer alloc.free(thirdShardEntries);
+
+    for (firstShardEntries) |*entry| entry.* = theLargest;
+    for (secondShardEntries) |*entry| entry.* = theLargest;
+    for (thirdShardEntries) |*entry| entry.* = theLargest;
+
+    try recorder.add(alloc, firstShardEntries);
+    try recorder.add(alloc, secondShardEntries);
+    try recorder.add(alloc, thirdShardEntries);
+
+    try testing.expectEqual(@as(usize, 2 * Entries.maxBlocksPerShard), recorder.blocksToFlush.items.len);
+
+    var blocksInShards: usize = 0;
+    for (recorder.entries.shards) |shard| {
+        blocksInShards += shard.blocks.items.len;
+    }
+    try testing.expectEqual(@as(usize, countAdditionalEntries), blocksInShards);
 }
