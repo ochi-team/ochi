@@ -43,7 +43,7 @@ entries: *Entries,
 blocksToFlush: std.ArrayList(*MemBlock),
 mxBlocks: std.Thread.Mutex = .{},
 // TODO: make it as atomic instead of locking to access this value,
-// we still need mutex to access blocksToFlush
+// we still need mutex to access blocksToFlush (mxBlocks)
 flushEntriesAtUs: i64 = std.math.maxInt(i64),
 blocksThresholdToFlush: u32,
 
@@ -264,7 +264,7 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
     try self.blocksToFlush.appendSlice(alloc, blocks);
     if (self.blocksToFlush.items.len >= self.blocksThresholdToFlush) {
         // TODO: metric how much capacity is actual capacity of it comparing to expected
-        // TODO: this slice could have come out of a mem pool which preallocates such slices by 10x
+        // TODO: this slice could have come out of a mem pool
         // and pops on demand
         var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksToFlush.items.len);
         std.mem.swap(std.ArrayList(*MemBlock), &blocksToFlush, &self.blocksToFlush);
@@ -1017,11 +1017,6 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     const theLargest = "x" ** (maxIndexMemBlockSize);
 
     const recorder = try IndexRecorder.init(alloc, rootPath);
-    defer {
-        recorder.stopped.store(true, .release);
-        recorder.wg.wait();
-        recorder.deinit(alloc);
-    }
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
     defer alloc.free(firstShardEntries);
@@ -1045,6 +1040,8 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         blocksInShards += shard.blocks.items.len;
     }
     try testing.expectEqual(@as(usize, countAdditionalEntries), blocksInShards);
+
+    try recorder.stop(alloc);
 }
 
 test "IndexRecorder large entries write to 3 shards" {

@@ -78,6 +78,7 @@ const EntriesShard = struct {
             gatheredEntriesCount += 1;
 
             const ok = block.add(entry);
+            // fresh block must have enough space
             std.debug.assert(ok);
         }
 
