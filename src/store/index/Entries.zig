@@ -5,6 +5,11 @@ const builtin = @import("builtin");
 
 const MemBlock = @import("MemBlock.zig");
 
+const EntriesShardAddResult = struct {
+    blocksToFlush: std.ArrayList(*MemBlock),
+    gatheredEntriesCount: usize,
+};
+
 const EntriesShard = struct {
     mx: std.Thread.Mutex = .{},
     blocks: std.ArrayList(*MemBlock),
@@ -32,20 +37,26 @@ const EntriesShard = struct {
         alloc: Allocator,
         entries: [][]const u8,
         maxMemBlockSize: u32,
-    ) !?std.ArrayList(*MemBlock) {
+    ) !?EntriesShardAddResult {
         self.mx.lock();
         defer self.mx.unlock();
-
         if (self.blocks.items.len == 0) {
             const b = try MemBlock.init(alloc, maxMemBlockSize);
             try self.blocks.append(alloc, b);
             self.flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
         }
-
         var block = self.blocks.items[self.blocks.items.len - 1];
+        var gatheredEntriesCount: usize = 0;
 
         for (entries) |entry| {
-            if (block.add(entry)) continue;
+            if (block.add(entry)) {
+                gatheredEntriesCount += 1;
+                continue;
+            }
+
+            if (self.blocks.items.len >= maxBlocksPerShard) {
+                break;
+            }
 
             // Skip too long item
             if (entry.len > maxMemBlockSize) {
@@ -60,12 +71,11 @@ const EntriesShard = struct {
                 continue;
             }
 
-            // TODO: throttle max blocks per entries shard,
-            // instead of creating new block it has to return the unprocessed entries
-
             // if it didn't skip the block means the previous one has not enough space
             block = try MemBlock.init(alloc, maxMemBlockSize);
             try self.blocks.append(alloc, block);
+
+            gatheredEntriesCount += 1;
 
             const ok = block.add(entry);
             if (builtin.is_test) {
@@ -77,11 +87,14 @@ const EntriesShard = struct {
             // TODO: test if its worth returning the origin array instead of the copy
             // so the caller could clear its capacity having no need to allocate one more same array
             // OR preallocate a pool of such arrays in a single segment
-            const blocksToFlush = self.blocks;
-            const freshBlocks = try std.ArrayList(*MemBlock).initCapacity(alloc, maxBlocksPerShard);
+            const result: EntriesShardAddResult = .{
+                .blocksToFlush = self.blocks,
+                .gatheredEntriesCount = gatheredEntriesCount,
+            };
 
-            self.blocks = freshBlocks;
-            return blocksToFlush;
+            self.blocks = try std.ArrayList(*MemBlock).initCapacity(alloc, maxBlocksPerShard);
+
+            return result;
         }
 
         return null;
@@ -118,8 +131,13 @@ pub fn init(alloc: Allocator, concurrency: u16) !*Entries {
 
     const shards = try alloc.alloc(EntriesShard, concurrency);
     errdefer alloc.free(shards);
+
+    var initialized: usize = 0;
+    errdefer for (shards[0..initialized]) |*shard| shard.deinit(alloc);
+
     for (shards) |*shard| {
         shard.* = try .init(alloc, maxBlocksPerShard);
+        initialized += 1;
     }
 
     const e = try alloc.create(Entries);
@@ -163,57 +181,6 @@ test "Entries.shardIdxOverflow" {
     try std.testing.expectEqual(shard, firstShard);
 }
 
-test "EntriesShard.flushesAllBlocksIncludingExtras" {
-    const alloc = testing.allocator;
-    const maxIndexMemBlockSize = 1024;
-
-    var shard = EntriesShard{
-        .mx = .{},
-        .blocks = std.ArrayList(*MemBlock).empty,
-        .flushAtUs = 0,
-    };
-    defer {
-        for (shard.blocks.items) |b| b.deinit(alloc);
-        shard.blocks.deinit(alloc);
-    }
-
-    // Setup: create maxBlocksPerShard blocks with last one full
-    for (0..maxBlocksPerShard) |_| {
-        const b = try MemBlock.init(alloc, maxIndexMemBlockSize);
-        try shard.blocks.append(alloc, b);
-    }
-    const lastBlock = shard.blocks.items[shard.blocks.items.len - 1];
-    const filler = "y" ** 100;
-    while (lastBlock.size + filler.len <= maxIndexMemBlockSize) {
-        _ = lastBlock.add(filler);
-    }
-    try testing.expectEqual(maxBlocksPerShard, shard.blocks.items.len);
-    const remainingSpace = maxIndexMemBlockSize - lastBlock.size;
-
-    // Add entry that doesn't fit - will create block #257
-    const entry_buf = try alloc.alloc(u8, remainingSpace + 1);
-    defer alloc.free(entry_buf);
-    @memset(entry_buf, 'x');
-    var entries = [_][]const u8{entry_buf};
-
-    // add() processes ALL entries even if it temporarily exceeds maxBlocksPerShard,
-    // then flushes everything including the extra blocks
-    const result = try shard.add(alloc, &entries, maxIndexMemBlockSize);
-
-    try testing.expect(result != null);
-    var flushed = result.?;
-
-    // Should flush all blocks including the one created during processing
-    try testing.expectEqual(maxBlocksPerShard + 1, flushed.items.len);
-
-    // Shard should have fresh empty array
-    try testing.expectEqual(0, shard.blocks.items.len);
-
-    // cleanup
-    for (flushed.items) |b| b.deinit(alloc);
-    flushed.deinit(alloc);
-}
-
 test "EntriesShard.add" {
     const maxIndexMemBlockSize = 1024;
     const alloc = testing.allocator;
@@ -226,23 +193,24 @@ test "EntriesShard.add" {
         test_entries: []const []const u8,
         expected_flush: bool = false,
         expected_block_count: usize,
-        expected_last_block_entries: usize,
+        expected_last_block_entries_count: usize,
+        expected_gathered_entries_count: usize = 0,
     };
 
     const cases = [_]Case{
-        // normal entries added successfully
+        //normal entries added successfully
         .{
             .test_entries = &.{ "first_normal", "second_normal" },
             .expected_flush = false,
             .expected_block_count = 1,
-            .expected_last_block_entries = 2,
+            .expected_last_block_entries_count = 2,
         },
         // only too large entry creates two empty blocks
         .{
             .test_entries = &.{tooLarge},
             .expected_flush = false,
             .expected_block_count = 1,
-            .expected_last_block_entries = 0,
+            .expected_last_block_entries_count = 0,
         },
         // no flush when at threshold-1 with small entry that fits
         .{
@@ -251,7 +219,7 @@ test "EntriesShard.add" {
             .test_entries = &.{"fits_in_remaining_space"},
             .expected_flush = false,
             .expected_block_count = maxBlocksPerShard - 1,
-            .expected_last_block_entries = 2, // filled + 1 new entry
+            .expected_last_block_entries_count = 2, // filled + 1 new entry
         },
         // flush when at threshold-1 with large entry that doesn't fit
         .{
@@ -260,7 +228,8 @@ test "EntriesShard.add" {
             .test_entries = &.{theLargest},
             .expected_flush = true,
             .expected_block_count = 0,
-            .expected_last_block_entries = 0,
+            .expected_last_block_entries_count = 0,
+            .expected_gathered_entries_count = 1,
         },
         // flush when already at threshold (entry goes into flushed blocks)
         .{
@@ -268,7 +237,8 @@ test "EntriesShard.add" {
             .test_entries = &.{"trigger_immediate_flush"},
             .expected_flush = true,
             .expected_block_count = 0,
-            .expected_last_block_entries = 0,
+            .expected_last_block_entries_count = 0,
+            .expected_gathered_entries_count = 1,
         },
         // no flush when below threshold (entry fits in last block)
         .{
@@ -276,7 +246,16 @@ test "EntriesShard.add" {
             .test_entries = &.{"no_flush"},
             .expected_flush = false,
             .expected_block_count = maxBlocksPerShard - 2,
-            .expected_last_block_entries = 1,
+            .expected_last_block_entries_count = 1,
+        },
+        // flush and check gathered_entries_count always = maxBlocksPerShard
+        .{
+            .setup_blocks_count = 0,
+            .test_entries = &([_][]const u8{theLargest} ** (maxBlocksPerShard + 1)),
+            .expected_flush = true,
+            .expected_block_count = 0,
+            .expected_last_block_entries_count = 0,
+            .expected_gathered_entries_count = maxBlocksPerShard,
         },
     };
 
@@ -313,10 +292,10 @@ test "EntriesShard.add" {
         if (case.expected_flush) {
             try testing.expect(result != null);
             var flushed = result.?;
-            defer {
-                for (flushed.items) |b| b.deinit(alloc);
-                flushed.deinit(alloc);
-            }
+            for (flushed.blocksToFlush.items) |b| b.deinit(alloc);
+            flushed.blocksToFlush.deinit(alloc);
+
+            try testing.expectEqual(case.expected_gathered_entries_count, flushed.gatheredEntriesCount);
         } else {
             try testing.expect(result == null);
         }
@@ -324,7 +303,7 @@ test "EntriesShard.add" {
         try testing.expectEqual(case.expected_block_count, shard.blocks.items.len);
         if (shard.blocks.items.len > 0) {
             const lastBlock = shard.blocks.items[shard.blocks.items.len - 1];
-            try testing.expectEqual(case.expected_last_block_entries, lastBlock.items.items.len);
+            try testing.expectEqual(case.expected_last_block_entries_count, lastBlock.items.items.len);
         }
     }
 }

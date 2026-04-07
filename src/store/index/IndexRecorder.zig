@@ -18,8 +18,6 @@ const swap = @import("../table/swap.zig");
 
 const Conf = @import("../../Conf.zig");
 
-const maxBlocksPerShard = 256;
-
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
 const maxMemTables = 24;
@@ -64,6 +62,7 @@ memMergeSem: std.Thread.Semaphore,
 pool: *std.Thread.Pool,
 // wg holds all the running jobs
 wg: std.Thread.WaitGroup = .{},
+stopped: std.atomic.Value(bool) = .init(false),
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
 // TODO: find an optimal way to handle ingestion rate higher than merge rate
@@ -74,7 +73,6 @@ wg: std.Thread.WaitGroup = .{},
 memTablesSem: std.Thread.Semaphore = .{
     .permits = maxMemTables,
 },
-stopped: std.atomic.Value(bool) = .init(false),
 
 needInvalidate: std.atomic.Value(bool) = .init(false),
 indexCacheKeyVersion: std.atomic.Value(u64) = .init(0),
@@ -90,19 +88,20 @@ pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
     const entries = try Entries.init(alloc, concurrency);
     errdefer entries.deinit(alloc);
 
-    const blocksThresholdToFlush: u32 = @intCast(entries.shards.len * maxBlocksPerShard);
+    const blocksThresholdToFlush: u32 = @intCast(entries.shards.len * Entries.maxBlocksPerShard);
 
     // TODO: try using list of lists instead in order not to copy data from blocks to blocksToFlush
     var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksThresholdToFlush);
     errdefer blocksToFlush.deinit(alloc);
 
     var pool = try alloc.create(std.Thread.Pool);
+    errdefer pool.deinit();
     errdefer alloc.destroy(pool);
+
     try pool.init(.{
         .allocator = alloc,
         .n_jobs = conf.server.pools.workerThreads,
     });
-    errdefer pool.deinit();
 
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
@@ -213,13 +212,25 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
-    const shard = self.entries.next();
-    const blocksList = try shard.add(alloc, entries, self.maxMemBlockSize);
-    if (blocksList == null) return;
+    var entryIndex: usize = 0;
 
-    var blocks = blocksList.?;
-    defer blocks.deinit(alloc);
-    try self.flushBlocks(alloc, blocks.items);
+    while (entryIndex <= entries.len) {
+        const shard = self.entries.next();
+        var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+
+        if (blocksListResult) |*blocksList| {
+            defer blocksList.blocksToFlush.deinit(alloc);
+
+            try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
+            if (entryIndex >= entries.len) {
+                std.debug.assert(entryIndex == entries.len);
+                return;
+            }
+            entryIndex += blocksList.gatheredEntriesCount;
+        } else {
+            return;
+        }
+    }
 }
 
 pub fn getTables(self: *IndexRecorder, alloc: Allocator) !std.ArrayList(*Table) {
@@ -247,6 +258,7 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
     // TODO: make a more narrow locking
     self.mxBlocks.lock();
     defer self.mxBlocks.unlock();
+
     if (self.blocksToFlush.items.len == 0) {
         self.flushEntriesAtUs = std.time.microTimestamp() + std.time.us_per_s;
     }
@@ -852,6 +864,7 @@ test "IndexRecorder add and reopen preserves item count" {
     const inserted: usize = 128;
     {
         const recorder = try IndexRecorder.init(alloc, rootPath);
+        defer recorder.deinit(alloc);
 
         for (0..inserted) |i| {
             const item = stableItems[i % stableItems.len];
@@ -866,17 +879,16 @@ test "IndexRecorder add and reopen preserves item count" {
         try testing.expect(recorder.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(recorder));
-        recorder.deinit(alloc);
     }
 
     {
         const reopened = try IndexRecorder.init(alloc, rootPath);
+        defer reopened.deinit(alloc);
         reopened.stopped.store(true, .release);
         reopened.wg.wait();
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(reopened));
-        reopened.deinit(alloc);
     }
 }
 
@@ -892,9 +904,7 @@ fn addWorker(ctx: *AddWorkerCtx) void {
     while (i < ctx.items) : (i += 1) {
         const item = stableItems[(ctx.workerID + i) % stableItems.len];
         var batch = [_][]const u8{item};
-        ctx.recorder.add(ctx.alloc, &batch) catch |err| {
-            std.debug.panic("failed to add item in worker {d}: {s}", .{ ctx.workerID, @errorName(err) });
-        };
+        ctx.recorder.add(ctx.alloc, &batch) catch unreachable;
     }
 }
 
@@ -1005,4 +1015,44 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         blocksInShards += shard.blocks.items.len;
     }
     try testing.expectEqual(@as(usize, countAdditionalEntries), blocksInShards);
+}
+
+test "IndexRecorder large entries write to 3 shards" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const maxIndexMemBlockSize = 32 * 1024;
+    //countAdditionalEntries < Entries.maxBlocksPerShard
+    const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
+    //2 shards full-filled and third shard is not completely filled
+    const totalEntries = (2 * Entries.maxBlocksPerShard) + countAdditionalEntries;
+    const theLargest = "x" ** (maxIndexMemBlockSize);
+    var testEntries: [][]const u8 = try alloc.alloc([]const u8, totalEntries);
+    defer alloc.free(testEntries);
+
+    for (0..totalEntries) |i| {
+        testEntries[i] = theLargest;
+    }
+
+    const recorder = try IndexRecorder.init(alloc, rootPath);
+    defer recorder.deinit(alloc);
+
+    try recorder.add(alloc, testEntries);
+
+    try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
+
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+
+    try recorder.flushForce(alloc);
+
+    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+    try testing.expect(recorder.diskTables.items.len > 0);
+    try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
+    try testing.expectEqual(@as(u64, totalEntries), countDiskItemsInRecorder(recorder));
 }
