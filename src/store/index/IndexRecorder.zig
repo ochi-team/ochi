@@ -217,20 +217,17 @@ pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void 
 
     while (entryIndex < entries.len) {
         const shard = self.entries.next();
-        var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+        const blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
 
-        if (blocksListResult) |*blocksList| {
-            defer blocksList.blocksToFlush.deinit(alloc);
+        var blocksList = blocksListResult orelse return;
+        defer blocksList.blocksToFlush.deinit(alloc);
 
-            try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
-            if (entryIndex >= entries.len) {
-                std.debug.assert(entryIndex == entries.len);
-                return;
-            }
-            entryIndex += blocksList.gatheredEntriesCount;
-        } else {
+        try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
+        if (entryIndex >= entries.len) {
+            std.debug.assert(entryIndex == entries.len);
             return;
         }
+        entryIndex += blocksList.gatheredEntriesCount;
     }
 }
 
