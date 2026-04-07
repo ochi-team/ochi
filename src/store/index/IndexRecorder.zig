@@ -278,9 +278,13 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+    // enough for 256 tables, which a way beyond the expected amount
+    var fba = std.heap.stackFallback(2048, alloc);
+    const fbaAlloc = fba.get();
+
     const tablesSize = (blocks.len + blocksInMemTable - 1) / blocksInMemTable;
-    var memTables = try std.ArrayList(*Table).initCapacity(alloc, tablesSize);
-    defer memTables.deinit(alloc);
+    var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
+    defer memTables.deinit(fbaAlloc);
     errdefer {
         for (memTables.items) |memTable| memTable.close();
     }
@@ -334,20 +338,22 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     var mergedTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, 8);
     defer mergedTables.deinit(fbaAlloc);
 
+    var memToMerge = try std.ArrayList(*MemTable).initCapacity(fbaAlloc, 8);
+    defer memToMerge.deinit(fbaAlloc);
+
     std.debug.assert(memTables.items.len != 0);
     if (memTables.items.len == 1) return;
 
-    var left = std.ArrayList(*Table).initBuffer(memTables.items[0..]);
-    left.items.len = memTables.items.len;
-    while (left.items.len > 0) {
-        const n = merger.selectTablesToMerge(&left);
-        const toMerge = left.items[0..n];
-        const tail = left.items[n..];
-        left = std.ArrayList(*Table).initBuffer(tail);
-        left.items.len = tail.len;
+    var left = memTables.items[0..];
+    while (left.len > 0) {
+        var leftArray = std.ArrayList(*Table).initBuffer(left);
+        leftArray.items.len = left.len;
 
-        var memToMerge = try std.ArrayList(*MemTable).initCapacity(alloc, toMerge.len);
-        defer memToMerge.deinit(alloc);
+        const n = merger.selectTablesToMerge(&leftArray);
+        const toMerge = left[0..n];
+        left = left[n..];
+
+        try memToMerge.ensureUnusedCapacity(fbaAlloc, toMerge.len);
         for (toMerge) |table| {
             const mem = table.mem orelse {
                 std.debug.panic("mergeMemTables expects mem tables only", .{});
@@ -355,28 +361,46 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
             memToMerge.appendAssumeCapacity(mem);
         }
 
+        // TODO: I don't need it, we already have merging from []*Table, replace it
         const res = try MemTable.mergeMemTables(alloc, memToMerge.items);
+        memToMerge.clearRetainingCapacity();
+
         for (toMerge) |t| t.close();
         const t = try Table.fromMem(alloc, res);
         try mergedTables.append(fbaAlloc, t);
     }
 
+    // TODO: make it in place overwriting instead of holding a copy on stack
     memTables.clearRetainingCapacity();
     memTables.appendSliceAssumeCapacity(mergedTables.items);
 }
 
 fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, force: bool) !void {
-    var semaphoreWaited = false; // if not stopped then wait for an available semaphore
-    if (!self.stopped.load(.acquire)) {
-        self.memTablesSem.wait();
-        semaphoreWaited = true;
-    }
-    errdefer if (semaphoreWaited) self.memTablesSem.post();
+    // TODO: add a limit to wait max 3 minutes, otherwise something is broken
 
-    // TODO: ideally to know the amount of mem tables and call unlock without errdefer
+    var semaphoreAcuired = true;
+    while (true) {
+        self.memTablesSem.timedWait(std.time.ns_per_s) catch |err| {
+            switch (err) {
+                error.Timeout => {
+                    if (self.stopped.load(.acquire)) {
+                        // TODO: audit all semaphore as a state usage, it can happen
+                        // a background task fails and  doesn't post semaphore back
+                        semaphoreAcuired = false;
+                        break;
+                    }
+                },
+            }
+        };
+    }
+
+    // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lock();
-    errdefer self.mxTables.unlock();
-    try self.memTables.append(alloc, memTable);
+    self.memTables.append(alloc, memTable) catch {
+        self.mxTables.unlock();
+        if (semaphoreAcuired) self.memTablesSem.post();
+        return;
+    };
     self.startMemTablesMerge(alloc);
     self.mxTables.unlock();
 
@@ -673,7 +697,7 @@ pub fn mergeTables(
         blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
     }
 
-    var tableHeader = try MemTable.mergeBlocks(
+    const tableHeader = try MemTable.mergeBlocks(
         alloc,
         &blockWriter,
         &readers,
@@ -684,9 +708,10 @@ pub fn mergeTables(
     } else {
         std.debug.assert(destinationTablePath.len > 0);
         var fbaFallback = std.heap.stackFallback(256, alloc);
-        errdefer tableHeader.deinit(alloc);
+        // TODO: pass table header to openining a table and use it instead of reading from a file,
+        // write a test in advance to confirm it's exact same header
+        defer tableHeader.deinit(alloc);
         try tableHeader.writeFile(fbaFallback.get(), destinationTablePath);
-        tableHeader.deinit(alloc);
 
         fs.syncPathAndParentDir(destinationTablePath);
     }

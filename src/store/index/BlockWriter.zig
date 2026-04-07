@@ -52,7 +52,7 @@ const BlockWriter = @This();
 
 destination: Destination,
 
-bh: BlockHeader = .{ .firstItem = undefined, .prefix = undefined, .encodingType = undefined },
+bh: BlockHeader = .{ .firstItem = "", .prefix = "", .encodingType = .plain },
 mi: MetaIndex = .{},
 
 itemsBlockOffset: u64 = 0,
@@ -62,7 +62,6 @@ entriesBlock: EntriesBlock = .{},
 uncompressedIndexBlockBuf: std.ArrayList(u8) = .empty,
 uncompressedMetaindexBuf: std.ArrayList(u8) = .empty,
 compressedBuf: std.ArrayList(u8) = .empty,
-miFirstItemOwned: std.ArrayList(u8) = .empty,
 
 indexBlockOffset: u64 = 0,
 
@@ -124,7 +123,6 @@ pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
     self.uncompressedIndexBlockBuf.deinit(alloc);
     self.uncompressedMetaindexBuf.deinit(alloc);
     self.compressedBuf.deinit(alloc);
-    self.miFirstItemOwned.deinit(alloc);
 }
 
 pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void {
@@ -159,9 +157,7 @@ pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void 
 
     // Write block header
     if (self.mi.firstItem.len == 0) {
-        self.miFirstItemOwned.clearRetainingCapacity();
-        try self.miFirstItemOwned.appendSlice(alloc, self.bh.firstItem);
-        self.mi.firstItem = self.miFirstItemOwned.items;
+        self.mi.firstItem = self.bh.firstItem;
     }
     self.bh.reset();
     self.mi.blockHeadersCount += 1;
