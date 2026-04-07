@@ -14,7 +14,7 @@ const EncodingType = @import("BlockHeader.zig").EncodingType;
 const maxPlainMemBlockLen = 64;
 
 const EncodedMemBlock = struct {
-    firstItem: []const u8,
+    firstEntry: []const u8,
     prefix: []const u8,
     itemsCount: u32,
     encodingType: EncodingType,
@@ -23,7 +23,7 @@ const EncodedMemBlock = struct {
 const MemBlock = @This();
 
 // TODO: rename it, having items.items is not readable
-items: std.ArrayList([]const u8),
+memEntries: std.ArrayList([]const u8),
 size: u32,
 prefix: []const u8 = "",
 
@@ -40,20 +40,20 @@ pub fn init(
 
     const b = try alloc.create(MemBlock);
     b.* = .{
-        .items = data,
+        .memEntries = data,
         .size = 0,
     };
     return b;
 }
 
 pub fn deinit(self: *MemBlock, alloc: Allocator) void {
-    self.items.deinit(alloc);
+    self.memEntries.deinit(alloc);
     self.buf.deinit(alloc);
     alloc.destroy(self);
 }
 
 pub fn reset(self: *MemBlock) void {
-    self.items.clearRetainingCapacity();
+    self.memEntries.clearRetainingCapacity();
     self.buf.clearRetainingCapacity();
     self.size = 0;
     self.prefix = undefined;
@@ -61,9 +61,9 @@ pub fn reset(self: *MemBlock) void {
 
 pub fn add(self: *MemBlock, entry: []const u8) bool {
     std.debug.assert(entry.len > 0);
-    if ((self.size + entry.len) > self.items.capacity) return false;
+    if ((self.size + entry.len) > self.memEntries.capacity) return false;
 
-    self.items.appendAssumeCapacity(entry);
+    self.memEntries.appendAssumeCapacity(entry);
     self.size += @intCast(entry.len);
     return true;
 }
@@ -77,15 +77,15 @@ pub fn sortData(self: *MemBlock) void {
 }
 
 pub fn setPrefix(self: *MemBlock) void {
-    if (self.items.items.len == 0) return;
+    if (self.memEntries.items.len == 0) return;
 
-    if (self.items.items.len == 1) {
-        self.prefix = self.items.items[0];
+    if (self.memEntries.items.len == 1) {
+        self.prefix = self.memEntries.items[0];
         return;
     }
 
-    var prefix = self.items.items[0];
-    for (self.items.items[1..]) |entry| {
+    var prefix = self.memEntries.items[0];
+    for (self.memEntries.items[1..]) |entry| {
         if (std.mem.startsWith(u8, entry, prefix)) {
             continue;
         }
@@ -97,16 +97,16 @@ pub fn setPrefix(self: *MemBlock) void {
     self.prefix = prefix;
 }
 pub fn setPrefixSorted(self: *MemBlock) void {
-    if (self.items.items.len <= 1) {
+    if (self.memEntries.items.len <= 1) {
         self.prefix = "";
         return;
     }
 
-    self.prefix = strings.findPrefix(self.items.items[0], self.items.items[self.items.items.len - 1]);
+    self.prefix = strings.findPrefix(self.memEntries.items[0], self.memEntries.items[self.memEntries.items.len - 1]);
 }
 
 pub fn sort(self: *MemBlock) void {
-    std.mem.sortUnstable([]const u8, self.items.items, self, memBlockEntryLessThan);
+    std.mem.sortUnstable([]const u8, self.memEntries.items, self, memBlockEntryLessThan);
 }
 
 fn memBlockEntryLessThan(self: *MemBlock, one: []const u8, another: []const u8) bool {
@@ -120,7 +120,7 @@ fn memBlockEntryLessThan(self: *MemBlock, one: []const u8, another: []const u8) 
 
 inline fn assertIsSorted(self: *MemBlock) void {
     if (builtin.is_test) {
-        std.debug.assert(std.sort.isSorted([]const u8, self.items.items, {}, MemOrder(u8).lessThanConst));
+        std.debug.assert(std.sort.isSorted([]const u8, self.memEntries.items, {}, MemOrder(u8).lessThanConst));
     }
 }
 
@@ -129,43 +129,43 @@ pub fn encode(
     alloc: Allocator,
     entriesBlock: *EntrieBlock,
 ) !EncodedMemBlock {
-    std.debug.assert(self.items.items.len != 0);
+    std.debug.assert(self.memEntries.items.len != 0);
     // this API can't be called on unsorted data
     self.assertIsSorted();
 
     self.setPrefixSorted();
-    const firstItem = self.items.items[0];
+    const firstEntry = self.memEntries.items[0];
 
     // TODO: consider making len limit 128
-    if (self.size - self.prefix.len * self.items.items.len < maxPlainMemBlockLen or self.items.items.len < 2) {
+    if (self.size - self.prefix.len * self.memEntries.items.len < maxPlainMemBlockLen or self.memEntries.items.len < 2) {
         try self.encodePlain(alloc, entriesBlock);
         return EncodedMemBlock{
-            .firstItem = firstItem,
+            .firstEntry = firstEntry,
             .prefix = self.prefix,
-            .itemsCount = @intCast(self.items.items.len),
+            .itemsCount = @intCast(self.memEntries.items.len),
             .encodingType = .plain,
         };
     }
 
-    var itemsBuf = try std.ArrayList(u8).initCapacity(alloc, self.size - self.prefix.len * self.items.items.len);
-    defer itemsBuf.deinit(alloc);
+    var entriesBuf = try std.ArrayList(u8).initCapacity(alloc, self.size - self.prefix.len * self.memEntries.items.len);
+    defer entriesBuf.deinit(alloc);
     // TODO: make it a simple array
-    var lens = try std.ArrayList(u32).initCapacity(alloc, self.items.items.len - 1);
+    var lens = try std.ArrayList(u32).initCapacity(alloc, self.memEntries.items.len - 1);
     defer lens.deinit(alloc);
 
     // write prefix lens
-    var prevItem = firstItem[self.prefix.len..];
+    var prevEntry = firstEntry[self.prefix.len..];
     var prevLen: u32 = 0;
 
-    for (self.items.items[1..]) |item| {
-        const currItem = item[self.prefix.len..];
-        const prefix = strings.findPrefix(prevItem, currItem);
-        itemsBuf.appendSliceAssumeCapacity(currItem[prefix.len..]);
+    for (self.memEntries.items[1..]) |item| {
+        const currEntry = item[self.prefix.len..];
+        const prefix = strings.findPrefix(prevEntry, currEntry);
+        entriesBuf.appendSliceAssumeCapacity(currEntry[prefix.len..]);
 
         const xLen = prefix.len ^ prevLen;
         lens.appendAssumeCapacity(@intCast(xLen));
 
-        prevItem = currItem;
+        prevEntry = currEntry;
         prevLen = @intCast(prefix.len);
     }
 
@@ -179,15 +179,15 @@ pub fn encode(
     enc.writeVarInts(u32, lens.items);
 
     // compress items
-    var bound = try encoding.compressBound(itemsBuf.items.len);
+    var bound = try encoding.compressBound(entriesBuf.items.len);
     entriesBlock.entriesBuf.clearRetainingCapacity();
     try entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, bound);
-    entriesBlock.entriesBuf.items.len = try encoding.compressAuto(entriesBlock.entriesBuf.unusedCapacitySlice(), itemsBuf.items);
+    entriesBlock.entriesBuf.items.len = try encoding.compressAuto(entriesBlock.entriesBuf.unusedCapacitySlice(), entriesBuf.items);
 
     // write lens
     lens.clearRetainingCapacity();
-    prevLen = @intCast(firstItem.len - self.prefix.len);
-    for (self.items.items[1..]) |item| {
+    prevLen = @intCast(firstEntry.len - self.prefix.len);
+    for (self.memEntries.items[1..]) |item| {
         const itemLen: u32 = @intCast(item.len - self.prefix.len);
         const xLen = itemLen ^ prevLen;
         prevLen = itemLen;
@@ -211,22 +211,22 @@ pub fn encode(
     // if compressed content is more than 90% of the original size - not worth it
     // TODO: consider tweaking the value up to 80-85%
     if (@as(f64, @floatFromInt(entriesBlock.lensBuf.items.len)) >
-        0.9 * @as(f64, @floatFromInt(self.size - self.prefix.len * self.items.items.len)))
+        0.9 * @as(f64, @floatFromInt(self.size - self.prefix.len * self.memEntries.items.len)))
     {
         entriesBlock.reset();
         try self.encodePlain(alloc, entriesBlock);
         return EncodedMemBlock{
-            .firstItem = firstItem,
+            .firstEntry = firstEntry,
             .prefix = self.prefix,
-            .itemsCount = @intCast(self.items.items.len),
+            .itemsCount = @intCast(self.memEntries.items.len),
             .encodingType = .plain,
         };
     }
 
     return EncodedMemBlock{
-        .firstItem = firstItem,
+        .firstEntry = firstEntry,
         .prefix = self.prefix,
-        .itemsCount = @intCast(self.items.items.len),
+        .itemsCount = @intCast(self.memEntries.items.len),
         .encodingType = .zstd,
     };
 }
@@ -234,11 +234,11 @@ pub fn encode(
 fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock) !void {
     try entriesBlock.entriesBuf.ensureUnusedCapacity(
         alloc,
-        self.size - self.prefix.len * self.items.items.len + self.prefix.len - self.items.items[0].len,
+        self.size - self.prefix.len * self.memEntries.items.len + self.prefix.len - self.memEntries.items[0].len,
     );
-    try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, 2 * (self.items.items.len - 1));
+    try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, 2 * (self.memEntries.items.len - 1));
 
-    for (self.items.items[1..]) |item| {
+    for (self.memEntries.items[1..]) |item| {
         const suffix = item[self.prefix.len..];
         entriesBlock.entriesBuf.appendSliceAssumeCapacity(suffix);
     }
@@ -246,7 +246,7 @@ fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock) !v
     // no chance any len value is larger than 16384 (0x4000)
     const slice = entriesBlock.lensBuf.unusedCapacitySlice();
     var enc = Encoder.init(slice);
-    for (self.items.items[1..]) |item| {
+    for (self.memEntries.items[1..]) |item| {
         const len: u64 = @intCast(item.len - self.prefix.len);
         enc.writeVarInt(len);
     }
@@ -329,10 +329,10 @@ pub fn decode(
     defer alloc.free(decompressedItemsBuf);
     n = try encoding.decompress(decompressedItemsBuf, entriesBlock.entriesBuf.items);
 
-    try self.items.ensureUnusedCapacity(alloc, itemsCount);
+    try self.memEntries.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
     self.buf.appendSliceAssumeCapacity(firstItem);
-    self.items.appendAssumeCapacity(self.buf.items[0..firstItem.len]);
+    self.memEntries.appendAssumeCapacity(self.buf.items[0..firstItem.len]);
 
     var decompressedItemsSlice = decompressedItemsBuf[0..n];
     var prevItem = self.buf.items[prefix.len..];
@@ -348,7 +348,7 @@ pub fn decode(
         self.buf.appendSliceAssumeCapacity(prefix);
         self.buf.appendSliceAssumeCapacity(prevItem[0..prefixLen]);
         self.buf.appendSliceAssumeCapacity(decompressedItemsSlice[0..suffixLen]);
-        self.items.appendAssumeCapacity(self.buf.items[dataStart..self.buf.items.len]);
+        self.memEntries.appendAssumeCapacity(self.buf.items[dataStart..self.buf.items.len]);
 
         decompressedItemsSlice = decompressedItemsSlice[suffixLen..];
         prevItem = self.buf.items[self.buf.items.len - itemLen ..];
@@ -361,11 +361,11 @@ pub fn decode(
     }
 }
 
-pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock, firstItem: []const u8, itemsCount: u32) !void {
+pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock, firstEntry: []const u8, itemsCount: u32) !void {
     // decode lens
     const lensBuf = try alloc.alloc(u64, itemsCount);
     defer alloc.free(lensBuf);
-    lensBuf[0] = firstItem.len - self.prefix.len;
+    lensBuf[0] = firstEntry.len - self.prefix.len;
 
     var dec = encoding.Decoder.init(entriesBlock.lensBuf.items);
     for (1..itemsCount) |i| {
@@ -374,11 +374,11 @@ pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock
     std.debug.assert(dec.offset == dec.buf.len);
 
     // decode items
-    const dataLen: usize = self.prefix.len * (itemsCount - 1) + firstItem.len + entriesBlock.entriesBuf.items.len;
-    try self.items.ensureUnusedCapacity(alloc, itemsCount);
+    const dataLen: usize = self.prefix.len * (itemsCount - 1) + firstEntry.len + entriesBlock.entriesBuf.items.len;
+    try self.memEntries.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
-    self.buf.appendSliceAssumeCapacity(firstItem);
-    self.items.appendAssumeCapacity(self.buf.items[0..firstItem.len]);
+    self.buf.appendSliceAssumeCapacity(firstEntry);
+    self.memEntries.appendAssumeCapacity(self.buf.items[0..firstEntry.len]);
 
     var itemsSlice = entriesBlock.entriesBuf.items;
     for (1..itemsCount) |i| {
@@ -387,7 +387,7 @@ pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock
 
         self.buf.appendSliceAssumeCapacity(self.prefix);
         self.buf.appendSliceAssumeCapacity(itemsSlice[0..itemLen]);
-        self.items.appendAssumeCapacity(self.buf.items[start..self.buf.items.len]);
+        self.memEntries.appendAssumeCapacity(self.buf.items[start..self.buf.items.len]);
         itemsSlice = itemsSlice[itemLen..];
     }
     std.debug.assert(itemsSlice.len == 0);
@@ -430,7 +430,7 @@ test "MemBlock.add respects max size and reset clears state" {
     try testing.expectEqual(@as(u32, 6), block.size);
 
     block.reset();
-    try testing.expectEqual(@as(usize, 0), block.items.items.len);
+    try testing.expectEqual(@as(usize, 0), block.memEntries.items.len);
     try testing.expectEqual(@as(u32, 0), block.size);
 }
 
@@ -458,7 +458,7 @@ test "MemBlock.encode/decode plain and zstd cases" {
         .{
             .expectedEncodedBlock = .{
                 .encodingType = .plain,
-                .firstItem = plainItemsSorted[0],
+                .firstEntry = plainItemsSorted[0],
                 .prefix = "pre-",
                 .itemsCount = 3,
             },
@@ -468,7 +468,7 @@ test "MemBlock.encode/decode plain and zstd cases" {
         .{
             .expectedEncodedBlock = .{
                 .encodingType = .zstd,
-                .firstItem = zstdItems[0],
+                .firstEntry = zstdItems[0],
                 .prefix = "",
                 .itemsCount = 3,
             },
@@ -489,14 +489,14 @@ test "MemBlock.encode/decode plain and zstd cases" {
 
         var decoded = try MemBlock.init(alloc, 16);
         defer decoded.deinit(alloc);
-        try decoded.decode(alloc, &entriesBlock, encoded.firstItem, encoded.prefix, encoded.itemsCount, encoded.encodingType);
+        try decoded.decode(alloc, &entriesBlock, encoded.firstEntry, encoded.prefix, encoded.itemsCount, encoded.encodingType);
 
         try testing.expectEqualStrings(block.prefix, decoded.prefix);
         try testing.expectEqualStrings(block.prefix, case.expectedEncodedBlock.prefix);
-        try testing.expectEqual(block.items.items.len, decoded.items.items.len);
-        try testing.expectEqual(block.items.items.len, case.items.len);
-        try testing.expectEqualDeep(block.items.items, decoded.items.items);
-        try testing.expectEqualDeep(block.items.items, case.itemsSorted[0..]);
+        try testing.expectEqual(block.memEntries.items.len, decoded.memEntries.items.len);
+        try testing.expectEqual(block.memEntries.items.len, case.items.len);
+        try testing.expectEqualDeep(block.memEntries.items, decoded.memEntries.items);
+        try testing.expectEqualDeep(block.memEntries.items, case.itemsSorted[0..]);
     }
 }
 
@@ -548,9 +548,9 @@ test "MemBlock.decodePlain handles min and max lens values" {
         // Call decodePlain directly to isolate its varint length handling from the
         // full decode flow (which can route to zstd and other paths).
         try block.decodePlain(alloc, &entriesBlock, "a", 2);
-        try testing.expectEqual(@as(usize, 2), block.items.items.len);
-        try testing.expectEqualSlices(u8, "a", block.items.items[0]);
+        try testing.expectEqual(@as(usize, 2), block.memEntries.items.len);
+        try testing.expectEqualSlices(u8, "a", block.memEntries.items[0]);
         // Ensure the decoded second item length matches the varint value, including zero.
-        try testing.expectEqual(@as(usize, case.secondLen), block.items.items[1].len);
+        try testing.expectEqual(@as(usize, case.secondLen), block.memEntries.items[1].len);
     }
 }

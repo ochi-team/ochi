@@ -67,7 +67,7 @@ pub fn lessThan(one: LookupTable, another: LookupTable) bool {
 pub fn seek(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
     self.isRead = false;
 
-    if (std.mem.lessThan(u8, self.table.tableHeader.lastItem, key)) {
+    if (std.mem.lessThan(u8, self.table.tableHeader.lastEntry, key)) {
         self.isRead = true;
         return;
     }
@@ -83,7 +83,7 @@ pub fn seek(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
 fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
     const block = self.memBlock orelse return false;
 
-    var items = block.items.items;
+    var items = block.memEntries.items;
     var idx = self.memBlockIdx;
     if (idx >= items.len) {
         // block is over
@@ -121,8 +121,8 @@ fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
 fn seekFromStart(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
     self.resetState(alloc);
 
-    if (std.mem.eql(u8, key, self.table.tableHeader.firstItem) or
-        std.mem.lessThan(u8, key, self.table.tableHeader.firstItem))
+    if (std.mem.eql(u8, key, self.table.tableHeader.firstEntry) or
+        std.mem.lessThan(u8, key, self.table.tableHeader.firstEntry))
     {
         _ = try self.nextBlock(alloc);
         return;
@@ -147,8 +147,8 @@ fn seekFromStart(self: *LookupTable, alloc: Allocator, key: []const u8) !void {
     }
 
     const keyPrefixLen = strings.findPrefix(self.memBlock.?.prefix, key).len;
-    self.memBlockIdx = lowerBoundBySuffix(self.memBlock.?.items.items, key, keyPrefixLen);
-    if (self.memBlockIdx < self.memBlock.?.items.items.len) {
+    self.memBlockIdx = lowerBoundBySuffix(self.memBlock.?.memEntries.items, key, keyPrefixLen);
+    if (self.memBlockIdx < self.memBlock.?.memEntries.items.len) {
         return;
     }
 
@@ -173,7 +173,7 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
 
 // returns the first index with item[prefixLen..] >= keySuffix.
 // callers may receive items.len when keySuffix is greater than all suffixes.
-// TODO: replace to std.order.binarySearch 
+// TODO: replace to std.order.binarySearch
 // TODO: test alternative array layout
 fn lowerBoundBySuffix(items: []const []const u8, key: []const u8, prefixLen: usize) usize {
     if (items.len == 0) return 0;
@@ -197,8 +197,8 @@ fn lowerBoundBySuffix(items: []const []const u8, key: []const u8, prefixLen: usi
 pub fn next(self: *LookupTable, alloc: Allocator) !bool {
     if (self.isRead) return false;
 
-    if (self.memBlockIdx < self.memBlock.?.items.items.len) {
-        self.current = self.memBlock.?.items.items[self.memBlockIdx];
+    if (self.memBlockIdx < self.memBlock.?.memEntries.items.len) {
+        self.current = self.memBlock.?.memEntries.items[self.memBlockIdx];
         self.memBlockIdx += 1;
         return true;
     }
@@ -207,7 +207,7 @@ pub fn next(self: *LookupTable, alloc: Allocator) !bool {
         return false;
     }
 
-    self.current = self.memBlock.?.items.items[0];
+    self.current = self.memBlock.?.memEntries.items[0];
     self.memBlockIdx += 1;
     return true;
 }
@@ -303,7 +303,7 @@ fn readMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
     try memBlock.decode(
         alloc,
         &self.entriesBlock,
-        blockHeader.firstItem,
+        blockHeader.firstEntry,
         blockHeader.prefix,
         blockHeader.entriesCount,
         blockHeader.encodingType,

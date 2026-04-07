@@ -108,7 +108,7 @@ pub fn merge(
             hasNextItem = true;
         }
 
-        const items = reader.block.?.items.items;
+        const items = reader.block.?.memEntries.items;
         var compareEveryItem = true;
         if (reader.currentI < items.len) {
             const lastItem = items[items.len - 1];
@@ -152,7 +152,7 @@ fn flush(
     writer: *BlockWriter,
     tableHeader: *TableHeader,
 ) !void {
-    const items = self.block.items.items;
+    const items = self.block.memEntries.items;
     if (items.len == 0) {
         return;
     }
@@ -161,23 +161,23 @@ fn flush(
     self.lastItem = items[items.len - 1];
     try self.mergeTagsRecords(alloc);
 
-    if (self.block.items.items.len == 0) {
+    if (self.block.memEntries.items.len == 0) {
         // nothing to flush
         return;
     }
 
-    const blockLastItem = self.block.items.items[self.block.items.items.len - 1];
+    const blockLastEntry = self.block.memEntries.items[self.block.memEntries.items.len - 1];
 
     // TODO: move this validation to tests and test the block is sorted
-    std.debug.assert(std.mem.order(u8, self.block.items.items[0], self.firstItem) != .lt);
-    std.debug.assert(std.mem.order(u8, blockLastItem, self.lastItem) != .gt);
-    std.debug.assert(std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst));
+    std.debug.assert(std.mem.order(u8, self.block.memEntries.items[0], self.firstItem) != .lt);
+    std.debug.assert(std.mem.order(u8, blockLastEntry, self.lastItem) != .gt);
+    std.debug.assert(std.sort.isSorted([]const u8, self.block.memEntries.items, {}, MemOrder(u8).lessThanConst));
 
-    tableHeader.itemsCount += self.block.items.items.len;
-    if (tableHeader.firstItem.len == 0) {
-        tableHeader.firstItem = self.block.items.items[0];
+    tableHeader.entriesCount += self.block.memEntries.items.len;
+    if (tableHeader.firstEntry.len == 0) {
+        tableHeader.firstEntry = self.block.memEntries.items[0];
     }
-    tableHeader.lastItem = blockLastItem;
+    tableHeader.lastEntry = blockLastEntry;
     try writer.writeBlock(alloc, self.block);
     tableHeader.blocksCount += 1;
     self.block.reset();
@@ -190,7 +190,7 @@ fn flush(
 // 2. writeState takes 2 buffers instead of a block, it manages the entire memory ownership,
 // not just 2 buffers
 fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
-    const items = self.block.items.items;
+    const items = self.block.memEntries.items;
 
     if (items.len <= 2) {
         return;
@@ -220,7 +220,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
 
     try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
     // can start mutating the original array after copying
-    self.block.items.clearRetainingCapacity();
+    self.block.memEntries.clearRetainingCapacity();
     self.block.buf.clearRetainingCapacity();
     const stateBuf = &self.block.buf;
 
@@ -231,39 +231,39 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     for (0..blockCopy.items.len) |i| {
         const item = blockCopy.items[i];
         if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == blockCopy.items.len - 1) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
-            try self.block.items.append(alloc, item);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            try self.block.memEntries.append(alloc, item);
             continue;
         }
 
         try tagRecordsMerger.state.setup(item);
         if (tagRecordsMerger.state.streamsLen() > maxStreamsPerRecord) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
-            try self.block.items.append(alloc, item);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            try self.block.memEntries.append(alloc, item);
             continue;
         }
 
         if (!tagRecordsMerger.statesPrefixEqual()) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
         }
 
         try tagRecordsMerger.state.parseStreamIDs(alloc);
         try tagRecordsMerger.moveParsedState(alloc);
 
         if (tagRecordsMerger.streamIDs.items.len >= maxStreamsPerRecord) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.items);
+            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
         }
     }
 
     std.debug.assert(tagRecordsMerger.streamIDs.items.len == 0);
-    const isSorted = std.sort.isSorted([]const u8, self.block.items.items, {}, MemOrder(u8).lessThanConst);
+    const isSorted = std.sort.isSorted([]const u8, self.block.memEntries.items, {}, MemOrder(u8).lessThanConst);
     if (!isSorted) {
         // defend against parallel writing leaving the state unmerged,
         // fallback to the original data
         self.block.buf.clearRetainingCapacity();
-        self.block.items.clearRetainingCapacity();
-        try self.block.items.ensureUnusedCapacity(alloc, blockCopy.items.len);
-        self.block.items.appendSliceAssumeCapacity(blockCopy.items);
+        self.block.memEntries.clearRetainingCapacity();
+        try self.block.memEntries.ensureUnusedCapacity(alloc, blockCopy.items.len);
+        self.block.memEntries.appendSliceAssumeCapacity(blockCopy.items);
     }
 }
 
@@ -355,23 +355,23 @@ test "BlockMerger.mergeBasicScenarios" {
     const cases = [_]Case{
         .{
             .blocks = &.{},
-            .expectedTableHeader = .{ .itemsCount = 0 },
+            .expectedTableHeader = .{ .entriesCount = 0 },
         },
         .{
             .blocks = &.{&.{ "a", "b", "c" }},
-            .expectedTableHeader = .{ .itemsCount = 3, .blocksCount = 1, .firstItem = "a", .lastItem = "c" },
+            .expectedTableHeader = .{ .entriesCount = 3, .blocksCount = 1, .firstEntry = "a", .lastEntry = "c" },
         },
         .{
             .blocks = &.{ &.{ "a", "d", "g" }, &.{ "b", "e", "h" }, &.{ "c", "f", "i" } },
-            .expectedTableHeader = .{ .itemsCount = 9, .blocksCount = 1, .firstItem = "a", .lastItem = "i" },
+            .expectedTableHeader = .{ .entriesCount = 9, .blocksCount = 1, .firstEntry = "a", .lastEntry = "i" },
         },
         .{
             .blocks = &.{ &.{ "a", "b", "c" }, &.{ "x", "y", "z" } },
-            .expectedTableHeader = .{ .itemsCount = 6, .blocksCount = 1, .firstItem = "a", .lastItem = "z" },
+            .expectedTableHeader = .{ .entriesCount = 6, .blocksCount = 1, .firstEntry = "a", .lastEntry = "z" },
         },
         .{
             .blocks = &.{ &.{ "a", "b", "c" }, &.{ "b", "c", "d" } },
-            .expectedTableHeader = .{ .itemsCount = 6, .blocksCount = 1, .firstItem = "a", .lastItem = "d" },
+            .expectedTableHeader = .{ .entriesCount = 6, .blocksCount = 1, .firstEntry = "a", .lastEntry = "d" },
         },
     };
 
@@ -401,7 +401,7 @@ test "BlockMerger.merge block overflow" {
     const Case = struct {
         entryCount: usize,
         entrySize: usize,
-        expectedItemsCount: u64,
+        expectedEntriesCount: u64,
     };
 
     const cases = [_]Case{
@@ -410,7 +410,7 @@ test "BlockMerger.merge block overflow" {
             // Split across two readers (3 entries each), all 6 entries fit
             .entryCount = 6,
             .entrySize = 200,
-            .expectedItemsCount = 6,
+            .expectedEntriesCount = 6,
         },
         .{
             // Case 2: 20 entries of 200 bytes each
@@ -418,7 +418,7 @@ test "BlockMerger.merge block overflow" {
             // Result: 5 entries from first reader + 5 from second = 10 total
             .entryCount = 20,
             .entrySize = 200,
-            .expectedItemsCount = 10,
+            .expectedEntriesCount = 10,
         },
     };
 
@@ -450,7 +450,7 @@ test "BlockMerger.merge block overflow" {
 
         const tableHeader = try merger.merge(alloc, &writer, null);
 
-        try testing.expectEqual(case.expectedItemsCount, tableHeader.itemsCount);
+        try testing.expectEqual(case.expectedEntriesCount, tableHeader.entriesCount);
     }
 }
 
@@ -497,7 +497,7 @@ test "BlockMerger.merge oversized entries" {
     defer merger.deinit(alloc);
 
     const tableHeader = try merger.merge(alloc, &writer, null);
-    try testing.expectEqual(@as(u64, 2), tableHeader.itemsCount);
+    try testing.expectEqual(2, tableHeader.entriesCount);
 }
 
 test "BlockMerger.merge tag records" {
@@ -680,7 +680,7 @@ test "BlockMerger.merge tag records" {
 
         const tableHeader = try merger.merge(alloc, &writer, null);
 
-        try testing.expectEqual(case.expectedItemsCount, tableHeader.itemsCount);
+        try testing.expectEqual(case.expectedItemsCount, tableHeader.entriesCount);
     }
 }
 

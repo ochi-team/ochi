@@ -65,7 +65,7 @@ itemsRead: usize = 0,
 firstItemChecked: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
 
 pub fn initFromMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
-    std.debug.assert(block.items.items.len > 0);
+    std.debug.assert(block.memEntries.items.len > 0);
     block.sortData();
 
     const r = try alloc.create(BlockReader);
@@ -90,7 +90,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
     );
     errdefer alloc.free(metaIndexRecords.records);
 
-    const block = try MemBlock.init(alloc, @intCast(memTable.tableHeader.itemsCount));
+    const block = try MemBlock.init(alloc, @intCast(memTable.tableHeader.entriesCount));
     errdefer block.deinit(alloc);
 
     const r = try alloc.create(BlockReader);
@@ -106,7 +106,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
     };
 
     std.debug.assert(r.tableHeader.blocksCount != 0);
-    std.debug.assert(r.tableHeader.itemsCount != 0);
+    std.debug.assert(r.tableHeader.entriesCount != 0);
     return r;
 }
 
@@ -157,7 +157,7 @@ pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
     };
 
     std.debug.assert(r.tableHeader.blocksCount != 0);
-    std.debug.assert(r.tableHeader.itemsCount != 0);
+    std.debug.assert(r.tableHeader.entriesCount != 0);
     return r;
 }
 
@@ -181,7 +181,7 @@ pub fn blockReaderLessThan(one: *BlockReader, another: *BlockReader) bool {
 }
 
 pub inline fn current(self: *BlockReader) []const u8 {
-    return self.block.?.items.items[self.currentI];
+    return self.block.?.memEntries.items[self.currentI];
 }
 
 pub fn next(self: *BlockReader, alloc: Allocator) !bool {
@@ -197,8 +197,8 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     if (self.blockHeaders.len == 0 or self.blockHeaderI >= self.blockHeaders.len) {
         const ok = try self.readNextBlockHeaders(alloc);
         if (!ok) {
-            const lastItem = self.block.?.items.items[self.block.?.items.items.len - 1];
-            std.debug.assert(std.mem.eql(u8, self.tableHeader.lastItem, lastItem));
+            const lastItem = self.block.?.memEntries.items[self.block.?.memEntries.items.len - 1];
+            std.debug.assert(std.mem.eql(u8, self.tableHeader.lastEntry, lastItem));
             self.isRead = true;
             return ok;
         }
@@ -228,7 +228,7 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     try self.block.?.decode(
         alloc,
         &self.entriesBlock,
-        self.blockHeader.firstItem,
+        self.blockHeader.firstEntry,
         self.blockHeader.prefix,
         self.blockHeader.entriesCount,
         self.blockHeader.encodingType,
@@ -236,13 +236,13 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     self.blocksRead += 1;
     std.debug.assert(self.blocksRead <= self.tableHeader.blocksCount);
     self.currentI = 0;
-    self.itemsRead += self.block.?.items.items.len;
-    std.debug.assert(self.itemsRead <= self.tableHeader.itemsCount);
+    self.itemsRead += self.block.?.memEntries.items.len;
+    std.debug.assert(self.itemsRead <= self.tableHeader.entriesCount);
 
     if (builtin.is_test and !self.firstItemChecked) {
         self.firstItemChecked = true;
-        const firstItem = self.block.?.items.items[0];
-        std.debug.assert(std.mem.eql(u8, self.tableHeader.firstItem, firstItem));
+        const firstItem = self.block.?.memEntries.items[0];
+        std.debug.assert(std.mem.eql(u8, self.tableHeader.firstEntry, firstItem));
     }
     return true;
 }
@@ -483,7 +483,7 @@ test "BlockReader.initFromMemTable reads items" {
         if (case.useMultiBlock) {
             var expectedI: usize = 0;
             while (try reader.next(alloc)) {
-                const decoded = reader.block.?.items.items;
+                const decoded = reader.block.?.memEntries.items;
                 for (decoded) |item| {
                     try testing.expectEqualSlices(u8, case.expected[expectedI], item);
                     expectedI += 1;
@@ -494,7 +494,7 @@ test "BlockReader.initFromMemTable reads items" {
             try testing.expect(try reader.next(alloc));
             try testing.expect(reader.block != null);
 
-            const decoded = reader.block.?.items.items;
+            const decoded = reader.block.?.memEntries.items;
             try testing.expectEqual(case.expected.len, decoded.len);
             try testing.expectEqualDeep(case.expected, decoded);
 

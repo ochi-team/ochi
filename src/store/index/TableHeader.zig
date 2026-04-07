@@ -9,16 +9,17 @@ const maxFileBytes = 16 * 1024 * 1024;
 const TableHeader = @This();
 
 // TODO: try making both values u32
-itemsCount: u64 = 0,
+entriesCount: u64 = 0,
 blocksCount: u64 = 0,
-firstItem: []const u8 = "",
-lastItem: []const u8 = "",
+firstEntry: []const u8 = "",
+lastEntry: []const u8 = "",
 
 pub fn deinit(self: TableHeader, alloc: Allocator) void {
-    alloc.free(self.firstItem);
-    alloc.free(self.lastItem);
+    alloc.free(self.firstEntry);
+    alloc.free(self.lastEntry);
 }
 
+// TODO: TableHeader could have a static bound value to give a stack buffer
 pub fn readFile(alloc: Allocator, path: []const u8) !TableHeader {
     var fba = std.heap.stackFallback(1024, alloc);
     const fbaAlloc = fba.get();
@@ -41,24 +42,24 @@ pub fn readFile(alloc: Allocator, path: []const u8) !TableHeader {
     };
     defer parsed.deinit();
 
-    const firstItem = try alloc.dupe(u8, parsed.value.firstItem);
-    errdefer alloc.free(firstItem);
-    const lastItem = try alloc.dupe(u8, parsed.value.lastItem);
+    const firstEntry = try alloc.dupe(u8, parsed.value.firstEntry);
+    errdefer alloc.free(firstEntry);
+    const lastEntry = try alloc.dupe(u8, parsed.value.lastEntry);
 
     return .{
         .blocksCount = parsed.value.blocksCount,
-        .itemsCount = parsed.value.itemsCount,
-        .firstItem = firstItem,
-        .lastItem = lastItem,
+        .entriesCount = parsed.value.entriesCount,
+        .firstEntry = firstEntry,
+        .lastEntry = lastEntry,
     };
 }
 
 pub fn writeFile(self: *const TableHeader, alloc: Allocator, tablePath: []const u8) !void {
     const json = try std.json.Stringify.valueAlloc(alloc, .{
-        .itemsCount = self.itemsCount,
+        .entriesCount = self.entriesCount,
         .blocksCount = self.blocksCount,
-        .firstItem = self.firstItem,
-        .lastItem = self.lastItem,
+        .firstEntry = self.firstEntry,
+        .lastEntry = self.lastEntry,
     }, .{ .whitespace = .minified });
     defer alloc.free(json);
 
@@ -81,9 +82,9 @@ test "roundtrip file read/write" {
 
     var tb = TableHeader{
         .blocksCount = 5,
-        .itemsCount = 12,
-        .firstItem = "alpha",
-        .lastItem = "omega",
+        .entriesCount = 12,
+        .firstEntry = "alpha",
+        .lastEntry = "omega",
     };
 
     try tb.writeFile(alloc, tablePath);

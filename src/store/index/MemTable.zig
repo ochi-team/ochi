@@ -36,12 +36,12 @@ pub fn empty(alloc: Allocator) !*MemTable {
         .blockHeader = undefined,
         .tableHeader = .{},
     };
-    t.tableHeader.firstItem = try alloc.dupe(u8, "");
+    t.tableHeader.firstEntry = try alloc.dupe(u8, "");
     errdefer {
-        alloc.free(t.tableHeader.firstItem);
+        alloc.free(t.tableHeader.firstEntry);
         alloc.destroy(t);
     }
-    t.tableHeader.lastItem = try alloc.dupe(u8, "");
+    t.tableHeader.lastEntry = try alloc.dupe(u8, "");
     return t;
 }
 
@@ -110,16 +110,16 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     var entriesBlock = EntriesBlock{};
     defer entriesBlock.deinit(alloc);
     const encodedBlock = try block.encode(alloc, &entriesBlock);
-    self.blockHeader.firstItem = encodedBlock.firstItem;
+    self.blockHeader.firstEntry = encodedBlock.firstEntry;
     self.blockHeader.prefix = encodedBlock.prefix;
     self.blockHeader.entriesCount = encodedBlock.itemsCount;
     self.blockHeader.encodingType = encodedBlock.encodingType;
 
     self.tableHeader = .{
-        .itemsCount = @intCast(block.items.items.len),
+        .entriesCount = @intCast(block.memEntries.items.len),
         .blocksCount = 1,
-        .firstItem = block.items.items[0],
-        .lastItem = block.items.items[block.items.items.len - 1],
+        .firstEntry = block.memEntries.items[0],
+        .lastEntry = block.memEntries.items[block.memEntries.items.len - 1],
     };
 
     try self.entriesBuf.appendSlice(alloc, entriesBlock.entriesBuf.items);
@@ -140,7 +140,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     try self.indexBuf.appendSlice(alloc, compressed[0..n]);
 
     const metaIndex = MetaIndex{
-        .firstItem = self.blockHeader.firstItem,
+        .firstItem = self.blockHeader.firstEntry,
         .blockHeadersCount = 1,
         .indexBlockOffset = 0,
         .indexBlockSize = @intCast(n),
@@ -158,12 +158,12 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
 
     try self.metaindexBuf.appendSlice(alloc, compressedMetaIndex[0..n]);
 
-    const firstItem = self.tableHeader.firstItem;
-    const lastItem = self.tableHeader.lastItem;
-    self.tableHeader.firstItem = try alloc.dupe(u8, firstItem);
-    errdefer alloc.free(self.tableHeader.firstItem);
-    self.tableHeader.lastItem = try alloc.dupe(u8, lastItem);
-    errdefer alloc.free(self.tableHeader.lastItem);
+    const firstEntry = self.tableHeader.firstEntry;
+    const lastEntry = self.tableHeader.lastEntry;
+    self.tableHeader.firstEntry = try alloc.dupe(u8, firstEntry);
+    errdefer alloc.free(self.tableHeader.firstEntry);
+    self.tableHeader.lastEntry = try alloc.dupe(u8, lastEntry);
+    errdefer alloc.free(self.tableHeader.lastEntry);
 }
 
 fn mergeIntoMemTable(
@@ -193,12 +193,12 @@ pub fn mergeBlocks(
     var tableHeader = try merger.merge(alloc, writer, stopped);
     try writer.close(alloc);
 
-    const firstItem = tableHeader.firstItem;
-    const lastItem = tableHeader.lastItem;
-    tableHeader.firstItem = try alloc.dupe(u8, firstItem);
-    errdefer alloc.free(tableHeader.firstItem);
-    tableHeader.lastItem = try alloc.dupe(u8, lastItem);
-    errdefer alloc.free(tableHeader.lastItem);
+    const firstEntry = tableHeader.firstEntry;
+    const lastEntry = tableHeader.lastEntry;
+    tableHeader.firstEntry = try alloc.dupe(u8, firstEntry);
+    errdefer alloc.free(tableHeader.firstEntry);
+    tableHeader.lastEntry = try alloc.dupe(u8, lastEntry);
+    errdefer alloc.free(tableHeader.lastEntry);
 
     return tableHeader;
 }

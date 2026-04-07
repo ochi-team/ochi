@@ -52,7 +52,7 @@ const BlockWriter = @This();
 
 destination: Destination,
 
-bh: BlockHeader = .{ .firstItem = "", .prefix = "", .encodingType = .plain },
+bh: BlockHeader = .{ .firstEntry = "", .prefix = "", .encodingType = .plain },
 mi: MetaIndex = .{},
 
 itemsBlockOffset: u64 = 0,
@@ -127,9 +127,9 @@ pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
 
 pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void {
     const encoded = try block.encode(alloc, &self.entriesBlock);
-    std.debug.assert(block.items.items.len > 0);
+    std.debug.assert(block.memEntries.items.len > 0);
 
-    self.bh.firstItem = encoded.firstItem;
+    self.bh.firstEntry = encoded.firstEntry;
     self.bh.prefix = encoded.prefix;
     self.bh.entriesCount = encoded.itemsCount;
     self.bh.encodingType = encoded.encodingType;
@@ -157,7 +157,7 @@ pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void 
 
     // Write block header
     if (self.mi.firstItem.len == 0) {
-        self.mi.firstItem = self.bh.firstItem;
+        self.mi.firstItem = self.bh.firstEntry;
     }
     self.bh.reset();
     self.mi.blockHeadersCount += 1;

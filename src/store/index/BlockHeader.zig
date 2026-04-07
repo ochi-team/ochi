@@ -18,7 +18,7 @@ pub const DecodedBlockHeader = struct {
 
 const BlockHeader = @This();
 
-firstItem: []const u8,
+firstEntry: []const u8,
 prefix: []const u8,
 encodingType: EncodingType,
 entriesCount: u32 = 0,
@@ -28,20 +28,20 @@ entriesBlockSize: u32 = 0,
 lensBlockSize: u32 = 0,
 
 pub fn reset(self: *BlockHeader) void {
-    self.* = .{ .firstItem = undefined, .prefix = undefined, .encodingType = undefined };
+    self.* = .{ .firstEntry = "", .prefix = "", .encodingType = .plain };
 }
 
 // [len:n][firstItem:len][len:n][prefix:len][count:4][type:1][offset:8][size:4][offset:8][size:4] = bound + len + 29
 pub fn bound(self: *const BlockHeader) usize {
-    const firstItemLenBound = Encoder.varIntBound(self.firstItem.len);
+    const firstEntryLenBound = Encoder.varIntBound(self.firstEntry.len);
     const prefixLenBound = Encoder.varIntBound(self.prefix.len);
-    return firstItemLenBound + prefixLenBound + self.firstItem.len + self.prefix.len + 29;
+    return firstEntryLenBound + prefixLenBound + self.firstEntry.len + self.prefix.len + 29;
 }
 
 pub fn encode(self: *const BlockHeader, buf: []u8) void {
     var enc = Encoder.init(buf);
 
-    enc.writeString(self.firstItem);
+    enc.writeString(self.firstEntry);
     enc.writeString(self.prefix);
     enc.writeInt(u8, @intFromEnum(self.encodingType));
     enc.writeInt(u32, self.entriesCount);
@@ -73,7 +73,7 @@ pub fn decode(buf: []const u8) DecodedBlockHeader {
 
     return .{
         .blockHeader = .{
-            .firstItem = firstItem,
+            .firstEntry = firstItem,
             .prefix = prefix,
             .encodingType = encodingType,
             .entriesCount = itemsCount,
@@ -106,11 +106,11 @@ pub fn decodeMany(alloc: Allocator, buf: []const u8, count: usize) ![]BlockHeade
 }
 
 pub fn blockHeaderLessThan(_: void, a: BlockHeader, b: BlockHeader) bool {
-    return std.mem.lessThan(u8, a.firstItem, b.firstItem);
+    return std.mem.lessThan(u8, a.firstEntry, b.firstEntry);
 }
 
 pub fn compareToKey(key: []const u8, header: BlockHeader) std.math.Order {
-    const order = std.mem.order(u8, key, header.firstItem);
+    const order = std.mem.order(u8, key, header.firstEntry);
     return switch (order) {
         .eq => .eq,
         .lt => .eq,
@@ -127,7 +127,7 @@ test "BlockHeader encode/decode" {
         // Minimal values
         .{
             .bh = .{
-                .firstItem = "",
+                .firstEntry = "",
                 .prefix = "",
                 .encodingType = .plain,
                 .entriesCount = 0,
@@ -140,7 +140,7 @@ test "BlockHeader encode/decode" {
         // Small values with short strings
         .{
             .bh = .{
-                .firstItem = "a",
+                .firstEntry = "a",
                 .prefix = "b",
                 .encodingType = .plain,
                 .entriesCount = 1,
@@ -153,7 +153,7 @@ test "BlockHeader encode/decode" {
         // Large values with very long strings (testing varint encoding bounds)
         .{
             .bh = .{
-                .firstItem = "a" ** 127, // Single byte varint
+                .firstEntry = "a" ** 127, // Single byte varint
                 .prefix = "b" ** 128, // Two byte varint
                 .encodingType = .plain,
                 .entriesCount = std.math.maxInt(u32),
@@ -166,7 +166,7 @@ test "BlockHeader encode/decode" {
         // Testing varint string length encoding boundaries
         .{
             .bh = .{
-                .firstItem = "x" ** 16383, // Max two byte varint (0x3fff)
+                .firstEntry = "x" ** 16383, // Max two byte varint (0x3fff)
                 .prefix = "y" ** 16384, // Three byte varint
                 .encodingType = .zstd,
                 .entriesCount = 999999,
@@ -197,7 +197,7 @@ test "BlockHeader decodeMany" {
 
     const headers = [_]BlockHeader{
         .{
-            .firstItem = "aaa",
+            .firstEntry = "aaa",
             .prefix = "a",
             .encodingType = .plain,
             .entriesCount = 10,
@@ -207,7 +207,7 @@ test "BlockHeader decodeMany" {
             .lensBlockSize = 25,
         },
         .{
-            .firstItem = "bbb",
+            .firstEntry = "bbb",
             .prefix = "b",
             .encodingType = .zstd,
             .entriesCount = 20,
@@ -217,7 +217,7 @@ test "BlockHeader decodeMany" {
             .lensBlockSize = 40,
         },
         .{
-            .firstItem = "ccc",
+            .firstEntry = "ccc",
             .prefix = "c",
             .encodingType = .plain,
             .entriesCount = 30,

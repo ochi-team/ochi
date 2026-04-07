@@ -297,10 +297,10 @@ fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
     try writer.close(alloc);
 
     var header = TableHeader{
-        .itemsCount = items.len,
+        .entriesCount = items.len,
         .blocksCount = 1,
-        .firstItem = items[0],
-        .lastItem = items[items.len - 1],
+        .firstEntry = items[0],
+        .lastEntry = items[items.len - 1],
     };
     try header.writeFile(alloc, tablePath);
 }

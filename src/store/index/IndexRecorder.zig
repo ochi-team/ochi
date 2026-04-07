@@ -683,7 +683,7 @@ pub fn mergeTables(
     } else {
         var sourceItemsCount: u64 = 0;
         for (tables) |table| {
-            sourceItemsCount += table.tableHeader.itemsCount;
+            sourceItemsCount += table.tableHeader.entriesCount;
         }
         // TODO: test if we can record compressed size and make caching more reliable
         const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable();
@@ -774,7 +774,7 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
 fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
     var count: u64 = 0;
     for (recorder.memTables.items) |table| {
-        count += table.tableHeader.itemsCount;
+        count += table.tableHeader.entriesCount;
     }
     return count;
 }
@@ -782,7 +782,7 @@ fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
 fn countDiskItemsInRecorder(recorder: *IndexRecorder) u64 {
     var count: u64 = 0;
     for (recorder.diskTables.items) |table| {
-        count += table.tableHeader.itemsCount;
+        count += table.tableHeader.entriesCount;
     }
     return count;
 }
@@ -839,12 +839,12 @@ test "flushMemEntries non-force respects flush deadline" {
 
     recorder.flushEntriesAtUs = std.time.microTimestamp() + std.time.us_per_s;
     try recorder.flushMemEntries(alloc, &dst, false);
-    try testing.expectEqual(@as(usize, 1), recorder.blocksToFlush.items.len);
-    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+    try testing.expectEqual(1, recorder.blocksToFlush.items.len);
+    try testing.expectEqual(0, recorder.memTables.items.len);
 
     recorder.flushEntriesAtUs = std.time.microTimestamp() - std.time.us_per_s;
     try recorder.flushMemEntries(alloc, &dst, false);
-    try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
+    try testing.expectEqual(0, recorder.blocksToFlush.items.len);
     try testing.expect(recorder.memTables.items.len > 0);
 
     try recorder.flushForce(alloc);
@@ -1068,8 +1068,8 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
         defer shard.mx.unlock();
 
         try testing.expectEqual(1, shard.blocks.items.len);
-        try testing.expectEqual(1, shard.blocks.items[0].items.items.len);
-        try testing.expectEqual(shortValue, shard.blocks.items[0].items.items[0]);
+        try testing.expectEqual(1, shard.blocks.items[0].memEntries.items.len);
+        try testing.expectEqual(shortValue, shard.blocks.items[0].memEntries.items[0]);
     }
 
     try recorder.stop(alloc);
