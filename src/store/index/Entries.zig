@@ -35,7 +35,7 @@ const EntriesShard = struct {
     pub fn add(
         self: *EntriesShard,
         alloc: Allocator,
-        entries: [][]const u8,
+        entries: []const []const u8,
         maxMemBlockSize: u32,
     ) !?EntriesShardAddResult {
         self.mx.lock();

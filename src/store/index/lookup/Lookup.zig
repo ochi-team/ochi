@@ -183,7 +183,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -212,7 +212,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);

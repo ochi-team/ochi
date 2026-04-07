@@ -11,6 +11,7 @@ const Table = @import("Table.zig");
 const MemTable = @import("MemTable.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockReader = @import("BlockReader.zig");
+const LookupTable = @import("lookup/LookupTable.zig");
 
 const flush = @import("../table/flush.zig");
 const merge = @import("../table/merge.zig");
@@ -80,11 +81,10 @@ indexCacheKeyVersion: std.atomic.Value(u64) = .init(0),
 mergeIdx: std.atomic.Value(u64),
 path: []const u8,
 
-pub fn init(alloc: Allocator, path: []const u8) !*IndexRecorder {
+pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*IndexRecorder {
     std.debug.assert(path.len > 0);
-
     const conf = Conf.getConf();
-    const concurrency = conf.server.pools.cpus;
+
     const entries = try Entries.init(alloc, concurrency);
     errdefer entries.deinit(alloc);
 
@@ -212,7 +212,7 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
     return self.mergeIdx.fetchAdd(1, .acquire);
 }
 
-pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
+pub fn add(self: *IndexRecorder, alloc: Allocator, entries: []const []const u8) !void {
     var entryIndex: usize = 0;
 
     while (entryIndex < entries.len) {
@@ -223,10 +223,6 @@ pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void 
         defer blocksList.blocksToFlush.deinit(alloc);
 
         try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
-        if (entryIndex >= entries.len) {
-            std.debug.assert(entryIndex == entries.len);
-            return;
-        }
         entryIndex += blocksList.gatheredEntriesCount;
     }
 }
@@ -807,7 +803,7 @@ test "IndexRecorder init and close empty dir, trim slash" {
     const pathWithSlash = try std.mem.concat(alloc, u8, &.{ rootPath, std.fs.path.sep_str });
     defer alloc.free(pathWithSlash);
 
-    const recorder = try IndexRecorder.init(alloc, pathWithSlash);
+    const recorder = try IndexRecorder.init(alloc, pathWithSlash, 4);
 
     try testing.expectEqual(@as(usize, 0), recorder.diskTables.items.len);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
@@ -827,7 +823,7 @@ test "flushMemEntries non-force respects flush deadline" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -864,7 +860,7 @@ test "mergeTables force single mem table creates disk table" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -893,7 +889,7 @@ test "IndexRecorder add and reopen preserves item count" {
 
     const inserted: usize = 128;
     {
-        const recorder = try IndexRecorder.init(alloc, rootPath);
+        const recorder = try IndexRecorder.init(alloc, rootPath, 4);
         defer recorder.deinit(alloc);
 
         for (0..inserted) |i| {
@@ -912,7 +908,7 @@ test "IndexRecorder add and reopen preserves item count" {
     }
 
     {
-        const reopened = try IndexRecorder.init(alloc, rootPath);
+        const reopened = try IndexRecorder.init(alloc, rootPath, 4);
         defer reopened.deinit(alloc);
         reopened.stopped.store(true, .release);
         reopened.wg.wait();
@@ -934,7 +930,10 @@ fn addWorker(ctx: *AddWorkerCtx) void {
     while (i < ctx.items) : (i += 1) {
         const item = stableItems[(ctx.workerID + i) % stableItems.len];
         var batch = [_][]const u8{item};
-        ctx.recorder.add(ctx.alloc, &batch) catch unreachable;
+        ctx.recorder.add(ctx.alloc, &batch) catch |err| {
+            std.debug.print("failed to add item in worker {d}: {s}\n", .{ ctx.workerID, @errorName(err) });
+            return;
+        };
     }
 }
 
@@ -948,7 +947,7 @@ test "IndexRecorder concurrent add preserves item count" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     defer recorder.deinit(alloc);
 
     const workers = 4;
@@ -986,7 +985,7 @@ test "IndexRecorder remove path after deinit" {
 
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     var batch = [_][]const u8{stableItems[1]};
 
     try recorder.add(alloc, &batch);
@@ -1016,7 +1015,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
     const theLargest = "x" ** (maxIndexMemBlockSize);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
     defer alloc.free(firstShardEntries);
@@ -1044,6 +1043,58 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     try recorder.stop(alloc);
 }
 
+test "IndexRecorder 3 shards addings small entries doesn't flush them" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+    const shortValue = "short";
+
+    const concurrency = 3;
+    const recorder = try IndexRecorder.init(alloc, rootPath, concurrency);
+    try testing.expectEqual(recorder.entries.shards.len, concurrency);
+
+    for (0..concurrency) |_| {
+        try recorder.add(alloc, &.{shortValue});
+    }
+
+    try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
+    for (recorder.entries.shards) |*shard| {
+        shard.mx.lock();
+        defer shard.mx.unlock();
+
+        try testing.expectEqual(1, shard.blocks.items.len);
+        try testing.expectEqual(1, shard.blocks.items[0].items.items.len);
+        try testing.expectEqual(shortValue, shard.blocks.items[0].items.items[0]);
+    }
+
+    try recorder.stop(alloc);
+    // after deinit we can't validate the blocks are empty, but can read the files
+
+    var tables = try Table.openAll(alloc, rootPath);
+    try testing.expectEqual(tables.items.len, 1);
+    defer {
+        for (tables.items) |table| table.release();
+        tables.deinit(alloc);
+    }
+    const flushedTable = tables.items[0];
+
+    var lookup = LookupTable.init(flushedTable, Conf.getConf().app.maxIndexMemBlockSize);
+    defer lookup.deinit(alloc);
+
+    try lookup.seek(alloc, shortValue);
+    var readItems: usize = 0;
+    while (try lookup.next(alloc)) {
+        try testing.expectEqualStrings(shortValue, lookup.current);
+        readItems += 1;
+    }
+    try testing.expectEqual(concurrency, readItems);
+}
+
 test "IndexRecorder large entries write to 3 shards" {
     const alloc = testing.allocator;
     _ = try Conf.default(alloc);
@@ -1066,7 +1117,7 @@ test "IndexRecorder large entries write to 3 shards" {
         testEntries[i] = theLargest;
     }
 
-    const recorder = try IndexRecorder.init(alloc, rootPath);
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
     defer recorder.deinit(alloc);
 
     try recorder.add(alloc, testEntries);
