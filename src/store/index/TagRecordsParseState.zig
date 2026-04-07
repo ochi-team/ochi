@@ -40,6 +40,8 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
 }
 
 pub fn setup(self: *Self, item: []const u8) !void {
+    self.streamIDs.clearRetainingCapacity();
+
     const kind = item[0];
     const tenantOffset = 1 + maxTenantIDLen;
     self.tenantID = item[1..tenantOffset];
@@ -154,4 +156,26 @@ test "parseStreamIDs empty" {
     try state.parseStreamIDs(alloc);
 
     try testing.expectEqual(@as(usize, 0), state.streamIDs.items.len);
+}
+
+test "setup resets parsed stream ids" {
+    const alloc = testing.allocator;
+    const state = try Self.init(alloc);
+    defer state.deinit(alloc);
+
+    const tag = Field{ .key = "k", .value = "v" };
+    const firstBuf = try alloc.alloc(u8, encodeRecordBound(tag, 3));
+    const first = firstBuf[0..encodeRecord(firstBuf, "tenant1", tag, &[_]u128{ 1, 2, 3 })];
+    defer alloc.free(first);
+    const secondBuf = try alloc.alloc(u8, encodeRecordBound(tag, 1));
+    const second = secondBuf[0..encodeRecord(secondBuf, "tenant1", tag, &[_]u128{9})];
+    defer alloc.free(second);
+
+    try state.setup(first);
+    try state.parseStreamIDs(alloc);
+    try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
+
+    try state.setup(second);
+    try state.parseStreamIDs(alloc);
+    try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
 }

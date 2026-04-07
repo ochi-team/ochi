@@ -34,8 +34,14 @@ pub fn empty(alloc: Allocator) !*MemTable {
     const t = try alloc.create(MemTable);
     t.* = .{
         .blockHeader = undefined,
-        .tableHeader = undefined,
+        .tableHeader = .{},
     };
+    t.tableHeader.firstItem = try alloc.dupe(u8, "");
+    errdefer {
+        alloc.free(t.tableHeader.firstItem);
+        alloc.destroy(t);
+    }
+    t.tableHeader.lastItem = try alloc.dupe(u8, "");
     return t;
 }
 
@@ -46,7 +52,7 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
         readers.deinit(alloc);
     }
     const t = try empty(alloc);
-    errdefer alloc.destroy(t);
+    errdefer t.deinit(alloc);
 
     if (blocks.len == 1) {
         // nothing to merge
@@ -54,6 +60,7 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
 
         const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
         try t.setup(alloc, b, flushAtUs);
+        std.debug.assert(t.metaindexBuf.items.len > 0);
         return t;
     }
 
@@ -64,12 +71,13 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
 
     const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
     try t.mergeIntoMemTable(alloc, &readers, flushAtUs);
+    std.debug.assert(t.metaindexBuf.items.len > 0);
     return t;
 }
 
 pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
-    errdefer {
+    defer {
         for (readers.items) |r| r.deinit(alloc);
         readers.deinit(alloc);
     }
@@ -78,7 +86,7 @@ pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
         readers.appendAssumeCapacity(reader);
     }
     const t = try empty(alloc);
-    errdefer alloc.destroy(t);
+    errdefer t.deinit(alloc);
 
     const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(*MemTable, memTables);
     try t.mergeIntoMemTable(alloc, &readers, flushToDiskAtUs);
@@ -90,12 +98,14 @@ pub fn deinit(self: *MemTable, alloc: Allocator) void {
     self.lensBuf.deinit(alloc);
     self.indexBuf.deinit(alloc);
     self.metaindexBuf.deinit(alloc);
+    self.tableHeader.deinit(alloc);
     alloc.destroy(self);
 }
 
 fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !void {
     block.sortData();
     self.flushAtUs = flushAtUs;
+    self.tableHeader.deinit(alloc);
 
     var entriesBlock = EntriesBlock{};
     defer entriesBlock.deinit(alloc);
@@ -147,6 +157,13 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     n = try encoding.compressAuto(compressedMetaIndex, encodedMetaIndex);
 
     try self.metaindexBuf.appendSlice(alloc, compressedMetaIndex[0..n]);
+
+    const firstItem = self.tableHeader.firstItem;
+    const lastItem = self.tableHeader.lastItem;
+    self.tableHeader.firstItem = try alloc.dupe(u8, firstItem);
+    errdefer alloc.free(self.tableHeader.firstItem);
+    self.tableHeader.lastItem = try alloc.dupe(u8, lastItem);
+    errdefer alloc.free(self.tableHeader.lastItem);
 }
 
 fn mergeIntoMemTable(
@@ -159,6 +176,7 @@ fn mergeIntoMemTable(
 
     var writer = BlockWriter.initFromMemTable(self);
     defer writer.deinit(alloc);
+    self.tableHeader.deinit(alloc);
     self.tableHeader = try mergeBlocks(alloc, &writer, readers, null);
 }
 
@@ -172,8 +190,15 @@ pub fn mergeBlocks(
     var merger = try BlockMerger.init(alloc, readers);
     defer merger.deinit(alloc);
 
-    const tableHeader = try merger.merge(alloc, writer, stopped);
+    var tableHeader = try merger.merge(alloc, writer, stopped);
     try writer.close(alloc);
+
+    const firstItem = tableHeader.firstItem;
+    const lastItem = tableHeader.lastItem;
+    tableHeader.firstItem = try alloc.dupe(u8, firstItem);
+    errdefer alloc.free(tableHeader.firstItem);
+    tableHeader.lastItem = try alloc.dupe(u8, lastItem);
+    errdefer alloc.free(tableHeader.lastItem);
 
     return tableHeader;
 }

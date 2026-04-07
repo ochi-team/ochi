@@ -78,9 +78,8 @@ const EntriesShard = struct {
             gatheredEntriesCount += 1;
 
             const ok = block.add(entry);
-            if (builtin.is_test) {
-                std.debug.assert(ok);
-            }
+            // fresh block must have enough space
+            std.debug.assert(ok);
         }
 
         if (self.blocks.items.len >= maxBlocksPerShard) {
@@ -91,9 +90,7 @@ const EntriesShard = struct {
                 .blocksToFlush = self.blocks,
                 .gatheredEntriesCount = gatheredEntriesCount,
             };
-
             self.blocks = try std.ArrayList(*MemBlock).initCapacity(alloc, maxBlocksPerShard);
-
             return result;
         }
 
@@ -225,7 +222,7 @@ test "EntriesShard.add" {
         .{
             .setup_blocks_count = maxBlocksPerShard - 1,
             .fill_block_after_setup = true,
-            .test_entries = &.{theLargest},
+            .test_entries = &.{ theLargest, theLargest },
             .expected_flush = true,
             .expected_block_count = 0,
             .expected_last_block_entries_count = 0,

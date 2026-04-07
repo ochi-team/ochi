@@ -43,7 +43,7 @@ entries: *Entries,
 blocksToFlush: std.ArrayList(*MemBlock),
 mxBlocks: std.Thread.Mutex = .{},
 // TODO: make it as atomic instead of locking to access this value,
-// we still need mutex to access blocksToFlush
+// we still need mutex to access blocksToFlush (mxBlocks)
 flushEntriesAtUs: i64 = std.math.maxInt(i64),
 blocksThresholdToFlush: u32,
 
@@ -184,6 +184,7 @@ pub fn flushForce(self: *IndexRecorder, alloc: Allocator) !void {
 // entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     // make sure deinit is never called outside of stop
+    std.debug.assert(self.blocksToFlush.items.len == 0);
     std.debug.assert(self.memTables.items.len == 0);
 
     for (self.blocksToFlush.items) |block| {
@@ -214,22 +215,19 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 pub fn add(self: *IndexRecorder, alloc: Allocator, entries: [][]const u8) !void {
     var entryIndex: usize = 0;
 
-    while (entryIndex <= entries.len) {
+    while (entryIndex < entries.len) {
         const shard = self.entries.next();
-        var blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+        const blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
 
-        if (blocksListResult) |*blocksList| {
-            defer blocksList.blocksToFlush.deinit(alloc);
+        var blocksList = blocksListResult orelse return;
+        defer blocksList.blocksToFlush.deinit(alloc);
 
-            try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
-            if (entryIndex >= entries.len) {
-                std.debug.assert(entryIndex == entries.len);
-                return;
-            }
-            entryIndex += blocksList.gatheredEntriesCount;
-        } else {
+        try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
+        if (entryIndex >= entries.len) {
+            std.debug.assert(entryIndex == entries.len);
             return;
         }
+        entryIndex += blocksList.gatheredEntriesCount;
     }
 }
 
@@ -266,7 +264,7 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
     try self.blocksToFlush.appendSlice(alloc, blocks);
     if (self.blocksToFlush.items.len >= self.blocksThresholdToFlush) {
         // TODO: metric how much capacity is actual capacity of it comparing to expected
-        // TODO: this slice could have come out of a mem pool which preallocates such slices by 10x
+        // TODO: this slice could have come out of a mem pool
         // and pops on demand
         var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksToFlush.items.len);
         std.mem.swap(std.ArrayList(*MemBlock), &blocksToFlush, &self.blocksToFlush);
@@ -277,6 +275,7 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+    // enough for 256 tables, which a way beyond the expected amount
     var fba = std.heap.stackFallback(2048, alloc);
     const fbaAlloc = fba.get();
 
@@ -336,41 +335,69 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     var mergedTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, 8);
     defer mergedTables.deinit(fbaAlloc);
 
+    var memToMerge = try std.ArrayList(*MemTable).initCapacity(fbaAlloc, 8);
+    defer memToMerge.deinit(fbaAlloc);
+
     std.debug.assert(memTables.items.len != 0);
     if (memTables.items.len == 1) return;
 
-    var left = std.ArrayList(*Table).initBuffer(memTables.items[0..]);
-    left.items.len = memTables.items.len;
-    // var left = memTables.items[0..];
-    while (left.items.len > 0) {
-        const n = merger.selectTablesToMerge(&left);
-        const toMerge = left.items[0..n];
-        const tail = left.items[n..];
-        left = std.ArrayList(*Table).initBuffer(tail);
-        left.items.len = tail.len;
+    var left = memTables.items[0..];
+    while (left.len > 0) {
+        var leftArray = std.ArrayList(*Table).initBuffer(left);
+        leftArray.items.len = left.len;
 
-        const res = try MemTable.mergeMemTables(alloc, toMerge);
+        const n = merger.selectTablesToMerge(&leftArray);
+        const toMerge = left[0..n];
+        left = left[n..];
+
+        try memToMerge.ensureUnusedCapacity(fbaAlloc, toMerge.len);
+        for (toMerge) |table| {
+            const mem = table.mem orelse {
+                std.debug.panic("mergeMemTables expects mem tables only", .{});
+            };
+            memToMerge.appendAssumeCapacity(mem);
+        }
+
+        // TODO: I don't need it, we already have merging from []*Table, replace it
+        const res = try MemTable.mergeMemTables(alloc, memToMerge.items);
+        memToMerge.clearRetainingCapacity();
+
         for (toMerge) |t| t.close();
         const t = try Table.fromMem(alloc, res);
         try mergedTables.append(fbaAlloc, t);
     }
 
+    // TODO: make it in place overwriting instead of holding a copy on stack
     memTables.clearRetainingCapacity();
     memTables.appendSliceAssumeCapacity(mergedTables.items);
 }
 
 fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, force: bool) !void {
-    var semaphoreWaited = false; // if not stopped then wait for an available semaphore
-    if (!self.stopped.load(.acquire)) {
-        self.memTablesSem.wait();
-        semaphoreWaited = true;
-    }
-    errdefer if (semaphoreWaited) self.memTablesSem.post();
+    // TODO: add a limit to wait max 3 minutes, otherwise something is broken
 
-    // TODO: ideally to know the amount of mem tables and call unlock without errdefer
+    var semaphoreAcuired = true;
+    while (true) {
+        self.memTablesSem.timedWait(std.time.ns_per_s) catch |err| {
+            switch (err) {
+                error.Timeout => {
+                    if (self.stopped.load(.acquire)) {
+                        // TODO: audit all semaphore as a state usage, it can happen
+                        // a background task fails and  doesn't post semaphore back
+                        semaphoreAcuired = false;
+                        break;
+                    }
+                },
+            }
+        };
+    }
+
+    // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lock();
-    errdefer self.mxTables.unlock();
-    try self.memTables.append(alloc, memTable);
+    self.memTables.append(alloc, memTable) catch {
+        self.mxTables.unlock();
+        if (semaphoreAcuired) self.memTablesSem.post();
+        return;
+    };
     self.startMemTablesMerge(alloc);
     self.mxTables.unlock();
 
@@ -678,6 +705,9 @@ pub fn mergeTables(
     } else {
         std.debug.assert(destinationTablePath.len > 0);
         var fbaFallback = std.heap.stackFallback(256, alloc);
+        // TODO: pass table header to openining a table and use it instead of reading from a file,
+        // write a test in advance to confirm it's exact same header
+        defer tableHeader.deinit(alloc);
         try tableHeader.writeFile(fbaFallback.get(), destinationTablePath);
 
         fs.syncPathAndParentDir(destinationTablePath);
@@ -987,11 +1017,6 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     const theLargest = "x" ** (maxIndexMemBlockSize);
 
     const recorder = try IndexRecorder.init(alloc, rootPath);
-    defer {
-        recorder.stopped.store(true, .release);
-        recorder.wg.wait();
-        recorder.deinit(alloc);
-    }
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
     defer alloc.free(firstShardEntries);
@@ -1015,6 +1040,8 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         blocksInShards += shard.blocks.items.len;
     }
     try testing.expectEqual(@as(usize, countAdditionalEntries), blocksInShards);
+
+    try recorder.stop(alloc);
 }
 
 test "IndexRecorder large entries write to 3 shards" {
@@ -1031,7 +1058,7 @@ test "IndexRecorder large entries write to 3 shards" {
     const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
     //2 shards full-filled and third shard is not completely filled
     const totalEntries = (2 * Entries.maxBlocksPerShard) + countAdditionalEntries;
-    const theLargest = "x" ** (maxIndexMemBlockSize);
+    const theLargest = "x" ** maxIndexMemBlockSize;
     var testEntries: [][]const u8 = try alloc.alloc([]const u8, totalEntries);
     defer alloc.free(testEntries);
 
