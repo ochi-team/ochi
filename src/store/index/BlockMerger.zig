@@ -89,7 +89,8 @@ pub fn merge(
         if (self.heap.len() == 0) {
             // done, exit path
             try self.flush(alloc, writer, &tableHeader);
-            return tableHeader;
+            // make a table header alive even when a merger is dead
+            return tableHeader.dupe(alloc);
         }
 
         if (stopped) |s| {
@@ -389,6 +390,7 @@ test "BlockMerger.mergeBasicScenarios" {
         defer merger.deinit(alloc);
 
         const tableHeader = try merger.merge(alloc, &writer, null);
+        defer tableHeader.deinit(alloc);
 
         try testing.expectEqualDeep(case.expectedTableHeader, tableHeader);
     }
@@ -449,6 +451,7 @@ test "BlockMerger.merge block overflow" {
         defer merger.deinit(alloc);
 
         const tableHeader = try merger.merge(alloc, &writer, null);
+        defer tableHeader.deinit(alloc);
 
         try testing.expectEqual(case.expectedEntriesCount, tableHeader.entriesCount);
     }
@@ -497,6 +500,7 @@ test "BlockMerger.merge oversized entries" {
     defer merger.deinit(alloc);
 
     const tableHeader = try merger.merge(alloc, &writer, null);
+    defer tableHeader.deinit(alloc);
     try testing.expectEqual(2, tableHeader.entriesCount);
 }
 
@@ -679,6 +683,7 @@ test "BlockMerger.merge tag records" {
         defer merger.deinit(alloc);
 
         const tableHeader = try merger.merge(alloc, &writer, null);
+        defer tableHeader.deinit(alloc);
 
         try testing.expectEqual(case.expectedItemsCount, tableHeader.entriesCount);
     }
@@ -701,6 +706,73 @@ test "BlockMerger.merge stopped flag" {
     var merger = try BlockMerger.init(alloc, &readers);
     defer merger.deinit(alloc);
 
-    const result = merger.merge(alloc, &writer, &stopped);
-    try testing.expectError(error.Stopped, result);
+    const res = merger.merge(alloc, &writer, &stopped);
+    try testing.expectError(error.Stopped, res);
+}
+
+test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit" {
+    const alloc = testing.allocator;
+    const maxIndexBlockSize = 1024;
+
+    const leftItems = [_][]const u8{ "a1", "c1", "e1" };
+    const rightItems = [_][]const u8{ "b1", "d1", "f1" };
+    const expected = [_][]const u8{ "a1", "b1", "c1", "d1", "e1", "f1" };
+
+    var leftBlock = try createTestMemBlock(alloc, &leftItems, maxIndexBlockSize);
+    var rightBlock = try createTestMemBlock(alloc, &rightItems, maxIndexBlockSize);
+
+    // memTable is defined out of the block to ensure the source blocks are gone
+    const memTable = blk: {
+        var leftBlocks = [_]*MemBlock{leftBlock};
+        var rightBlocks = [_]*MemBlock{rightBlock};
+        var leftMemTable = try MemTable.init(alloc, &leftBlocks);
+        var rightMemTable = try MemTable.init(alloc, &rightBlocks);
+        defer leftMemTable.deinit(alloc);
+        defer rightMemTable.deinit(alloc);
+        leftBlock.deinit(alloc);
+        rightBlock.deinit(alloc);
+
+        var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
+        defer readers.deinit(alloc);
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
+
+        var mergedMemTable = try MemTable.empty(alloc);
+        var writer = BlockWriter.initFromMemTable(mergedMemTable);
+        defer writer.deinit(alloc);
+
+        var merger = try BlockMerger.init(alloc, &readers);
+        mergedMemTable.tableHeader = try merger.merge(alloc, &writer, null);
+        try writer.close(alloc);
+
+        merger.deinit(alloc);
+        readers.items.len = 0;
+
+        try testing.expect(mergedMemTable.entriesBuf.items.len > 0);
+        try testing.expect(mergedMemTable.lensBuf.items.len > 0);
+        try testing.expect(mergedMemTable.indexBuf.items.len > 0);
+        try testing.expect(mergedMemTable.metaindexBuf.items.len > 0);
+
+        break :blk mergedMemTable;
+    };
+
+    defer memTable.deinit(alloc);
+
+    var mergedReader = try BlockReader.initFromMemTable(alloc, memTable);
+    defer mergedReader.deinit(alloc);
+
+    var expectedI: usize = 0;
+    var blocksRead: usize = 0;
+    while (try mergedReader.next(alloc)) {
+        blocksRead += 1;
+        try testing.expect(blocksRead <= expected.len);
+        const decoded = mergedReader.block.?.memEntries.items;
+        for (decoded) |item| {
+            try testing.expect(expectedI < expected.len);
+            try testing.expectEqualStrings(expected[expectedI], item);
+            expectedI += 1;
+        }
+    }
+
+    try testing.expectEqual(expected.len, expectedI);
 }

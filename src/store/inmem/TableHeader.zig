@@ -5,6 +5,8 @@ const Filenames = @import("../../Filenames.zig");
 
 const maxFileBytes = 16 * 1024 * 1024;
 
+// adding new fields take into account the header must own them,
+// follow the pattern of the index table header
 const TableHeader = @This();
 
 // TODO: find out whether we can do them u32

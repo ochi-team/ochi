@@ -36,12 +36,6 @@ pub fn empty(alloc: Allocator) !*MemTable {
         .blockHeader = undefined,
         .tableHeader = .{},
     };
-    t.tableHeader.firstEntry = try alloc.dupe(u8, "");
-    errdefer {
-        alloc.free(t.tableHeader.firstEntry);
-        alloc.destroy(t);
-    }
-    t.tableHeader.lastEntry = try alloc.dupe(u8, "");
     return t;
 }
 
@@ -190,15 +184,8 @@ pub fn mergeBlocks(
     var merger = try BlockMerger.init(alloc, readers);
     defer merger.deinit(alloc);
 
-    var tableHeader = try merger.merge(alloc, writer, stopped);
+    const tableHeader = try merger.merge(alloc, writer, stopped);
     try writer.close(alloc);
-
-    const firstEntry = tableHeader.firstEntry;
-    const lastEntry = tableHeader.lastEntry;
-    tableHeader.firstEntry = try alloc.dupe(u8, firstEntry);
-    errdefer alloc.free(tableHeader.firstEntry);
-    tableHeader.lastEntry = try alloc.dupe(u8, lastEntry);
-    errdefer alloc.free(tableHeader.lastEntry);
 
     return tableHeader;
 }
