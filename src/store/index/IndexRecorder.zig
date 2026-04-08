@@ -249,7 +249,7 @@ pub fn getTables(self: *IndexRecorder, alloc: Allocator) !std.ArrayList(*Table) 
 fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !void {
     if (blocks.len == 0) return;
 
-    // TODO: make a more narrow locking
+    // TODO: make a more narrow locking, ideally before we make flushEntriesAt field as atomic
     self.mxBlocks.lock();
     defer self.mxBlocks.unlock();
 
@@ -592,13 +592,18 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *std.Thread.Semaphore,
 ) anyerror!void {
-    var tablesToMerge = try std.ArrayList(*Table).initCapacity(alloc, tables.items.len);
+    var tablesToMerge = std.ArrayList(*Table).empty;
     defer tablesToMerge.deinit(alloc);
 
     while (true) {
         const maxDiskTableSize = cap.getMaxTableSize(self.path);
 
         self.mxTables.lock();
+        // TODO: we have to know the max amount of tables in advance
+        tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
+            self.mxTables.unlock();
+            return err;
+        };
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
         const window = merger.filterTablesToMerge(
             tables.items,
@@ -674,6 +679,8 @@ pub fn mergeTables(
         readers.deinit(alloc);
     }
 
+    // TODO: block writer deinit might be called before it's actually created,
+    // if we get rid of all the undefined's it's solved
     var newMemTable: ?*MemTable = null;
     var blockWriter: BlockWriter = undefined;
     defer blockWriter.deinit(alloc);
