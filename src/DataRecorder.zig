@@ -47,8 +47,11 @@ fn setFlushTime() i64 {
 pub const DataRecorder = @This();
 
 pub const DataShard = struct {
+    // state
+
     mx: std.Thread.Mutex = .{},
     lines: std.ArrayList(Line) = .empty,
+
     size: u64 = 0,
     // TODO: currently there is a single background process flushing the data shards
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
@@ -57,6 +60,7 @@ pub const DataShard = struct {
     // threshold as 90% of a max block size
     const flushSizeThreshold = 9 * (MemTable.maxBlockSize / 10);
     fn mustFlush(self: *DataShard) bool {
+        // TODO: check its timer?
         return self.size >= flushSizeThreshold;
     }
 
@@ -67,11 +71,14 @@ pub const DataShard = struct {
             return null;
         }
 
-        sem.wait();
-        errdefer sem.post();
-
         const memTable = try MemTable.init(alloc);
-        try memTable.addLines(alloc, self.lines.items);
+
+        sem.wait();
+
+        memTable.addLines(alloc, self.lines.items) catch |err| {
+            sem.post();
+            return err;
+        };
         self.lines.clearRetainingCapacity();
 
         sem.post();
@@ -181,6 +188,8 @@ pub fn init(alloc: Allocator, path: []const u8) !*DataRecorder {
 // another problem it's hard to test it via checkAllAllocationFailures.
 // Then audit all deinits and use it instead
 // TODO: make using this API instead of directly managing stopped state
+// TODO: this theoretically is not enough to stop the other jobs form starting,
+// either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, alloc: Allocator) !void {
     self.stopped.store(true, .release);
     self.wg.wait();
@@ -351,6 +360,9 @@ fn flushShard(self: *DataRecorder, alloc: Allocator, shard: *DataShard) !void {
         defer self.mxTables.unlock();
         try self.memTables.append(alloc, memTable);
 
+        shard.flushAtUs = null;
+        shard.size = 0;
+
         self.startMemTablesMerge(alloc);
     }
 }
@@ -514,17 +526,16 @@ pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size
     var shard = &self.shards[i];
 
     shard.mx.lock();
+    defer shard.mx.unlock();
 
+    // TODO: we must now the limit on amount of lines per shard and append a known amount
     try shard.lines.appendSlice(alloc, lines);
     shard.size += size;
     if (shard.mustFlush()) {
-        shard.flushAtUs = null;
         try self.flushShard(alloc, shard);
     } else if (shard.flushAtUs == null) {
         shard.flushAtUs = setFlushTime();
     }
-
-    shard.mx.unlock();
 }
 
 fn openCreatedTable(
