@@ -72,6 +72,7 @@ pub const DataShard = struct {
         }
 
         const memTable = try MemTable.init(alloc);
+        errdefer memTable.deinit(alloc);
 
         sem.wait();
 
@@ -101,6 +102,8 @@ memMergeSem: std.Thread.Semaphore,
 
 pool: *std.Thread.Pool,
 wg: std.Thread.WaitGroup = .{},
+// TODO: implement its usage, limit the amount of mem tables similar to index
+// in order to let the mem merger handle it
 memTablesSem: std.Thread.Semaphore = .{
     .permits = maxMemTables,
 },
@@ -168,7 +171,6 @@ pub fn init(alloc: Allocator, path: []const u8) !*DataRecorder {
         },
 
         .pool = pool,
-        .memTablesSem = .{ .permits = concurrency },
         .stopped = std.atomic.Value(bool).init(false),
         .path = trimmedPath,
     };
@@ -314,12 +316,8 @@ fn flushMemTablesInChunks(self: *DataRecorder, alloc: Allocator, toFlush: std.Ar
         const n = merger.selectTablesToMerge(&left);
         std.debug.assert(n > 0);
 
-        self.memTablesSem.wait();
-
-        errdefer self.memTablesSem.post();
+        // TODO: attempt to run it in parallel, add a semaphore then
         try self.mergeTables(alloc, left.items[0..n], true, null);
-
-        self.memTablesSem.post();
 
         const tail = left.items[n..];
         left = std.ArrayList(*Table).initBuffer(tail);
@@ -354,7 +352,7 @@ fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void
 }
 
 fn flushShard(self: *DataRecorder, alloc: Allocator, shard: *DataShard) !void {
-    const maybeMemTable = try shard.flush(alloc, &self.memTablesSem);
+    const maybeMemTable = try shard.flush(alloc, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
         self.mxTables.lock();
         defer self.mxTables.unlock();
@@ -389,7 +387,7 @@ fn runDiskTablesMerger(self: *DataRecorder, alloc: Allocator) void {
 }
 
 fn runMemTableMerger(self: *DataRecorder, alloc: Allocator) void {
-    self.tablesMerger(alloc, &self.memTables, &self.memTablesSem) catch |err| {
+    self.tablesMerger(alloc, &self.memTables, &self.memMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
