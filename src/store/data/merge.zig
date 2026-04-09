@@ -35,7 +35,7 @@ pub fn mergeData(
     while (merger.heap.array.items.len > 0) {
         if (stopped) |stop| {
             if (stop.load(.acquire)) {
-                // TODO: test whether simple break and merging what we have won't hurt
+                // TODO: test whether break cleans the resources
                 return error.Stopped;
             }
         }

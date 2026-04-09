@@ -28,12 +28,16 @@ const Self = @This();
 
 recorder: *IndexRecorder,
 
-pub fn init(allocator: std.mem.Allocator, table: *IndexRecorder) !*Self {
+pub fn init(allocator: std.mem.Allocator, recorder: *IndexRecorder) !*Self {
     const i = try allocator.create(Self);
     i.* = .{
-        .recorder = table,
+        .recorder = recorder,
     };
     return i;
+}
+
+pub fn deinit(self: *Self, allocator: Allocator) void {
+    allocator.destroy(self);
 }
 
 pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {

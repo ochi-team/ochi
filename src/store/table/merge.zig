@@ -97,6 +97,9 @@ pub fn Merger(
 
         // TODO: we probably might define few levels of tables and
         // split the for compaction accordingly
+        // TODO: try designing a destination in a way that skips merging multiple mem tables to a larger one
+        // in order to reduce unncecessary load,
+        // we can skip a merge and wait a bit to flush them all together immediately to disk
         pub fn getDestinationTableKind(tables: []T, force: bool) TableKind {
             if (force) return .disk;
 

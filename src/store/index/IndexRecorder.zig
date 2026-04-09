@@ -299,6 +299,9 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     var left = try std.ArrayList(*Table).initCapacity(alloc, memTables.items.len);
     defer left.deinit(alloc);
 
+    // TODO: consider skipping this step and directly append tables to its collection,
+    // it requires another way to handle mem tables semaphore, 
+    // but might reduce the load on merging small tables
     while (memTables.items.len > 1) {
         try mergeMemTables(alloc, &memTables);
 

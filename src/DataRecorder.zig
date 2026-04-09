@@ -52,7 +52,9 @@ pub const DataShard = struct {
     mx: std.Thread.Mutex = .{},
     lines: std.ArrayList(Line) = .empty,
 
-    size: u64 = 0,
+    /// size defines the amount of space is take by the shard,
+    /// raw bytes required to hold the lines
+    size: u32 = 0,
     // TODO: currently there is a single background process flushing the data shards
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
@@ -503,6 +505,7 @@ fn mergeTables(
         ownedStreamWriter = streamWriter;
     }
 
+    // TODO: handle error.Stopped and remove the table if it's created before shutdown
     const tableHeader = try mergeData(alloc, streamWriter, &readers, stopped);
     if (newMemTable) |memTable| {
         memTable.tableHeader = tableHeader;
@@ -520,7 +523,7 @@ fn mergeTables(
     swapped = true;
 }
 
-pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size: usize) !void {
+pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size: u32) !void {
     const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
     var shard = &self.shards[i];
 

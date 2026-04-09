@@ -236,6 +236,15 @@ pub const Line = struct {
     // can't be const because we reorder fields
     fields: []Field,
 
+    pub fn rawSize(self: Line) u32 {
+        var res: u32 = 0;
+        for (self.fields) |field| {
+            res += @intCast(field.key.len);
+            res += @intCast(field.value.len);
+        }
+        return res;
+    }
+
     pub fn fieldsSize(self: Line) u32 {
         return sizing.fieldsJsonSize(self);
     }

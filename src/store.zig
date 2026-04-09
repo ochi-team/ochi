@@ -6,105 +6,12 @@ const DataRecorder = @import("DataRecorder.zig");
 const Index = @import("store/index/Index.zig");
 const IndexRecorder = @import("store/index/IndexRecorder.zig");
 const Line = @import("store/lines.zig").Line;
-const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 const Cache = @import("stds/Cache.zig");
 
+const Partition = @import("Partition.zig");
+
 const Conf = @import("Conf.zig");
-
-const Encoder = @import("encoding").Encoder;
-
-fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
-    return lines.items[i].sid.lessThan(&lines.items[j].sid);
-}
-
-const partitionNameSize = 8;
-
-pub const Partition = struct {
-    day: u64,
-    path: []const u8,
-    name: []const u8,
-    index: *Index,
-    data: *DataRecorder,
-
-    streamCache: *Cache.StreamCache,
-
-    // TODO: meter how much it takes usually
-    const bufSize = 1024;
-    pub fn addLines(
-        self: *Partition,
-        allocator: Allocator,
-        lines: std.ArrayList(Line),
-        tags: []Field,
-        encodedTags: []const u8,
-    ) !void {
-        var fallbackFba = std.heap.stackFallback(bufSize, allocator);
-        const fba = fallbackFba.get();
-        var streamsToCache = try std.ArrayList(u32).initCapacity(fba, bufSize / @sizeOf(u32));
-        defer streamsToCache.deinit(fba);
-
-        // detect not cached stream ids
-        for (0..lines.items.len) |i| {
-            const line = lines.items[i];
-            if (self.isCached(line.sid)) {
-                continue;
-            }
-
-            if (streamsToCache.items.len == 0) {
-                try streamsToCache.append(fba, @intCast(i));
-                continue;
-            }
-
-            const lineToCacheIdx = streamsToCache.items[streamsToCache.items.len - 1];
-            const lineToCache = lines.items[lineToCacheIdx];
-            if (!line.sid.eql(&lineToCache.sid)) {
-                try streamsToCache.append(fba, @intCast(i));
-            }
-        }
-
-        if (streamsToCache.items.len > 0) {
-            // sort the stream ids,
-            // it's necessary in case the incoming lines are mixed like [1, 3, 2],
-            // so to make it [1, 2, 3]
-            std.mem.sortUnstable(u32, streamsToCache.items, lines, streamIndexLess);
-        }
-
-        for (streamsToCache.items, 0..) |i, pos| {
-            const sid = lines.items[i].sid;
-
-            if (pos > 0 and lines.items[streamsToCache.items[pos - 1]].sid.eql(&sid)) continue;
-
-            if (self.isCached(lines.items[i].sid)) continue;
-
-            if (!try self.index.hasStream(allocator, sid)) {
-                try self.index.indexStream(allocator, sid, tags, encodedTags);
-            }
-            try self.cache(sid);
-        }
-
-        try self.data.addLines(allocator, lines.items, 0);
-        // FIXME: size calculation is not implemented
-        unreachable;
-    }
-
-    fn isCached(self: *Partition, sid: SID) bool {
-        var cacheKey: [SID.encodeBound + partitionNameSize]u8 = undefined;
-        var enc = Encoder.init(&cacheKey);
-        sid.encode(&enc);
-        @memcpy(cacheKey[SID.encodeBound..], self.name);
-
-        return self.streamCache.contains(cacheKey[0..]);
-    }
-
-    fn cache(self: *Partition, sid: SID) !void {
-        var cacheKey: [SID.encodeBound + partitionNameSize]u8 = undefined;
-        var enc = Encoder.init(&cacheKey);
-        sid.encode(&enc);
-        @memcpy(cacheKey[SID.encodeBound..], self.name);
-
-        try self.streamCache.set(&cacheKey, {});
-    }
-};
 
 pub const Store = struct {
     path: []const u8,
@@ -187,33 +94,13 @@ pub const Store = struct {
         return partition;
     }
 
-    fn openPartition(self: *Store, allocator: Allocator, path: []const u8, day: u64) !*Partition {
-        // FIXME: understand whether the path for index and data is the same,
-        // if it is - make sure deinit doesn't remove disk space from the cache, but it does it based on the partition path or something
-        const conf = Conf.getConf();
-        const indexTable = try IndexRecorder.init(allocator, "", conf.server.pools.cpus);
-        const index = try Index.init(allocator, indexTable);
+    fn openPartition(self: *Store, alloc: Allocator, path: []const u8, day: u64) !*Partition {
+        try self.partitions.ensureUnusedCapacity(alloc, 1);
 
-        // TODO: replace abc to path from config file
-        const data = try DataRecorder.init(allocator, "abc"[0..], conf.server.pools.cpus);
-        // TODO: remove unused parts directories
+        const partition = try Partition.open(alloc, path, day);
 
-        const cache = try Cache.StreamCache.init(allocator);
-
-        const partitionName = std.fs.path.basename(path);
-        std.debug.assert(partitionName.len == partitionNameSize);
-
-        const partition = try allocator.create(Partition);
-        partition.* = Partition{
-            .day = day,
-            .path = path,
-            .name = partitionName,
-            .index = index,
-            .data = data,
-            .streamCache = cache,
-        };
         self.hot = partition;
-        try self.partitions.append(allocator, partition);
+        try self.partitions.append(alloc, partition);
 
         return partition;
     }

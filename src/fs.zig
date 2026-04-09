@@ -8,6 +8,17 @@ const Allocator = std.mem.Allocator;
 
 var tmpFileNum = std.atomic.Value(u64).init(0);
 
+pub fn pathExists(path: []const u8) !bool {
+    std.fs.accessAbsolute(path, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => return false,
+            else => return err,
+        }
+    };
+
+    return true;
+}
+
 pub fn syncPathAndParentDir(path: []const u8) void {
     syncPath(path);
 
@@ -102,6 +113,44 @@ pub fn readAll(alloc: Allocator, path: []const u8) ![]u8 {
 
     _ = try file.readAll(dst);
     return dst;
+}
+
+test "pathExists returns true for existing paths and false for missing path" {
+    const alloc = std.testing.allocator;
+    const Case = struct {
+        path: []const u8,
+        expected: bool,
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("nested");
+    {
+        var file = try tmp.dir.createFile("existing.txt", .{});
+        defer file.close();
+        try file.writeAll("content");
+    }
+
+    const tmp_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(tmp_path);
+    const existing_file = try std.fs.path.join(alloc, &.{ tmp_path, "existing.txt" });
+    defer alloc.free(existing_file);
+    const existing_dir = try std.fs.path.join(alloc, &.{ tmp_path, "nested" });
+    defer alloc.free(existing_dir);
+    const missing = try std.fs.path.join(alloc, &.{ tmp_path, "missing.txt" });
+    defer alloc.free(missing);
+
+    const cases = [_]Case{
+        .{ .path = existing_file, .expected = true },
+        .{ .path = existing_dir, .expected = true },
+        .{ .path = missing, .expected = false },
+    };
+
+    for (cases) |case| {
+        const actual = try pathExists(case.path);
+        try std.testing.expectEqual(case.expected, actual);
+    }
 }
 
 test "syncPathAndParentDir fsync file and parent directory" {
