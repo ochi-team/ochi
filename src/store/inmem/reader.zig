@@ -154,7 +154,7 @@ pub const StreamReader = struct {
 
         var columnIDGen: *ColumnIDGen = undefined;
         if (columnsKeysBuf.len > 0) {
-            columnIDGen = try ColumnIDGen.decode(alloc, @constCast(columnsKeysBuf));
+            columnIDGen = try ColumnIDGen.decode(alloc, columnsKeysBuf);
         } else {
             columnIDGen = try ColumnIDGen.init(alloc);
         }
