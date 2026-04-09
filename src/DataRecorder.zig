@@ -489,8 +489,6 @@ fn mergeTables(
     const blockWriter = try BlockWriter.init(alloc);
     defer blockWriter.deinit(alloc);
 
-    // TODO: remove this shame after rmoving writer from mem table
-    var ownedStreamWriter: bool = false;
     const streamWriter: *StreamWriter = blk: {
         if (tableKind == .mem) {
             newMemTable = try MemTable.init(alloc);
@@ -501,11 +499,10 @@ fn mergeTables(
                 sourceCompressedSizeTotal += table.tableHeader.compressedSize;
             }
             const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
-            ownedStreamWriter = true;
             break :blk try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
     };
-    defer if (ownedStreamWriter) streamWriter.deinit(alloc);
+    defer if (tableKind != .mem) streamWriter.deinit(alloc);
 
     // TODO: handle error.Stopped and remove the table if it's created before shutdown
     const tableHeader = try mergeData(alloc, streamWriter, &readers, stopped);
