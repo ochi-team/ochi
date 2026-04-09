@@ -215,9 +215,8 @@ pub const StreamReader = struct {
         }
         self.bloomTokensList.deinit(allocator);
 
-        // TODO: audit and get rid of all @constCast
-        allocator.free(@constCast(self.columnsKeysBuf));
-        allocator.free(@constCast(self.columnIdxsBuf));
+        allocator.free(self.columnsKeysBuf);
+        allocator.free(self.columnIdxsBuf);
 
         const columnIDGen = @constCast(self.columnIDGen);
         columnIDGen.deinit(allocator);
