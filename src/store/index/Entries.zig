@@ -283,7 +283,7 @@ test "EntriesShard.add" {
             }
         }
 
-        const result = try shard.add(alloc, @constCast(case.test_entries), maxIndexMemBlockSize);
+        const result = try shard.add(alloc, case.test_entries, maxIndexMemBlockSize);
 
         // Check if flush happened as expected
         if (case.expected_flush) {
