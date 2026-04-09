@@ -37,7 +37,7 @@ pub const HashTokenizer = struct {
     pub fn tokenizeValues(
         self: *HashTokenizer,
         allocator: std.mem.Allocator,
-        values: [][]const u8,
+        values: []const []const u8,
     ) !std.ArrayList(u64) {
         var dst: std.ArrayList(u64) = try std.ArrayList(u64).initCapacity(allocator, 2);
         errdefer dst.deinit(allocator);
@@ -209,7 +209,7 @@ test "tokenizeValues" {
         const tokenizer = try HashTokenizer.init(allocator);
         defer tokenizer.deinit(allocator);
 
-        var tokens = try tokenizer.tokenizeValues(allocator, @constCast(c.input));
+        var tokens = try tokenizer.tokenizeValues(allocator, c.input);
         defer tokens.deinit(allocator);
 
         try std.testing.expectEqualSlices(u64, c.expected, tokens.items);
@@ -400,7 +400,7 @@ test "BloomFilter" {
         // init
         var tokenizer = try HashTokenizer.init(allocator);
         defer tokenizer.deinit(allocator);
-        var hashes = try tokenizer.tokenizeValues(allocator, @constCast(case.tokens));
+        var hashes = try tokenizer.tokenizeValues(allocator, case.tokens);
         defer hashes.deinit(allocator);
 
         const bf = try BloomFilter.initHashes(allocator, hashes.items);
