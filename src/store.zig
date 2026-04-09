@@ -195,7 +195,7 @@ pub const Store = struct {
         const index = try Index.init(allocator, indexTable);
 
         // TODO: replace abc to path from config file
-        const data = try DataRecorder.init(allocator, "abc"[0..]);
+        const data = try DataRecorder.init(allocator, "abc"[0..], conf.server.pools.cpus);
         // TODO: remove unused parts directories
 
         const cache = try Cache.StreamCache.init(allocator);

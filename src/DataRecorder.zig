@@ -113,11 +113,11 @@ path: []const u8,
 
 // TODO: investigate the ownership of the Lines and background jobs,
 // identify whether they match the data
-pub fn init(alloc: Allocator, path: []const u8) !*DataRecorder {
-    const conf = Conf.getConf();
-    const concurrency = conf.server.pools.cpus;
+// TODO: pass a common thread pool to data and index
+pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder {
+    std.debug.assert(concurrency != 0);
 
-    std.debug.assert(conf.server.pools.cpus != 0);
+    const conf = Conf.getConf();
     // 4 is a minimum amount for workers:
     // data shards flushare, mem table flusher, mem table merger, disk table merger
     // TODO: move basic validation to the config
@@ -634,7 +634,7 @@ test "DataRecorder init and close empty dir, trim slash" {
     const pathWithSlash = try std.mem.concat(alloc, u8, &.{ rootPath, std.fs.path.sep_str });
     defer alloc.free(pathWithSlash);
 
-    const recorder = try DataRecorder.init(alloc, pathWithSlash);
+    const recorder = try DataRecorder.init(alloc, pathWithSlash, 4);
 
     try testing.expectEqual(@as(usize, 0), recorder.diskTables.items.len);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
@@ -654,7 +654,7 @@ test "flushDataShards non-force respects flush deadline" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try DataRecorder.init(alloc, rootPath);
+    const recorder = try DataRecorder.init(alloc, rootPath, 4);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -686,7 +686,7 @@ test "mergeTables force single mem table creates disk table" {
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try DataRecorder.init(alloc, rootPath);
+    const recorder = try DataRecorder.init(alloc, rootPath, 4);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -719,7 +719,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
     const inserted: usize = 96;
     {
-        const recorder = try DataRecorder.init(alloc, rootPath);
+        const recorder = try DataRecorder.init(alloc, rootPath, 4);
         defer recorder.deinit(alloc);
 
         for (0..inserted) |i| {
@@ -738,7 +738,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
     }
 
     {
-        const reopened = try DataRecorder.init(alloc, rootPath);
+        const reopened = try DataRecorder.init(alloc, rootPath, 4);
         reopened.stopped.store(true, .release);
         reopened.wg.wait();
         defer reopened.deinit(alloc);
