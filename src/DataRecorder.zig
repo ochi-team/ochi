@@ -59,6 +59,7 @@ pub const DataShard = struct {
 
     // threshold as 90% of a max block size
     const flushSizeThreshold = 9 * (MemTable.maxBlockSize / 10);
+    // TODO: make size limit configurable
     fn mustFlush(self: *DataShard) bool {
         // TODO: check its timer?
         return self.size >= flushSizeThreshold;

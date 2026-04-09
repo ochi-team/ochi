@@ -404,3 +404,97 @@ test "mergeLines" {
         try std.testing.expectEqualDeep(case.expected, merged.items);
     }
 }
+
+test "mergeData keeps merged memtable buffers alive after source memtables deinit" {
+    const alloc = std.testing.allocator;
+    const sid = SID{ .tenantID = "tenant-a", .id = 42 };
+
+    const expected = [_]struct {
+        timestampNs: u64,
+        value: []const u8,
+    }{
+        .{ .timestampNs = 1, .value = "left-1" },
+        .{ .timestampNs = 2, .value = "right-1" },
+        .{ .timestampNs = 3, .value = "left-2" },
+        .{ .timestampNs = 4, .value = "right-2" },
+    };
+
+    const fieldKey = "key";
+
+    const mergedMemTable = blk: {
+        const leftMemTable = try MemTable.init(alloc);
+        defer leftMemTable.deinit(alloc);
+        const rightMemTable = try MemTable.init(alloc);
+        defer rightMemTable.deinit(alloc);
+
+        var leftFields1 = [_]Field{.{ .key = fieldKey, .value = "left-1" }};
+        var leftFields2 = [_]Field{.{ .key = fieldKey, .value = "left-2" }};
+        var rightFields1 = [_]Field{.{ .key = fieldKey, .value = "right-1" }};
+        var rightFields2 = [_]Field{.{ .key = fieldKey, .value = "right-2" }};
+
+        var leftLines = [_]Line{
+            .{ .timestampNs = 1, .sid = sid, .fields = leftFields1[0..] },
+            .{ .timestampNs = 3, .sid = sid, .fields = leftFields2[0..] },
+        };
+        var rightLines = [_]Line{
+            .{ .timestampNs = 2, .sid = sid, .fields = rightFields1[0..] },
+            .{ .timestampNs = 4, .sid = sid, .fields = rightFields2[0..] },
+        };
+
+        try leftMemTable.addLines(alloc, leftLines[0..]);
+        try rightMemTable.addLines(alloc, rightLines[0..]);
+
+        var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
+        defer readers.deinit(alloc);
+
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
+
+        const dstMemTable = try MemTable.init(alloc);
+        const stopped: ?*std.atomic.Value(bool) = null;
+        dstMemTable.tableHeader = try mergeData(alloc, dstMemTable.streamWriter, &readers, stopped);
+
+        try std.testing.expect(dstMemTable.streamWriter.indexDst.len() > 0);
+        try std.testing.expect(dstMemTable.streamWriter.metaIndexDst.len() > 0);
+        try std.testing.expect(dstMemTable.streamWriter.columnsHeaderIndexDst.len() > 0);
+        try std.testing.expect(dstMemTable.streamWriter.columnsHeaderDst.len() > 0);
+        try std.testing.expect(dstMemTable.streamWriter.timestampsDst.len() > 0);
+
+        break :blk dstMemTable;
+    };
+    defer mergedMemTable.deinit(alloc);
+
+    var mergedReader = try BlockReader.initFromMemTable(alloc, mergedMemTable);
+    defer mergedReader.deinit(alloc);
+
+    const unpacker = try Unpacker.init(alloc);
+    defer unpacker.deinit(alloc);
+    const decoder = try ValuesDecoder.init(alloc);
+    defer decoder.deinit();
+
+    var expectedI: usize = 0;
+    while (try mergedReader.nextBlock(alloc)) {
+        const block = try Block.initFromData(alloc, &mergedReader.blockData, unpacker, decoder);
+        defer block.deinit(alloc);
+
+        var lines = std.ArrayList(Line).empty;
+        defer {
+            for (lines.items) |line| {
+                alloc.free(line.fields);
+            }
+            lines.deinit(alloc);
+        }
+        try block.gatherLines(alloc, &lines);
+
+        for (lines.items) |line| {
+            try std.testing.expect(expectedI < expected.len);
+            try std.testing.expectEqual(expected[expectedI].timestampNs, line.timestampNs);
+            try std.testing.expectEqual(@as(usize, 1), line.fields.len);
+            try std.testing.expectEqualStrings(fieldKey, line.fields[0].key);
+            try std.testing.expectEqualStrings(expected[expectedI].value, line.fields[0].value);
+            expectedI += 1;
+        }
+    }
+
+    try std.testing.expectEqual(expected.len, expectedI);
+}
