@@ -20,7 +20,6 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
     // TODO: consider using concurrent reader of the body,
     // currently the entire body is pre-read by the start of the API handler
     const body = r.body() orelse return InsertError.EmptyBody;
-    
 
     if (body.len > ctx.conf.maxRequestSize) {
         return InsertError.MaxBodySize;
@@ -28,19 +27,16 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
 
     // TODO: validate a disk has enough space
     const encoding = r.headers.get("content-encoding") orelse "snappy";
-    const compress = Compression.fromEncoding(encoding)
-         catch  return InsertError.ContentEncodingNotSupported;
+    const compress = Compression.fromEncoding(encoding) catch return InsertError.ContentEncodingNotSupported;
 
-    const uncompressed = compress.uncompress(res.arena, body)
-         catch return InsertError.DecompressFailed;
+    const uncompressed = compress.uncompress(res.arena, body) catch return InsertError.DecompressFailed;
     defer res.arena.free(uncompressed);
 
     const params = Params{ .tenantID = ctx.tenantID };
-    process(res.arena, uncompressed, params, ctx.processor)
-         catch return InsertError.FailedToProccess;
+    process(res.arena, uncompressed, params, ctx.processor) catch return InsertError.FailedToProccess;
 
     res.status = 200;
-   }
+}
 
 /// insertLokiReady defines a loki handler to signal its readiness
 pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
@@ -76,7 +72,7 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
 
     // pre allocate labels list
     // TODO: reuse for next requests, put back to the pool
-    var labels: std.ArrayList(Field) = undefined;
+    var labels: std.ArrayList(Field) = .empty;
     defer labels.deinit(allocator);
 
     if (streams.array.items.len > 0 and streams.array.items[0] == .object) {

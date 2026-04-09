@@ -300,7 +300,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     defer left.deinit(alloc);
 
     // TODO: consider skipping this step and directly append tables to its collection,
-    // it requires another way to handle mem tables semaphore, 
+    // it requires another way to handle mem tables semaphore,
     // but might reduce the load on merging small tables
     while (memTables.items.len > 1) {
         try mergeMemTables(alloc, &memTables);
@@ -685,20 +685,21 @@ pub fn mergeTables(
     // TODO: block writer deinit might be called before it's actually created,
     // if we get rid of all the undefined's it's solved
     var newMemTable: ?*MemTable = null;
-    var blockWriter: BlockWriter = undefined;
-    defer blockWriter.deinit(alloc);
-    if (tableKind == .mem) {
-        newMemTable = try MemTable.empty(alloc);
-        blockWriter = BlockWriter.initFromMemTable(newMemTable.?);
-    } else {
-        var sourceItemsCount: u64 = 0;
-        for (tables) |table| {
-            sourceItemsCount += table.tableHeader.entriesCount;
+    var blockWriter: BlockWriter = blk: {
+        if (tableKind == .mem) {
+            newMemTable = try MemTable.empty(alloc);
+            break :blk BlockWriter.initFromMemTable(newMemTable.?);
+        } else {
+            var sourceItemsCount: u64 = 0;
+            for (tables) |table| {
+                sourceItemsCount += table.tableHeader.entriesCount;
+            }
+            // TODO: test if we can record compressed size and make caching more reliable
+            const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable();
+            break :blk try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
         }
-        // TODO: test if we can record compressed size and make caching more reliable
-        const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable();
-        blockWriter = try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
-    }
+    };
+    defer blockWriter.deinit(alloc);
 
     const tableHeader = try MemTable.mergeBlocks(
         alloc,

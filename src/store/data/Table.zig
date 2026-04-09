@@ -139,12 +139,13 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
 
     const columnKeysContent = try fs.readAll(alloc, columnKeysPath);
     defer alloc.free(columnKeysContent);
-    var columnIDGen: *ColumnIDGen = undefined;
-    if (columnKeysContent.len > 0) {
-        columnIDGen = try ColumnIDGen.decode(alloc, columnKeysContent);
-    } else {
-        columnIDGen = try ColumnIDGen.init(alloc);
-    }
+    var columnIDGen: *ColumnIDGen = blk: {
+        if (columnKeysContent.len > 0) {
+            break :blk try ColumnIDGen.decode(alloc, columnKeysContent);
+        } else {
+            break :blk try ColumnIDGen.init(alloc);
+        }
+    };
     errdefer columnIDGen.deinit(alloc);
 
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
