@@ -37,6 +37,10 @@ pub fn init(allocator: std.mem.Allocator, recorder: *IndexRecorder) !*Self {
 }
 
 pub fn deinit(self: *Self, allocator: Allocator) void {
+    self.recorder.stop(allocator) catch |err| {
+        std.debug.panic("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
+    };
+
     allocator.destroy(self);
 }
 

@@ -24,24 +24,25 @@ const partitionKeySize = 8;
 
 pub const Partition = @This();
 
-day: u64,
+/// path is an absolute path to the partition
 path: []const u8,
+/// day is an internal key for the partition, represents as a day since epoch time,
+day: u64,
+/// key is a human readable representation of the partition,
+/// it's also used as a folder name for both index and data tables,
+/// it's derived from the day
 key: []const u8,
 index: *Index,
 data: *DataRecorder,
 
 streamCache: *Cache.StreamCache,
 
-pub fn open(alloc: Allocator, path: []const u8, day: u64) !*Partition {
+pub fn open(alloc: Allocator, path: []const u8, indexPath: []const u8, dataPath: []const u8, day: u64) !*Partition {
     const conf = Conf.getConf();
 
-    // TODO: index and data paths are leaked, find out where to store them,
-    // 1. make it as a computed property in the recorders
-    // 2. collect them in the partition and free on closing
-    const indexPath = try std.fs.path.join(alloc, &.{ path, Filenames.tableIndex });
-    errdefer alloc.free(indexPath);
-    const dataPath = try std.fs.path.join(alloc, &.{ path, Filenames.tableData });
-    errdefer alloc.free(dataPath);
+    const partitionKey = std.fs.path.basename(path);
+    std.debug.assert(partitionKey.len == partitionKeySize);
+
     const indexExists = try fs.pathExists(indexPath);
     const dataExists = try fs.pathExists(dataPath);
 
@@ -56,10 +57,8 @@ pub fn open(alloc: Allocator, path: []const u8, day: u64) !*Partition {
 
         std.debug.print("partition doesn't exist due to recent crash or a data loss," ++
             " creating missing partition, path: {s}\n", .{path});
-        fs.makeDirAssert(indexPath);
-        fs.syncPathAndParentDir(indexPath);
-        fs.makeDirAssert(dataPath);
-        fs.syncPathAndParentDir(dataPath);
+        IndexRecorder.createDir(indexPath);
+        DataRecorder.createDir(dataPath);
     }
 
     const indexRecorder = try IndexRecorder.init(alloc, indexPath, conf.server.pools.cpus);
@@ -74,9 +73,6 @@ pub fn open(alloc: Allocator, path: []const u8, day: u64) !*Partition {
     var streamCache = try Cache.StreamCache.init(alloc);
     errdefer streamCache.deinit();
 
-    const partitionKey = std.fs.path.basename(path);
-    std.debug.assert(partitionKey.len == partitionKeySize);
-
     const partition = try alloc.create(Partition);
     partition.* = Partition{
         .day = day,
@@ -88,6 +84,25 @@ pub fn open(alloc: Allocator, path: []const u8, day: u64) !*Partition {
     };
 
     return partition;
+}
+
+pub fn close(self: *Partition, allocator: Allocator) void {
+    self.index.deinit(allocator);
+
+    self.data.stop(allocator) catch |err| {
+        std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
+    };
+    self.streamCache.deinit();
+    allocator.destroy(self);
+}
+
+pub fn createDir(path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
+    fs.makeDirAssert(path);
+
+    IndexRecorder.createDir(indexPath);
+    DataRecorder.createDir(dataPath);
+
+    fs.syncPathAndParentDir(path);
 }
 
 // TODO: meter how much it takes usually

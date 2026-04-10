@@ -16,6 +16,6 @@ pub const entries = "entries.bin";
 pub const header = "header.json";
 pub const tables = "tables.json";
 
-pub const tableIndex = "index";
-pub const tableData = "data";
+pub const indexTables = "index";
+pub const dataTables = "data";
 pub const partitions = "partitions";

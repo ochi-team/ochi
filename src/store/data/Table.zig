@@ -8,7 +8,6 @@ const DiskTable = @import("DiskTable.zig");
 const IndexBlockHeader = @import("../inmem/IndexBlockHeader.zig");
 const TableHeader = @import("../inmem/TableHeader.zig");
 const ColumnIDGen = @import("../inmem/ColumnIDGen.zig");
-const encoding = @import("encoding");
 
 const catalog = @import("../table/catalog.zig");
 

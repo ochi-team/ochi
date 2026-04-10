@@ -52,10 +52,8 @@ fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
     };
 }
 
-const dayNs: u64 = std.time.ns_per_day;
-
 // TODO: make it configurable
-const retention: u64 = 30 * std.time.ns_per_day;
+const retentionNs: u64 = 30 * std.time.ns_per_day;
 
 fn sortStreamFields(_: void, one: Field, another: Field) bool {
     return std.mem.order(u8, one.key, another.key) == .lt;
@@ -130,17 +128,17 @@ pub const Processor = struct {
     pub fn flush(self: *Processor, allocator: std.mem.Allocator) !void {
         // TODO: add to hot partition if possible
 
-        const now: u64 = @intCast(std.time.nanoTimestamp());
-        const minDay = (now - retention) / dayNs;
+        // TODO: make partition interval configurable
+        // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
+        const nowNs: u64 = @intCast(std.time.nanoTimestamp());
+        const minDay = (nowNs - retentionNs) / std.time.ns_per_day;
 
         var linesByInterval = std.AutoHashMap(u64, std.ArrayList(Line)).init(allocator);
 
         for (self.lines) |line| {
-            const day = line.timestampNs / dayNs;
+            const day = line.timestampNs / std.time.ns_per_day;
             if (day < minDay) {
                 // TODO: log a warning
-                // TODO: produce a metric to understand if its worth to validate,
-                // perhaps easier to insert and clean after
                 continue;
             }
 

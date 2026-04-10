@@ -1,32 +1,32 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Filenames = @import("Filenames.zig");
-const DataRecorder = @import("DataRecorder.zig");
-const Index = @import("store/index/Index.zig");
-const IndexRecorder = @import("store/index/IndexRecorder.zig");
+const zeit = @import("zeit");
+
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
-const Cache = @import("stds/Cache.zig");
 
 const Partition = @import("Partition.zig");
-
+const Filenames = @import("Filenames.zig");
 const Conf = @import("Conf.zig");
 
 pub const Store = struct {
     path: []const u8,
 
-    partitions: std.ArrayList(*Partition),
-    hot: ?*Partition,
+    partitionsMx: std.Thread.Mutex = .{},
+    partitions: std.ArrayList(*Partition) = .empty,
+    lruPartition: ?*Partition = null,
 
-    pub fn init(allocator: Allocator, path: []const u8) !*Store {
-        const store = try allocator.create(Store);
+    /// pathsBuf holds a garbage of created paths for partitions and it's tables
+    pathsBuf: std.ArrayList([]const u8) = .empty,
+
+    pub fn init(alloc: Allocator, path: []const u8) !*Store {
+        const store = try alloc.create(Store);
         store.* = .{
             .path = path,
-            .partitions = std.ArrayList(*Partition).empty,
-            .hot = null,
         };
         // truncate separator
+        // TODO: do it outside
         if (path[store.path.len - 1] == std.fs.path.sep_str[0]) {
             store.path = path[0 .. path.len - 1];
         }
@@ -34,7 +34,15 @@ pub const Store = struct {
     }
 
     pub fn deinit(self: *Store, allocator: Allocator) void {
+        for (self.partitions.items) |partition| {
+            partition.close(allocator);
+        }
         self.partitions.deinit(allocator);
+
+        for (self.pathsBuf.items) |path| {
+            allocator.free(path);
+        }
+        self.pathsBuf.deinit(allocator);
         allocator.destroy(self);
     }
 
@@ -52,7 +60,10 @@ pub const Store = struct {
         }
     }
 
-    fn getPartition(self: *Store, allocator: Allocator, day: u64) !*Partition {
+    fn getPartition(self: *Store, alloc: Allocator, day: u64) !*Partition {
+        self.partitionsMx.lock();
+        defer self.partitionsMx.unlock();
+
         const n = std.sort.binarySearch(
             *Partition,
             self.partitions.items,
@@ -61,61 +72,63 @@ pub const Store = struct {
         );
         if (n) |i| {
             const part = self.partitions.items[i];
-            self.hot = part;
+            self.lruPartition = part;
             return part;
         }
 
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const partitionPath = try std.fmt.bufPrint(
-            &path_buf,
-            "{s}{s}{s}{s}{d}",
-            .{ self.path, std.fs.path.sep_str, Filenames.partitions, std.fs.path.sep_str, day },
-        );
+        // TODO: what if a partition is deleted, we might want to return null
 
-        const res = std.fs.accessAbsolute(partitionPath, .{ .mode = .read_write });
-        if (res) |_| {
-            // TODO: get a partition from existing folder or create missing files
-            // missing files could be due to crash
-            return error.PartitionUnavailble;
-        } else |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        }
+        var partitionKey: [8]u8 = undefined;
+        const partitionKeySlice = try partitionKeyBuf(&partitionKey, day);
+        std.debug.assert(std.mem.eql(u8, partitionKeySlice, partitionKey[0..]));
 
-        // TODO: consider using fixed buffer allocator for dataFolderPath and indexFolderPath
-        const dataFolderPath = try std.mem.concat(allocator, u8, &.{ partitionPath, Filenames.tableData });
-        defer allocator.free(dataFolderPath);
-        const indexFolderPath = try std.mem.concat(allocator, u8, &.{ partitionPath, Filenames.tableIndex });
-        defer allocator.free(indexFolderPath);
+        const partitionPath = try std.fs.path.join(alloc, &.{ self.path, Filenames.partitions, partitionKeySlice });
+        errdefer alloc.free(partitionPath);
 
-        try createParitionFiles(allocator, dataFolderPath, indexFolderPath);
-        const partition = try self.openPartition(allocator, partitionPath, day);
+        // TODO: don't allocate those paths, make it as computed properties,
+        // then we can:
+        // - remove pathsBuf
+        // - make disk space cache rely on the store path
+        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.indexTables });
+        errdefer alloc.free(indexPath);
+        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.dataTables });
+        errdefer alloc.free(dataPath);
 
+        std.fs.accessAbsolute(partitionPath, .{ .mode = .read_write }) catch |err| {
+            switch (err) {
+                error.FileNotFound => {
+                    Partition.createDir(partitionPath, indexPath, dataPath);
+                },
+                else => return err,
+            }
+        };
+
+        const partition = try self.openPartition(alloc, partitionPath, indexPath, dataPath, day);
         return partition;
     }
 
-    fn openPartition(self: *Store, alloc: Allocator, path: []const u8, day: u64) !*Partition {
+    fn openPartition(
+        self: *Store,
+        alloc: Allocator,
+        path: []const u8,
+        indexPath: []const u8,
+        dataPath: []const u8,
+        day: u64,
+    ) !*Partition {
         try self.partitions.ensureUnusedCapacity(alloc, 1);
+        try self.pathsBuf.ensureUnusedCapacity(alloc, 3);
 
-        const partition = try Partition.open(alloc, path, day);
+        const partition = try Partition.open(alloc, path, indexPath, dataPath, day);
 
-        self.hot = partition;
-        try self.partitions.append(alloc, partition);
+        self.pathsBuf.appendAssumeCapacity(path);
+        self.pathsBuf.appendAssumeCapacity(indexPath);
+        self.pathsBuf.appendAssumeCapacity(dataPath);
+        self.lruPartition = partition;
+        self.partitions.appendAssumeCapacity(partition);
 
         return partition;
     }
 };
-
-fn createParitionFiles(allocator: Allocator, indexFolderPath: []const u8, dataFolderPath: []const u8) !void {
-    try std.fs.makeDirAbsolute(indexFolderPath);
-    try std.fs.makeDirAbsolute(dataFolderPath);
-
-    // TODO: consider using static buffer allocator
-    const partsFilePath = try std.mem.concat(allocator, u8, &.{ dataFolderPath, Filenames.tables });
-    defer allocator.free(partsFilePath);
-    const file = try std.fs.createFileAbsolute(partsFilePath, .{ .exclusive = true });
-    file.close();
-}
 
 fn orderPartitions(day: u64, part: *Partition) std.math.Order {
     if (day < part.day) {
@@ -125,4 +138,66 @@ fn orderPartitions(day: u64, part: *Partition) std.math.Order {
         return .gt;
     }
     return .eq;
+}
+
+const testing = std.testing;
+
+fn partitionKeyBuf(buf: []u8, day: u64) ![]u8 {
+    const nowNs = day * std.time.ns_per_day;
+    const inst = try zeit.instant(.{ .source = .{ .unix_nano = nowNs } });
+    const time = inst.time();
+    return std.fmt.bufPrint(buf, "{d:0>2}{d:0>2}{d:0>4}", .{ time.day, time.month, @as(u32, @intCast(time.year)) });
+}
+
+test "partitionKeyFormat" {
+    const inst = try zeit.instant(.{ .source = .{ .time = .{
+        .day = 1,
+        .month = .jan,
+        .year = 2026,
+    } } });
+    var key: [8]u8 = undefined;
+    const now: u64 = @intCast(inst.timestamp);
+    const day = now / std.time.ns_per_day;
+    const keySlice = try partitionKeyBuf(&key, @intCast(day));
+    try testing.expectEqualStrings("01012026", key[0..]);
+    try testing.expectEqualStrings("01012026", keySlice);
+}
+
+test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, Filenames.partitions });
+    defer alloc.free(partitionsRoot);
+    try std.fs.makeDirAbsolute(partitionsRoot);
+
+    const store = try Store.init(alloc, rootPath);
+
+    const dayOne: u64 = 10;
+    const dayTwo: u64 = 11;
+
+    try testing.expectEqual(0, store.partitions.items.len);
+
+    const first = try store.getPartition(alloc, dayOne);
+    try testing.expectEqual(1, store.partitions.items.len);
+    try testing.expectEqual(first, store.partitions.items[0]);
+    try testing.expectEqual(first, store.lruPartition.?);
+
+    const firstAgain = try store.getPartition(alloc, dayOne);
+    try testing.expectEqual(first, firstAgain);
+    try testing.expectEqual(1, store.partitions.items.len);
+    try testing.expectEqual(first, store.lruPartition.?);
+
+    const second = try store.getPartition(alloc, dayTwo);
+    try testing.expectEqual(2, store.partitions.items.len);
+    try testing.expectEqual(second, store.partitions.items[1]);
+    try testing.expectEqual(second, store.lruPartition.?);
+
+    store.deinit(alloc);
 }

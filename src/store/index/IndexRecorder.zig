@@ -157,6 +157,11 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*IndexRecorde
     return t;
 }
 
+pub fn createDir(path: []const u8) void {
+    fs.makeDirAssert(path);
+    fs.syncPathAndParentDir(path);
+}
+
 // TODO: find an approach to make it never fail,
 // the only option it fails is OOM, so cleaning more memory in advance might be more reliable
 // another problem it's hard to test it via checkAllAllocationFailures
@@ -300,7 +305,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     defer left.deinit(alloc);
 
     // TODO: consider skipping this step and directly append tables to its collection,
-    // it requires another way to handle mem tables semaphore, 
+    // it requires another way to handle mem tables semaphore,
     // but might reduce the load on merging small tables
     while (memTables.items.len > 1) {
         try mergeMemTables(alloc, &memTables);

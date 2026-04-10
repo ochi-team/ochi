@@ -188,6 +188,11 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
     return t;
 }
 
+pub fn createDir(path: []const u8) void {
+    fs.makeDirAssert(path);
+    fs.syncPathAndParentDir(path);
+}
+
 // TODO: find an approach to make it never fail,
 // the only option it fails is OOM, so cleaning more memory in advance might be more reliable
 // another problem it's hard to test it via checkAllAllocationFailures.
