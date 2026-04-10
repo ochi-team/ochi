@@ -502,6 +502,7 @@ fn mergeTables(
             break :blk try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
     };
+    // TODO: remove this shame after rmoving writer from mem table
     defer if (tableKind != .mem) streamWriter.deinit(alloc);
 
     // TODO: handle error.Stopped and remove the table if it's created before shutdown
