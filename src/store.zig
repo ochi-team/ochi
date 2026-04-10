@@ -55,7 +55,18 @@ pub const Store = struct {
     ) !void {
         var linesIterator = lines.iterator();
         while (linesIterator.next()) |it| {
-            const partition = try self.getPartition(allocator, it.key_ptr.*);
+            const day = it.key_ptr.*;
+
+            // TODO: rework how we approach lru partition
+            // 1. pass all the lines directly to the store,
+            // iterate over saving the window width, if it fits - pass them all to the lru
+            // 2. if it doesn't fit - make a map by intervals, retain it
+            if (self.lruPartition) |part| if (part.day == day) {
+                try part.addLines(allocator, it.value_ptr.*, tags, encodedTags);
+                continue;
+            };
+
+            const partition = try self.getPartition(allocator, day);
             try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
         }
     }
@@ -76,7 +87,9 @@ pub const Store = struct {
             return part;
         }
 
-        // TODO: what if a partition is deleted, we might want to return null
+        // TODO: what if a partition is deleted, we might want to return null,
+        // handle it outside, log a warning showing the partition is missing
+        // due to being deprecated (identify whether it's out of the retention period)
 
         var partitionKey: [8]u8 = undefined;
         const partitionKeySlice = try partitionKeyBuf(&partitionKey, day);
