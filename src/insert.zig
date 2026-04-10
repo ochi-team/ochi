@@ -27,13 +27,16 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
 
     // TODO: validate a disk has enough space
     const encoding = r.headers.get("content-encoding") orelse "snappy";
-    const compress = Compression.fromEncoding(encoding) catch return InsertError.ContentEncodingNotSupported;
+    const compress = Compression.fromEncoding(encoding) catch
+        return InsertError.ContentEncodingNotSupported;
 
-    const uncompressed = compress.uncompress(res.arena, body) catch return InsertError.DecompressFailed;
+    const uncompressed = compress.uncompress(res.arena, body) catch
+        return InsertError.DecompressFailed;
     defer res.arena.free(uncompressed);
 
     const params = Params{ .tenantID = ctx.tenantID };
-    process(res.arena, uncompressed, params, ctx.processor) catch return InsertError.FailedToProccess;
+    process(res.arena, uncompressed, params, ctx.processor) catch
+        return InsertError.FailedToProccess;
 
     res.status = 200;
 }
