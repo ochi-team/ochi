@@ -191,3 +191,7 @@ fn cache(self: *Partition, sid: SID) !void {
 
     try self.streamCache.set(&cacheKey, {});
 }
+
+pub fn lessThan(_: void, one: *Partition, another: *Partition) bool {
+    return one.day < another.day;
+}

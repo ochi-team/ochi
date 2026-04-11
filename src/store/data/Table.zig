@@ -272,6 +272,8 @@ pub fn close(self: *Table) void {
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
     if (shouldRemove) {
         // TODO: replace to an error log
+        // TODO: review it to make removing more reliable,
+        // e.g. deletion must be intrrupted in the middle leaving a half baked table
         std.fs.deleteTreeAbsolute(self.path) catch |err| {
             std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
         };

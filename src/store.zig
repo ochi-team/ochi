@@ -34,7 +34,13 @@ pub const Store = struct {
         std.debug.assert(std.fs.path.isAbsolute(path));
         std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
-        try createStoreDirIfNotExists(path);
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const partitionsPath = try std.fmt.bufPrint(
+            &buf,
+            "{s}{c}{s}",
+            .{ path, std.fs.path.sep, Filenames.partitions },
+        );
+        const partitionsDir = try createStoreDirIfNotExists(path, partitionsPath);
 
         const file = try createLockFile(path);
         errdefer file.close();
@@ -42,12 +48,43 @@ pub const Store = struct {
         var streamCache = try Cache.StreamCache.init(alloc);
         errdefer streamCache.deinit();
 
+        // 30 is a default retention
+        var partitions = try std.ArrayList(*Partition).initCapacity(alloc, 30);
+        errdefer {
+            for (partitions.items) |partition| {
+                partition.close(alloc);
+            }
+            partitions.deinit(alloc);
+        }
+
         const store = try alloc.create(Store);
         store.* = .{
             .path = path,
             .lockFile = file,
+            .partitions = partitions,
             .streamCache = streamCache,
         };
+
+        // TODO: try making it parallel, it speed up start up time
+        var it = partitionsDir.iterate();
+        while (try it.next()) |entry| {
+            const partitionPath = try std.fs.path.join(alloc, &.{ partitionsPath, entry.name });
+            errdefer alloc.free(partitionPath);
+
+            const day = try dayFromKey(entry.name);
+            const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.indexTables });
+            errdefer alloc.free(indexPath);
+            const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.dataTables });
+            errdefer alloc.free(dataPath);
+
+            _ = try store.openPartition(alloc, partitionPath, indexPath, dataPath, day);
+        }
+
+        std.sort.pdq(*Partition, partitions.items, {}, Partition.lessThan);
+        store.lruPartition = if (store.partitions.items.len > 0)
+            store.partitions.items[store.partitions.items.len - 1]
+        else
+            null;
         return store;
     }
 
@@ -67,18 +104,12 @@ pub const Store = struct {
         allocator.destroy(self);
     }
 
-    pub fn createStoreDirIfNotExists(path: []const u8) !void {
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const partitionsPath = try std.fmt.bufPrint(
-            &buf,
-            "{s}{c}{s}",
-            .{ path, std.fs.path.sep, Filenames.partitions },
-        );
+    pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !std.fs.Dir {
         std.fs.accessAbsolute(path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => {
                     createDir(path, partitionsPath);
-                    return;
+                    return std.fs.openDirAbsolute(partitionsPath, .{ .iterate = true });
                 },
                 else => return err,
             }
@@ -92,6 +123,8 @@ pub const Store = struct {
                 else => return err,
             }
         };
+
+        return std.fs.openDirAbsolute(partitionsPath, .{ .iterate = true });
     }
 
     pub fn createDir(path: []const u8, partitionsPath: []const u8) void {
@@ -172,6 +205,8 @@ pub const Store = struct {
         };
 
         const partition = try self.openPartition(alloc, partitionPath, indexPath, dataPath, day);
+        self.lruPartition = partition;
+
         return partition;
     }
 
@@ -191,7 +226,6 @@ pub const Store = struct {
         self.pathsBuf.appendAssumeCapacity(path);
         self.pathsBuf.appendAssumeCapacity(indexPath);
         self.pathsBuf.appendAssumeCapacity(dataPath);
-        self.lruPartition = partition;
         self.partitions.appendAssumeCapacity(partition);
 
         return partition;
@@ -215,6 +249,24 @@ fn partitionKeyBuf(buf: []u8, day: u64) ![]u8 {
     const inst = try zeit.instant(.{ .source = .{ .unix_nano = nowNs } });
     const time = inst.time();
     return std.fmt.bufPrint(buf, "{d:0>2}{d:0>2}{d:0>4}", .{ time.day, time.month, @as(u32, @intCast(time.year)) });
+}
+
+fn dayFromKey(key: []const u8) !u64 {
+    std.debug.assert(key.len == 8);
+
+    const day = try std.fmt.parseInt(u64, key[0..2], 10);
+    const month = try std.fmt.parseInt(u64, key[2..4], 10);
+    const year = try std.fmt.parseInt(u64, key[4..8], 10);
+
+    const monthEnum: zeit.Month = @enumFromInt(month);
+    const inst = try zeit.instant(.{ .source = .{ .time = .{
+        .day = @intCast(day),
+        .month = monthEnum,
+        .year = @intCast(year),
+    } } });
+
+    const ts: u64 = @intCast(inst.timestamp);
+    return ts / std.time.ns_per_day;
 }
 
 fn createLockFile(path: []const u8) !std.fs.File {
@@ -264,6 +316,37 @@ test "partitionKeyFormat" {
     try testing.expectEqualStrings("01012026", keySlice);
 }
 
+test "dayFromKey parses partition keys and roundtrips with partitionKeyBuf" {
+    const Case = struct {
+        key: []const u8,
+        day: u5,
+        month: zeit.Month,
+        year: i32,
+    };
+
+    const cases = [_]Case{
+        .{ .key = "01012026", .day = 1, .month = .jan, .year = 2026 },
+        .{ .key = "29022024", .day = 29, .month = .feb, .year = 2024 },
+        .{ .key = "31121999", .day = 31, .month = .dec, .year = 1999 },
+    };
+
+    for (cases) |case| {
+        const parsedDay = try dayFromKey(case.key);
+        const inst = try zeit.instant(.{ .source = .{ .time = .{
+            .day = case.day,
+            .month = case.month,
+            .year = case.year,
+        } } });
+        const expectedTs: u64 = @intCast(inst.timestamp);
+        const expectedDay = expectedTs / std.time.ns_per_day;
+        try testing.expectEqual(expectedDay, parsedDay);
+
+        var keyBuf: [8]u8 = undefined;
+        const keySlice = try partitionKeyBuf(&keyBuf, parsedDay);
+        try testing.expectEqualStrings(case.key, keySlice);
+    }
+}
+
 test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
     const alloc = testing.allocator;
 
@@ -299,11 +382,61 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
             try std.fs.makeDirAbsolute(partitionsPath);
         }
 
-        try Store.createStoreDirIfNotExists(storePath);
+        _ = try Store.createStoreDirIfNotExists(storePath, partitionsPath);
 
         try testing.expect(try fs.pathExists(storePath));
         try testing.expect(try fs.pathExists(partitionsPath));
     }
+}
+
+test "init opens existing partitions, sorts them and sets lru" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const storePath = try std.fs.path.join(alloc, &.{ rootPath, "store" });
+    defer alloc.free(storePath);
+    try std.fs.makeDirAbsolute(storePath);
+
+    const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, Filenames.partitions });
+    defer alloc.free(partitionsPath);
+    try std.fs.makeDirAbsolute(partitionsPath);
+
+    const keys = [_][]const u8{ "31121999", "01012026", "29022024" };
+    for (keys) |key| {
+        const partitionPath = try std.fs.path.join(alloc, &.{ partitionsPath, key });
+        defer alloc.free(partitionPath);
+        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.indexTables });
+        defer alloc.free(indexPath);
+        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.dataTables });
+        defer alloc.free(dataPath);
+
+        try std.fs.makeDirAbsolute(partitionPath);
+        try std.fs.makeDirAbsolute(indexPath);
+        try std.fs.makeDirAbsolute(dataPath);
+    }
+
+    const store = try Store.init(alloc, storePath);
+    defer store.deinit(alloc);
+
+    try testing.expectEqual(keys.len, store.partitions.items.len);
+
+    const day0 = try dayFromKey("31121999");
+    const day1 = try dayFromKey("29022024");
+    const day2 = try dayFromKey("01012026");
+
+    try testing.expectEqual(day0, store.partitions.items[0].day);
+    try testing.expectEqual(day1, store.partitions.items[1].day);
+    try testing.expectEqual(day2, store.partitions.items[2].day);
+
+    const lru = store.lruPartition orelse return error.TestExpectedPartition;
+    try testing.expectEqual(day2, lru.day);
 }
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
