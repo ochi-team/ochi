@@ -489,22 +489,22 @@ fn mergeTables(
     var newMemTable: ?*MemTable = null;
     const blockWriter = try BlockWriter.init(alloc);
     defer blockWriter.deinit(alloc);
-    var streamWriter: *StreamWriter = undefined;
-    // TODO: remove this shame after rmoving writer from mem table
-    var ownedStreamWriter: ?*StreamWriter = null;
-    defer if (ownedStreamWriter) |w| w.deinit(alloc);
-    if (tableKind == .mem) {
-        newMemTable = try MemTable.init(alloc);
-        streamWriter = newMemTable.?.streamWriter;
-    } else {
-        var sourceCompressedSizeTotal: u64 = 0;
-        for (tables) |table| {
-            sourceCompressedSizeTotal += table.tableHeader.compressedSize;
+
+    const streamWriter: *StreamWriter = blk: {
+        if (tableKind == .mem) {
+            newMemTable = try MemTable.init(alloc);
+            break :blk newMemTable.?.streamWriter;
+        } else {
+            var sourceCompressedSizeTotal: u64 = 0;
+            for (tables) |table| {
+                sourceCompressedSizeTotal += table.tableHeader.compressedSize;
+            }
+            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
+            break :blk try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
-        const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
-        streamWriter = try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
-        ownedStreamWriter = streamWriter;
-    }
+    };
+    // TODO: remove this shame after rmoving writer from mem table
+    defer if (tableKind != .mem) streamWriter.deinit(alloc);
 
     // TODO: handle error.Stopped and remove the table if it's created before shutdown
     const tableHeader = try mergeData(alloc, streamWriter, &readers, stopped);

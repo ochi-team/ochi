@@ -465,16 +465,17 @@ test "BlockReader.initFromMemTable reads items" {
         const block1 = try createTestMemBlockWithMax(alloc, block1_items_for_case, case.maxMemBlockSize);
         defer if (!case.useMultiBlock) block1.deinit(alloc);
 
-        var memTable: *MemTable = undefined;
-        var block2: ?*MemBlock = null;
-        if (case.useMultiBlock) {
-            block2 = try createTestMemBlockWithMax(alloc, block2_items, itemsTotalSize(block2_items) + 16);
-            var blocks = [_]*MemBlock{ block1, block2.? };
-            memTable = try MemTable.init(alloc, blocks[0..]);
-        } else {
-            var blocks = [_]*MemBlock{block1};
-            memTable = try MemTable.init(alloc, blocks[0..]);
-        }
+        var memTable: *MemTable = blk: {
+            var block2: ?*MemBlock = null;
+            if (case.useMultiBlock) {
+                block2 = try createTestMemBlockWithMax(alloc, block2_items, itemsTotalSize(block2_items) + 16);
+                var blocks = [_]*MemBlock{ block1, block2.? };
+                break :blk try MemTable.init(alloc, blocks[0..]);
+            } else {
+                var blocks = [_]*MemBlock{block1};
+                break :blk try MemTable.init(alloc, blocks[0..]);
+            }
+        };
         defer memTable.deinit(alloc);
 
         var reader = try BlockReader.initFromMemTable(alloc, memTable);
