@@ -33,8 +33,8 @@ pub const StreamReader = struct {
     bloomTokensList: std.ArrayList([]const u8),
 
     // TODO: decode manually when it comes to file reader
-    columnIDGen: *const ColumnIDGen,
-    colIdx: *const std.AutoHashMap(u16, u16),
+    columnIDGen: *ColumnIDGen,
+    colIdx: *std.AutoHashMap(u16, u16),
 
     // TODO: this flag doesn't look smart,
     // there must be a better idea to track ownership
@@ -154,7 +154,7 @@ pub const StreamReader = struct {
 
         var columnIDGen: *ColumnIDGen = undefined;
         if (columnsKeysBuf.len > 0) {
-            columnIDGen = try ColumnIDGen.decode(alloc, @constCast(columnsKeysBuf));
+            columnIDGen = try ColumnIDGen.decode(alloc, columnsKeysBuf);
         } else {
             columnIDGen = try ColumnIDGen.init(alloc);
         }
@@ -215,16 +215,13 @@ pub const StreamReader = struct {
         }
         self.bloomTokensList.deinit(allocator);
 
-        // TODO: audit and get rid of all @constCast
-        allocator.free(@constCast(self.columnsKeysBuf));
-        allocator.free(@constCast(self.columnIdxsBuf));
+        allocator.free(self.columnsKeysBuf);
+        allocator.free(self.columnIdxsBuf);
 
-        const columnIDGen = @constCast(self.columnIDGen);
-        columnIDGen.deinit(allocator);
+        self.columnIDGen.deinit(allocator);
 
-        const colIdx = @constCast(self.colIdx);
-        colIdx.deinit();
-        allocator.destroy(colIdx);
+        self.colIdx.deinit();
+        allocator.destroy(self.colIdx);
 
         allocator.destroy(self);
     }

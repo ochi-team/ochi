@@ -33,7 +33,7 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 
 // TODO: rename to encodeAlloc, implement 2 methods as replacement: bound and encode.
 // the purpose is to being able to reuse a buffer across encodings
-pub fn encode(self: *Self, allocator: std.mem.Allocator, tss: []u64) !EncodedTimestamps {
+pub fn encode(self: *Self, allocator: std.mem.Allocator, tss: []const u64) !EncodedTimestamps {
     const len: u32 = @intCast(tss.len);
 
     const compress_buf = try allocator.alloc(u8, zType.deltapack_compress_bound(len));
@@ -66,7 +66,7 @@ test "TimestampsEncoder" {
         const enc = try Self.init(alloc);
         defer enc.deinit(alloc);
 
-        const res = try enc.encode(alloc, @constCast(case.input));
+        const res = try enc.encode(alloc, case.input);
         defer alloc.free(res.buf);
         try std.testing.expectEqual(EncodingType.ZDeltapack, res.encodingType);
 
