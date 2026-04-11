@@ -21,8 +21,18 @@ fn handleSigterm(_: c_int) callconv(.c) void {
     }
 }
 
+// TODO: make it configurable
+const storePath = ".ochi";
+
 pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
-    const store = try Store.init(allocator, ".ochi");
+    std.fs.cwd().makeDir(storePath) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try std.fs.cwd().realpath(storePath, &storePathBuf);
+
+    const store = try Store.init(allocator, path);
     defer store.deinit(allocator);
     const processor = try Processor.init(allocator, store);
     defer processor.deinit(allocator);

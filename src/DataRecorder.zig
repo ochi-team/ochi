@@ -118,6 +118,9 @@ path: []const u8,
 // identify whether they match the data
 // TODO: pass a common thread pool to data and index
 pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder {
+    std.debug.assert(std.fs.path.isAbsolute(path));
+    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
     std.debug.assert(concurrency != 0);
 
     const conf = Conf.getConf();
@@ -143,14 +146,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    // TODO: move it to the config level and pass path as trimmed
-    var trimmedPath = path[0..];
-    if (std.fs.path.isSep(path[path.len - 1])) {
-        trimmedPath = trimmedPath[0 .. trimmedPath.len - 1];
-    }
-    std.debug.assert(std.fs.path.isAbsolute(trimmedPath));
-
-    var tables = try Table.openAll(alloc, trimmedPath);
+    var tables = try Table.openAll(alloc, path);
     errdefer {
         for (tables.items) |table| table.close();
         tables.deinit(alloc);
@@ -175,7 +171,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
 
         .pool = pool,
         .stopped = std.atomic.Value(bool).init(false),
-        .path = trimmedPath,
+        .path = path,
     };
 
     for (0..concurrency) |_| {
@@ -629,28 +625,6 @@ fn countDiskLinesInRecorder(recorder: *DataRecorder) u64 {
         n += table.tableHeader.len;
     }
     return n;
-}
-
-test "DataRecorder init and close empty dir, trim slash" {
-    const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
-    defer alloc.free(rootPath);
-    const pathWithSlash = try std.mem.concat(alloc, u8, &.{ rootPath, std.fs.path.sep_str });
-    defer alloc.free(pathWithSlash);
-
-    const recorder = try DataRecorder.init(alloc, pathWithSlash, 4);
-
-    try testing.expectEqual(@as(usize, 0), recorder.diskTables.items.len);
-    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
-    try testing.expectEqual(@as(usize, 0), countMemLinesInRecorder(recorder));
-    try testing.expect(std.mem.eql(u8, recorder.path, rootPath));
-
-    try recorder.stop(alloc);
 }
 
 test "flushDataShards non-force respects flush deadline" {

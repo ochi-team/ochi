@@ -3,6 +3,9 @@ const Allocator = std.mem.Allocator;
 
 const zeit = @import("zeit");
 
+const fs = @import("fs.zig");
+
+const Cache = @import("stds/Cache.zig");
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
 
@@ -12,24 +15,39 @@ const Conf = @import("Conf.zig");
 
 pub const Store = struct {
     path: []const u8,
+    /// lockFile is used to ensure only one instance is running
+    /// in order to prevent data corruption
+    lockFile: std.fs.File,
 
     partitionsMx: std.Thread.Mutex = .{},
     partitions: std.ArrayList(*Partition) = .empty,
     lruPartition: ?*Partition = null,
 
+    /// streamCache is a stream id cache for ingestion,
+    /// shared across all partitions, injected from a store to them
+    streamCache: *Cache.StreamCache,
+
     /// pathsBuf holds a garbage of created paths for partitions and it's tables
     pathsBuf: std.ArrayList([]const u8) = .empty,
 
     pub fn init(alloc: Allocator, path: []const u8) !*Store {
+        std.debug.assert(std.fs.path.isAbsolute(path));
+        std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
+        try createStoreDirIfNotExists(path);
+
+        const file = try createLockFile(path);
+        errdefer file.close();
+
+        var streamCache = try Cache.StreamCache.init(alloc);
+        errdefer streamCache.deinit();
+
         const store = try alloc.create(Store);
         store.* = .{
             .path = path,
+            .lockFile = file,
+            .streamCache = streamCache,
         };
-        // truncate separator
-        // TODO: do it outside
-        if (path[store.path.len - 1] == std.fs.path.sep_str[0]) {
-            store.path = path[0 .. path.len - 1];
-        }
         return store;
     }
 
@@ -43,7 +61,44 @@ pub const Store = struct {
             allocator.free(path);
         }
         self.pathsBuf.deinit(allocator);
+        self.streamCache.deinit();
+
+        self.lockFile.close();
         allocator.destroy(self);
+    }
+
+    pub fn createStoreDirIfNotExists(path: []const u8) !void {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const partitionsPath = try std.fmt.bufPrint(
+            &buf,
+            "{s}{c}{s}",
+            .{ path, std.fs.path.sep, Filenames.partitions },
+        );
+        std.fs.accessAbsolute(path, .{}) catch |err| {
+            switch (err) {
+                error.FileNotFound => {
+                    createDir(path, partitionsPath);
+                    return;
+                },
+                else => return err,
+            }
+        };
+        std.fs.accessAbsolute(partitionsPath, .{}) catch |err| {
+            switch (err) {
+                error.FileNotFound => {
+                    fs.makeDirAssert(partitionsPath);
+                    fs.syncPathAndParentDir(path);
+                },
+                else => return err,
+            }
+        };
+    }
+
+    pub fn createDir(path: []const u8, partitionsPath: []const u8) void {
+        fs.makeDirAssert(path);
+        fs.makeDirAssert(partitionsPath);
+
+        fs.syncPathAndParentDir(path);
     }
 
     pub fn addLines(
@@ -131,7 +186,7 @@ pub const Store = struct {
         try self.partitions.ensureUnusedCapacity(alloc, 1);
         try self.pathsBuf.ensureUnusedCapacity(alloc, 3);
 
-        const partition = try Partition.open(alloc, path, indexPath, dataPath, day);
+        const partition = try Partition.open(alloc, path, indexPath, dataPath, day, self.streamCache);
 
         self.pathsBuf.appendAssumeCapacity(path);
         self.pathsBuf.appendAssumeCapacity(indexPath);
@@ -162,6 +217,39 @@ fn partitionKeyBuf(buf: []u8, day: u64) ![]u8 {
     return std.fmt.bufPrint(buf, "{d:0>2}{d:0>2}{d:0>4}", .{ time.day, time.month, @as(u32, @intCast(time.year)) });
 }
 
+fn createLockFile(path: []const u8) !std.fs.File {
+    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
+    var lockFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const lockFilePath = try std.fmt.bufPrint(
+        &lockFilePathBuf,
+        "{s}{c}{s}",
+        .{ path, std.fs.path.sep, Filenames.lock },
+    );
+
+    // TODO: test locking mechanic carefully, perhaps we need to apply the statements below,
+    // we must also test it with different devices: block, s3 fs, nfs (ceph), etc.
+    // read "man flock" for details
+    var file = try std.fs.createFileAbsolute(lockFilePath, .{ .lock = .exclusive });
+    errdefer file.close();
+
+    // var i: u8 = 0;
+    // while (i < 5) : (i += 1) {
+    //     std.posix.flock(file.handle, std.posix.LOCK.EX | std.posix.LOCK.NB) catch |err| {
+    //         switch (err) {
+    //             // repeat once again
+    //             error.WouldBlock => std.Thread.sleep(std.time.ns_per_ms * 200),
+    //             else => std.debug.panic(
+    //                 "Failed to acquire lock on the store, another instance might be running, error: {s}",
+    //                 .{@errorName(err)},
+    //             ),
+    //         }
+    //     };
+    // }
+
+    return file;
+}
+
 test "partitionKeyFormat" {
     const inst = try zeit.instant(.{ .source = .{ .time = .{
         .day = 1,
@@ -174,6 +262,48 @@ test "partitionKeyFormat" {
     const keySlice = try partitionKeyBuf(&key, @intCast(day));
     try testing.expectEqualStrings("01012026", key[0..]);
     try testing.expectEqualStrings("01012026", keySlice);
+}
+
+test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
+    const alloc = testing.allocator;
+
+    const Case = struct {
+        createStoreDir: bool,
+        createPartitionsDir: bool,
+    };
+
+    const cases = [_]Case{
+        .{ .createStoreDir = false, .createPartitionsDir = false },
+        .{ .createStoreDir = true, .createPartitionsDir = false },
+        .{ .createStoreDir = true, .createPartitionsDir = true },
+    };
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    for (cases, 0..) |case, i| {
+        var storeNameBuf: [32]u8 = undefined;
+        const storeName = try std.fmt.bufPrint(&storeNameBuf, "store-{d}", .{i});
+
+        const storePath = try std.fs.path.join(alloc, &.{ rootPath, storeName });
+        defer alloc.free(storePath);
+        const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, Filenames.partitions });
+        defer alloc.free(partitionsPath);
+
+        if (case.createStoreDir) {
+            try std.fs.makeDirAbsolute(storePath);
+        }
+        if (case.createPartitionsDir) {
+            try std.fs.makeDirAbsolute(partitionsPath);
+        }
+
+        try Store.createStoreDirIfNotExists(storePath);
+
+        try testing.expect(try fs.pathExists(storePath));
+        try testing.expect(try fs.pathExists(partitionsPath));
+    }
 }
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {

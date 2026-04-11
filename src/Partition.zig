@@ -35,9 +35,21 @@ key: []const u8,
 index: *Index,
 data: *DataRecorder,
 
+/// stream cache for ingestion, shared across all partitions,
+/// so the partition doesn't own it
 streamCache: *Cache.StreamCache,
 
-pub fn open(alloc: Allocator, path: []const u8, indexPath: []const u8, dataPath: []const u8, day: u64) !*Partition {
+pub fn open(
+    alloc: Allocator,
+    path: []const u8,
+    indexPath: []const u8,
+    dataPath: []const u8,
+    day: u64,
+    streamCache: *Cache.StreamCache,
+) !*Partition {
+    std.debug.assert(std.fs.path.isAbsolute(path));
+    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
     const conf = Conf.getConf();
 
     const partitionKey = std.fs.path.basename(path);
@@ -70,9 +82,6 @@ pub fn open(alloc: Allocator, path: []const u8, indexPath: []const u8, dataPath:
     const data = try DataRecorder.init(alloc, dataPath, conf.server.pools.cpus);
     errdefer data.deinit(alloc);
 
-    var streamCache = try Cache.StreamCache.init(alloc);
-    errdefer streamCache.deinit();
-
     const partition = try alloc.create(Partition);
     partition.* = Partition{
         .day = day,
@@ -92,7 +101,6 @@ pub fn close(self: *Partition, allocator: Allocator) void {
     self.data.stop(allocator) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
-    self.streamCache.deinit();
     allocator.destroy(self);
 }
 

@@ -82,7 +82,9 @@ mergeIdx: std.atomic.Value(u64),
 path: []const u8,
 
 pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*IndexRecorder {
-    std.debug.assert(path.len > 0);
+    std.debug.assert(std.fs.path.isAbsolute(path));
+    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
     const conf = Conf.getConf();
 
     const entries = try Entries.init(alloc, concurrency);
@@ -106,14 +108,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*IndexRecorde
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    // TODO: move it to the config level and pass path as trimmed
-    var trimmedPath = path[0..];
-    if (std.fs.path.isSep(path[path.len - 1])) {
-        trimmedPath = trimmedPath[0 .. trimmedPath.len - 1];
-    }
-    std.debug.assert(std.fs.path.isAbsolute(trimmedPath));
-
-    var tables = try Table.openAll(alloc, trimmedPath);
+    var tables = try Table.openAll(alloc, path);
     errdefer {
         for (tables.items) |table| table.close();
         tables.deinit(alloc);
@@ -129,7 +124,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*IndexRecorde
         .diskTables = tables,
         .memTables = memTables,
         .mergeIdx = .init(@intCast(std.time.nanoTimestamp())),
-        .path = trimmedPath,
+        .path = path,
         .concurrency = concurrency,
         .diskMergeSem = .{
             .permits = @max(4, concurrency),
@@ -805,28 +800,6 @@ fn countDiskItemsInRecorder(recorder: *IndexRecorder) u64 {
 const stableItems = [_][]const u8{
     "item-a", "item-b", "item-c", "item-d", "item-e", "item-f", "item-g", "item-h",
 };
-
-test "IndexRecorder init and close empty dir, trim slash" {
-    const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
-    defer alloc.free(rootPath);
-    const pathWithSlash = try std.mem.concat(alloc, u8, &.{ rootPath, std.fs.path.sep_str });
-    defer alloc.free(pathWithSlash);
-
-    const recorder = try IndexRecorder.init(alloc, pathWithSlash, 4);
-
-    try testing.expectEqual(@as(usize, 0), recorder.diskTables.items.len);
-    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
-    try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
-    try testing.expect(std.mem.eql(u8, recorder.path, rootPath));
-
-    try recorder.stop(alloc);
-}
 
 test "flushMemEntries non-force respects flush deadline" {
     const alloc = testing.allocator;

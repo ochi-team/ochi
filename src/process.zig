@@ -132,12 +132,19 @@ pub const Processor = struct {
         // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
         const nowNs: u64 = @intCast(std.time.nanoTimestamp());
         const minDay = (nowNs - retentionNs) / std.time.ns_per_day;
+        // limit the incoming logs to now + 1 day,
+        // in case an ingestor sends data with broken timezone or timestamp
+        const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
 
         var linesByInterval = std.AutoHashMap(u64, std.ArrayList(Line)).init(allocator);
 
         for (self.lines) |line| {
             const day = line.timestampNs / std.time.ns_per_day;
             if (day < minDay) {
+                // TODO: log a warning
+                continue;
+            }
+            if (day > maxDay) {
                 // TODO: log a warning
                 continue;
             }
@@ -151,6 +158,11 @@ pub const Processor = struct {
             try list.append(allocator, line);
         }
 
-        try self.store.addLines(allocator, linesByInterval, self.tags[0], self.encodedTags.buf[0..self.encodedTags.offset]);
+        try self.store.addLines(
+            allocator,
+            linesByInterval,
+            self.tags[0],
+            self.encodedTags.buf[0..self.encodedTags.offset],
+        );
     }
 };

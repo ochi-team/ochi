@@ -19,3 +19,5 @@ pub const tables = "tables.json";
 pub const indexTables = "index";
 pub const dataTables = "data";
 pub const partitions = "partitions";
+
+pub const lock = "lock";

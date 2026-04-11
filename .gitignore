@@ -12,3 +12,6 @@ simulator/k6
 # IDEs
 .vscode
 .idea/
+
+# default ochi store path
+.ochi/
