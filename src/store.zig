@@ -80,7 +80,8 @@ pub const Store = struct {
             _ = try store.openPartition(alloc, partitionPath, indexPath, dataPath, day);
         }
 
-        std.sort.pdq(*Partition, partitions.items, {}, Partition.lessThan);
+        std.mem.sortUnstable(*Partition, partitions.items, {}, Partition.lessThan);
+
         store.lruPartition = if (store.partitions.items.len > 0)
             store.partitions.items[store.partitions.items.len - 1]
         else
@@ -210,6 +211,8 @@ pub const Store = struct {
         return partition;
     }
 
+    // TODO: when we get rid of pathsBuf we can path only partitions ref,
+    // therefore make store init returning the store in the end
     fn openPartition(
         self: *Store,
         alloc: Allocator,
