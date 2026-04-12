@@ -1,4 +1,4 @@
-pub const InsertError = error {
+pub const InsertError = error{
     EmptyBody,
     MaxBodySize,
     DecompressFailed,

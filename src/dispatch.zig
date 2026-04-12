@@ -27,7 +27,7 @@ pub const Dispatcher = struct {
             .tenantID = tenantID,
         };
 
-        if (! tenant.isValidID(ctx.tenantID)) {
+        if (!tenant.isValidID(ctx.tenantID)) {
             res.status = 400;
             res.body = "tenant id is invalid";
             return;
