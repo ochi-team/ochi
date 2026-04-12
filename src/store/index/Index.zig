@@ -4,6 +4,8 @@ const Allocator = std.mem.Allocator;
 const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
+const Query = @import("../query.zig").Query;
+
 const Lookup = @import("lookup/Lookup.zig");
 
 const Encoder = @import("encoding").Encoder;
@@ -103,4 +105,13 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     }
 
     try self.recorder.add(alloc, entries);
+}
+
+pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(SID) {
+    _ = self;
+    _ = alloc;
+    _ = tenantID;
+    _ = query;
+
+    return .empty;
 }

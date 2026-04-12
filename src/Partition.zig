@@ -200,11 +200,13 @@ pub fn addLines(
 }
 
 pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
-    _ = self;
-    _ = alloc;
-    _ = tenantID;
-    _ = query;
-    return .empty;
+    // TODO: query cancelation
+    // TODO: cache query => stream
+
+    var streamIDs = try self.index.queryStreams(alloc, tenantID, query);
+    defer streamIDs.deinit(alloc);
+
+    return self.data.queryLines(alloc, streamIDs.items, query);
 }
 
 fn isCached(self: *Partition, sid: SID) bool {

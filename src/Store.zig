@@ -203,6 +203,8 @@ pub fn addLines(
 }
 
 pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
+    // TODO: query cancelation
+
     self.partitionsMx.lock();
 
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);

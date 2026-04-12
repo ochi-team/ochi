@@ -7,6 +7,8 @@ const fs = @import("fs.zig");
 
 const Conf = @import("Conf.zig");
 const Line = @import("store/lines.zig").Line;
+const Query = @import("store/query.zig").Query;
+const SID = @import("store/lines.zig").SID;
 
 const MemTable = @import("store/inmem/MemTable.zig");
 const BlockWriter = @import("store/inmem/BlockWriter.zig");
@@ -542,6 +544,14 @@ pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size
     } else if (shard.flushAtUs == null) {
         shard.flushAtUs = setFlushTime();
     }
+}
+
+pub fn queryLines(self: *DataRecorder, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
+    _ = self;
+    _ = alloc;
+    _ = sids;
+    _ = query;
+    return .empty;
 }
 
 fn openCreatedTable(
