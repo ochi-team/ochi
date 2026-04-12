@@ -12,7 +12,7 @@ const maxValuesBlockSize = @import("BlockData.zig").maxValuesBlockSize;
 const maxBloomTokensBlockSize = @import("BlockData.zig").maxBloomTokensBlockSize;
 const Column = @import("Column.zig");
 const MemTable = @import("MemTable.zig");
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 const BlockHeader = @import("block_header.zig").BlockHeader;
 const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
@@ -158,23 +158,23 @@ pub fn initDisk(alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
 
     // TODO: banch of openings are duplicated across index and data file,
     // it's better to have them all together as DataBuffers, DataFiles, etc.
-    const columnKeysPath = try std.fs.path.join(fba, &.{ path, Filenames.columnKeys });
+    const columnKeysPath = try std.fs.path.join(fba, &.{ path, filenames.columnKeys });
     defer fba.free(columnKeysPath);
-    const columnIdxsPath = try std.fs.path.join(fba, &.{ path, Filenames.columnIdxs });
+    const columnIdxsPath = try std.fs.path.join(fba, &.{ path, filenames.columnIdxs });
     defer fba.free(columnIdxsPath);
-    const metaindexPath = try std.fs.path.join(fba, &.{ path, Filenames.metaindex });
+    const metaindexPath = try std.fs.path.join(fba, &.{ path, filenames.metaindex });
     defer fba.free(metaindexPath);
-    const indexPath = try std.fs.path.join(fba, &.{ path, Filenames.index });
+    const indexPath = try std.fs.path.join(fba, &.{ path, filenames.index });
     defer fba.free(indexPath);
-    const columnsHeaderIndexPath = try std.fs.path.join(fba, &.{ path, Filenames.columnsHeaderIndex });
+    const columnsHeaderIndexPath = try std.fs.path.join(fba, &.{ path, filenames.columnsHeaderIndex });
     defer fba.free(columnsHeaderIndexPath);
-    const columnsHeaderPath = try std.fs.path.join(fba, &.{ path, Filenames.columnsHeader });
+    const columnsHeaderPath = try std.fs.path.join(fba, &.{ path, filenames.columnsHeader });
     defer fba.free(columnsHeaderPath);
-    const timestampsPath = try std.fs.path.join(fba, &.{ path, Filenames.timestamps });
+    const timestampsPath = try std.fs.path.join(fba, &.{ path, filenames.timestamps });
     defer fba.free(timestampsPath);
-    const messageBloomTokensPath = try std.fs.path.join(fba, &.{ path, Filenames.messageTokens });
+    const messageBloomTokensPath = try std.fs.path.join(fba, &.{ path, filenames.messageTokens });
     defer fba.free(messageBloomTokensPath);
-    const messageBloomValuesPath = try std.fs.path.join(fba, &.{ path, Filenames.messageValues });
+    const messageBloomValuesPath = try std.fs.path.join(fba, &.{ path, filenames.messageValues });
     defer fba.free(messageBloomValuesPath);
 
     var columnKeysFile = try std.fs.createFileAbsolute(columnKeysPath, .{ .truncate = true, .read = true });

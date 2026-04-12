@@ -13,7 +13,7 @@ const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 
 const Conf = @import("Conf.zig");
-const Filenames = @import("Filenames.zig");
+const filenames = @import("filenames.zig");
 const fs = @import("fs.zig");
 
 fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {

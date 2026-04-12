@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const fs = @import("../../fs.zig");
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 
 const maxFileBytes = 16 * 1024 * 1024;
 
@@ -34,7 +34,7 @@ pub fn writeFile(
 
     const metadataPath = try std.fs.path.join(
         allocator,
-        &.{ path, Filenames.header },
+        &.{ path, filenames.header },
     );
     defer allocator.free(metadataPath);
 
@@ -50,7 +50,7 @@ pub fn readFile(
 
     const metadataPath = try std.fs.path.join(
         fbaAlloc,
-        &.{ path, Filenames.header },
+        &.{ path, filenames.header },
     );
     defer fbaAlloc.free(metadataPath);
 

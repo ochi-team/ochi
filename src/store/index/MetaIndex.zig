@@ -5,7 +5,7 @@ const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 const Encoder = encoding.Encoder;
 
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 
 const MetaIndex = @This();
 
@@ -64,7 +64,7 @@ pub fn readFile(alloc: Allocator, path: []const u8, blocksCount: u64) !DecodedMe
     var fba = std.heap.stackFallback(256, alloc);
     const fbaAlloc = fba.get();
 
-    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
+    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
     defer fbaAlloc.free(metaindexPath);
     var metaindexFile = try std.fs.openFileAbsolute(metaindexPath, .{});
     defer metaindexFile.close();
@@ -213,7 +213,7 @@ test "MetaIndex roundtrip file read/write" {
     defer alloc.free(compressed);
     const compressedLen = try encoding.compressAuto(compressed, uncompressed.items);
 
-    const metaindexPath = try std.fs.path.join(alloc, &.{ tablePath, Filenames.metaindex });
+    const metaindexPath = try std.fs.path.join(alloc, &.{ tablePath, filenames.metaindex });
     defer alloc.free(metaindexPath);
 
     var file = try std.fs.createFileAbsolute(metaindexPath, .{ .truncate = true });

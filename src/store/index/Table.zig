@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
@@ -67,7 +67,7 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
 
     // read table names,
     // they are given either from a file or listed directories in the path
-    const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, Filenames.tables });
+    const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, filenames.tables });
     defer alloc.free(tablesFilePath);
     var tableNames = try catalog.readNames(alloc, tablesFilePath, true);
     defer tableNames.deinit(alloc);
@@ -105,11 +105,11 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.index });
+    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
     defer fbaAlloc.free(indexPath);
-    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.entries });
+    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.entries });
     defer fbaAlloc.free(entriesPath);
-    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.lens });
+    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
     defer fbaAlloc.free(lensPath);
 
     var indexFile = try std.fs.openFileAbsolute(indexPath, .{});
@@ -251,7 +251,7 @@ pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror
     });
     defer fba.free(data);
 
-    const tablesFilePath = try std.fs.path.join(fba, &.{ path, Filenames.tables });
+    const tablesFilePath = try std.fs.path.join(fba, &.{ path, filenames.tables });
     defer fba.free(tablesFilePath);
 
     try fs.writeBufferToFileAtomic(tablesFilePath, data, true);
@@ -422,13 +422,13 @@ test "open reads table from disk" {
 
     try testing.expect(table.disk != null);
 
-    const expectedIndex = try readTestTableFile(alloc, tablePath, Filenames.index);
+    const expectedIndex = try readTestTableFile(alloc, tablePath, filenames.index);
     defer alloc.free(expectedIndex);
-    const expectedEntries = try readTestTableFile(alloc, tablePath, Filenames.entries);
+    const expectedEntries = try readTestTableFile(alloc, tablePath, filenames.entries);
     defer alloc.free(expectedEntries);
-    const expectedLens = try readTestTableFile(alloc, tablePath, Filenames.lens);
+    const expectedLens = try readTestTableFile(alloc, tablePath, filenames.lens);
     defer alloc.free(expectedLens);
-    const expectedMetaindexCompressed = try readTestTableFile(alloc, tablePath, Filenames.metaindex);
+    const expectedMetaindexCompressed = try readTestTableFile(alloc, tablePath, filenames.metaindex);
     defer alloc.free(expectedMetaindexCompressed);
 
     try testing.expectEqualSlices(u8, expectedIndex, table.indexBuf);

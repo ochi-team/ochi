@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
 
 const fs = @import("../../fs.zig");
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 
 const BlockHeader = @import("BlockHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
@@ -88,13 +88,13 @@ pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitsInCache: bool) 
     const fbaAlloc = fba.get();
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.index });
+    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
     defer fbaAlloc.free(indexPath);
-    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.entries });
+    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.entries });
     defer fbaAlloc.free(entriesPath);
-    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.lens });
+    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
     defer fbaAlloc.free(lensPath);
-    const metaIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
+    const metaIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
     defer fbaAlloc.free(metaIndexPath);
 
     var indexFile = try std.fs.createFileAbsolute(indexPath, .{ .truncate = true });
@@ -311,13 +311,13 @@ test "BlockWriter disk output matches mem output" {
     try diskWriter.writeBlock(alloc, blockTwo);
     try diskWriter.close(alloc);
 
-    const entries = try readTableFile(alloc, tablePath, Filenames.entries);
+    const entries = try readTableFile(alloc, tablePath, filenames.entries);
     defer alloc.free(entries);
-    const lens = try readTableFile(alloc, tablePath, Filenames.lens);
+    const lens = try readTableFile(alloc, tablePath, filenames.lens);
     defer alloc.free(lens);
-    const index = try readTableFile(alloc, tablePath, Filenames.index);
+    const index = try readTableFile(alloc, tablePath, filenames.index);
     defer alloc.free(index);
-    const metaindex = try readTableFile(alloc, tablePath, Filenames.metaindex);
+    const metaindex = try readTableFile(alloc, tablePath, filenames.metaindex);
     defer alloc.free(metaindex);
 
     try testing.expectEqualSlices(u8, memTable.entriesBuf.items, entries);

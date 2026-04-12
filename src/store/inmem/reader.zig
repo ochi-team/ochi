@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const encoding = @import("encoding");
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 
 const SID = @import("../lines.zig").SID;
@@ -84,23 +84,23 @@ pub const StreamReader = struct {
         const fbaAlloc = fba.get();
 
         // TODO: open files in parallel to speed up high-latency storage.
-        const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnIdxs });
+        const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
         defer fbaAlloc.free(columnIdxsPath);
-        const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
+        const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
         defer fbaAlloc.free(metaindexPath);
-        const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.index });
+        const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
         defer fbaAlloc.free(indexPath);
-        const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnsHeaderIndex });
+        const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeaderIndex });
         defer fbaAlloc.free(columnsHeaderIndexPath);
-        const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnsHeader });
+        const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeader });
         defer fbaAlloc.free(columnsHeaderPath);
-        const timestampsPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.timestamps });
+        const timestampsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.timestamps });
         defer fbaAlloc.free(timestampsPath);
-        const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageTokens });
+        const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageTokens });
         defer fbaAlloc.free(messageBloomTokensPath);
-        const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageValues });
+        const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageValues });
         defer fbaAlloc.free(messageBloomValuesPath);
-        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnKeys });
+        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnKeys });
         defer fbaAlloc.free(columnNamesPath);
 
         const columnIdxsBuf = try fs.readAll(alloc, columnIdxsPath);
