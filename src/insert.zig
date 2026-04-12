@@ -35,7 +35,8 @@ pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response)
     defer res.arena.free(uncompressed);
 
     const params = Params{ .tenantID = ctx.tenantID };
-    process(res.arena, uncompressed, params, ctx.processor) catch
+
+    process(res.arena, ctx, uncompressed, params) catch
         return InsertError.FailedToProccess;
 
     res.status = 200;
@@ -47,15 +48,12 @@ pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) 
     res.body = "ready";
 }
 
-fn process(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
-    try parseJson(allocator, data, params, processor);
-    if (processor.mustFlush()) {
-        try processor.flush(allocator);
-    }
+fn process(alloc: std.mem.Allocator, ctx: *AppContext, data: []const u8, params: Params) !void {
+    try parseJson(alloc, ctx, data, params);
 }
 
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
-fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, processor: *Processor) !void {
+fn parseJson(allocator: std.mem.Allocator, ctx: *AppContext, data: []const u8, params: Params) !void {
     // TODO: consider implementing a zero allocation json parsing
 
     // FIXME: allocator there is a request arena, so the labels values disappear when the request is done
@@ -95,6 +93,9 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
         labels = try std.ArrayList(Field).initCapacity(allocator, labelSize);
     }
 
+    var processor = Processor.empty(ctx.store);
+    defer processor.deinit(allocator);
+
     // Iterate through each stream
     for (streams.array.items) |stream| {
         if (stream != .object) return error.StreamNotObject;
@@ -112,7 +113,9 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
             }
         }
 
-        const streamLabelsLen = labels.items.len;
+        const tagsLen = labels.items.len;
+
+        try processor.reinit(allocator, labels.items, params.tenantID);
 
         // Parse "values" array
         const values = stream.object.get("values") orelse return error.MissingValues;
@@ -156,14 +159,15 @@ fn parseJson(allocator: std.mem.Allocator, data: []const u8, params: Params, pro
             // it requires 2 more options: parseJsonMsg and msgField,
             // first defines whether the parins is required,
             // second is optional and defines what field in the given json is read as a _msg field
-            try labels.append(allocator, .{ .key = "_msg", .value = msg });
+            try labels.append(allocator, .{ .key = "", .value = msg });
 
-            const tags = labels.items[0 .. labels.items.len - 1]; // -1 cuts _msg off
-            try processor.pushLine(allocator, tsNs, labels.items, tags, params);
+            try processor.pushLine(allocator, tsNs, labels.items);
 
             // clean value labels, but retain stream labels
-            labels.items.len = streamLabelsLen;
+            labels.items.len = tagsLen;
         }
+
+        try processor.flush(allocator);
 
         // clean len of the labels len, but retain allocated memory
         labels.clearRetainingCapacity();

@@ -6,28 +6,35 @@ const AppConfig = @import("Conf.zig").AppConfig;
 const Processor = @import("process.zig").Processor;
 const tenant = @import("store/tenant.zig");
 
+const Store = @import("store.zig").Store;
+
 const InsertError = @import("server/error.zig").InsertError;
 
 pub const AppContext = struct {
     conf: AppConfig,
-    processor: *Processor,
     tenantID: tenant.TenantID,
+    store: *Store,
 };
 
 pub const Dispatcher = struct {
     conf: AppConfig,
-    processor: *Processor,
+    store: *Store,
 
-    pub fn dispatch(self: *Dispatcher, action: httpz.Action(*AppContext), req: *httpz.Request, res: *httpz.Response) !void {
+    pub fn dispatch(
+        self: *Dispatcher,
+        action: httpz.Action(*AppContext),
+        req: *httpz.Request,
+        res: *httpz.Response,
+    ) void {
         const tenantID: tenant.TenantID = req.headers.get("X-Scope-OrgID") orelse "default";
 
         var ctx = AppContext{
             .conf = self.conf,
-            .processor = self.processor,
             .tenantID = tenantID,
+            .store = self.store,
         };
 
-        if (! tenant.isValidID(ctx.tenantID)) {
+        if (!tenant.isValidID(ctx.tenantID)) {
             res.status = 400;
             res.body = "tenant id is invalid";
             return;

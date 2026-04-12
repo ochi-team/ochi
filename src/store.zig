@@ -135,14 +135,46 @@ pub const Store = struct {
         fs.syncPathAndParentDir(path);
     }
 
+    // TODO: make it configurable
+    const retentionNs: u64 = 30 * std.time.ns_per_day;
     pub fn addLines(
         self: *Store,
         allocator: Allocator,
-        lines: std.AutoHashMap(u64, std.ArrayList(Line)),
+        lines: []Line,
         tags: []Field,
         encodedTags: []const u8,
     ) !void {
-        var linesIterator = lines.iterator();
+        // TODO: make partition interval configurable
+        // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
+        const nowNs: u64 = @intCast(std.time.nanoTimestamp());
+        const minDay = (nowNs - retentionNs) / std.time.ns_per_day;
+        // limit the incoming logs to now + 1 day,
+        // in case an ingestor sends data with broken timezone or timestamp
+        const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
+
+        var linesByInterval = std.AutoHashMap(u64, std.ArrayList(Line)).init(allocator);
+
+        for (lines) |line| {
+            const day = line.timestampNs / std.time.ns_per_day;
+            if (day < minDay) {
+                // TODO: log a warning
+                continue;
+            }
+            if (day > maxDay) {
+                // TODO: log a warning
+                continue;
+            }
+
+            if (linesByInterval.getPtr(day)) |list| {
+                try list.append(allocator, line);
+                continue;
+            }
+            var list = std.ArrayList(Line).empty;
+            try list.append(allocator, line);
+            try linesByInterval.put(day, list);
+        }
+
+        var linesIterator = linesByInterval.iterator();
         while (linesIterator.next()) |it| {
             const day = it.key_ptr.*;
 

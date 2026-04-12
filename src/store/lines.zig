@@ -227,6 +227,20 @@ pub const Field = struct {
     }
 };
 
+pub const LinesSize = struct {
+    size: u32,
+    totalFieldsCount: u16,
+};
+pub const defaultMaxFieldsPerLine: usize = 1000;
+pub const defaultMaxFieldKeySize: usize = 100;
+pub const defaultMaxLineSize: usize = 512 * 1024;
+
+pub const LinesSizeError = error{
+    MaxFieldsPerLineExceeded,
+    MaxFieldKeySizeExceeded,
+    MaxLineSizeExceeded,
+};
+
 // Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
@@ -243,6 +257,31 @@ pub const Line = struct {
             res += @intCast(field.value.len);
         }
         return res;
+    }
+
+    pub fn rawSizeValidate(self: Line) LinesSizeError!LinesSize {
+        // TODO: identify max line size and probably make it u16
+        var res: u32 = 0;
+        var totalFieldsCount: u16 = 0;
+        for (self.fields) |field| {
+            if (field.key.len > defaultMaxFieldKeySize) {
+                return error.MaxFieldKeySizeExceeded;
+            }
+
+            res += @intCast(field.key.len);
+            res += @intCast(field.value.len);
+            totalFieldsCount += 1;
+
+            if (totalFieldsCount == defaultMaxFieldsPerLine) {
+                return error.MaxFieldsPerLineExceeded;
+            }
+        }
+
+        if (res > defaultMaxLineSize) {
+            return error.MaxLineSizeExceeded;
+        }
+
+        return .{ .size = res, .totalFieldsCount = totalFieldsCount };
     }
 
     pub fn fieldsSize(self: Line) u32 {

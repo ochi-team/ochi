@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Store = @import("store.zig").Store;
 const Encoder = @import("encoding").Encoder;
@@ -10,16 +11,10 @@ pub const Params = struct {
     tenantID: []const u8,
 };
 
-const EncodedTags = struct {
-    buf: []u8,
-    offset: usize,
-};
-
-fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) !EncodedTags {
-    // [10:len] + tags.len * [10:key len][key][10:value.len][value]
-    var size: usize = 10;
+fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
+    var size: usize = Encoder.varIntBound(tags.len);
     for (tags) |tag| {
-        size += 20;
+        size += Encoder.varIntBound(tag.key.len) + Encoder.varIntBound(tag.value.len);
         size += tag.key.len + tag.value.len;
     }
     const buf = try allocator.alloc(u8, size);
@@ -31,10 +26,9 @@ fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) !EncodedTags {
         enc.writeString(tag.value);
     }
 
-    return .{
-        .buf = buf,
-        .offset = enc.offset,
-    };
+    std.debug.assert(enc.offset == buf.len);
+
+    return buf;
 }
 
 const magic = "xxhash";
@@ -52,117 +46,106 @@ fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
     };
 }
 
-// TODO: make it configurable
-const retentionNs: u64 = 30 * std.time.ns_per_day;
-
 fn sortStreamFields(_: void, one: Field, another: Field) bool {
     return std.mem.order(u8, one.key, another.key) == .lt;
 }
 
 pub const Processor = struct {
-    lines: [1]Line,
-    tags: [1][]Field,
-    encodedTags: EncodedTags,
-
     store: *Store,
 
-    pub fn init(allocator: std.mem.Allocator, store: *Store) !*Processor {
-        const processor = try allocator.create(Processor);
-        processor.store = store;
-        processor.encodedTags = .{ .buf = undefined, .offset = 0 };
-        return processor;
-    }
-    pub fn deinit(self: *Processor, allocator: std.mem.Allocator) void {
-        if (self.encodedTags.offset != 0) {
-            allocator.free(self.encodedTags.buf);
-        }
-        allocator.destroy(self);
+    size: u32 = 0,
+    lines: std.ArrayList(Line) = .empty,
+    tags: []Field,
+    encodedTags: []const u8,
+    sid: SID,
+
+    pub fn empty(store: *Store) Processor {
+        return Processor{
+            .store = store,
+            .size = 0,
+            .lines = std.ArrayList(Line).empty,
+            .tags = &[_]Field{},
+            .encodedTags = &[_]u8{},
+            .sid = SID{ .tenantID = "", .id = 0 },
+        };
     }
 
-    pub fn pushLine(
+    pub fn reinit(
         self: *Processor,
-        allocator: std.mem.Allocator,
-        timestampNs: u64,
-        fields: []Field,
+        alloc: std.mem.Allocator,
         tags: []Field,
-        params: Params,
+        tenantID: []const u8,
     ) !void {
-        // TODO: controll how many fields a single line may contain
-        // add a config value and validate fields length
-        // 1000 is a default limit
-
-        // TODO: add an option  to accept stream fields, so as not to put to stream all the fields
-        // it requires 2 fields:
-        // tags: list of keys to retrieve from fields to identify as a stream
-        // presetStream: list of fields to append to tags
-
-        // TODO: add an option to accep extra stream fields
-
-        // TODO: add an option to accep extra fields
-
-        // TODO: add an option to accept ignore fields
-        // doesn't impact stream fields, to narrow set of stream fields better to use stream fields option
+        self.lines.clearRetainingCapacity();
+        self.size = 0;
 
         // use unstable sort because we don't expect duplicated keys
         std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
 
-        const encodedTags = try encodeTags(allocator, tags);
-        const streamID = makeStreamID(params.tenantID, encodedTags.buf[0..encodedTags.offset]);
+        const encodedTags = try encodeTags(alloc, tags);
+        const streamID = makeStreamID(tenantID, encodedTags);
 
+        self.tags = tags;
+        self.encodedTags = encodedTags;
+        self.sid = streamID;
+    }
+
+    pub fn deinit(self: *Processor, alloc: std.mem.Allocator) void {
+        self.lines.deinit(alloc);
+        self.size = 0;
+        alloc.destroy(self);
+        self.* = undefined;
+    }
+
+    pub fn pushLine(
+        self: *Processor,
+        alloc: std.mem.Allocator,
+        timestampNs: u64,
+        fields: []Field,
+    ) !void {
         const line = Line{
             .timestampNs = timestampNs,
-            .sid = streamID,
+            .sid = self.sid,
             .fields = fields,
         };
-        self.lines[0] = line;
-        self.tags[0] = tags;
 
-        if (self.encodedTags.offset != 0) {
-            allocator.free(self.encodedTags.buf);
+        const size = line.rawSizeValidate() catch |err| {
+            switch (err) {
+                error.MaxFieldsPerLineExceeded => {
+                    // TODO: log error
+                    return;
+                },
+                error.MaxFieldKeySizeExceeded => {
+                    // TODO: log error
+                    return;
+                },
+                error.MaxLineSizeExceeded => {
+                    // TODO: log error
+                    return;
+                },
+            }
+        };
+
+        self.size += size.size;
+        try self.lines.append(alloc, line);
+
+        if (self.mustFlush()) {
+            try self.flush(alloc);
         }
-        self.encodedTags = encodedTags;
     }
-    pub fn mustFlush(_: *Processor) bool {
-        return true;
+
+    // threshold as 90% of a max block size
+    const flushSizeThreshold = 9 * (2 * 1024 * 1024 / 10);
+    // TODO: make size limit configurable
+    // TODO: this threshold is used in DataRecorder too,
+    // make it configurable and extract from both
+    pub fn mustFlush(self: *Processor) bool {
+        return self.size >= flushSizeThreshold;
     }
-    pub fn flush(self: *Processor, allocator: std.mem.Allocator) !void {
-        // TODO: add to hot partition if possible
 
-        // TODO: make partition interval configurable
-        // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
-        const nowNs: u64 = @intCast(std.time.nanoTimestamp());
-        const minDay = (nowNs - retentionNs) / std.time.ns_per_day;
-        // limit the incoming logs to now + 1 day,
-        // in case an ingestor sends data with broken timezone or timestamp
-        const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
-
-        var linesByInterval = std.AutoHashMap(u64, std.ArrayList(Line)).init(allocator);
-
-        for (self.lines) |line| {
-            const day = line.timestampNs / std.time.ns_per_day;
-            if (day < minDay) {
-                // TODO: log a warning
-                continue;
-            }
-            if (day > maxDay) {
-                // TODO: log a warning
-                continue;
-            }
-
-            if (linesByInterval.getPtr(day)) |list| {
-                try list.append(allocator, line);
-                continue;
-            }
-            var list = try std.ArrayList(Line).initCapacity(allocator, self.lines.len);
-            try linesByInterval.put(day, list);
-            try list.append(allocator, line);
-        }
-
-        try self.store.addLines(
-            allocator,
-            linesByInterval,
-            self.tags[0],
-            self.encodedTags.buf[0..self.encodedTags.offset],
-        );
+    pub fn flush(self: *Processor, alloc: std.mem.Allocator) !void {
+        try self.store.addLines(alloc, self.lines.items, self.tags, self.encodedTags);
+        self.lines.clearRetainingCapacity();
+        self.size = 0;
     }
 };

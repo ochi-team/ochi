@@ -62,6 +62,8 @@ pub const DataShard = struct {
     // threshold as 90% of a max block size
     const flushSizeThreshold = 9 * (MemTable.maxBlockSize / 10);
     // TODO: make size limit configurable
+    // TODO: this threshold is used in processor too,
+    // make it configurable and extract from both
     fn mustFlush(self: *DataShard) bool {
         // TODO: check its timer?
         return self.size >= flushSizeThreshold;
@@ -116,7 +118,8 @@ path: []const u8,
 
 // TODO: investigate the ownership of the Lines and background jobs,
 // identify whether they match the data
-// TODO: pass a common thread pool to data and index
+// TODO: pass a common thread pool to data and index,
+// audit all Thread.Pool usage
 pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);

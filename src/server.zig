@@ -5,7 +5,6 @@ const httpz = @import("httpz");
 const Conf = @import("Conf.zig");
 const Dispatcher = @import("dispatch.zig").Dispatcher;
 const AppContext = @import("dispatch.zig").AppContext;
-const Processor = @import("process.zig").Processor;
 const Store = @import("store.zig").Store;
 const insert = @import("insert.zig");
 
@@ -34,15 +33,13 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
 
     const store = try Store.init(allocator, path);
     defer store.deinit(allocator);
-    const processor = try Processor.init(allocator, store);
-    defer processor.deinit(allocator);
 
     const dispatcher = try allocator.create(Dispatcher);
     defer allocator.destroy(dispatcher);
 
     dispatcher.* = Dispatcher{
         .conf = conf.app,
-        .processor = processor,
+        .store = store,
     };
     var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.server.port }, dispatcher);
     defer server.deinit();
