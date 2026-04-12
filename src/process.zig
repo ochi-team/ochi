@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Store = @import("store.zig").Store;
+const Store = @import("Store.zig").Store;
 const Encoder = @import("encoding").Encoder;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;

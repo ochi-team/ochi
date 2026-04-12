@@ -3,12 +3,11 @@ const std = @import("std");
 const httpz = @import("httpz");
 
 const AppConfig = @import("Conf.zig").AppConfig;
-const Processor = @import("process.zig").Processor;
 const tenant = @import("store/tenant.zig");
 
-const Store = @import("store.zig").Store;
+const Store = @import("Store.zig").Store;
 
-const InsertError = @import("server/error.zig").InsertError;
+const ApiError = @import("server/error.zig").ApiError;
 
 pub const AppContext = struct {
     conf: AppConfig,
@@ -41,23 +40,23 @@ pub const Dispatcher = struct {
         }
 
         action(&ctx, req, res) catch |err| switch (err) {
-            InsertError.EmptyBody => {
+            ApiError.EmptyBody => {
                 res.status = 400;
                 res.body = "request body is empty";
             },
-            InsertError.DecompressFailed => {
+            ApiError.DecompressFailed => {
                 res.status = 400;
                 res.body = "failed to decompress request body";
             },
-            InsertError.ContentEncodingNotSupported => {
+            ApiError.ContentEncodingNotSupported => {
                 res.status = 415;
                 res.body = "content-encoding is not supported";
             },
-            InsertError.ContentTypeNotSupported => {
+            ApiError.ContentTypeNotSupported => {
                 res.status = 415;
                 res.body = "content-type is not supported";
             },
-            InsertError.MaxBodySize => {
+            ApiError.MaxBodySize => {
                 res.status = 413;
                 res.body = "max body size is exceeded";
             },

@@ -5,8 +5,9 @@ const httpz = @import("httpz");
 const Conf = @import("Conf.zig");
 const Dispatcher = @import("dispatch.zig").Dispatcher;
 const AppContext = @import("dispatch.zig").AppContext;
-const Store = @import("store.zig").Store;
+const Store = @import("Store.zig").Store;
 const insert = @import("insert.zig");
+const query = @import("query.zig");
 
 var global_server: ?*httpz.Server(*Dispatcher) = null;
 
@@ -61,7 +62,8 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
     router.get("/health", health, .{});
 
     router.get("/insert/loki/ready", insert.insertLokiReady, .{});
-    router.post("/insert/loki/api/v1/push", insert.insertLokiJson, .{});
+    router.post("/insert/loki/api/v1/push", insert.insertLokiJsonHandler, .{});
+    router.get("/query", query.queryHandler, .{});
 
     server.listen() catch |err| switch (err) {
         std.posix.BindError.AddressInUse => {

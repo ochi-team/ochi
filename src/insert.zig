@@ -6,38 +6,38 @@ const AppContext = @import("dispatch.zig").AppContext;
 const Processor = @import("process.zig").Processor;
 const Field = @import("store/lines.zig").Field;
 const Params = @import("process.zig").Params;
-const InsertError = @import("server/error.zig").InsertError;
+const ApiError = @import("server/error.zig").ApiError;
 const Compression = @import("server/compression.zig").Compression;
 
 /// insertLokiJson defines a loki json insertion operation
-pub fn insertLokiJson(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) InsertError!void {
+pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
     const contentType = r.headers.get("content-type");
 
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
         // TODO: implement protobuf marhsalling
-        return InsertError.ContentTypeNotSupported;
+        return ApiError.ContentTypeNotSupported;
     }
     // TODO: consider using concurrent reader of the body,
     // currently the entire body is pre-read by the start of the API handler
-    const body = r.body() orelse return InsertError.EmptyBody;
+    const body = r.body() orelse return ApiError.EmptyBody;
 
     if (body.len > ctx.conf.maxRequestSize) {
-        return InsertError.MaxBodySize;
+        return ApiError.MaxBodySize;
     }
 
     // TODO: validate a disk has enough space
     const encoding = r.headers.get("content-encoding") orelse "snappy";
     const compress = Compression.fromEncoding(encoding) catch
-        return InsertError.ContentEncodingNotSupported;
+        return ApiError.ContentEncodingNotSupported;
 
     const uncompressed = compress.uncompress(res.arena, body) catch
-        return InsertError.DecompressFailed;
+        return ApiError.DecompressFailed;
     defer res.arena.free(uncompressed);
 
     const params = Params{ .tenantID = ctx.tenantID };
 
     process(res.arena, ctx, uncompressed, params) catch
-        return InsertError.FailedToProccess;
+        return ApiError.FailedToProccess;
 
     res.status = 200;
 }

@@ -23,7 +23,7 @@ fn calculatePools() PoolsConfig {
 }
 
 pub const AppConfig = struct {
-    maxRequestSize: u32 = 1024 * 1024 * 4,
+    maxRequestSize: u32 = 4 * 1024 * 1024,
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,
     /// must be cache friendly, depending on used CPU model must be changed according its L1 cache size
     maxIndexMemBlockSize: u32 = 32 * 1024,
