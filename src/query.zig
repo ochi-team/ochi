@@ -5,11 +5,11 @@ const httpz = @import("httpz");
 
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
+const Query = @import("store/query.zig").Query;
 
 const AppContext = @import("dispatch.zig").AppContext;
 const ApiError = @import("server/error.zig").ApiError;
 
-pub const Query = @import("Store.zig").Query;
 
 /// queryHandler handles a log query request, unmarshals a JSON body,
 /// queries the store and writes matching lines as a JSON array.

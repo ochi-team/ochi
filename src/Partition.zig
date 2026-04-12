@@ -11,6 +11,7 @@ const Cache = @import("stds/Cache.zig");
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
+const Query = @import("store/query.zig").Query;
 
 const Conf = @import("Conf.zig");
 const fs = @import("fs.zig");
@@ -37,6 +38,12 @@ data: *DataRecorder,
 /// stream cache for ingestion, shared across all partitions,
 /// so the partition doesn't own it
 streamCache: *Cache.StreamCache,
+
+refCounter: std.atomic.Value(u32) = .init(1),
+
+/// Partition is a managed resource by a ref counter,
+/// therefore it requires an allocator
+alloc: Allocator,
 
 pub fn open(
     alloc: Allocator,
@@ -83,6 +90,7 @@ pub fn open(
 
     const partition = try alloc.create(Partition);
     partition.* = Partition{
+        .alloc = alloc,
         .day = day,
         .path = path,
         .key = partitionKey,
@@ -94,13 +102,31 @@ pub fn open(
     return partition;
 }
 
-pub fn close(self: *Partition, allocator: Allocator) void {
-    self.index.deinit(allocator);
+pub fn retain(self: *Partition) void {
+    _ = self.refCounter.fetchAdd(1, .acquire);
+}
 
-    self.data.stop(allocator) catch |err| {
+pub fn release(self: *Partition) void {
+    const prev = self.refCounter.fetchSub(1, .acq_rel);
+    std.debug.assert(prev > 0);
+
+    if (prev != 1) return;
+
+    self.close();
+
+    // deletion of the partition due to retention or eviction policy is here
+    // read table release as a sample
+}
+
+pub fn close(
+    self: *Partition,
+) void {
+    self.index.deinit(self.alloc);
+
+    self.data.stop(self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
-    allocator.destroy(self);
+    self.alloc.destroy(self);
 }
 
 pub fn createDir(path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
@@ -171,6 +197,14 @@ pub fn addLines(
         size += line.rawSize();
     }
     try self.data.addLines(allocator, lines.items, size);
+}
+
+pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
+    _ = self;
+    _ = alloc;
+    _ = tenantID;
+    _ = query;
+    return .empty;
 }
 
 fn isCached(self: *Partition, sid: SID) bool {

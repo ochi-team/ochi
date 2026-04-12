@@ -8,6 +8,7 @@ const fs = @import("fs.zig");
 const Cache = @import("stds/Cache.zig");
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
+const Query = @import("store/query.zig").Query;
 
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
@@ -53,7 +54,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
     var partitions = try std.ArrayList(*Partition).initCapacity(alloc, 30);
     errdefer {
         for (partitions.items) |partition| {
-            partition.close(alloc);
+            partition.close();
         }
         partitions.deinit(alloc);
     }
@@ -92,7 +93,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
 
 pub fn deinit(self: *Store, allocator: Allocator) void {
     for (self.partitions.items) |partition| {
-        partition.close(allocator);
+        partition.release();
     }
     self.partitions.deinit(allocator);
 
@@ -182,23 +183,24 @@ pub fn addLines(
         // TODO: rework how we approach lru partition
         // 1. pass all the lines directly to the store,
         // iterate over saving the window width, if it fits - pass them all to the lru
-        // 2. if it doesn't fit - make a map by intervals, retain it
-        if (self.lruPartition) |part| if (part.day == day) {
+        // 2. if it doesn't fit - make a map by intervals, retain it.
+        // Ref counter here makes no sense, but it demos the API is necessary to perform after rework
+
+        self.partitionsMx.lock();
+        defer self.partitionsMx.unlock();
+
+        const lruPartition = self.getLruPartition();
+        if (lruPartition) |part| if (part.day == day) {
+            defer part.release();
             try part.addLines(allocator, it.value_ptr.*, tags, encodedTags);
             continue;
         };
 
         const partition = try self.getPartition(allocator, day);
+        defer partition.release();
         try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
     }
 }
-
-pub const Query = struct {
-    start: u64,
-    end: u64,
-    tags: []Field,
-    fields: []Field,
-};
 
 pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
     self.partitionsMx.lock();
@@ -206,20 +208,34 @@ pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Q
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
 
+    var fba = std.heap.stackFallback(64, alloc);
+    const fbaAlloc = fba.get();
+
     const slice = selectPartitionsSlice(self.partitions.items, minDay, maxDay);
     // copy partitions not to deal with the lock
-    var parts = std.ArrayList(*Partition).initCapacity(alloc, slice.len) catch |err| {
+    var parts = std.ArrayList(*Partition).initCapacity(fbaAlloc, slice.len) catch |err| {
         self.partitionsMx.unlock();
         return err;
     };
+    defer {
+        for (parts.items) |part| part.release();
+        parts.deinit(fbaAlloc);
+    }
     for (slice) |part| {
-        // part.retain();
+        part.retain();
         parts.appendAssumeCapacity(part);
     }
     self.partitionsMx.unlock();
 
-    _ = tenantID;
-    return .empty;
+    var results = std.ArrayList(Line).empty;
+    for (parts.items) |part| {
+        var partResults = try part.queryLines(fbaAlloc, tenantID, query);
+        defer partResults.deinit(fbaAlloc);
+
+        try results.appendSlice(alloc, partResults.items);
+    }
+
+    return results;
 }
 
 fn selectPartitionsSlice(partitions: []const *Partition, minDay: u32, maxDay: u32) []const *Partition {
@@ -243,10 +259,15 @@ fn selectPartitionsSlice(partitions: []const *Partition, minDay: u32, maxDay: u3
     return slice[0..end];
 }
 
-fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
-    self.partitionsMx.lock();
-    defer self.partitionsMx.unlock();
+fn getLruPartition(self: *Store) ?*Partition {
+    if (self.lruPartition) |part| {
+        part.retain();
+        return part;
+    }
+    return null;
+}
 
+fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
     const n = std.sort.binarySearch(
         *Partition,
         self.partitions.items,
@@ -255,6 +276,8 @@ fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
     );
     if (n) |i| {
         const part = self.partitions.items[i];
+        part.retain();
+
         self.lruPartition = part;
         return part;
     }
@@ -288,10 +311,11 @@ fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
         }
     };
 
-    const partition = try self.openPartition(alloc, partitionPath, indexPath, dataPath, day);
-    self.lruPartition = partition;
+    const part = try self.openPartition(alloc, partitionPath, indexPath, dataPath, day);
+    part.retain();
 
-    return partition;
+    self.lruPartition = part;
+    return part;
 }
 
 // TODO: when we get rid of pathsBuf we can path only partitions ref,
@@ -545,6 +569,7 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
     const newPartition = struct {
         fn new(day: u32) Partition {
             const p = Partition{
+                .alloc = undefined,
                 .day = day,
                 .path = "",
                 .key = "",
@@ -663,6 +688,7 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try std.fs.makeDirAbsolute(partitionsRoot);
 
     const store = try Store.init(alloc, rootPath);
+    defer store.deinit(alloc);
 
     const dayOne: u64 = 10;
     const dayTwo: u64 = 11;
@@ -670,19 +696,20 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try testing.expectEqual(0, store.partitions.items.len);
 
     const first = try store.getPartition(alloc, dayOne);
+    defer first.release();
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
     const firstAgain = try store.getPartition(alloc, dayOne);
+    defer firstAgain.release();
     try testing.expectEqual(first, firstAgain);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
     const second = try store.getPartition(alloc, dayTwo);
+    defer second.release();
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);
-
-    store.deinit(alloc);
 }
