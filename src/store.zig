@@ -10,7 +10,7 @@ const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
 
 const Partition = @import("Partition.zig");
-const Filenames = @import("Filenames.zig");
+const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
 
 pub const Store = struct {
@@ -38,7 +38,7 @@ pub const Store = struct {
         const partitionsPath = try std.fmt.bufPrint(
             &buf,
             "{s}{c}{s}",
-            .{ path, std.fs.path.sep, Filenames.partitions },
+            .{ path, std.fs.path.sep, filenames.partitions },
         );
         const partitionsDir = try createStoreDirIfNotExists(path, partitionsPath);
 
@@ -72,9 +72,9 @@ pub const Store = struct {
             errdefer alloc.free(partitionPath);
 
             const day = try dayFromKey(entry.name);
-            const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.indexTables });
+            const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.indexTables });
             errdefer alloc.free(indexPath);
-            const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.dataTables });
+            const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
             errdefer alloc.free(dataPath);
 
             _ = try store.openPartition(alloc, partitionPath, indexPath, dataPath, day);
@@ -216,16 +216,16 @@ pub const Store = struct {
         const partitionKeySlice = try partitionKeyBuf(&partitionKey, day);
         std.debug.assert(std.mem.eql(u8, partitionKeySlice, partitionKey[0..]));
 
-        const partitionPath = try std.fs.path.join(alloc, &.{ self.path, Filenames.partitions, partitionKeySlice });
+        const partitionPath = try std.fs.path.join(alloc, &.{ self.path, filenames.partitions, partitionKeySlice });
         errdefer alloc.free(partitionPath);
 
         // TODO: don't allocate those paths, make it as computed properties,
         // then we can:
         // - remove pathsBuf
         // - make disk space cache rely on the store path
-        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.indexTables });
+        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.indexTables });
         errdefer alloc.free(indexPath);
-        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.dataTables });
+        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
         errdefer alloc.free(dataPath);
 
         std.fs.accessAbsolute(partitionPath, .{ .mode = .read_write }) catch |err| {
@@ -311,7 +311,7 @@ fn createLockFile(path: []const u8) !std.fs.File {
     const lockFilePath = try std.fmt.bufPrint(
         &lockFilePathBuf,
         "{s}{c}{s}",
-        .{ path, std.fs.path.sep, Filenames.lock },
+        .{ path, std.fs.path.sep, filenames.lock },
     );
 
     // TODO: test locking mechanic carefully, perhaps we need to apply the statements below,
@@ -407,7 +407,7 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
 
         const storePath = try std.fs.path.join(alloc, &.{ rootPath, storeName });
         defer alloc.free(storePath);
-        const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, Filenames.partitions });
+        const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, filenames.partitions });
         defer alloc.free(partitionsPath);
 
         if (case.createStoreDir) {
@@ -439,7 +439,7 @@ test "init opens existing partitions, sorts them and sets lru" {
     defer alloc.free(storePath);
     try std.fs.makeDirAbsolute(storePath);
 
-    const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, Filenames.partitions });
+    const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, filenames.partitions });
     defer alloc.free(partitionsPath);
     try std.fs.makeDirAbsolute(partitionsPath);
 
@@ -447,9 +447,9 @@ test "init opens existing partitions, sorts them and sets lru" {
     for (keys) |key| {
         const partitionPath = try std.fs.path.join(alloc, &.{ partitionsPath, key });
         defer alloc.free(partitionPath);
-        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.indexTables });
+        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.indexTables });
         defer alloc.free(indexPath);
-        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, Filenames.dataTables });
+        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
         defer alloc.free(dataPath);
 
         try std.fs.makeDirAbsolute(partitionPath);
@@ -484,7 +484,7 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, Filenames.partitions });
+    const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, filenames.partitions });
     defer alloc.free(partitionsRoot);
     try std.fs.makeDirAbsolute(partitionsRoot);
 

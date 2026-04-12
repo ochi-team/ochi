@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 const strings = @import("../../stds/strings.zig");
 
@@ -213,7 +213,7 @@ test "readNames returns error in validate mode when tables file is missing but t
 
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
-    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, Filenames.tables });
+    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
     defer alloc.free(tablesFilePath);
     const tableDirPath = try std.fs.path.join(alloc, &.{ rootPath, "table-a" });
     defer alloc.free(tableDirPath);

@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 const MemTable = @import("../inmem/MemTable.zig");
 const DiskTable = @import("DiskTable.zig");
@@ -75,7 +75,7 @@ pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) 
 
     // read table names,
     // they are given either from a file or listed directories in the path
-    const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, Filenames.tables });
+    const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, filenames.tables });
     defer alloc.free(tablesFilePath);
     var tableNames = try catalog.readNames(alloc, tablesFilePath, true);
     defer {
@@ -117,23 +117,23 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         .tableHeader = header,
     };
 
-    const columnKeysPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnKeys });
+    const columnKeysPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnKeys });
     defer fbaAlloc.free(columnKeysPath);
-    const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnIdxs });
+    const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
     defer fbaAlloc.free(columnIdxsPath);
-    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.metaindex });
+    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
     defer fbaAlloc.free(metaindexPath);
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.index });
+    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
     defer fbaAlloc.free(indexPath);
-    const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnsHeaderIndex });
+    const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeaderIndex });
     defer fbaAlloc.free(columnsHeaderIndexPath);
-    const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.columnsHeader });
+    const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeader });
     defer fbaAlloc.free(columnsHeaderPath);
-    const timestampsPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.timestamps });
+    const timestampsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.timestamps });
     defer fbaAlloc.free(timestampsPath);
-    const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageTokens });
+    const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageTokens });
     defer fbaAlloc.free(messageBloomTokensPath);
-    const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, Filenames.messageValues });
+    const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageValues });
     defer fbaAlloc.free(messageBloomValuesPath);
 
     const columnKeysContent = try fs.readAll(alloc, columnKeysPath);
@@ -374,7 +374,7 @@ pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror
     });
     defer fba.free(data);
 
-    const tablesFilePath = try std.fs.path.join(fba, &.{ path, Filenames.tables });
+    const tablesFilePath = try std.fs.path.join(fba, &.{ path, filenames.tables });
     defer fba.free(tablesFilePath);
 
     try fs.writeBufferToFileAtomic(tablesFilePath, data, true);

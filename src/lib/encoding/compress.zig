@@ -13,7 +13,7 @@ const errorSize: c_ulonglong = 0xfffffffffffffffe;
 //TODO: Need to more research about what value to choose for limiting the loop.
 // Min one chunk block size = 4 KB
 // maxItrationsDecompressStream = 10 GB / 4KB
-const maxItrationsDecompressStream = 2_621_440; 
+const maxItrationsDecompressStream = 2_621_440;
 
 pub fn compressAuto(dst: []u8, src: []const u8) CompressError!usize {
     const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
@@ -135,11 +135,11 @@ pub fn decompressUnknownSizeToArrayList(
 
     var chunk = try allocator.alloc(u8, outChunk);
     defer allocator.free(chunk);
-    
+
     var input = C.ZSTD_inBuffer{ .src = src.ptr, .size = src.len, .pos = 0 };
     var countChunks: u32 = 0;
 
-    while (true): (countChunks += 1) {
+    while (true) : (countChunks += 1) {
         if (countChunks >= maxItrationsDecompressStream) {
             return DecompressError.OutOfLimitChunks;
         }
@@ -164,7 +164,6 @@ pub fn decompressUnknownSizeToArrayList(
         if (res == 0) {
             break;
         }
-        
     }
 
     return;

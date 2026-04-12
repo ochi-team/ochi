@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const fs = @import("../../fs.zig");
-const Filenames = @import("../../Filenames.zig");
+const filenames = @import("../../filenames.zig");
 
 const maxFileBytes = 16 * 1024 * 1024;
 
@@ -37,7 +37,7 @@ pub fn readFile(alloc: Allocator, path: []const u8) !TableHeader {
     var fba = std.heap.stackFallback(1024, alloc);
     const fbaAlloc = fba.get();
 
-    const metadataPath = try std.fs.path.join(fbaAlloc, &[_][]const u8{ path, Filenames.header });
+    const metadataPath = try std.fs.path.join(fbaAlloc, &[_][]const u8{ path, filenames.header });
     defer fbaAlloc.free(metadataPath);
 
     var file = std.fs.openFileAbsolute(metadataPath, .{}) catch |err| {
@@ -76,7 +76,7 @@ pub fn writeFile(self: *const TableHeader, alloc: Allocator, tablePath: []const 
     }, .{ .whitespace = .minified });
     defer alloc.free(json);
 
-    const metadataPath = try std.fs.path.join(alloc, &[_][]const u8{ tablePath, Filenames.header });
+    const metadataPath = try std.fs.path.join(alloc, &[_][]const u8{ tablePath, filenames.header });
     defer alloc.free(metadataPath);
 
     try fs.writeBufferValToFile(metadataPath, json);
