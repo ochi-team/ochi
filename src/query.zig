@@ -28,10 +28,11 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
 
     const parsed = parseQuery(res.arena, body) catch return ApiError.FailedToParse;
 
-    const lines = ctx.store.queryLines(res.arena, ctx.tenantID, parsed.value) catch {
+    var lines = ctx.store.queryLines(res.arena, ctx.tenantID, parsed.value) catch {
         parsed.deinit();
         return ApiError.FailedToProccess;
     };
+    defer lines.deinit(res.arena);
     parsed.deinit();
 
     writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;

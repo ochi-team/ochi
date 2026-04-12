@@ -13,7 +13,6 @@ const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 
 const Conf = @import("Conf.zig");
-const filenames = @import("filenames.zig");
 const fs = @import("fs.zig");
 
 fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
@@ -27,7 +26,7 @@ pub const Partition = @This();
 /// path is an absolute path to the partition
 path: []const u8,
 /// day is an internal key for the partition, represents as a day since epoch time,
-day: u64,
+day: u32,
 /// key is a human readable representation of the partition,
 /// it's also used as a folder name for both index and data tables,
 /// it's derived from the day
@@ -44,7 +43,7 @@ pub fn open(
     path: []const u8,
     indexPath: []const u8,
     dataPath: []const u8,
-    day: u64,
+    day: u32,
     streamCache: *Cache.StreamCache,
 ) !*Partition {
     std.debug.assert(std.fs.path.isAbsolute(path));
