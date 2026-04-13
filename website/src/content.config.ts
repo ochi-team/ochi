@@ -10,6 +10,7 @@ const blog = defineCollection({
     title: z.string(),
     description: z.string(),
     date: z.string(),
+    author: z.string().optional(),
   }),
 });
 const docs = defineCollection({ loader: docsLoader(), schema: docsSchema() });

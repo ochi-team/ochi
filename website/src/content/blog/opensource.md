@@ -2,6 +2,7 @@
 title: Ochi is opensource forever
 date: "2026-03-19"
 description: We must stay opensource
+author: "Denis"
 ---
 
 # Why Ochi is open source.
