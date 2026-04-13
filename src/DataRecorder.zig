@@ -13,6 +13,7 @@ const SID = @import("store/lines.zig").SID;
 const MemTable = @import("store/inmem/MemTable.zig");
 const BlockWriter = @import("store/inmem/BlockWriter.zig");
 const StreamWriter = @import("store/inmem/StreamWriter.zig");
+const TableHeader = @import("store/inmem/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 const mergeData = @import("store/data/merge.zig").mergeData;
@@ -547,11 +548,37 @@ pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size
 }
 
 pub fn queryLines(self: *DataRecorder, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
-    _ = self;
-    _ = alloc;
-    _ = sids;
-    _ = query;
-    return .empty;
+    self.mxTables.lock();
+
+    const stackSize = 64;
+    var fba = std.heap.stackFallback(stackSize, alloc);
+    const fbaAlloc = fba.get();
+    var tables = std.ArrayList(*Table).initCapacity(fbaAlloc, stackSize / @sizeOf(*Table)) catch |err| {
+        // panic because we allocate precise amount on stack
+        std.debug.panic("failed to allocate tables array list for query: {s}\n", .{@errorName(err)});
+    };
+    defer {
+        for (tables.items) |table| table.release();
+        tables.deinit(fbaAlloc);
+    }
+
+    selectTablesInRange(fbaAlloc, &tables, self.memTables.items, query.start, query.end) catch |err| {
+        self.mxTables.unlock();
+        return err;
+    };
+    selectTablesInRange(fbaAlloc, &tables, self.diskTables.items, query.start, query.end) catch |err| {
+        self.mxTables.unlock();
+        return err;
+    };
+    self.mxTables.unlock();
+
+    var linesDst = std.ArrayList(Line).empty;
+    errdefer linesDst.deinit(alloc);
+    for (tables.items) |table| {
+        try table.queryLines(alloc, &linesDst, sids, query);
+    }
+
+    return linesDst;
 }
 
 fn openCreatedTable(
@@ -585,6 +612,22 @@ fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockRea
     }
 
     return readers;
+}
+
+fn selectTablesInRange(
+    alloc: Allocator,
+    dst: *std.ArrayList(*Table),
+    tables: []const *Table,
+    start: u64,
+    end: u64,
+) !void {
+    for (tables) |table| {
+        if (table.tableHeader.maxTimestamp < start or table.tableHeader.minTimestamp > end) {
+            continue;
+        }
+        table.retain();
+        try dst.append(alloc, table);
+    }
 }
 
 const testing = std.testing;
@@ -638,6 +681,145 @@ fn countDiskLinesInRecorder(recorder: *DataRecorder) u64 {
         n += table.tableHeader.len;
     }
     return n;
+}
+
+test "selectTablesInRange selects overlap and handles gaps" {
+    const alloc = testing.allocator;
+
+    const Range = struct {
+        min: u64,
+        max: u64,
+    };
+    const Case = struct {
+        from: u64,
+        to: u64,
+        expected: []const Range,
+    };
+
+    const check = struct {
+        fn run(alloc_: Allocator, tables: []const *Table, cases: []const Case) !void {
+            for (cases) |case| {
+                var selected = std.ArrayList(*Table).empty;
+                defer {
+                    for (selected.items) |table| table.release();
+                    selected.deinit(alloc_);
+                }
+
+                try selectTablesInRange(alloc_, &selected, tables, case.from, case.to);
+                try testing.expectEqual(case.expected.len, selected.items.len);
+                for (case.expected, 0..) |expected, i| {
+                    try testing.expectEqual(expected.min, selected.items[i].tableHeader.minTimestamp);
+                    try testing.expectEqual(expected.max, selected.items[i].tableHeader.maxTimestamp);
+                }
+            }
+        }
+    }.run;
+
+    const newTable = struct {
+        fn new(header: *TableHeader) Table {
+            return .{
+                .disk = null,
+                .mem = null,
+                .indexBlockHeaders = &.{},
+                .tableHeader = header,
+                .size = 0,
+                .path = "",
+                .indexBuf = &.{},
+                .columnsHeaderIndexBuf = &.{},
+                .columnsHeaderBuf = &.{},
+                .timestampsBuf = &.{},
+                .messageBloomTokens = &.{},
+                .messageBloomValues = &.{},
+                .bloomTokensShards = &.{},
+                .bloomValuesShards = &.{},
+                .columnIDGen = undefined,
+                .columnIdxs = .{},
+                .alloc = undefined,
+                .inMerge = false,
+                .toRemove = .init(false),
+                .refCounter = .init(1),
+            };
+        }
+    }.new;
+
+    {
+        const tables = [_]*Table{};
+        try check(alloc, &tables, &[_]Case{
+            .{ .from = 0, .to = 0, .expected = &.{} },
+            .{ .from = 0, .to = 100, .expected = &.{} },
+            .{ .from = 10, .to = 20, .expected = &.{} },
+        });
+    }
+
+    {
+        var h = TableHeader{ .minTimestamp = 100, .maxTimestamp = 110 };
+        var t = newTable(&h);
+        const tables = [_]*Table{&t};
+        try check(alloc, &tables, &[_]Case{
+            .{ .from = 100, .to = 110, .expected = &.{.{ .min = 100, .max = 110 }} },
+            .{ .from = 90, .to = 120, .expected = &.{.{ .min = 100, .max = 110 }} },
+            .{ .from = 99, .to = 100, .expected = &.{.{ .min = 100, .max = 110 }} },
+            .{ .from = 110, .to = 111, .expected = &.{.{ .min = 100, .max = 110 }} },
+            .{ .from = 0, .to = 99, .expected = &.{} },
+            .{ .from = 111, .to = 200, .expected = &.{} },
+        });
+    }
+
+    {
+        var h10 = TableHeader{ .minTimestamp = 10, .maxTimestamp = 19 };
+        var h30 = TableHeader{ .minTimestamp = 30, .maxTimestamp = 39 };
+        var h50 = TableHeader{ .minTimestamp = 50, .maxTimestamp = 59 };
+        var t10 = newTable(&h10);
+        var t30 = newTable(&h30);
+        var t50 = newTable(&h50);
+        const tables = [_]*Table{ &t10, &t30, &t50 };
+        try check(alloc, &tables, &[_]Case{
+            .{ .from = 20, .to = 29, .expected = &.{} },
+            .{ .from = 25, .to = 35, .expected = &.{.{ .min = 30, .max = 39 }} },
+            .{ .from = 10, .to = 10, .expected = &.{.{ .min = 10, .max = 19 }} },
+            .{ .from = 39, .to = 39, .expected = &.{.{ .min = 30, .max = 39 }} },
+            .{ .from = 39, .to = 49, .expected = &.{.{ .min = 30, .max = 39 }} },
+            .{ .from = 39, .to = 50, .expected = &.{ .{ .min = 30, .max = 39 }, .{ .min = 50, .max = 59 } } },
+            .{ .from = 40, .to = 50, .expected = &.{.{ .min = 50, .max = 59 }} },
+            .{ .from = 0, .to = 100, .expected = &.{
+                .{ .min = 10, .max = 19 },
+                .{ .min = 30, .max = 39 },
+                .{ .min = 50, .max = 59 },
+            } },
+            .{ .from = 40, .to = 49, .expected = &.{} },
+            .{ .from = 60, .to = 100, .expected = &.{} },
+        });
+    }
+
+    {
+        var h10 = TableHeader{ .minTimestamp = 10, .maxTimestamp = 19 };
+        var h20 = TableHeader{ .minTimestamp = 20, .maxTimestamp = 29 };
+        var h30 = TableHeader{ .minTimestamp = 30, .maxTimestamp = 39 };
+        var h40 = TableHeader{ .minTimestamp = 40, .maxTimestamp = 49 };
+        var h50 = TableHeader{ .minTimestamp = 50, .maxTimestamp = 59 };
+        var t10 = newTable(&h10);
+        var t20 = newTable(&h20);
+        var t30 = newTable(&h30);
+        var t40 = newTable(&h40);
+        var t50 = newTable(&h50);
+        const tables = [_]*Table{ &t10, &t20, &t30, &t40, &t50 };
+        try check(alloc, &tables, &[_]Case{
+            .{ .from = 10, .to = 59, .expected = &.{
+                .{ .min = 10, .max = 19 },
+                .{ .min = 20, .max = 29 },
+                .{ .min = 30, .max = 39 },
+                .{ .min = 40, .max = 49 },
+                .{ .min = 50, .max = 59 },
+            } },
+            .{ .from = 22, .to = 47, .expected = &.{
+                .{ .min = 20, .max = 29 },
+                .{ .min = 30, .max = 39 },
+                .{ .min = 40, .max = 49 },
+            } },
+            .{ .from = 0, .to = 9, .expected = &.{} },
+            .{ .from = 60, .to = 100, .expected = &.{} },
+        });
+    }
 }
 
 test "flushDataShards non-force respects flush deadline" {

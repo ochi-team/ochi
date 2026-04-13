@@ -9,6 +9,10 @@ const IndexBlockHeader = @import("../inmem/IndexBlockHeader.zig");
 const TableHeader = @import("../inmem/TableHeader.zig");
 const ColumnIDGen = @import("../inmem/ColumnIDGen.zig");
 
+const Line = @import("../lines.zig").Line;
+const SID = @import("../lines.zig").SID;
+const Query = @import("../query.zig").Query;
+
 const catalog = @import("../table/catalog.zig");
 
 const Table = @This();
@@ -393,6 +397,14 @@ pub fn release(self: *Table) void {
     self.close();
 }
 
+pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
+    _ = self;
+    _ = alloc;
+    _ = dst;
+    _ = sids;
+    _ = query;
+}
+
 pub fn lessThan(_: void, one: *Table, another: *Table) bool {
     return one.size < another.size;
 }
@@ -478,7 +490,6 @@ test "release fromMem does not affect filesystem path" {
     try std.fs.accessAbsolute(sentinelPath, .{});
 }
 
-const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 
 test "fromMem creates proper table from mem table with populated data" {

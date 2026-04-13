@@ -213,7 +213,7 @@ pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Q
     var fba = std.heap.stackFallback(64, alloc);
     const fbaAlloc = fba.get();
 
-    const slice = selectPartitionsSlice(self.partitions.items, minDay, maxDay);
+    const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
     // copy partitions not to deal with the lock
     var parts = std.ArrayList(*Partition).initCapacity(fbaAlloc, slice.len) catch |err| {
         self.partitionsMx.unlock();
@@ -240,7 +240,7 @@ pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Q
     return results;
 }
 
-fn selectPartitionsSlice(partitions: []const *Partition, minDay: u32, maxDay: u32) []const *Partition {
+fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32, maxDay: u32) []const *Partition {
     // Find first partition with day >= minDay
     const start = std.sort.lowerBound(
         *Partition,
@@ -560,7 +560,7 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
     const check = struct {
         fn run(partitions: []const *Partition, cases: []const Case) !void {
             for (cases) |case| {
-                const slice = selectPartitionsSlice(partitions, case.minDay, case.maxDay);
+                const slice = selectPartitionsSliceInRange(partitions, case.minDay, case.maxDay);
                 try testing.expectEqual(case.expectedDays.len, slice.len);
                 for (case.expectedDays, 0..) |day, i| {
                     try testing.expectEqual(day, slice[i].day);
