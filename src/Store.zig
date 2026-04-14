@@ -186,7 +186,7 @@ pub fn addLines(
         try partition.addLines(allocator, list, tags, encodedTags);
 
         // Return early since all lines are added to the same Partition
-        if (idx == lines.len) return;
+        if (list.items.len == lines.len) return;
     }
 
     // If the Lines belong to different Partitions, continue where left off,
