@@ -159,8 +159,6 @@ pub fn addLines(
     var idx: usize = 0;
     // Hot path if all Lines belong to the same Partition
     {
-        var list = std.ArrayList(Line).empty;
-
         const firstDay: u32 = @intCast(lines[0].timestampNs / std.time.ns_per_day);
 
         while (idx < lines.len) : (idx += 1) {
@@ -174,8 +172,6 @@ pub fn addLines(
                 continue;
             }
             if (day != firstDay) break;
-
-            try list.append(allocator, lines[idx]);
         }
         const partition = blk: {
             self.partitionsMx.lock();
@@ -185,6 +181,8 @@ pub fn addLines(
         };
         defer partition.release();
 
+        var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
+        list.items.len = idx;
         try partition.addLines(allocator, list, tags, encodedTags);
 
         // Return early since all lines are added to the same Partition
