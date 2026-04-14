@@ -66,6 +66,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
         .partitions = partitions,
         .streamCache = streamCache,
     };
+    errdefer alloc.destroy(store);
 
     // TODO: try making it parallel, it speed up start up time
     var it = partitionsDir.iterate();
@@ -146,6 +147,7 @@ pub fn addLines(
     tags: []Field,
     encodedTags: []const u8,
 ) !void {
+    if (lines.len == 0) return;
     // TODO: make partition interval configurable
     // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
     const nowNs: u64 = @intCast(std.time.nanoTimestamp());
@@ -154,10 +156,47 @@ pub fn addLines(
     // in case an ingestor sends data with broken timezone or timestamp
     const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
 
+    var idx: usize = 0;
+    // Hot path if all Lines belong to the same Partition
+    {
+        var list = std.ArrayList(Line).empty;
+
+        const firstDay: u32 = @intCast(lines[0].timestampNs / std.time.ns_per_day);
+
+        while (idx < lines.len) : (idx += 1) {
+            const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
+            if (day < minDay) {
+                // TODO: log a warning
+                continue;
+            }
+            if (day > maxDay) {
+                // TODO: log a warning
+                continue;
+            }
+            if (day != firstDay) break;
+
+            try list.append(allocator, lines[idx]);
+        }
+        const partition = blk: {
+            self.partitionsMx.lock();
+            defer self.partitionsMx.unlock();
+
+            break :blk try self.getPartitionOrLru(allocator, firstDay);
+        };
+        defer partition.release();
+
+        try partition.addLines(allocator, list, tags, encodedTags);
+
+        // Return early since all lines are added to the same Partition
+        if (idx == lines.len) return;
+    }
+
+    // If the Lines belong to different Partitions, continue where left off,
+    // sort them by day, then bulk add
     var linesByInterval = std.AutoHashMap(u32, std.ArrayList(Line)).init(allocator);
 
-    for (lines) |line| {
-        const day: u32 = @intCast(line.timestampNs / std.time.ns_per_day);
+    while (idx < lines.len) : (idx += 1) {
+        const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
         if (day < minDay) {
             // TODO: log a warning
             continue;
@@ -167,37 +206,27 @@ pub fn addLines(
             continue;
         }
 
-        if (linesByInterval.getPtr(day)) |list| {
-            try list.append(allocator, line);
-            continue;
+        const gop = try linesByInterval.getOrPut(day);
+        if (gop.found_existing) {
+            try gop.value_ptr.append(allocator, lines[idx]);
+        } else {
+            gop.value_ptr.* = .empty;
+            try gop.value_ptr.append(allocator, lines[idx]);
         }
-        var list = std.ArrayList(Line).empty;
-        try list.append(allocator, line);
-        try linesByInterval.put(day, list);
     }
 
     var linesIterator = linesByInterval.iterator();
     while (linesIterator.next()) |it| {
         const day = it.key_ptr.*;
 
-        // TODO: rework how we approach lru partition
-        // 1. pass all the lines directly to the store,
-        // iterate over saving the window width, if it fits - pass them all to the lru
-        // 2. if it doesn't fit - make a map by intervals, retain it.
-        // Ref counter here makes no sense, but it demos the API is necessary to perform after rework
+        const partition = blk: {
+            self.partitionsMx.lock();
+            defer self.partitionsMx.unlock();
 
-        self.partitionsMx.lock();
-        defer self.partitionsMx.unlock();
-
-        const lruPartition = self.getLruPartition();
-        if (lruPartition) |part| if (part.day == day) {
-            defer part.release();
-            try part.addLines(allocator, it.value_ptr.*, tags, encodedTags);
-            continue;
+            break :blk try self.getPartitionOrLru(allocator, day);
         };
-
-        const partition = try self.getPartition(allocator, day);
         defer partition.release();
+
         try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
     }
 }
@@ -318,6 +347,14 @@ fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
 
     self.lruPartition = part;
     return part;
+}
+
+fn getPartitionOrLru(self: *Store, alloc: Allocator, day: u32) !*Partition {
+    if (self.getLruPartition()) |part|
+        if (part.day == day)
+            return part;
+
+    return self.getPartition(alloc, day);
 }
 
 // TODO: when we get rid of pathsBuf we can path only partitions ref,
