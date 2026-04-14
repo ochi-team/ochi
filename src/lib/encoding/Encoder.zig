@@ -43,6 +43,7 @@ pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
 }
 
 /// The maximum number of bytes a varint-encoded 64-bit integer can occupy.
+/// TODO: remove it and use varIntBound
 pub const maxVarUint64Len = 10;
 
 // Calculate the exact number of bytes needed to encode a value as a varint

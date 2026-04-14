@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const encoding = @import("encoding");
+
 const SID = @import("../lines.zig").SID;
 const Block = @import("Block.zig");
 const BlockData = @import("BlockData.zig").BlockData;
@@ -8,6 +10,7 @@ const Column = @import("Column.zig");
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
+const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const ColumnDict = @import("ColumnDict.zig");
@@ -129,6 +132,42 @@ pub const BlockHeader = struct {
         validateBlockHeaders(dst.items[dst_len..]);
     }
 
+    pub fn decodeIndexWindow(
+        alloc: Allocator,
+        dst: *std.ArrayList(BlockHeader),
+        src: []const u8,
+        index: IndexBlockHeader,
+    ) !void {
+        std.debug.assert(index.size <= IndexBlockHeader.maxIndexBlockSize);
+        const dstStart = dst.items.len;
+
+        // src is a compressed index buffer, uncompress only the requested window
+        const end = index.offset + index.size;
+        const compressed = src[index.offset..end];
+        const decompressedSize = try encoding.getFrameContentSize(compressed);
+
+        // TODO: we probably can put it on stack,
+        // since index is passed the window must be narrow enough
+        var decompressedBuf = try alloc.alloc(u8, decompressedSize);
+        defer alloc.free(decompressedBuf);
+
+        const n = try encoding.decompress(
+            decompressedBuf,
+            compressed,
+        );
+        const decompressed = decompressedBuf[0..n];
+        try BlockHeader.decodeFew(alloc, dst, decompressed);
+
+        // BlockHeader.decode() borrows SID tenant bytes from the decode buffer.
+        // decodeIndexWindow frees that buffer, so remap tenantID to the stable one
+        // carried by the index header.
+        for (dst.items[dstStart..]) |*header| {
+            header.sid.tenantID = index.sid.tenantID;
+        }
+    }
+
+    // TODO: consider to move it under builtin.is_test condition or have it in the testing.assert,
+    // have it in release safe also must be vaible
     pub fn validateBlockHeaders(bhs: []const BlockHeader) void {
         if (bhs.len < 2) return;
 
@@ -556,13 +595,37 @@ pub const ColumnHeader = struct {
     }
 };
 
-test "BlockHeaderEncode" {
+test "BlockHeader encode/decode and decodeIndexWindow" {
+    const alloc = std.testing.allocator;
+
     const Case = struct {
         header: BlockHeader,
         expectedLen: usize,
     };
 
-    const cases = &[_]Case{
+    const cases = [_]Case{
+        .{
+            .header = .{
+                .sid = .{
+                    .tenantID = "tenant",
+                    .id = 1,
+                },
+                .size = 0,
+                .len = 0,
+                .timestampsHeader = .{
+                    .offset = 0,
+                    .size = 0,
+                    .min = 0,
+                    .max = 0,
+                    .encodingType = .Undefined,
+                },
+                .columnsHeaderOffset = 0,
+                .columnsHeaderSize = 0,
+                .columnsHeaderIndexOffset = 0,
+                .columnsHeaderIndexSize = 0,
+            },
+            .expectedLen = 77,
+        },
         .{
             .header = .{
                 .sid = .{
@@ -576,17 +639,13 @@ test "BlockHeaderEncode" {
                     .size = 2,
                     .min = 50,
                     .max = 100,
-                    .encodingType = EncodingType.ZDeltapack,
+                    .encodingType = .ZDeltapack,
                 },
                 .columnsHeaderOffset = 10,
                 .columnsHeaderSize = 20,
                 .columnsHeaderIndexOffset = 30,
                 .columnsHeaderIndexSize = 40,
             },
-            .expectedLen = 77,
-        },
-        .{
-            .header = std.mem.zeroInit(BlockHeader, .{}),
             .expectedLen = 77,
         },
         .{
@@ -613,13 +672,70 @@ test "BlockHeaderEncode" {
         },
     };
 
-    for (cases) |case| {
+    var headers: [cases.len]BlockHeader = undefined;
+    for (cases, 0..) |case, i| {
         var encodeBuf: [BlockHeader.encodeExpectedSize]u8 = undefined;
         const offset = case.header.encode(&encodeBuf);
         try std.testing.expectEqual(case.expectedLen, offset);
 
-        const h = BlockHeader.decode(encodeBuf[0..offset]);
-        try std.testing.expectEqualDeep(case.header, h.header);
+        const decoded = BlockHeader.decode(encodeBuf[0..offset]);
+        try std.testing.expectEqual(offset, decoded.offset);
+        try std.testing.expectEqualDeep(case.header, decoded.header);
+
+        headers[i] = case.header;
+    }
+
+    var indexBuf = std.ArrayList(u8).empty;
+    defer indexBuf.deinit(alloc);
+
+    const WindowCase = struct {
+        offset: u64,
+        size: u64,
+        expected: []const BlockHeader,
+    };
+
+    var windowCases = [_]WindowCase{
+        .{ .offset = 0, .size = 0, .expected = headers[0..2] },
+        .{ .offset = 0, .size = 0, .expected = headers[1..3] },
+        .{ .offset = 0, .size = 0, .expected = headers[1..2] },
+        .{ .offset = 0, .size = 0, .expected = headers[2..3] },
+    };
+
+    for (&windowCases) |*windowCase| {
+        const rawLen = windowCase.expected.len * BlockHeader.encodeExpectedSize;
+        const raw = try alloc.alloc(u8, rawLen);
+        defer alloc.free(raw);
+
+        var off: usize = 0;
+        for (windowCase.expected) |header| {
+            const n = header.encode(raw[off .. off + BlockHeader.encodeExpectedSize]);
+            off += n;
+        }
+
+        const bound = try encoding.compressBound(off);
+        const compressed = try alloc.alloc(u8, bound);
+        defer alloc.free(compressed);
+
+        windowCase.offset = @intCast(indexBuf.items.len);
+        const n = try encoding.compressAuto(compressed, raw[0..off]);
+        windowCase.size = @intCast(n);
+        try indexBuf.appendSlice(alloc, compressed[0..n]);
+    }
+
+    for (windowCases) |windowCase| {
+        var decoded = try std.ArrayList(BlockHeader).initCapacity(alloc, 4);
+        defer decoded.deinit(alloc);
+
+        const window = IndexBlockHeader{
+            .sid = windowCase.expected[0].sid,
+            .minTs = windowCase.expected[0].timestampsHeader.min,
+            .maxTs = windowCase.expected[windowCase.expected.len - 1].timestampsHeader.max,
+            .offset = windowCase.offset,
+            .size = windowCase.size,
+        };
+
+        try BlockHeader.decodeIndexWindow(alloc, &decoded, indexBuf.items, window);
+        try std.testing.expectEqualDeep(windowCase.expected, decoded.items);
     }
 }
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("StreamWriter.zig");
@@ -18,7 +19,7 @@ maxTs: u64,
 offset: u64,
 size: u64,
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
+pub fn init(allocator: Allocator) !*Self {
     // TODO: test if it can be used by value, doesn't seem it needs an allocator
     const bh = try allocator.create(Self);
     bh.* = .{
@@ -31,18 +32,18 @@ pub fn init(allocator: std.mem.Allocator) !*Self {
     return bh;
 }
 
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *Self, allocator: Allocator) void {
     self.deinitRead(allocator);
     allocator.destroy(self);
 }
 
-pub fn deinitRead(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinitRead(self: *Self, allocator: Allocator) void {
     self.sid.deinit(allocator);
 }
 
 pub fn writeIndexBlock(
     self: *Self,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     indexBlockBuf: *std.ArrayList(u8),
     sid: SID,
     minTs: u64,
@@ -97,10 +98,10 @@ pub fn decode(buf: []const u8) Self {
 }
 
 // TODO: unify the way how we use SID
-pub fn decodeAlloc(allocator: std.mem.Allocator, buf: []const u8) !Self {
+pub fn decodeAlloc(allocator: Allocator, buf: []const u8) !Self {
     var decoder = Decoder.init(buf);
     const sid = try SID.decodeAlloc(allocator, buf);
-    decoder.offset += 32; // SID is 32 bytes
+    decoder.offset += SID.encodeBound;
     const minTs = decoder.readInt(u64);
     const maxTs = decoder.readInt(u64);
     const offset = decoder.readInt(u64);
@@ -115,7 +116,7 @@ pub fn decodeAlloc(allocator: std.mem.Allocator, buf: []const u8) !Self {
 }
 
 pub fn readIndexBlockHeaders(
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     compressed: []const u8,
 ) ![]Self {
     const decompressedSize = try encoding.getFrameContentSize(compressed);
@@ -153,7 +154,8 @@ pub fn readIndexBlockHeaders(
     return dst;
 }
 
-// TODO: consider to move it under builtin.is_test condition
+// TODO: consider to move it under builtin.is_test condition or have it in the testing.assert,
+// have it in release safe also must be vaible
 fn validateIndexBlockHeaders(headers: []const Self) void {
     for (1..headers.len) |i| {
         std.debug.assert(!headers[i].sid.lessThan(&headers[i - 1].sid));

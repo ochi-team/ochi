@@ -6,6 +6,7 @@ const fs = @import("../../fs.zig");
 const MemTable = @import("../inmem/MemTable.zig");
 const DiskTable = @import("DiskTable.zig");
 const IndexBlockHeader = @import("../inmem/IndexBlockHeader.zig");
+const BlockHeader = @import("../inmem/block_header.zig").BlockHeader;
 const TableHeader = @import("../inmem/TableHeader.zig");
 const ColumnIDGen = @import("../inmem/ColumnIDGen.zig");
 
@@ -398,11 +399,112 @@ pub fn release(self: *Table) void {
 }
 
 pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
+    var indexBlockHeaders = self.indexBlockHeaders;
+    var sidsToFind = sids;
+
+    while (indexBlockHeaders.len > 0 and sidsToFind.len > 0) {
+        var sid = sidsToFind[0];
+        var indexBlockHeader = indexBlockHeaders[0];
+
+        if (sid.lessThan(&indexBlockHeader.sid)) {
+            const n = std.sort.lowerBound(SID, sidsToFind, sid, sidQueryOrder);
+            if (n == sidsToFind.len) {
+                sidsToFind = sidsToFind[0..0];
+                break;
+            }
+
+            sid = sidsToFind[n];
+            sidsToFind = sidsToFind[n..];
+        }
+
+        var n: usize = 0;
+        if (indexBlockHeaders[0].sid.lessThan(&sid)) {
+            n = std.sort.lowerBound(IndexBlockHeader, indexBlockHeaders, sid, indexBlockHeaderSidQueryOrder);
+            // TODO: should we n -= 1;
+        }
+
+        indexBlockHeader = indexBlockHeaders[n];
+        indexBlockHeaders = indexBlockHeaders[n + 1 ..];
+
+        if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
+            // block doesn't contain the requested range
+            continue;
+        }
+
+        var blockHeaders = std.ArrayList(BlockHeader).empty;
+        errdefer blockHeaders.deinit(alloc);
+        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, self.indexBuf, indexBlockHeader);
+
+        var blockHeadersToRead = blockHeaders.items;
+        while (blockHeadersToRead.len > 0) {
+            n = std.sort.lowerBound(BlockHeader, blockHeadersToRead, sid, blockHeaderQueryOrder);
+            blockHeadersToRead = blockHeadersToRead[n..];
+
+            while (blockHeadersToRead.len > 0 and blockHeadersToRead[0].sid.eql(&sid)) {
+                const blockHeader = blockHeadersToRead[0];
+                blockHeadersToRead = blockHeadersToRead[1..];
+
+                if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
+                    // block doesn't contain the requested range
+                    continue;
+                }
+
+                try self.queryBlock(alloc, dst, blockHeader, query);
+            }
+
+            if (blockHeadersToRead.len > 0) {
+                break;
+            }
+
+            sid = blockHeadersToRead[0].sid;
+            n = std.sort.lowerBound(SID, sidsToFind, sid, sidQueryOrder);
+            if (n == sidsToFind.len) {
+                sidsToFind = sidsToFind[0..0];
+                break;
+            }
+
+            sid = sidsToFind[n];
+            sidsToFind = sidsToFind[n..];
+        }
+    }
+}
+
+pub fn queryBlock(
+    self: *Table,
+    alloc: Allocator,
+    dst: *std.ArrayList(Line),
+    blockHeader: BlockHeader,
+    query: Query,
+) !void {
     _ = self;
     _ = alloc;
     _ = dst;
-    _ = sids;
+    _ = blockHeader;
     _ = query;
+}
+
+fn sidQueryOrder(ctx: SID, sid: SID) std.math.Order {
+    if (ctx.lessThan(&sid)) {
+        return .gt;
+    }
+    // sid <= ctx is fine, we look for lower bound
+    return .eq;
+}
+
+fn indexBlockHeaderSidQueryOrder(ctx: SID, self: IndexBlockHeader) std.math.Order {
+    if (self.sid.lessThan(&ctx)) {
+        return .gt;
+    }
+    // ctx <= sid is fine, we look for lower bound
+    return .eq;
+}
+
+fn blockHeaderQueryOrder(ctx: SID, bh: BlockHeader) std.math.Order {
+    if (bh.sid.lessThan(&ctx)) {
+        return .gt;
+    }
+    // ctx <= sid is fine, we look for lower bound
+    return .eq;
 }
 
 pub fn lessThan(_: void, one: *Table, another: *Table) bool {
