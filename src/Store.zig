@@ -161,7 +161,7 @@ pub fn addLines(
     {
         var list = std.ArrayList(Line).empty;
 
-        const first_day: u32 = @intCast(lines[0].timestampNs / std.time.ns_per_day);
+        const firstDay: u32 = @intCast(lines[0].timestampNs / std.time.ns_per_day);
 
         while (idx < lines.len) : (idx += 1) {
             const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
@@ -173,7 +173,7 @@ pub fn addLines(
                 // TODO: log a warning
                 continue;
             }
-            if (day != first_day) break;
+            if (day != firstDay) break;
 
             try list.append(allocator, lines[idx]);
         }
@@ -181,7 +181,7 @@ pub fn addLines(
         self.partitionsMx.lock();
         defer self.partitionsMx.unlock();
 
-        const partition = try self.getPartitionOrLru(allocator, first_day);
+        const partition = try self.getPartitionOrLru(allocator, firstDay);
         defer partition.release();
         try partition.addLines(allocator, list, tags, encodedTags);
 
