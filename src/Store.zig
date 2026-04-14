@@ -180,7 +180,7 @@ pub fn addLines(
         self.partitionsMx.lock();
         defer self.partitionsMx.unlock();
 
-        const partition = try self.getLruOrPartition(allocator, first_day);
+        const partition = try self.getPartitionOrLru(allocator, first_day);
         defer partition.release();
         try partition.addLines(allocator, list, tags, encodedTags);
 
@@ -219,7 +219,7 @@ pub fn addLines(
         self.partitionsMx.lock();
         defer self.partitionsMx.unlock();
 
-        const partition = try self.getLruOrPartition(allocator, day);
+        const partition = try self.getPartitionOrLru(allocator, day);
         defer partition.release();
         try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
     }
@@ -343,7 +343,7 @@ fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
     return part;
 }
 
-fn getLruOrPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
+fn getPartitionOrLru(self: *Store, alloc: Allocator, day: u32) !*Partition {
     if (self.getLruPartition()) |part|
         if (part.day == day)
             return part;
