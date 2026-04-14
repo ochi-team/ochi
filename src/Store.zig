@@ -158,21 +158,15 @@ pub fn addLines(
 
     var idx: usize = 0;
     // Hot path if all Lines belong to the same Partition
-    {
+    hotpath: {
         const firstDay: u32 = @intCast(lines[0].timestampNs / std.time.ns_per_day);
+        if (firstDay < minDay or firstDay > maxDay) break :hotpath;
 
         while (idx < lines.len) : (idx += 1) {
             const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
-            if (day < minDay) {
-                // TODO: log a warning
-                continue;
-            }
-            if (day > maxDay) {
-                // TODO: log a warning
-                continue;
-            }
             if (day != firstDay) break;
         }
+
         const partition = blk: {
             self.partitionsMx.lock();
             defer self.partitionsMx.unlock();
@@ -186,7 +180,7 @@ pub fn addLines(
         try partition.addLines(allocator, list, tags, encodedTags);
 
         // Return early since all lines are added to the same Partition
-        if (idx == lines.len) return;
+        if (list.items.len == lines.len) return;
     }
 
     // If the Lines belong to different Partitions, continue where left off,
