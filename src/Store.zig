@@ -157,7 +157,7 @@ pub fn addLines(
     const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
 
     var idx: usize = 0;
-    // Hot path if all Lines belong to the same day
+    // Hot path if all Lines belong to the same Partition
     {
         var list = std.ArrayList(Line).empty;
 
@@ -177,15 +177,17 @@ pub fn addLines(
 
             try list.append(allocator, lines[idx]);
         }
+        const partition = blk: {
+            self.partitionsMx.lock();
+            defer self.partitionsMx.unlock();
 
-        self.partitionsMx.lock();
-        defer self.partitionsMx.unlock();
-
-        const partition = try self.getPartitionOrLru(allocator, firstDay);
+            break :blk try self.getPartitionOrLru(allocator, firstDay);
+        };
         defer partition.release();
+
         try partition.addLines(allocator, list, tags, encodedTags);
 
-        // Early return
+        // Return early since all lines are added to the same Partition
         if (idx == lines.len) return;
     }
 
@@ -217,11 +219,14 @@ pub fn addLines(
     while (linesIterator.next()) |it| {
         const day = it.key_ptr.*;
 
-        self.partitionsMx.lock();
-        defer self.partitionsMx.unlock();
+        const partition = blk: {
+            self.partitionsMx.lock();
+            defer self.partitionsMx.unlock();
 
-        const partition = try self.getPartitionOrLru(allocator, day);
+            break :blk try self.getPartitionOrLru(allocator, day);
+        };
         defer partition.release();
+
         try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
     }
 }
