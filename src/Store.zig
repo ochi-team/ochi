@@ -66,6 +66,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
         .partitions = partitions,
         .streamCache = streamCache,
     };
+    errdefer alloc.destroy(store);
 
     // TODO: try making it parallel, it speed up start up time
     var it = partitionsDir.iterate();
