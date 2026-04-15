@@ -38,9 +38,10 @@ pub fn readPadded(self: *Self, totalSize: usize) []const u8 {
     return bytes[0..len];
 }
 
-pub fn readPaddedToBuf(self: *Self, totalSize: usize, tenantBuf: []u8) void {
+pub fn readPaddedToBuf(self: *Self, totalSize: usize, buf: []u8) void {
     const src = self.readPadded(totalSize);
-    @memcpy(tenantBuf[0..src.len], src);
+    @memcpy(buf[0..src.len], src);
+    @memset(buf[src.len..], 0);
 }
 
 pub fn readVarInt(self: *Self) u64 {

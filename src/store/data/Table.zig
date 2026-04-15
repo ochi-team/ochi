@@ -9,6 +9,11 @@ const IndexBlockHeader = @import("../inmem/IndexBlockHeader.zig");
 const BlockHeader = @import("../inmem/block_header.zig").BlockHeader;
 const TableHeader = @import("../inmem/TableHeader.zig");
 const ColumnIDGen = @import("../inmem/ColumnIDGen.zig");
+const BlockData = @import("../inmem/BlockData.zig").BlockData;
+const Block = @import("../inmem/Block.zig");
+const Unpacker = @import("../inmem/Unpacker.zig");
+const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
+const StreamReader = @import("../inmem/reader.zig").StreamReader;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
@@ -407,7 +412,7 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
         var indexBlockHeader = indexBlockHeaders[0];
 
         if (sid.lessThan(&indexBlockHeader.sid)) {
-            const n = std.sort.lowerBound(SID, sidsToFind, sid, sidQueryOrder);
+            const n = firstSIDGte(sidsToFind, indexBlockHeader.sid);
             if (n == sidsToFind.len) {
                 sidsToFind = sidsToFind[0..0];
                 break;
@@ -418,9 +423,11 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
         }
 
         var n: usize = 0;
-        if (indexBlockHeaders[0].sid.lessThan(&sid)) {
-            n = std.sort.lowerBound(IndexBlockHeader, indexBlockHeaders, sid, indexBlockHeaderSidQueryOrder);
-            // TODO: should we n -= 1;
+        if (sidLessQuery(indexBlockHeaders[0].sid, sid)) {
+            n = firstIndexBlockHeaderSidGte(indexBlockHeaders, sid);
+            // n can be indexBlockHeaders.len,
+            // so we make a step back to check the last value
+            if (n > 0) n -= 1;
         }
 
         indexBlockHeader = indexBlockHeaders[n];
@@ -432,15 +439,15 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
         }
 
         var blockHeaders = std.ArrayList(BlockHeader).empty;
-        errdefer blockHeaders.deinit(alloc);
+        defer blockHeaders.deinit(alloc);
         try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, self.indexBuf, indexBlockHeader);
 
         var blockHeadersToRead = blockHeaders.items;
         while (blockHeadersToRead.len > 0) {
-            n = std.sort.lowerBound(BlockHeader, blockHeadersToRead, sid, blockHeaderQueryOrder);
+            n = firstBlockHeaderSidGte(blockHeadersToRead, sid);
             blockHeadersToRead = blockHeadersToRead[n..];
 
-            while (blockHeadersToRead.len > 0 and blockHeadersToRead[0].sid.eql(&sid)) {
+            while (blockHeadersToRead.len > 0 and sidEqlQuery(blockHeadersToRead[0].sid, sid)) {
                 const blockHeader = blockHeadersToRead[0];
                 blockHeadersToRead = blockHeadersToRead[1..];
 
@@ -452,12 +459,12 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
                 try self.queryBlock(alloc, dst, blockHeader, query);
             }
 
-            if (blockHeadersToRead.len > 0) {
+            if (blockHeadersToRead.len == 0) {
                 break;
             }
 
             sid = blockHeadersToRead[0].sid;
-            n = std.sort.lowerBound(SID, sidsToFind, sid, sidQueryOrder);
+            n = firstSIDGte(sidsToFind, sid);
             if (n == sidsToFind.len) {
                 sidsToFind = sidsToFind[0..0];
                 break;
@@ -469,18 +476,156 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
     }
 }
 
-pub fn queryBlock(
+fn firstSIDGte(sids: []const SID, target: SID) usize {
+    var lo: usize = 0;
+    var hi: usize = sids.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (sidLessQuery(sids[mid], target)) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn firstIndexBlockHeaderSidGte(headers: []const IndexBlockHeader, target: SID) usize {
+    var lo: usize = 0;
+    var hi: usize = headers.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (sidLessQuery(headers[mid].sid, target)) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn firstBlockHeaderSidGte(headers: []const BlockHeader, target: SID) usize {
+    var lo: usize = 0;
+    var hi: usize = headers.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (sidLessQuery(headers[mid].sid, target)) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn sidLessQuery(a: SID, b: SID) bool {
+    const tenantA = trimTenantPadding(a.tenantID);
+    const tenantB = trimTenantPadding(b.tenantID);
+
+    return std.mem.lessThan(u8, tenantA, tenantB) or
+        (std.mem.eql(u8, tenantA, tenantB) and a.id < b.id);
+}
+
+fn sidEqlQuery(a: SID, b: SID) bool {
+    return std.mem.eql(u8, trimTenantPadding(a.tenantID), trimTenantPadding(b.tenantID)) and
+        a.id == b.id;
+}
+
+fn trimTenantPadding(tenantID: []const u8) []const u8 {
+    var n = tenantID.len;
+    while (n > 0 and tenantID[n - 1] == 0) {
+        n -= 1;
+    }
+    return tenantID[0..n];
+}
+
+fn queryBlock(
     self: *Table,
     alloc: Allocator,
     dst: *std.ArrayList(Line),
     blockHeader: BlockHeader,
     query: Query,
 ) !void {
-    _ = self;
-    _ = alloc;
-    _ = dst;
-    _ = blockHeader;
-    _ = query;
+    var colIdx = std.AutoHashMap(u16, u16).init(alloc);
+    defer colIdx.deinit();
+
+    try colIdx.ensureTotalCapacity(self.columnIdxs.count());
+    var idxIt = self.columnIdxs.iterator();
+    while (idxIt.next()) |entry| {
+        const colID = self.columnIDGen.keyIDs.get(entry.key_ptr.*) orelse continue;
+        colIdx.putAssumeCapacity(colID, entry.value_ptr.*);
+    }
+
+    var bloomValuesList = std.ArrayList([]const u8).initBuffer(self.bloomValuesShards);
+    bloomValuesList.items.len = self.bloomValuesShards.len;
+    var bloomTokensList = std.ArrayList([]const u8).initBuffer(self.bloomTokensShards);
+    bloomTokensList.items.len = self.bloomTokensShards.len;
+
+    const streamReader = StreamReader{
+        .timestampsBuf = self.timestampsBuf,
+        .indexBuf = self.indexBuf,
+        .metaIndexBuf = &.{},
+        .columnsHeaderBuf = self.columnsHeaderBuf,
+        .columnsHeaderIndexBuf = self.columnsHeaderIndexBuf,
+        .columnsKeysBuf = &.{},
+        .columnIdxsBuf = &.{},
+        .messageBloomValuesBuf = self.messageBloomValues,
+        .messageBloomTokensBuf = self.messageBloomTokens,
+        .bloomValuesList = bloomValuesList,
+        .bloomTokensList = bloomTokensList,
+        .columnIDGen = self.columnIDGen,
+        .colIdx = &colIdx,
+    };
+
+    var blockData = BlockData.initEmpty();
+    defer blockData.deinit(alloc);
+    try blockData.readFrom(alloc, &blockHeader, &streamReader);
+
+    const unpacker = try Unpacker.init(alloc);
+    defer unpacker.deinit(alloc);
+    const decoder = try ValuesDecoder.init(alloc);
+    defer decoder.deinit();
+
+    const block = try Block.initFromData(alloc, &blockData, unpacker, decoder);
+    defer block.deinit(alloc);
+
+    var i = dst.items.len;
+    try block.gatherLines(alloc, dst);
+
+    std.debug.assert(dst.items.len > i);
+    while (i < dst.items.len) {
+        const line = dst.items[i];
+
+        if (line.timestampNs < query.start or line.timestampNs > query.end) {
+            const removed = dst.swapRemove(i);
+            alloc.free(removed.fields);
+            continue;
+        }
+        if (!queryFieldsMatch(line.fields, query.fields)) {
+            const removed = dst.swapRemove(i);
+            alloc.free(removed.fields);
+            continue;
+        }
+
+        dst.items[i].sid = blockHeader.sid;
+        i += 1;
+    }
+}
+
+fn queryFieldsMatch(fields: []const Field, queryFields: []const Field) bool {
+    for (queryFields) |needle| {
+        var matched = false;
+        for (fields) |field| {
+            if (std.mem.eql(u8, needle.key, field.key) and std.mem.eql(u8, needle.value, field.value)) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            return false;
+        }
+    }
+    return true;
 }
 
 fn sidQueryOrder(ctx: SID, sid: SID) std.math.Order {
@@ -593,6 +738,13 @@ test "release fromMem does not affect filesystem path" {
 }
 
 const Field = @import("../lines.zig").Field;
+
+fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
+    for (lines.items) |line| {
+        alloc.free(line.fields);
+    }
+    lines.deinit(alloc);
+}
 
 test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
@@ -717,6 +869,181 @@ test "open reads table from disk" {
     for (expectedHeaders, table.indexBlockHeaders) |expected, actual| {
         try testing.expectEqualDeep(expected, actual);
     }
+}
+
+test "queryBlock returns expected lines by time range and field filters" {
+    const alloc = testing.allocator;
+
+    const memTable = try MemTable.init(alloc);
+
+    var fields1 = [_]Field{
+        .{ .key = "app", .value = "seq" },
+        .{ .key = "level", .value = "info" },
+    };
+    var fields2 = [_]Field{
+        .{ .key = "app", .value = "seq" },
+        .{ .key = "level", .value = "warn" },
+    };
+    var fields3 = [_]Field{
+        .{ .key = "app", .value = "seq" },
+        .{ .key = "level", .value = "error" },
+    };
+
+    const sid = SID{ .id = 1, .tenantID = "1234" };
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = fields1[0..] },
+        .{ .timestampNs = 2, .sid = sid, .fields = fields2[0..] },
+        .{ .timestampNs = 3, .sid = sid, .fields = fields3[0..] },
+    };
+    try memTable.addLines(alloc, lines[0..]);
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.release();
+
+    var blockHeaders = std.ArrayList(BlockHeader).empty;
+    defer blockHeaders.deinit(alloc);
+    try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, table.indexBuf, table.indexBlockHeaders[0]);
+    try testing.expect(blockHeaders.items.len > 0);
+    const blockHeader = blockHeaders.items[0];
+
+    var queried = std.ArrayList(Line).empty;
+    defer deinitQueriedLines(alloc, &queried);
+
+    const noFieldFilters = Query{
+        .start = 1,
+        .end = 3,
+        .tags = &.{},
+        .fields = &.{},
+    };
+    try table.queryBlock(alloc, &queried, blockHeader, noFieldFilters);
+    try testing.expectEqual(@as(usize, 3), queried.items.len);
+    try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
+    try testing.expectEqual(@as(u64, 2), queried.items[1].timestampNs);
+    try testing.expectEqual(@as(u64, 3), queried.items[2].timestampNs);
+
+    for (queried.items) |line| alloc.free(line.fields);
+    queried.clearRetainingCapacity();
+
+    var levelWarnFilter = [_]Field{.{ .key = "level", .value = "warn" }};
+    const warnOnly = Query{
+        .start = 1,
+        .end = 3,
+        .tags = &.{},
+        .fields = levelWarnFilter[0..],
+    };
+    try table.queryBlock(alloc, &queried, blockHeader, warnOnly);
+    try testing.expectEqual(@as(usize, 1), queried.items.len);
+    try testing.expectEqual(@as(u64, 2), queried.items[0].timestampNs);
+
+    for (queried.items) |line| alloc.free(line.fields);
+    queried.clearRetainingCapacity();
+
+    var noMatchFilter = [_]Field{.{ .key = "level", .value = "fatal" }};
+    const noMatches = Query{
+        .start = 1,
+        .end = 3,
+        .tags = &.{},
+        .fields = noMatchFilter[0..],
+    };
+    try table.queryBlock(alloc, &queried, blockHeader, noMatches);
+    try testing.expectEqual(@as(usize, 0), queried.items.len);
+
+    const outOfRange = Query{
+        .start = 10,
+        .end = 20,
+        .tags = &.{},
+        .fields = &.{},
+    };
+    try table.queryBlock(alloc, &queried, blockHeader, outOfRange);
+    try testing.expectEqual(@as(usize, 0), queried.items.len);
+}
+
+test "queryLines returns lines for requested sids and skips missing sid" {
+    const alloc = testing.allocator;
+
+    const memTable = try MemTable.init(alloc);
+
+    var sid1FieldsA = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
+    var sid1FieldsB = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
+    var sid3Fields = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "info" } };
+    var sid5Fields = [_]Field{ .{ .key = "app", .value = "worker" }, .{ .key = "level", .value = "error" } };
+
+    const sid1 = SID{ .id = 1, .tenantID = "1234" };
+    const sid3 = SID{ .id = 3, .tenantID = "1234" };
+    const sid5 = SID{ .id = 5, .tenantID = "1234" };
+
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sid1, .fields = sid1FieldsA[0..] },
+        .{ .timestampNs = 2, .sid = sid1, .fields = sid1FieldsB[0..] },
+        .{ .timestampNs = 3, .sid = sid3, .fields = sid3Fields[0..] },
+        .{ .timestampNs = 4, .sid = sid5, .fields = sid5Fields[0..] },
+    };
+    try memTable.addLines(alloc, lines[0..]);
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.release();
+
+    var queried = std.ArrayList(Line).empty;
+    defer deinitQueriedLines(alloc, &queried);
+
+    const sid2 = SID{ .id = 2, .tenantID = "1234" };
+    var requestedSIDs = [_]SID{ sid2, sid5 };
+    const q = Query{
+        .start = 0,
+        .end = 10,
+        .tags = &.{},
+        .fields = &.{},
+    };
+
+    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
+
+    try testing.expectEqual(@as(usize, 1), queried.items.len);
+    try testing.expectEqual(@as(u64, 4), queried.items[0].timestampNs);
+    try testing.expectEqual(@as(u128, 5), queried.items[0].sid.id);
+}
+
+test "queryLines applies timestamp and field filters across multiple sids" {
+    const alloc = testing.allocator;
+
+    const memTable = try MemTable.init(alloc);
+
+    var sid1Info = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
+    var sid1Error = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
+    var sid2ErrorA = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "error" } };
+    var sid2ErrorB = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "error" } };
+
+    const sid1 = SID{ .id = 1, .tenantID = "1234" };
+    const sid2 = SID{ .id = 2, .tenantID = "1234" };
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sid1, .fields = sid1Info[0..] },
+        .{ .timestampNs = 2, .sid = sid1, .fields = sid1Error[0..] },
+        .{ .timestampNs = 3, .sid = sid2, .fields = sid2ErrorA[0..] },
+        .{ .timestampNs = 6, .sid = sid2, .fields = sid2ErrorB[0..] },
+    };
+    try memTable.addLines(alloc, lines[0..]);
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.release();
+
+    var queried = std.ArrayList(Line).empty;
+    defer deinitQueriedLines(alloc, &queried);
+
+    var requestedSIDs = [_]SID{ sid1, sid2 };
+    var fieldFilter = [_]Field{.{ .key = "level", .value = "error" }};
+    const q = Query{
+        .start = 2,
+        .end = 5,
+        .tags = &.{},
+        .fields = fieldFilter[0..],
+    };
+
+    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
+
+    try testing.expectEqual(@as(usize, 2), queried.items.len);
+    try testing.expectEqual(@as(u64, 2), queried.items[0].timestampNs);
+    try testing.expectEqual(@as(u128, 1), queried.items[0].sid.id);
+    try testing.expectEqual(@as(u64, 3), queried.items[1].timestampNs);
+    try testing.expectEqual(@as(u128, 2), queried.items[1].sid.id);
 }
 
 // TODO: test flushed mem table is the same as an opened one
