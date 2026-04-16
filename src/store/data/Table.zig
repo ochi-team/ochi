@@ -804,328 +804,141 @@ test "open reads table from disk" {
     }
 }
 
-test "queryBlock returns expected lines by time range and field filters" {
+test "queryLines" {
     const alloc = testing.allocator;
-
-    const memTable = try MemTable.init(alloc);
-
-    var fields1 = [_]Field{
-        .{ .key = "app", .value = "seq" },
-        .{ .key = "level", .value = "info" },
+    const ExpectedLine = struct {
+        timestampNs: u64,
+        sid: SID,
     };
-    var fields2 = [_]Field{
-        .{ .key = "app", .value = "seq" },
-        .{ .key = "level", .value = "warn" },
-    };
-    var fields3 = [_]Field{
-        .{ .key = "app", .value = "seq" },
-        .{ .key = "level", .value = "error" },
+    const Case = struct {
+        requestedSIDs: []const SID,
+        query: Query,
+        expected: []const ExpectedLine,
     };
 
-    const sid = SID{ .id = 1, .tenantID = "1234" };
-    var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid, .fields = fields1[0..] },
-        .{ .timestampNs = 2, .sid = sid, .fields = fields2[0..] },
-        .{ .timestampNs = 3, .sid = sid, .fields = fields3[0..] },
-    };
-    try memTable.addLines(alloc, lines[0..]);
-
-    const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
-
-    var blockHeaders = std.ArrayList(BlockHeader).empty;
-    defer {
-        for (blockHeaders.items) |bh| {
-            alloc.free(bh.sid.tenantID);
-        }
-        blockHeaders.deinit(alloc);
-    }
-
-    try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, table.indexBuf, table.indexBlockHeaders[0]);
-    try testing.expect(blockHeaders.items.len > 0);
-    const blockHeader = blockHeaders.items[0];
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
-
-    const noFieldFilters = Query{
-        .start = 1,
-        .end = 3,
-        .tags = &.{},
-        .fields = &.{},
-    };
-    try table.queryBlock(alloc, &queried, blockHeader, noFieldFilters);
-    try testing.expectEqual(@as(usize, 3), queried.items.len);
-    try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
-    try testing.expectEqual(@as(u64, 2), queried.items[1].timestampNs);
-    try testing.expectEqual(@as(u64, 3), queried.items[2].timestampNs);
-
-    for (queried.items) |line| {
-        alloc.free(line.sid.tenantID);
-        alloc.free(line.fields);
-    }
-    queried.clearRetainingCapacity();
-
-    const warnOnly = Query{
-        .start = 1,
-        .end = 3,
-        .tags = &.{},
-        .fields = &.{.{ .key = "level", .value = "warn" }},
-    };
-    try table.queryBlock(alloc, &queried, blockHeader, warnOnly);
-    try testing.expectEqual(@as(usize, 1), queried.items.len);
-    try testing.expectEqual(@as(u64, 2), queried.items[0].timestampNs);
-
-    for (queried.items) |line| {
-        alloc.free(line.sid.tenantID);
-        alloc.free(line.fields);
-    }
-    queried.clearRetainingCapacity();
-
-    const noMatches = Query{
-        .start = 1,
-        .end = 3,
-        .tags = &.{},
-        .fields = &.{.{ .key = "level", .value = "fatal" }},
-    };
-    try table.queryBlock(alloc, &queried, blockHeader, noMatches);
-    try testing.expectEqual(@as(usize, 0), queried.items.len);
-
-    const outOfRange = Query{
-        .start = 10,
-        .end = 20,
-        .tags = &.{},
-        .fields = &.{},
-    };
-    try table.queryBlock(alloc, &queried, blockHeader, outOfRange);
-    try testing.expectEqual(@as(usize, 0), queried.items.len);
-}
-
-test "queryLines returns lines for requested sids and skips missing sid" {
-    const alloc = testing.allocator;
-
-    const memTable = try MemTable.init(alloc);
-
-    var sid1FieldsA = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
-    var sid1FieldsB = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
-    var sid3Fields = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "info" } };
-    var sid5Fields = [_]Field{ .{ .key = "app", .value = "worker" }, .{ .key = "level", .value = "error" } };
-
+    const sidBlock = SID{ .id = 10, .tenantID = "1234" };
     const sid1 = SID{ .id = 1, .tenantID = "1234" };
+    const sid2 = SID{ .id = 2, .tenantID = "1234" };
     const sid3 = SID{ .id = 3, .tenantID = "1234" };
     const sid5 = SID{ .id = 5, .tenantID = "1234" };
-
-    var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid1, .fields = sid1FieldsA[0..] },
-        .{ .timestampNs = 2, .sid = sid1, .fields = sid1FieldsB[0..] },
-        .{ .timestampNs = 3, .sid = sid3, .fields = sid3Fields[0..] },
-        .{ .timestampNs = 4, .sid = sid5, .fields = sid5Fields[0..] },
-    };
-    try memTable.addLines(alloc, lines[0..]);
-
-    const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
-
-    const sid2 = SID{ .id = 2, .tenantID = "1234" };
-    var requestedSIDs = [_]SID{ sid2, sid5 };
-    const q = Query{
-        .start = 0,
-        .end = 10,
-        .tags = &.{},
-        .fields = &.{},
-    };
-
-    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
-
-    try testing.expectEqual(@as(usize, 1), queried.items.len);
-    try testing.expectEqual(@as(u64, 4), queried.items[0].timestampNs);
-    try testing.expectEqual(@as(u128, 5), queried.items[0].sid.id);
-}
-
-test "queryLines applies timestamp and field filters across multiple sids" {
-    const alloc = testing.allocator;
-
-    const memTable = try MemTable.init(alloc);
-
-    var sid1Info = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
-    var sid1Error = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
-    var sid2ErrorA = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "error" } };
-    var sid2ErrorB = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "error" } };
-
-    const sid1 = SID{ .id = 1, .tenantID = "1234" };
-    const sid2 = SID{ .id = 2, .tenantID = "1234" };
-    var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid1, .fields = sid1Info[0..] },
-        .{ .timestampNs = 2, .sid = sid1, .fields = sid1Error[0..] },
-        .{ .timestampNs = 3, .sid = sid2, .fields = sid2ErrorA[0..] },
-        .{ .timestampNs = 6, .sid = sid2, .fields = sid2ErrorB[0..] },
-    };
-    try memTable.addLines(alloc, lines[0..]);
-
-    const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
-
-    var requestedSIDs = [_]SID{ sid1, sid2 };
-    var fieldFilter = [_]Field{.{ .key = "level", .value = "error" }};
-    const q = Query{
-        .start = 2,
-        .end = 5,
-        .tags = &.{},
-        .fields = fieldFilter[0..],
-    };
-
-    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
-
-    try testing.expectEqual(@as(usize, 2), queried.items.len);
-    try testing.expectEqual(@as(u64, 2), queried.items[0].timestampNs);
-    try testing.expectEqual(@as(u128, 1), queried.items[0].sid.id);
-    try testing.expectEqual(@as(u64, 3), queried.items[1].timestampNs);
-    try testing.expectEqual(@as(u128, 2), queried.items[1].sid.id);
-}
-
-test "queryLines matches when blocks contain only larger sids" {
-    const alloc = testing.allocator;
-
-    const memTable = try MemTable.init(alloc);
-
-    var sid5Fields = [_]Field{ .{ .key = "app", .value = "worker" }, .{ .key = "level", .value = "info" } };
-    const sid5 = SID{ .id = 5, .tenantID = "1234" };
-    var lines = [_]Line{
-        .{ .timestampNs = 10, .sid = sid5, .fields = sid5Fields[0..] },
-    };
-    try memTable.addLines(alloc, lines[0..]);
-
-    const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
-
-    const sid2 = SID{ .id = 2, .tenantID = "1234" };
-    var requestedSIDs = [_]SID{ sid2, sid5 };
-    const q = Query{
-        .start = 0,
-        .end = 20,
-        .tags = &.{},
-        .fields = &.{},
-    };
-
-    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
-
-    try testing.expectEqual(@as(usize, 1), queried.items.len);
-    try testing.expectEqual(@as(u64, 10), queried.items[0].timestampNs);
-    try testing.expectEqual(@as(u128, 5), queried.items[0].sid.id);
-}
-
-test "queryLines keeps tenants distinct for same stream id" {
-    const alloc = testing.allocator;
-
-    const memTable = try MemTable.init(alloc);
-
-    var tenantAFields = [_]Field{ .{ .key = "app", .value = "api-a" }, .{ .key = "level", .value = "info" } };
-    var tenantBFields = [_]Field{ .{ .key = "app", .value = "api-b" }, .{ .key = "level", .value = "info" } };
-
+    const sidMissing = SID{ .id = 4, .tenantID = "1234" };
     const sidTenantA = SID{ .id = 1, .tenantID = "1111" };
     const sidTenantB = SID{ .id = 1, .tenantID = "2222" };
 
+    var seqInfo = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
+    var seqWarn = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
+    var seqError = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
+    var apiInfo = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "info" } };
+    var apiErrorA = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "error" } };
+    var apiErrorB = [_]Field{ .{ .key = "app", .value = "api" }, .{ .key = "level", .value = "error" } };
+    var workerInfo = [_]Field{ .{ .key = "app", .value = "worker" }, .{ .key = "level", .value = "info" } };
+    var tenantAFields = [_]Field{ .{ .key = "app", .value = "api-a" }, .{ .key = "level", .value = "info" } };
+    var tenantBFields = [_]Field{ .{ .key = "app", .value = "api-b" }, .{ .key = "level", .value = "info" } };
+
     var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sidBlock, .fields = seqInfo[0..] },
+        .{ .timestampNs = 2, .sid = sidBlock, .fields = seqWarn[0..] },
+        .{ .timestampNs = 3, .sid = sidBlock, .fields = seqError[0..] },
+        .{ .timestampNs = 1, .sid = sid1, .fields = seqInfo[0..] },
+        .{ .timestampNs = 2, .sid = sid1, .fields = seqError[0..] },
+        .{ .timestampNs = 3, .sid = sid2, .fields = apiErrorA[0..] },
+        .{ .timestampNs = 6, .sid = sid2, .fields = apiErrorB[0..] },
+        .{ .timestampNs = 3, .sid = sid3, .fields = apiInfo[0..] },
+        .{ .timestampNs = 10, .sid = sid5, .fields = workerInfo[0..] },
         .{ .timestampNs = 1, .sid = sidTenantA, .fields = tenantAFields[0..] },
         .{ .timestampNs = 2, .sid = sidTenantB, .fields = tenantBFields[0..] },
     };
-    try memTable.addLines(alloc, lines[0..]);
-
-    const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
-
-    var requestedSIDs = [_]SID{sidTenantB};
-    const q = Query{
-        .start = 0,
-        .end = 10,
-        .tags = &.{},
-        .fields = &.{},
-    };
-
-    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
-
-    try testing.expectEqual(@as(usize, 1), queried.items.len);
-    try testing.expect(queried.items[0].sid.eql(&sidTenantB));
-    try testing.expect(!queried.items[0].sid.eql(&sidTenantA));
-    try testing.expectEqual(@as(u64, 2), queried.items[0].timestampNs);
-}
-
-test "queryLines does not duplicate output for duplicate requested sids" {
-    const alloc = testing.allocator;
 
     const memTable = try MemTable.init(alloc);
-
-    var sid1Info = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
-    var sid1Warn = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
-    const sid1 = SID{ .id = 1, .tenantID = "1234" };
-
-    var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid1, .fields = sid1Info[0..] },
-        .{ .timestampNs = 2, .sid = sid1, .fields = sid1Warn[0..] },
-    };
     try memTable.addLines(alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release();
 
+    const cases = [_]Case{
+        .{
+            .requestedSIDs = &.{sidBlock},
+            .query = .{ .start = 1, .end = 3, .tags = &.{}, .fields = &.{} },
+            .expected = &.{
+                .{ .timestampNs = 1, .sid = sidBlock },
+                .{ .timestampNs = 2, .sid = sidBlock },
+                .{ .timestampNs = 3, .sid = sidBlock },
+            },
+        },
+        .{
+            .requestedSIDs = &.{sidBlock},
+            .query = .{ .start = 1, .end = 3, .tags = &.{}, .fields = &.{.{ .key = "level", .value = "warn" }} },
+            .expected = &.{.{ .timestampNs = 2, .sid = sidBlock }},
+        },
+        .{
+            .requestedSIDs = &.{sidBlock},
+            .query = .{ .start = 1, .end = 3, .tags = &.{}, .fields = &.{.{ .key = "level", .value = "fatal" }} },
+            .expected = &.{},
+        },
+        .{
+            .requestedSIDs = &.{sidBlock},
+            .query = .{ .start = 10, .end = 20, .tags = &.{}, .fields = &.{} },
+            .expected = &.{},
+        },
+        .{
+            .requestedSIDs = &.{ sidMissing, sid5 },
+            .query = .{ .start = 0, .end = 20, .tags = &.{}, .fields = &.{} },
+            .expected = &.{.{ .timestampNs = 10, .sid = sid5 }},
+        },
+        .{
+            .requestedSIDs = &.{ sid1, sid2 },
+            .query = .{ .start = 2, .end = 5, .tags = &.{}, .fields = &.{.{ .key = "level", .value = "error" }} },
+            .expected = &.{
+                .{ .timestampNs = 2, .sid = sid1 },
+                .{ .timestampNs = 3, .sid = sid2 },
+            },
+        },
+        .{
+            .requestedSIDs = &.{ sid1, sid1 },
+            .query = .{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} },
+            .expected = &.{
+                .{ .timestampNs = 1, .sid = sid1 },
+                .{ .timestampNs = 2, .sid = sid1 },
+            },
+        },
+        .{
+            .requestedSIDs = &.{sidTenantB},
+            .query = .{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} },
+            .expected = &.{.{ .timestampNs = 2, .sid = sidTenantB }},
+        },
+        .{
+            .requestedSIDs = &.{ sidMissing, sid5 },
+            .query = .{ .start = 0, .end = 9, .tags = &.{}, .fields = &.{} },
+            .expected = &.{},
+        },
+        .{
+            .requestedSIDs = &.{},
+            .query = .{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} },
+            .expected = &.{},
+        },
+    };
+
     var queried = std.ArrayList(Line).empty;
     defer deinitQueriedLines(alloc, &queried);
 
-    var requestedSIDs = [_]SID{ sid1, sid1 };
-    const q = Query{
-        .start = 0,
-        .end = 10,
-        .tags = &.{},
-        .fields = &.{},
-    };
+    for (cases) |case| {
+        for (queried.items) |line| {
+            alloc.free(line.sid.tenantID);
+            alloc.free(line.fields);
+        }
+        queried.clearRetainingCapacity();
 
-    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
+        const requested = try alloc.dupe(SID, case.requestedSIDs);
+        defer alloc.free(requested);
 
-    try testing.expectEqual(@as(usize, 2), queried.items.len);
-    try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
-    try testing.expectEqual(@as(u64, 2), queried.items[1].timestampNs);
-}
+        try table.queryLines(alloc, &queried, requested, case.query);
+        try testing.expectEqual(case.expected.len, queried.items.len);
 
-test "queryLines returns immediately for empty requested sids" {
-    const alloc = testing.allocator;
-
-    const memTable = try MemTable.init(alloc);
-
-    var sid1Fields = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
-    const sid1 = SID{ .id = 1, .tenantID = "1234" };
-    var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid1, .fields = sid1Fields[0..] },
-    };
-    try memTable.addLines(alloc, lines[0..]);
-
-    const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
-
-    var requestedSIDs = [_]SID{};
-    const q = Query{
-        .start = 0,
-        .end = 10,
-        .tags = &.{},
-        .fields = &.{},
-    };
-
-    try table.queryLines(alloc, &queried, requestedSIDs[0..], q);
-    try testing.expectEqual(@as(usize, 0), queried.items.len);
+        for (case.expected, 0..) |expected, i| {
+            try testing.expectEqual(expected.timestampNs, queried.items[i].timestampNs);
+            try testing.expect(queried.items[i].sid.eql(&expected.sid));
+        }
+    }
 }
 
 // TODO: test flushed mem table is the same as an opened one,

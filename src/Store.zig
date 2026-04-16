@@ -35,6 +35,7 @@ pathsBuf: std.ArrayList([]const u8) = .empty,
 // TODO: store must observe current disk space for 2 reasons:
 // 1. expose it as a metric in order to alert to OPS to expand disk or remove the stale data
 // 2. handle eviction policy based on the config (e.g. free GB or free % of the disk)
+// TODO: start partitions retention watcher
 pub fn init(alloc: Allocator, path: []const u8) !*Store {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
