@@ -68,7 +68,6 @@ pub const DataShard = struct {
     // TODO: this threshold is used in processor too,
     // make it configurable and extract from both
     fn mustFlush(self: *DataShard) bool {
-        // TODO: check its timer?
         return self.size >= flushSizeThreshold;
     }
 
@@ -119,10 +118,6 @@ stopped: std.atomic.Value(bool) = .init(false),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 
-// TODO: investigate the ownership of the Lines and background jobs,
-// identify whether they match the data
-// TODO: pass a common thread pool to data and index,
-// audit all Thread.Pool usage
 pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -130,10 +125,6 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
     std.debug.assert(concurrency != 0);
 
     const conf = Conf.getConf();
-    // 4 is a minimum amount for workers:
-    // data shards flushare, mem table flusher, mem table merger, disk table merger
-    // TODO: move basic validation to the config
-    std.debug.assert(conf.server.pools.workerThreads >= 4);
 
     const shards = try alloc.alloc(DataShard, concurrency);
     errdefer alloc.free(shards);
@@ -199,7 +190,7 @@ pub fn createDir(path: []const u8) void {
 // the only option it fails is OOM, so cleaning more memory in advance might be more reliable
 // another problem it's hard to test it via checkAllAllocationFailures.
 // Then audit all deinits and use it instead
-// TODO: make using this API instead of directly managing stopped state
+// TODO: make using this API instead of directly managing stopped state in the tests
 // TODO: this theoretically is not enough to stop the other jobs form starting,
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, alloc: Allocator) !void {
@@ -338,9 +329,13 @@ fn flushMemTablesInChunks(self: *DataRecorder, alloc: Allocator, toFlush: std.Ar
 fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void {
     if (force) {
         for (self.shards) |*shard| {
-            shard.mx.lock();
-            defer shard.mx.unlock();
-            try self.flushShard(allocator, shard);
+            // if it's not locked we are adding lines just know, makes no sense to lock it yet
+            if (shard.mx.tryLock()) {
+                defer shard.mx.unlock();
+                try self.flushShard(allocator, shard);
+            } else {
+                std.debug.print("[DEBUG] skipping shard flush because it's locked\n", .{});
+            }
         }
         return;
     }
@@ -348,8 +343,6 @@ fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void
     const nowUs = std.time.microTimestamp();
     for (self.shards) |*shard| {
         // if it's not locked we are adding lines just know, makes no sense to lock it yet
-        // TODO: find out whether it's possible never flush them due to tryLock,
-        // requires adding a debug log here
         if (shard.mx.tryLock()) {
             defer shard.mx.unlock();
             if (shard.flushAtUs) |flushAtUs| {
@@ -357,6 +350,8 @@ fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void
                     try self.flushShard(allocator, shard);
                 }
             }
+        } else {
+            std.debug.print("[DEBUG] skipping shard flush because it's locked\n", .{});
         }
     }
 }

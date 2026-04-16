@@ -23,6 +23,9 @@ Ochi is a cost-effective, Loki compatible database for logs.
 * 0.3
 - [ ] support Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
 
+* 0.4
+- [ ] Logging for Logging, Ochi starts emitting logs to itself in order to let the team experience itself
+
 #### Goals
 - support majority ingestion protocols (loki, fluentd, syslog, etc)
 - home made UI

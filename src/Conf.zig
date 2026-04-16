@@ -180,6 +180,7 @@ pub fn default(alloc: Allocator) !Conf {
         .sys = sys,
     };
 
+    std.debug.assert(conf.server.pools.workerThreads >= 4);
     std.debug.assert(conf.app.flushIntervalUs >= std.time.us_per_s);
     return conf;
 }

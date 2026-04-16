@@ -84,6 +84,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
         const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
         errdefer alloc.free(dataPath);
 
+        // discard partition because it appends it to the store state
         _ = try store.openPartition(alloc, partitionPath, indexPath, dataPath, day);
     }
 
