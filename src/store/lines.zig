@@ -7,23 +7,53 @@ const sizing = @import("inmem/sizing.zig");
 
 const maxTenantIDLen = @import("tenant.zig").maxTenantIDLen;
 
+// TODO: this brings a lot of problems across the codes base,
+// we can:
+// either make it a regular string, it requires writing its len to the files
+// or make it an integer, might work for us as well
+// alternatively we can assert tenant id len maxTenantIDLen in every call
+// and write tests accordingly creating padded tenant ids, but it smells odd
+fn trimTenantPadding(tenantID: []const u8) []const u8 {
+    var n = tenantID.len;
+    while (n > 0 and tenantID[n - 1] == 0) {
+        n -= 1;
+    }
+    return tenantID[0..n];
+}
+
 pub const SID = struct {
     tenantID: []const u8,
     id: u128,
     // buf holds ownership of tenant id
     buf: ?[]u8 = null,
 
+    pub fn order(one: SID, another: SID) std.math.Order {
+        if (one.lessThan(&another)) {
+            return .lt;
+        } else if (one.eql(&another)) {
+            return .eq;
+        }
+
+        return .gt;
+    }
+
     pub fn eql(self: *const SID, another: *const SID) bool {
-        return std.mem.eql(u8, self.tenantID, another.tenantID) and
+        return std.mem.eql(
+            u8,
+            trimTenantPadding(self.tenantID),
+            trimTenantPadding(another.tenantID),
+        ) and
             self.id == another.id;
     }
 
     // TODO: pass it by value maybe?
     pub fn lessThan(self: *const SID, another: *const SID) bool {
         // tenant is less
-        return std.mem.lessThan(u8, self.tenantID, another.tenantID) or
+        const lhs = trimTenantPadding(self.tenantID);
+        const rhs = trimTenantPadding(another.tenantID);
+        return std.mem.lessThan(u8, lhs, rhs) or
             // or if tenant is eq than id is less
-            (std.mem.eql(u8, self.tenantID, another.tenantID) and
+            (std.mem.eql(u8, lhs, rhs) and
                 self.id < another.id);
     }
 

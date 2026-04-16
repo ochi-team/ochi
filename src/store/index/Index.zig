@@ -107,7 +107,7 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []Field) !std.ArrayList(SID) {
+pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !std.ArrayList(SID) {
     // TODO: cache query => stream
 
     _ = self;

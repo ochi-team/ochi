@@ -158,11 +158,21 @@ pub const BlockHeader = struct {
         const decompressed = decompressedBuf[0..n];
         try BlockHeader.decodeFew(alloc, dst, decompressed);
 
-        // BlockHeader.decode() borrows SID tenant bytes from the decode buffer.
-        // decodeIndexWindow frees that buffer, so remap tenantID to the stable one
-        // carried by the index header.
+        // BlockHeader.decode() borrows SID tenant bytes from decompressed.
+        // decodeIndexWindow frees that buffer, so copy tenantID into owned memory.
+        // TODO: perhaps we must copy tenant on every decode, not just window,
+        // right on SID.decode level,
+        // OR if we make tenant id integer eventually it's fixed
+        var copied: usize = 0;
+        errdefer {
+            for (dst.items[dstStart .. dstStart + copied]) |header| {
+                alloc.free(header.sid.tenantID);
+            }
+        }
         for (dst.items[dstStart..]) |*header| {
-            header.sid.tenantID = index.sid.tenantID;
+            const tenantID = try alloc.dupe(u8, header.sid.tenantID);
+            header.sid.tenantID = tenantID;
+            copied += 1;
         }
     }
 
@@ -724,7 +734,12 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
 
     for (windowCases) |windowCase| {
         var decoded = try std.ArrayList(BlockHeader).initCapacity(alloc, 4);
-        defer decoded.deinit(alloc);
+        defer {
+            for (decoded.items) |bh| {
+                alloc.free(bh.sid.tenantID);
+            }
+            decoded.deinit(alloc);
+        }
 
         const window = IndexBlockHeader{
             .sid = windowCase.expected[0].sid,

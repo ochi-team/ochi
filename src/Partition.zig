@@ -114,8 +114,8 @@ pub fn release(self: *Partition) void {
 
     self.close();
 
-    // deletion of the partition due to retention or eviction policy is here
-    // read table release as a sample
+    // TODO: deletion of the partition due to retention or eviction policy
+    // read table release implementation as a sample
 }
 
 pub fn close(

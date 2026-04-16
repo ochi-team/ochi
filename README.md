@@ -32,10 +32,13 @@ app:
   maxRequestSize: 4194304 # 4MB
 ```
 
-## Dependency Resources
-###### Where to look for zig dependencies
-1. https://zigistry.dev/
-2. https://ziglist.org/
+### Code style
+TBD
+
+### Roadmap
+TBD
+
+#### Non goals
 
 ### tiny package movements
 - extract structs from store/inmem/block_header.zig
@@ -43,4 +46,6 @@ app:
 - extract components from BlockData
 - separate data and data/MemTable packages
 - separate index and index/Memtable packages
+- test data and effects separately
+- setup coverage reports
 
