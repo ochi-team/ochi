@@ -114,6 +114,8 @@ wg: std.Thread.WaitGroup = .{},
 memTablesSem: std.Thread.Semaphore = .{
     .permits = maxMemTables,
 },
+// TODO: implement atomic value that change it's value depending on how many times it's read,
+// the idea is to test every break on stop.load() similar to check all allocations failure
 stopped: std.atomic.Value(bool) = .init(false),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
@@ -506,13 +508,32 @@ fn mergeTables(
     // TODO: remove this shame after rmoving writer from mem table
     defer if (tableKind != .mem) streamWriter.deinit(alloc);
 
-    // TODO: handle error.Stopped and remove the table if it's created before shutdown
-    const tableHeader = try mergeData(alloc, streamWriter, &readers, stopped);
+    const tableHeader = mergeData(alloc, streamWriter, &readers, stopped) catch |err| {
+        switch (err) {
+            error.Stopped => {
+                if (destinationTablePath.len > 0) {
+                    std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
+                        std.debug.print(
+                            "failed to delete half way merged data table after stopped: {s}\n",
+                            .{@errorName(deleteErr)},
+                        );
+                    };
+                }
+                return err;
+            },
+            else => {
+                std.debug.print("failed to merge tables: {s}\n", .{@errorName(err)});
+                return err;
+            },
+        }
+    };
     if (newMemTable) |memTable| {
         memTable.tableHeader = tableHeader;
     } else {
         std.debug.assert(destinationTablePath.len > 0);
 
+        // TODO: implement stack fallback that replaces stack size to 1 in tests,
+        // add a tidy linter that restricts usage of std.heap.stackFallback
         var fba = std.heap.stackFallback(256, alloc);
         try tableHeader.writeFile(fba.get(), destinationTablePath);
 

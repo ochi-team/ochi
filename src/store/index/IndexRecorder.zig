@@ -701,12 +701,30 @@ pub fn mergeTables(
     };
     defer blockWriter.deinit(alloc);
 
-    const tableHeader = try MemTable.mergeBlocks(
+    const tableHeader = MemTable.mergeBlocks(
         alloc,
         &blockWriter,
         &readers,
         stopped,
-    );
+    ) catch |err| {
+        switch (err) {
+            error.Stopped => {
+                if (destinationTablePath.len > 0) {
+                    std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
+                        std.debug.print(
+                            "failed to delete half way merged index table after stopped: {s}\n",
+                            .{@errorName(deleteErr)},
+                        );
+                    };
+                }
+                return err;
+            },
+            else => {
+                std.debug.print("failed to merge tables: {s}\n", .{@errorName(err)});
+                return err;
+            },
+        }
+    };
     if (newMemTable) |memTable| {
         memTable.tableHeader = tableHeader;
     } else {
