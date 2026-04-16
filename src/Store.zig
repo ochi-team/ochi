@@ -162,19 +162,14 @@ pub fn addLines(
 
     var idx: usize = 0;
     // Hot path if all Lines belong to the same Partition
-    {
+    hotpath: {
         const firstDay: u32 = @intCast(lines[0].timestampNs / std.time.ns_per_day);
+        if (firstDay < minDay or firstDay > maxDay) break :hotpath;
+        //skip first element
+        idx = 1;
 
         while (idx < lines.len) : (idx += 1) {
             const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
-            if (day < minDay) {
-                // TODO: log a warning
-                continue;
-            }
-            if (day > maxDay) {
-                // TODO: log a warning
-                continue;
-            }
             if (day != firstDay) break;
         }
         const partition = blk: {
