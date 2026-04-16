@@ -79,20 +79,18 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !v
 
 // TODO: this is not the best place for bloom path generation
 pub fn getBloomValuesFilePath(alloc: std.mem.Allocator, partPath: []const u8, shardIdx: u64) ![]u8 {
-    return std.fmt.allocPrint(
-        alloc,
-        "{s}/{s}{}",
-        .{ partPath, filenames.bloomValues, shardIdx },
-    );
+    const shardIdxLen = std.fmt.count("{}", .{shardIdx});
+    const path = try alloc.alloc(u8, partPath.len + 1 + filenames.bloomValues.len + shardIdxLen);
+    _ = try std.fmt.bufPrint(path, "{s}/{s}{}", .{ partPath, filenames.bloomValues, shardIdx });
+    return path;
 }
 
 // TODO: this is not the best place for bloom path generation
 pub fn getBloomTokensFilePath(alloc: std.mem.Allocator, tablePath: []const u8, shardIdx: u64) ![]u8 {
-    return std.fmt.allocPrint(
-        alloc,
-        "{s}/{s}{}",
-        .{ tablePath, filenames.bloomTokens, shardIdx },
-    );
+    const shardIdxLen = std.fmt.count("{}", .{shardIdx});
+    const path = try alloc.alloc(u8, tablePath.len + 1 + filenames.bloomTokens.len + shardIdxLen);
+    _ = try std.fmt.bufPrint(path, "{s}/{s}{}", .{ tablePath, filenames.bloomTokens, shardIdx });
+    return path;
 }
 
 pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) !void {

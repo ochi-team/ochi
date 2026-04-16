@@ -460,17 +460,14 @@ fn mergeTables(
     const tableKind = merger.getDestinationTableKind(tables, force);
 
     const destinationTablePath: []u8 =
-        if (tableKind == .disk)
+        if (tableKind == .disk) blk: {
             // 1 for / and 16 for 16 bytes of idx representation,
             // we can't bitcast it to [8]u8 because we need human readlable file names
-            // TODO: find all usage and replace to bufPrint to make precise allocations
-            try std.fmt.allocPrint(
-                alloc,
-                "{s}/{X:0>16}",
-                .{ self.path, self.nextMergeIdx() },
-            )
-        else
-            "";
+            const mergeIdx = self.nextMergeIdx();
+            const path = try alloc.alloc(u8, self.path.len + 1 + 16);
+            _ = try std.fmt.bufPrint(path, "{s}/{X:0>16}", .{ self.path, mergeIdx });
+            break :blk path;
+        } else "";
     errdefer if (destinationTablePath.len > 0)
         alloc.free(destinationTablePath);
 
