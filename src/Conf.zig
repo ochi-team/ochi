@@ -6,9 +6,7 @@ const Ymlz = @import("ymlz").Ymlz;
 const C = @import("c").C;
 
 fn calculatePools() PoolsConfig {
-    // TODO: log warning if can't get cpus, no clue why getCpuCount may fail,
-    // perhaps due to a weird CPU architecture
-    const cpus = std.Thread.getCpuCount() catch 4;
+    const cpus = getCpuCount();
     // 4 is a minimum amount of threads for workers
     const totalThreads: u16 = @intCast(@max(cpus, 8));
     // TODO: the numbers must be tuned further to balance between http and workers
@@ -20,6 +18,14 @@ fn calculatePools() PoolsConfig {
         .workerThreads = workers,
         .cpus = @intCast(cpus),
     };
+}
+
+fn getCpuCount() usize {
+    const cpus = std.Thread.getCpuCount() catch |err| {
+        std.debug.print("[WARN] failed to get CPU count, defaulting to 4 threads: {s}", .{@errorName(err)});
+        return 4;
+    };
+    return cpus;
 }
 
 pub const AppConfig = struct {

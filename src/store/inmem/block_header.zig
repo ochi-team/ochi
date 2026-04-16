@@ -15,6 +15,7 @@ const ColumnIDGen = @import("ColumnIDGen.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const ColumnDict = @import("ColumnDict.zig");
 
+// TODO: extract to another file all the structs in there
 pub const BlockHeader = struct {
     sid: SID,
     size: u32,
