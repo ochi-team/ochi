@@ -4,41 +4,38 @@
 
 Ochi is a cost-effective, Loki compatible database for logs.
 
-### Build
-The build will automatically resolve dependencies listed in `build.zig.zon`.
-```bash
-zig build
-```
-This produces the `Ochi` executable in `zig-out/bin/`.
-
-### Run
-By default Ochi looks for `ochi.yaml` in the current directory.
-```bash
-zig build run
-```
-Specify a custom config file:
-
-TODO: For some reason this doesn't work.
-```bash
-zig build run -- -c ./my-ochi.yaml
-```
-
-### Configuration
-Example `ochi.yaml`:
-```yaml
-server:
-  port: 9012
-app:
-  maxRequestSize: 4194304 # 4MB
-```
-
 ### Code style
-TBD
+- a good inner function comment describes why, not what
+- a good outer function comment (doc string) describes what
+- explicit is better than implicit, therefore default options are not the best
+- tests must either cover data or effects, not both
+- to produce effect it must take a data to produce a pre determined effect, pure functions are welcome
 
 ### Roadmap
-TBD
+
+* 0.1
+- [ ] store is able to persist the data, simple query API is functionaning
+- [ ] grafana datasource available
+
+* 0.2
+- [ ] yaml configuration supported
+
+* 0.3
+- [ ] support Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
+
+#### Goals
+- support majority ingestion protocols (loki, fluentd, syslog, etc)
+- home made UI
+- cost analysis built in
+- GDPR compliance
+- support ARM64 and x86_64 as Tier 1
+- support POSIX systems, but Linux remains Tier 1
+- better core over features
+- documentation must be able to answer 99% questions, if it doesn't - write a doc and share as an answer
 
 #### Non goals
+- support every OS
+- being "feature complete"
 
 ### tiny package movements
 - extract structs from store/inmem/block_header.zig
