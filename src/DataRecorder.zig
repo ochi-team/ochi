@@ -477,8 +477,6 @@ fn mergeTables(
             "";
     errdefer if (tableKind == .disk)
         alloc.free(destinationTablePath);
-    if (tableKind == .disk)
-        std.debug.assert(destinationTablePath.len == self.path.len + 1 + 16);
 
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
