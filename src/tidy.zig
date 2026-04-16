@@ -15,7 +15,20 @@ pub fn gitHasNoMergeCommits(alloc: Allocator) !bool {
     // return result.stdout.len == 0;
 }
 
-// TODO: add formatter
+pub fn projectIsFormatted(alloc: Allocator) !bool {
+    const result = try std.process.Child.run(.{
+        .allocator = alloc,
+        .argv = &.{ "zig", "fmt", "--check", "." },
+    });
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    return switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+}
+
 // TODO: add linter
 // TODO: validate git history has no large files (256kb+)
 // TODO: ensure the licenses are ok and there are no AGPL

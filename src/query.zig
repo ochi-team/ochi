@@ -10,7 +10,6 @@ const Query = @import("store/query.zig").Query;
 const AppContext = @import("dispatch.zig").AppContext;
 const ApiError = @import("server/error.zig").ApiError;
 
-
 /// queryHandler handles a log query request, unmarshals a JSON body,
 /// queries the store and writes matching lines as a JSON array.
 pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {

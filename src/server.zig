@@ -114,6 +114,9 @@ test "tidy" {
     const lint = @import("tidy.zig");
     const noMergeCommits = try lint.gitHasNoMergeCommits(alloc);
     try std.testing.expect(noMergeCommits);
+
+    const isFormatted = try lint.projectIsFormatted(alloc);
+    try std.testing.expect(isFormatted);
 }
 
 // TODO: e2e / API tests using snapshot testing
