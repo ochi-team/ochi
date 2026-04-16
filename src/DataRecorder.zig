@@ -468,6 +468,7 @@ fn mergeTables(
         if (tableKind == .disk)
             // 1 for / and 16 for 16 bytes of idx representation,
             // we can't bitcast it to [8]u8 because we need human readlable file names
+            // TODO: find all usage and replace to bufPrint to make precise allocations
             try std.fmt.allocPrint(
                 alloc,
                 "{s}/{X:0>16}",
