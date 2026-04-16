@@ -463,10 +463,11 @@ fn mergeTables(
     }
 
     const tableKind = merger.getDestinationTableKind(tables, force);
-    // 1 for / and 16 for 16 bytes of idx representation,
-    // we can't bitcast it to [8]u8 because we need human readlable file names
+
     const destinationTablePath: []u8 =
         if (tableKind == .disk)
+            // 1 for / and 16 for 16 bytes of idx representation,
+            // we can't bitcast it to [8]u8 because we need human readlable file names
             try std.fmt.allocPrint(
                 alloc,
                 "{s}/{X:0>16}",
