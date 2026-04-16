@@ -475,7 +475,7 @@ fn mergeTables(
             )
         else
             "";
-    errdefer if (tableKind == .disk)
+    errdefer if (destinationTablePath.len > 0)
         alloc.free(destinationTablePath);
 
     if (force and tables.len == 1 and tables[0].mem != null) {
