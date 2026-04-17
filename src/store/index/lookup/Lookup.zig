@@ -98,6 +98,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
         arr.deinit(alloc);
     }
 
+    // TODO optimize so we dont iterate over next entries multiple times
     for (prefixes) |prefix| {
         try self.seek(alloc, prefix);
 

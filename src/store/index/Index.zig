@@ -65,12 +65,16 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
 
 pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
-    // defer???
-    alloc.free(entries);
     var ei: usize = 0;
+    defer {
+        for (ei..0) |i| alloc.free(entries[i]);
+        alloc.free(entries);
+    }
 
     // index stream existence
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
+    errdefer alloc.free(sidBuf);
+
     var enc = Encoder.init(sidBuf);
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
@@ -85,6 +89,8 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     // it's stored in index instead of data
     // in order not to duplicate the tags data in every block
     var sidTagsBuf = try alloc.alloc(u8, 1 + SID.encodeBound + encodedTags.len);
+    errdefer alloc.free(sidTagsBuf);
+
     sidTagsBuf[0] = @intFromEnum(IndexKind.sidToTags);
     @memcpy(sidTagsBuf[1..33], enc.buf[0..]);
     @memcpy(sidTagsBuf[33..], encodedTags);
