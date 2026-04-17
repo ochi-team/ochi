@@ -85,9 +85,14 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 }
 
 /// Returns an owned slice of owned slices representing items that start
-/// with given prefixes, or null if none exist.
+/// with given prefixes, or null if none exist. The following flag determines
+/// if the result was cut off or not.
 const resultLimit = 1000;
-pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?[]const []const u8 {
+const FindAllByPrefixesResult = struct {
+    result: []const []const u8,
+    cutoff: bool,
+};
+pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?FindAllByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
@@ -121,14 +126,20 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             }
 
             if (count > resultLimit)
-                return error.TooManyResults;
+                return .{
+                    .result = try alloc.dupe([]const u8, ahm.keys()),
+                    .cutoff = true,
+                };
         }
     }
 
     if (ahm.count() == 0)
         return null;
 
-    return try alloc.dupe([]const u8, ahm.keys());
+    return .{
+        .result = try alloc.dupe([]const u8, ahm.keys()),
+        .cutoff = false,
+    };
 }
 
 fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
@@ -275,8 +286,8 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
     };
     const actual = try lookup.findAllByPrefixes(alloc, &prefixes);
     defer if (actual) |a| {
-        for (a) |i| alloc.free(i);
-        alloc.free(a);
+        for (a.result) |i| alloc.free(i);
+        alloc.free(a.result);
     };
 
     try testing.expect(actual == null);
@@ -482,17 +493,18 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     for (cases) |case| {
         const actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
         defer if (actual) |a| {
-            for (a) |i| {
+            for (a.result) |i| {
                 alloc.free(i);
             }
-            alloc.free(a);
+            alloc.free(a.result);
         };
 
         if (case.expected) |want| {
             try testing.expect(actual != null);
-            for (actual.?, want) |a, w| {
+            for (actual.?.result, want) |a, w| {
                 try testing.expectEqualStrings(a, w);
             }
+            try testing.expect(actual.?.cutoff == false);
         } else {
             try testing.expect(actual == null);
         }
