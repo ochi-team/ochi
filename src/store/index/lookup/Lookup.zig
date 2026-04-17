@@ -86,6 +86,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 
 /// Returns an owned slice of owned slices representing items that start
 /// with given prefixes, or null if none exist.
+const resultLimit = 1000;
 pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?[]const []const u8 {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
@@ -97,6 +98,8 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             alloc.free(i);
         arr.deinit(alloc);
     }
+
+    var count: usize = 0;
 
     // TODO optimize so we dont iterate over next entries multiple times
     for (prefixes) |prefix| {
@@ -110,7 +113,12 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
                 errdefer alloc.free(copy);
 
                 try arr.append(alloc, copy);
+
+                count += 1;
             }
+
+            if (count > resultLimit)
+                return error.TooManyResults;
         }
     }
 
