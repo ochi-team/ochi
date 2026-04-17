@@ -73,7 +73,7 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
 
     // index stream existence
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
-    errdefer alloc.free(sidBuf);
+    defer alloc.free(sidBuf);
 
     var enc = Encoder.init(sidBuf);
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
