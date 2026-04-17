@@ -64,6 +64,21 @@ pub fn deinit(self: *Lookup, alloc: Allocator) void {
     self.tables.deinit(alloc);
 }
 
+pub fn findAllByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !std.ArrayList([]const u8) {
+    var arr: std.ArrayList([]const u8) = .empty;
+    errdefer arr.deinit(alloc);
+
+    try self.seek(alloc, prefix);
+
+    while (try self.next(alloc)) {
+        if (std.mem.eql(u8, self.current[0..prefix.len], prefix)) {
+            try arr.append(alloc, self.current);
+        }
+    }
+
+    return arr;
+}
+
 /// Returns the first item that starts with prefix, or null if none exist.
 /// Semantics are the same as:
 /// 1) seek to the first item >= prefix
@@ -75,6 +90,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
         return null;
     }
 
+    // TODO remove first condition, see std.mem.eql source
     if (self.current.len >= prefix.len and std.mem.eql(u8, self.current[0..prefix.len], prefix)) {
         return self.current;
     }
@@ -202,6 +218,37 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     }
 }
 
+test "Lookup.findAllByPrefix returns empty on empty recorder" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    var lookup = try Lookup.init(alloc, recorder);
+    defer lookup.deinit(alloc);
+
+    const prefixes = [_][]const u8{
+        "",
+        "key:",
+        "zzzz",
+    };
+    for (prefixes) |prefix| {
+        var actual = try lookup.findAllByPrefix(alloc, prefix);
+        defer actual.deinit(alloc);
+
+        try testing.expect(actual.items.len == 0);
+    }
+}
+
 test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
     _ = try Conf.default(alloc);
@@ -283,6 +330,80 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
             try testing.expectEqualStrings(want, actual.?);
         } else {
             try testing.expect(actual == null);
+        }
+    }
+    try recorder.flushForce(alloc);
+}
+
+test "Lookup.findAllByPrefix matches lower-bound prefix behavior on mixed tables" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    const tableAItems = [_][]const u8{
+        "key:aa:002",
+        "key:cc:002",
+        "key:zz:100",
+    };
+    const tableBItems = [_][]const u8{
+        "key:aa:001",
+        "key:bb:010",
+        "key:mm:900",
+    };
+    const tableDiskItems = [_][]const u8{
+        "key:aa:099",
+        "key:bb:001",
+        "key:dd:000",
+    };
+
+    {
+        const table = try createMemTableFromItems(alloc, &tableAItems);
+        errdefer table.close();
+        try recorder.memTables.append(alloc, table);
+    }
+    {
+        const table = try createMemTableFromItems(alloc, &tableBItems);
+        errdefer table.close();
+        try recorder.memTables.append(alloc, table);
+    }
+    {
+        const table = try createDiskTableFromItems(alloc, rootPath, "lookup-disk-table", &tableDiskItems);
+        errdefer table.close();
+        try recorder.diskTables.append(alloc, table);
+    }
+
+    const Case = struct {
+        prefix: []const u8,
+        expected: []const []const u8,
+    };
+
+    const cases = [_]Case{
+        .{ .prefix = "", .expected = &[_][]const u8{tableAItems[0]} },
+    };
+
+    var lookup = try Lookup.init(alloc, recorder);
+    defer lookup.deinit(alloc);
+
+    for (cases) |case| {
+        var actual = try lookup.findAllByPrefix(alloc, case.prefix);
+        defer actual.deinit(alloc);
+
+        if (case.expected.len != 0) {
+            for (actual.items, case.expected) |a, e| {
+                try testing.expectEqualStrings(a, e);
+            }
+        } else {
+            try testing.expect(actual.items.len == 0);
         }
     }
     try recorder.flushForce(alloc);

@@ -65,6 +65,7 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
 
 pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
+    // defer???
     alloc.free(entries);
     var ei: usize = 0;
 
@@ -109,11 +110,14 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
 
 pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !std.ArrayList(SID) {
     // TODO: cache query => stream
+    var lookup = try Lookup.init(alloc, self.recorder);
+    defer lookup.deinit(alloc);
 
-    _ = self;
-    _ = alloc;
     _ = tenantID;
-    _ = tags;
+
+    for (tags) |tag| {
+        _ = tag;
+    }
 
     return .empty;
 }
