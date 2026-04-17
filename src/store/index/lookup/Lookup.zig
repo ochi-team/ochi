@@ -417,17 +417,31 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
                 "key:aa:099",
             },
         },
-        // .{
-        //     .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
-        //     .expected = &[_][]const u8{
-        //         "key:aa:001",
-        //         "key:aa:002",
-        //         "key:aa:099",
-        //         "key:bb:001",
-        //         "key:bb:002",
-        //         "key:bb:099",
-        //     },
-        // },
+        .{
+            .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
+            .expected = &[_][]const u8{
+                "key:aa:001",
+                "key:aa:002",
+                "key:aa:099",
+                "key:bb:001",
+                "key:bb:010",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:cc", "key:bb" },
+            .expected = &[_][]const u8{
+                "key:cc:002",
+                "key:bb:001",
+                "key:bb:010",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
+            .expected = &[_][]const u8{
+                "key:cc:002",
+                "key:dd:000",
+            },
+        },
         .{
             .prefixes = &[_][]const u8{"zzz"},
             .expected = null,
