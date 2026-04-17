@@ -3,15 +3,14 @@ const Allocator = std.mem.Allocator;
 
 const httpz = @import("httpz");
 
-const Field = @import("store/lines.zig").Field;
-const Line = @import("store/lines.zig").Line;
-const Query = @import("store/query.zig").Query;
+const Field = @import("../store/lines.zig").Field;
+const Line = @import("../store/lines.zig").Line;
+const Query = @import("../store/query.zig").Query;
 
-const AppContext = @import("dispatch.zig").AppContext;
-const ApiError = @import("server/error.zig").ApiError;
+const AppContext = @import("../dispatch.zig").AppContext;
+const ApiError = @import("../server/error.zig").ApiError;
 
-/// queryHandler handles a log query request, unmarshals a JSON body,
-/// queries the store and writes matching lines as a JSON array.
+/// queryHandler does a query fetch according to a passed Query in the body
 pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
     const contentType = r.headers.get("content-type");
 

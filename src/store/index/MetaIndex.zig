@@ -102,6 +102,9 @@ pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u
     }
     std.debug.assert(totalBlockHeaders == blocksCount);
 
+    // TODO: find a way to get rid of all toOwnedSlice calls,
+    // it does remap inside which might fail, if so - it copies the data,
+    // if the incoming allocator is arena, very likely, it's double wasted memory
     const recordsOwned = try records.toOwnedSlice(alloc);
     return .{
         .records = recordsOwned,

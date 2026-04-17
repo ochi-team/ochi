@@ -273,6 +273,25 @@ pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Q
     return results;
 }
 
+pub fn flush(self: *Store, alloc: Allocator) !void {
+    var parts = try std.ArrayList(*Partition).initCapacity(alloc, self.partitions.items.len);
+    defer {
+        for (parts.items) |part| part.release();
+        parts.deinit(alloc);
+    }
+
+    self.partitionsMx.lock();
+    for (self.partitions.items) |part| {
+        parts.appendAssumeCapacity(part);
+        part.retain();
+    }
+    self.partitionsMx.unlock();
+
+    for (self.partitions.items) |part| {
+        try part.flushForce(alloc);
+    }
+}
+
 fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32, maxDay: u32) []const *Partition {
     // Find first partition with day >= minDay
     const start = std.sort.lowerBound(

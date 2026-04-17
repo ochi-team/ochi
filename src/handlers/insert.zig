@@ -2,12 +2,12 @@
 const std = @import("std");
 
 const httpz = @import("httpz");
-const AppContext = @import("dispatch.zig").AppContext;
-const Processor = @import("process.zig").Processor;
-const Field = @import("store/lines.zig").Field;
-const Params = @import("process.zig").Params;
-const ApiError = @import("server/error.zig").ApiError;
-const Compression = @import("server/compression.zig").Compression;
+const AppContext = @import("../dispatch.zig").AppContext;
+const Processor = @import("../process.zig").Processor;
+const Field = @import("../store/lines.zig").Field;
+const Params = @import("../process.zig").Params;
+const ApiError = @import("../server/error.zig").ApiError;
+const Compression = @import("../server/compression.zig").Compression;
 
 /// insertLokiJson defines a loki json insertion operation
 pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {

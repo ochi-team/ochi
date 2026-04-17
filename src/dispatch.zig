@@ -39,6 +39,11 @@ pub const Dispatcher = struct {
             return;
         }
 
+        // TODO: add error logging to every handler,
+        // define a standard approach:
+        // 1. where to log
+        // 2. how do we propagate inner error, only diagnostic or real error
+        // 3. do we return ApiError or any from a handler
         action(&ctx, req, res) catch |err| switch (err) {
             ApiError.EmptyBody => {
                 res.status = 400;

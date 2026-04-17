@@ -7,4 +7,5 @@ pub const ApiError = error{
     FailedToProccess,
     FailedToParse,
     FailedToWriteResponse,
+    InternalError,
 };

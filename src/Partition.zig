@@ -205,6 +205,11 @@ pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, quer
     return self.data.queryLines(alloc, streamIDs.items, query);
 }
 
+pub fn flushForce(self: *Partition, alloc: Allocator) !void {
+    try self.index.recorder.flushForce(alloc);
+    try self.data.flushForce(alloc);
+}
+
 fn isCached(self: *Partition, sid: SID) bool {
     var cacheKey: [SID.encodeBound + partitionKeySize]u8 = undefined;
     var enc = Encoder.init(&cacheKey);
