@@ -34,7 +34,7 @@ day: u32,
 key: []const u8,
 index: *Index,
 data: *DataRecorder,
-
+toRemove: bool = false,
 /// stream cache for ingestion, shared across all partitions,
 /// so the partition doesn't own it
 streamCache: *Cache.StreamCache,
@@ -126,6 +126,13 @@ pub fn close(
     self.data.stop(self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
+
+    if (self.toRemove) {
+        std.fs.deleteTreeAbsolute(self.path) catch |err| {
+            std.debug.panic("failed to delete partition '{s}': {s}", .{ self.path, @errorName(err) });
+        };
+    }
+
     self.alloc.destroy(self);
 }
 

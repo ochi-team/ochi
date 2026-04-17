@@ -23,7 +23,6 @@ lockFile: std.fs.File,
 
 partitionsMx: std.Thread.Mutex = .{},
 partitions: std.ArrayList(*Partition) = .empty,
-partitionsToRemove: std.ArrayList(*Partition) = .empty,
 lruPartition: ?*Partition = null,
 
 /// streamCache is a stream id cache for ingestion,
@@ -304,8 +303,13 @@ fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
         day,
         orderPartitions,
     );
+
     if (n) |i| {
         const part = self.partitions.items[i];
+        if (part.toRemove) {
+            return error.PartitionRemoved;
+        }
+
         part.retain();
 
         self.lruPartition = part;
@@ -349,9 +353,12 @@ fn getPartition(self: *Store, alloc: Allocator, day: u32) !*Partition {
 }
 
 fn getPartitionOrLru(self: *Store, alloc: Allocator, day: u32) !*Partition {
-    if (self.getLruPartition()) |part|
-        if (part.day == day)
+    if (self.getLruPartition()) |part| {
+        if (part.day == day) {
+            if (part.toRemove) return error.PartitionRemoved;
             return part;
+        }
+    }
 
     return self.getPartition(alloc, day);
 }
@@ -449,23 +456,20 @@ fn createLockFile(path: []const u8) !std.fs.File {
     return file;
 }
 
-fn markExpiredPartitions(alloc: std.mem.Allocator, store: *Store, minDay: u32) !void {
+fn markExpiredPartitions(store: *Store, minDay: u32) !void {
     store.partitionsMx.lock();
     defer store.partitionsMx.unlock();
 
     if (store.lruPartition) |lruPartition| {
         if (lruPartition.day < minDay) {
+            lruPartition.toRemove = true;
             store.lruPartition = null;
         }
     }
 
-    var partIdx: u32 = 0;
-    store.partitionsToRemove.ensureUnusedCapacity(alloc, store.partitions.items.len);
-    
-    while (partIdx < store.partitions.items.len): (partIdx += 1) {
-        if (store.partitions.items[partIdx].day < minDay) {
-            const partition = store.partitions.swapRemove(partIdx);
-            store.partitionsToRemove.appendAssumeCapacity(partition);
+    for (store.partitions.items) |partition| {
+        if (partition.day < minDay) {
+            partition.toRemove = true;
         }
     }
 }
