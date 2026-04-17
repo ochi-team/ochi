@@ -92,11 +92,12 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
 
-    var arr: std.ArrayList([]const u8) = .empty;
+    var ahm: std.StringArrayHashMapUnmanaged(void) = .empty;
+    defer ahm.deinit(alloc);
     errdefer {
-        for (arr.items) |i|
-            alloc.free(i);
-        arr.deinit(alloc);
+        var it = ahm.iterator();
+        while (it.next()) |i|
+            alloc.free(i.key_ptr.*);
     }
 
     var count: usize = 0;
@@ -109,13 +110,14 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             if (self.current.len >= prefix.len and
                 std.mem.eql(u8, self.current[0..prefix.len], prefix))
             {
-                try arr.ensureUnusedCapacity(alloc, 1);
-
-                const copy = try alloc.dupe(u8, self.current);
-
-                arr.appendAssumeCapacity(copy);
+                if (ahm.contains(self.current)) continue;
 
                 count += 1;
+
+                const copy = try alloc.dupe(u8, self.current);
+                errdefer alloc.free(copy);
+
+                try ahm.put(alloc, copy, {});
             }
 
             if (count > resultLimit)
@@ -123,10 +125,10 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
         }
     }
 
-    if (arr.items.len == 0)
-        return null
-    else
-        return try arr.toOwnedSlice(alloc);
+    if (ahm.count() == 0)
+        return null;
+
+    return try alloc.dupe([]const u8, ahm.keys());
 }
 
 fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
@@ -454,6 +456,14 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
             },
         },
         .{
+            .prefixes = &[_][]const u8{ "key:aa", "key:aa" },
+            .expected = &[_][]const u8{
+                "key:aa:001",
+                "key:aa:002",
+                "key:aa:099",
+            },
+        },
+        .{
             .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
             .expected = &[_][]const u8{
                 "key:cc:002",
@@ -472,7 +482,9 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     for (cases) |case| {
         const actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
         defer if (actual) |a| {
-            for (a) |i| alloc.free(i);
+            for (a) |i| {
+                alloc.free(i);
+            }
             alloc.free(a);
         };
 
