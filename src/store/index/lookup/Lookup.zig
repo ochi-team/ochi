@@ -87,6 +87,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// Returns an owned slice of owned slices representing items that start
 /// with given prefixes, or null if none exist. The following flag determines
 /// if the result was cut off or not.
+/// TODO: make it configurable and reduce for tests to 10
 const resultLimit = 1000;
 const FindAllByPrefixesResult = struct {
     result: []const []const u8,
@@ -512,4 +513,58 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
 
         try recorder.flushForce(alloc);
     }
+}
+
+test "Lookup.findAllByPrefixes respects result limit cutoff" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
+    defer items.deinit(alloc);
+    for (0..resultLimit + 1) |i| {
+        const item = try std.fmt.allocPrint(alloc, "key:aa:{d:0>4}", .{i});
+        errdefer alloc.free(item);
+        items.appendAssumeCapacity(item);
+    }
+    defer {
+        for (items.items) |item| {
+            alloc.free(item);
+        }
+    }
+
+    {
+        const table = try createMemTableFromItems(alloc, items.items);
+        errdefer table.close();
+        try recorder.memTables.append(alloc, table);
+    }
+
+    var lookup = try Lookup.init(alloc, recorder);
+    defer lookup.deinit(alloc);
+
+    const actual = try lookup.findAllByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    defer if (actual) |a| {
+        for (a.result) |i| {
+            alloc.free(i);
+        }
+        alloc.free(a.result);
+    };
+
+    try testing.expect(actual != null);
+    try testing.expect(actual.?.cutoff);
+    try testing.expectEqual(@as(usize, resultLimit), actual.?.result.len);
+    try testing.expectEqualStrings("key:aa:0000", actual.?.result[0]);
+    try testing.expectEqualStrings("key:aa:0999", actual.?.result[resultLimit - 1]);
+
+    try recorder.flushForce(alloc);
 }
