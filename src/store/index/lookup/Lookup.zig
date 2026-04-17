@@ -75,11 +75,72 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
         return null;
     }
 
-    if (self.current.len >= prefix.len and std.mem.eql(u8, self.current[0..prefix.len], prefix)) {
+    if (self.current.len >= prefix.len and
+        std.mem.eql(u8, self.current[0..prefix.len], prefix))
+    {
         return self.current;
     }
 
     return null;
+}
+
+/// Returns an owned slice of owned slices representing items that start
+/// with given prefixes, or null if none exist. The following flag determines
+/// if the result was cut off or not.
+const resultLimit = 1000;
+const FindAllByPrefixesResult = struct {
+    result: []const []const u8,
+    cutoff: bool,
+};
+pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?FindAllByPrefixesResult {
+    std.debug.assert(prefixes.len > 0);
+    for (prefixes) |prefix|
+        std.debug.assert(prefix.len > 0);
+
+    var ahm: std.StringArrayHashMapUnmanaged(void) = .empty;
+    defer ahm.deinit(alloc);
+    errdefer {
+        var it = ahm.iterator();
+        while (it.next()) |i|
+            alloc.free(i.key_ptr.*);
+    }
+
+    var count: usize = 0;
+
+    // TODO optimize so we dont iterate over next entries multiple times
+    for (prefixes) |prefix| {
+        try self.seek(alloc, prefix);
+
+        while (try self.next(alloc)) {
+            if (self.current.len >= prefix.len and
+                std.mem.eql(u8, self.current[0..prefix.len], prefix))
+            {
+                if (ahm.contains(self.current)) continue;
+
+                count += 1;
+
+                const copy = try alloc.dupe(u8, self.current);
+                errdefer alloc.free(copy);
+
+                try ahm.put(alloc, copy, {});
+            }
+
+            if (count > resultLimit)
+                // TODO log warning
+                return .{
+                    .result = try alloc.dupe([]const u8, ahm.keys()),
+                    .cutoff = true,
+                };
+        }
+    }
+
+    if (ahm.count() == 0)
+        return null;
+
+    return .{
+        .result = try alloc.dupe([]const u8, ahm.keys()),
+        .cutoff = false,
+    };
 }
 
 fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
@@ -125,7 +186,7 @@ fn next(self: *Lookup, alloc: Allocator) !bool {
 fn nextBlock(self: *Lookup, alloc: Allocator) !bool {
     // We keep value copies of LookupTable in the heap array.
     // Advancing the min cursor and fixing the heap yields the next global item.
-    var lt = self.tablesHeap.array.items[0];
+    var lt = &self.tablesHeap.array.items[0];
     if (try lt.next(alloc)) {
         self.tablesHeap.fix(0);
         self.current = self.tablesHeap.array.items[0].current;
@@ -200,6 +261,37 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
         const actual = try lookup.findFirstByPrefix(alloc, prefix);
         try testing.expect(actual == null);
     }
+}
+
+test "Lookup.findAllByPrefixes returns empty on empty recorder" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    var lookup = try Lookup.init(alloc, recorder);
+    defer lookup.deinit(alloc);
+
+    const prefixes = [_][]const u8{
+        "key:",
+        "zzzz",
+    };
+    const actual = try lookup.findAllByPrefixes(alloc, &prefixes);
+    defer if (actual) |a| {
+        for (a.result) |i| alloc.free(i);
+        alloc.free(a.result);
+    };
+
+    try testing.expect(actual == null);
 }
 
 test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tables" {
@@ -286,4 +378,138 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
         }
     }
     try recorder.flushForce(alloc);
+}
+
+test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tables" {
+    const alloc = testing.allocator;
+    _ = try Conf.default(alloc);
+    defer Conf.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(rootPath);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    recorder.stopped.store(true, .release);
+    recorder.wg.wait();
+    defer recorder.deinit(alloc);
+
+    const tableAItems = [_][]const u8{
+        "key:aa:002",
+        "key:cc:002",
+        "key:zz:100",
+    };
+    const tableBItems = [_][]const u8{
+        "key:aa:001",
+        "key:bb:010",
+        "key:mm:900",
+    };
+    const tableDiskItems = [_][]const u8{
+        "key:aa:099",
+        "key:bb:001",
+        "key:dd:000",
+    };
+
+    {
+        const table = try createMemTableFromItems(alloc, &tableAItems);
+        errdefer table.close();
+        try recorder.memTables.append(alloc, table);
+    }
+    {
+        const table = try createMemTableFromItems(alloc, &tableBItems);
+        errdefer table.close();
+        try recorder.memTables.append(alloc, table);
+    }
+    {
+        const table = try createDiskTableFromItems(alloc, rootPath, "lookup-disk-table", &tableDiskItems);
+        errdefer table.close();
+        try recorder.diskTables.append(alloc, table);
+    }
+
+    const Case = struct {
+        prefixes: []const []const u8,
+        expected: ?[]const []const u8,
+    };
+
+    const cases = [_]Case{
+        .{
+            .prefixes = &[_][]const u8{"key:aa"},
+            .expected = &[_][]const u8{
+                "key:aa:001",
+                "key:aa:002",
+                "key:aa:099",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
+            .expected = &[_][]const u8{
+                "key:aa:001",
+                "key:aa:002",
+                "key:aa:099",
+                "key:bb:001",
+                "key:bb:010",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:cc", "key:bb" },
+            .expected = &[_][]const u8{
+                "key:cc:002",
+                "key:bb:001",
+                "key:bb:010",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:bb:00", "key:cc", "key:bb" },
+            .expected = &[_][]const u8{
+                "key:bb:001",
+                "key:cc:002",
+                "key:bb:010",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:aa", "key:aa" },
+            .expected = &[_][]const u8{
+                "key:aa:001",
+                "key:aa:002",
+                "key:aa:099",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
+            .expected = &[_][]const u8{
+                "key:cc:002",
+                "key:dd:000",
+            },
+        },
+        .{
+            .prefixes = &[_][]const u8{"zzz"},
+            .expected = null,
+        },
+    };
+
+    var lookup = try Lookup.init(alloc, recorder);
+    defer lookup.deinit(alloc);
+
+    for (cases) |case| {
+        const actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
+        defer if (actual) |a| {
+            for (a.result) |i| {
+                alloc.free(i);
+            }
+            alloc.free(a.result);
+        };
+
+        if (case.expected) |want| {
+            try testing.expect(actual != null);
+            for (actual.?.result, want) |a, w| {
+                try testing.expectEqualStrings(a, w);
+            }
+            try testing.expect(actual.?.cutoff == false);
+        } else {
+            try testing.expect(actual == null);
+        }
+
+        try recorder.flushForce(alloc);
+    }
 }
