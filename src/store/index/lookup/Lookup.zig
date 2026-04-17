@@ -109,10 +109,11 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             if (self.current.len >= prefix.len and
                 std.mem.eql(u8, self.current[0..prefix.len], prefix))
             {
-                const copy = try alloc.dupe(u8, self.current);
-                errdefer alloc.free(copy);
+                try arr.ensureUnusedCapacity(alloc, 1);
 
-                try arr.append(alloc, copy);
+                const copy = try alloc.dupe(u8, self.current);
+
+                arr.appendAssumeCapacity(copy);
 
                 count += 1;
             }
