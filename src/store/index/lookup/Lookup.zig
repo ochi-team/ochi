@@ -126,6 +126,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             }
 
             if (count > resultLimit)
+                // TODO log warning
                 return .{
                     .result = try alloc.dupe([]const u8, ahm.keys()),
                     .cutoff = true,
