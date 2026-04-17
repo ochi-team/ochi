@@ -8,6 +8,7 @@ const AppContext = @import("dispatch.zig").AppContext;
 const Store = @import("Store.zig").Store;
 const insert = @import("insert.zig");
 const query = @import("query.zig");
+const Scheduler = @import("scheduler.zig").Scheduler;
 
 var global_server: ?*httpz.Server(*Dispatcher) = null;
 
@@ -34,6 +35,11 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
 
     const store = try Store.init(allocator, path);
     defer store.deinit(allocator);
+
+    const storeScheduler = try Scheduler.init(allocator, 1, 1 * std.time.ms_per_day);
+    defer storeScheduler.deinit(allocator);
+
+    storeScheduler.start( Store.markExpiredPartitionsJob, .{store, 30});
 
     const dispatcher = try allocator.create(Dispatcher);
     defer allocator.destroy(dispatcher);

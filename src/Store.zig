@@ -13,6 +13,7 @@ const Query = @import("store/query.zig").Query;
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
+const Scheduler = @import("scheduler.zig").Scheduler;
 
 pub const Store = @This();
 
@@ -456,21 +457,24 @@ fn createLockFile(path: []const u8) !std.fs.File {
     return file;
 }
 
-fn markExpiredPartitions(store: *Store, minDay: u32) !void {
-    store.partitionsMx.lock();
-    defer store.partitionsMx.unlock();
+pub fn markExpiredPartitionsJob(scheduler: *Scheduler, store: *Store, minDay: u32) !void {
+    while (!scheduler.stopped.load(.acquire)) {
+        store.partitionsMx.lock();
+        defer store.partitionsMx.unlock();
 
-    if (store.lruPartition) |lruPartition| {
-        if (lruPartition.day < minDay) {
-            lruPartition.toRemove = true;
-            store.lruPartition = null;
+        if (store.lruPartition) |lruPartition| {
+            if (lruPartition.day < minDay) {
+                lruPartition.toRemove = true;
+                store.lruPartition = null;
+            }
         }
-    }
 
-    for (store.partitions.items) |partition| {
-        if (partition.day < minDay) {
-            partition.toRemove = true;
+        for (store.partitions.items) |partition| {
+            if (partition.day < minDay) {
+                partition.toRemove = true;
+            }
         }
+        scheduler.sleepOrStop();
     }
 }
 
