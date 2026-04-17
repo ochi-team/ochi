@@ -23,6 +23,7 @@ lockFile: std.fs.File,
 
 partitionsMx: std.Thread.Mutex = .{},
 partitions: std.ArrayList(*Partition) = .empty,
+partitionsToRemove: std.ArrayList(*Partition) = .empty,
 lruPartition: ?*Partition = null,
 
 /// streamCache is a stream id cache for ingestion,
@@ -446,6 +447,27 @@ fn createLockFile(path: []const u8) !std.fs.File {
     // }
 
     return file;
+}
+
+fn markExpiredPartitions(alloc: std.mem.Allocator, store: *Store, minDay: u32) !void {
+    store.partitionsMx.lock();
+    defer store.partitionsMx.unlock();
+
+    if (store.lruPartition) |lruPartition| {
+        if (lruPartition.day < minDay) {
+            store.lruPartition = null;
+        }
+    }
+
+    var partIdx: u32 = 0;
+    store.partitionsToRemove.ensureUnusedCapacity(alloc, store.partitions.items.len);
+    
+    while (partIdx < store.partitions.items.len): (partIdx += 1) {
+        if (store.partitions.items[partIdx].day < minDay) {
+            const partition = store.partitions.swapRemove(partIdx);
+            store.partitionsToRemove.appendAssumeCapacity(partition);
+        }
+    }
 }
 
 test "partitionKeyFormat" {
