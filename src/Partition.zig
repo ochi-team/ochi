@@ -65,10 +65,7 @@ pub fn open(
     const dataExists = try fs.pathExists(dataPath);
 
     if (!indexExists or !dataExists) {
-        // TODO: if we write index first it might happen that index exists, but data doesn't,
-        // therefore makes sense to have that state recoverable
         if (indexExists != dataExists) {
-            // TODO: add a config option not to fail here
             std.debug.panic("data partition exists but index partition doesn't, " ++
                 "data is corrupted, path: {s}", .{path});
         }

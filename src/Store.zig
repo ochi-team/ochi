@@ -196,11 +196,17 @@ pub fn addLines(
     while (idx < lines.len) : (idx += 1) {
         const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
         if (day < minDay) {
-            // TODO: log a warning
+            std.debug.print(
+                "[WARN] incoming log is out of the retentation range: lower range={d}, given={d}\n",
+                .{ nowNs - retentionNs, lines[idx].timestampNs },
+            );
             continue;
         }
         if (day > maxDay) {
-            // TODO: log a warning
+            std.debug.print(
+                "[WARN] incoming log is out of the retentation range: upper range={d}, given={d}\n",
+                .{ nowNs + std.time.ns_per_day, lines[idx].timestampNs },
+            );
             continue;
         }
 
