@@ -89,7 +89,7 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     // it's stored in index instead of data
     // in order not to duplicate the tags data in every block
     var sidTagsBuf = try alloc.alloc(u8, 1 + SID.encodeBound + encodedTags.len);
-    errdefer alloc.free(sidTagsBuf);
+    defer alloc.free(sidTagsBuf);
 
     sidTagsBuf[0] = @intFromEnum(IndexKind.sidToTags);
     @memcpy(sidTagsBuf[1..33], enc.buf[0..]);

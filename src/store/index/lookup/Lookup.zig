@@ -107,7 +107,8 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
 
     var count: usize = 0;
 
-    // TODO optimize so we dont iterate over next entries multiple times
+    // TODO optimize so we dont iterate over next entries multiple times,
+    // the isuue is seek resets the state and for every key we must restart the seek
     for (prefixes) |prefix| {
         try self.seek(alloc, prefix);
 
@@ -119,13 +120,12 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
 
                 count += 1;
 
+                try ahm.ensureUnusedCapacity(alloc, 1);
                 const copy = try alloc.dupe(u8, self.current);
-                errdefer alloc.free(copy);
-
-                try ahm.put(alloc, copy, {});
+                ahm.putAssumeCapacity(copy, {});
             }
 
-            if (count > resultLimit)
+            if (count >= resultLimit)
                 // TODO log warning
                 return .{
                     .result = try alloc.dupe([]const u8, ahm.keys()),
