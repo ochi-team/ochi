@@ -121,5 +121,3 @@ test "tidy" {
     const isFormatted = try lint.projectIsFormatted(alloc);
     try std.testing.expect(isFormatted);
 }
-
-// TODO: e2e / API tests using snapshot testing

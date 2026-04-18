@@ -2,17 +2,23 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub fn gitHasNoMergeCommits(alloc: Allocator) !bool {
-    // TODO: implement it
-    _ = alloc;
-    return true;
-    // const result = std.process.execv(alloc, &.{
-    //     "git",
-    //     "log",
-    //     "--merges",
-    //     "--oneline",
-    //     "-1",
-    // });
-    // return result.stdout.len == 0;
+    const result = try std.process.Child.run(.{
+        .allocator = alloc,
+        .argv = &.{
+            "git",
+            "log",
+            "--merges",
+            "--oneline",
+            "-1",
+        },
+    });
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    return switch (result.term) {
+        .Exited => |code| code == 0 and std.mem.trim(u8, result.stdout, " \t\r\n").len == 0,
+        else => false,
+    };
 }
 
 pub fn projectIsFormatted(alloc: Allocator) !bool {
