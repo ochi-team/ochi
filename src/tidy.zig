@@ -38,5 +38,7 @@ pub fn projectIsFormatted(alloc: Allocator) !bool {
 // TODO: add linter
 // TODO: validate git history has no large files (256kb+)
 // TODO: ensure the licenses are ok and there are no AGPL
-// TODO: ast-grep or something (treesitter perhaps) to allow constCast only inside test block
+// TODO: restrict constCast usage
+// TODO: restrict Self = @This(), use proper type name
+// TODO: restrict std.debug.print
 // TODO: restrict TODO / FIXME comments, must be the last rule to fix them all

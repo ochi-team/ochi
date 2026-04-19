@@ -177,6 +177,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
         t.startDiskTablesMerge(alloc);
     }
 
+    // TODO: remove background tasks from init to make unit tests real units
     t.startMemTablesFlusher(alloc);
     t.startDataShardsFlusher(alloc);
 
