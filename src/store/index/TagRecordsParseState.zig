@@ -76,8 +76,8 @@ pub fn parseStreamIDs(self: *Self, alloc: Allocator) !void {
     self.streamsRaw.len = 0;
 }
 
-pub fn encodePrefixBound(self: *const Self) usize {
-    return 1 + maxTenantIDLen + self.tag.encodeIndexTagBound();
+pub fn encodePrefixBound(tag: Field) usize {
+    return 1 + maxTenantIDLen + tag.encodeIndexTagBound();
 }
 
 pub fn encodePrefix(dst: []u8, tenantID: []const u8, tag: Field) void {
@@ -133,7 +133,7 @@ test "setup parses tag record" {
     try testing.expectEqual(@as(u128, 200), state.streamIDs.items[1]);
 
     // Test encodePrefix
-    const prefixLen = state.encodePrefixBound();
+    const prefixLen = Self.encodePrefixBound(state.tag);
     var outBuf: [128]u8 = undefined;
     Self.encodePrefix(&outBuf, state.tenantID, state.tag);
 

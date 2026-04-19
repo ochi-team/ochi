@@ -133,7 +133,7 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     defer state.deinit(alloc);
 
     for (tags) |tag| {
-        const prefix = try alloc.alloc(u8, state.encodePrefixBound());
+        const prefix = try alloc.alloc(u8, TagRecordsParseState.encodePrefixBound(tag));
 
         TagRecordsParseState.encodePrefix(prefix, tenantID, tag);
 
@@ -156,8 +156,12 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     var sids: std.ArrayList(SID) = try .initCapacity(alloc, items.result.len);
 
     for (items.result) |i| {
-        const sid = SID.decode(i);
-        sids.appendAssumeCapacity(sid);
+        try state.setup(i);
+
+        try state.parseStreamIDs(alloc);
+
+        for (state.streamIDs.items) |s|
+            sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
     return sids;
