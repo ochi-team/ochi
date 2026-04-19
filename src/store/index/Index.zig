@@ -138,14 +138,23 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     const buf = try alloc.alloc(u8, bufSize);
     defer alloc.free(buf);
 
+    var prefixes: std.ArrayList([]const u8) = .empty;
+    defer prefixes.deinit(alloc);
+
     for (tags) |tag| {
         const totalLen = Trps.encodeRecord(buf, tenantID, tag, &[_]u128{});
 
         try state.setup(buf[0..totalLen]);
 
+        try prefixes.ensureUnusedCapacity(alloc, 1);
+
         const prefix = try alloc.alloc(u8, state.encodePrefixBound());
         state.encodePrefix(prefix);
+
+        prefixes.appendAssumeCapacity(prefix);
     }
+
+    _ = try lookup.findAllByPrefixes(alloc, prefixes.items);
 
     return .empty;
 }
