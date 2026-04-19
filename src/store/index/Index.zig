@@ -116,8 +116,8 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-const queryStreamsResult = struct { result: std.ArrayList(SID), cutOff: bool };
-pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !queryStreamsResult {
+const QueryStreamsResult = struct { result: std.ArrayList(SID), cutOff: bool };
+pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(alloc, self.recorder);
     defer lookup.deinit(alloc);
