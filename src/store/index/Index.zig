@@ -169,12 +169,12 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     _ = items.cutoff;
 
     var sids: std.ArrayList(SID) = try .initCapacity(alloc, items.result.len);
-    _ = &sids;
 
     // parse items to SIDs
     for (items.result) |i| {
-        _ = i;
+        const sid = SID.decode(i);
+        sids.appendAssumeCapacity(sid);
     }
 
-    return .empty;
+    return sids;
 }
