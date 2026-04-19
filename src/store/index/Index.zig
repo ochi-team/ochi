@@ -116,7 +116,7 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-const QueryStreamsResult = struct { result: std.ArrayList(SID), cutOff: bool };
+const QueryStreamsResult = struct { streamIDs: std.ArrayList(SID), cutOff: bool };
 pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(alloc, self.recorder);
@@ -143,7 +143,7 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
 
     const items =
         try lookup.findAllByPrefixes(alloc, prefixes.items) orelse
-        return .{ .result = .empty, .cutOff = false };
+        return .{ .streamIDs = .empty, .cutOff = false };
     defer {
         for (items.result) |i| {
             alloc.free(i);
@@ -164,5 +164,5 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
             sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
-    return .{ .result = sids, .cutOff = items.cutOff };
+    return .{ .streamIDs = sids, .cutOff = items.cutOff };
 }
