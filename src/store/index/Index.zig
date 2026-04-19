@@ -153,12 +153,14 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     // handle somehow
     _ = items.cutoff;
 
-    var sids: std.ArrayList(SID) = try .initCapacity(alloc, items.result.len);
+    var sids: std.ArrayList(SID) = .empty;
 
     for (items.result) |i| {
         try state.setup(i);
 
         try state.parseStreamIDs(alloc);
+
+        try sids.ensureUnusedCapacity(alloc, state.streamIDs.items.len);
 
         for (state.streamIDs.items) |s|
             sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
