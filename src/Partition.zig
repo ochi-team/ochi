@@ -13,7 +13,7 @@ const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 const Query = @import("store/query.zig").Query;
 
-const Conf = @import("Conf.zig");
+const Runtime = @import("Runtime.zig");
 const fs = @import("fs.zig");
 
 fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
@@ -52,11 +52,10 @@ pub fn open(
     dataPath: []const u8,
     day: u32,
     streamCache: *Cache.StreamCache,
+    runtime: *Runtime,
 ) !*Partition {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
-
-    const conf = Conf.getConf();
 
     const partitionKey = std.fs.path.basename(path);
     std.debug.assert(partitionKey.len == partitionKeySize);
@@ -76,13 +75,13 @@ pub fn open(
         DataRecorder.createDir(dataPath);
     }
 
-    const indexRecorder = try IndexRecorder.init(alloc, indexPath, conf.server.pools.cpus);
+    const indexRecorder = try IndexRecorder.init(alloc, indexPath, runtime);
     errdefer indexRecorder.deinit(alloc);
 
     const index = try Index.init(alloc, indexRecorder);
     errdefer index.deinit(alloc);
 
-    const data = try DataRecorder.init(alloc, dataPath, conf.server.pools.cpus);
+    const data = try DataRecorder.init(alloc, dataPath, runtime);
     errdefer data.deinit(alloc);
 
     const partition = try alloc.create(Partition);

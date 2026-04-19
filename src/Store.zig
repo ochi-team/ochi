@@ -13,6 +13,7 @@ const Query = @import("store/query.zig").Query;
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
+const Runtime = @import("Runtime.zig");
 
 pub const Store = @This();
 
@@ -32,6 +33,9 @@ streamCache: *Cache.StreamCache,
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
 pathsBuf: std.ArrayList([]const u8) = .empty,
 
+// runtime stats
+runtime: *Runtime,
+
 // TODO: store must observe current disk space for 2 reasons:
 // 1. expose it as a metric in order to alert to OPS to expand disk or remove the stale data
 // 2. handle eviction policy based on the config (e.g. free GB or free % of the disk)
@@ -39,6 +43,9 @@ pathsBuf: std.ArrayList([]const u8) = .empty,
 pub fn init(alloc: Allocator, path: []const u8) !*Store {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
+    const runtime = try Runtime.init(alloc, path, Conf.getConf().app.maxCachePortion);
+    errdefer runtime.deinit(alloc);
 
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const partitionsPath = try std.fmt.bufPrint(
@@ -69,6 +76,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
         .lockFile = file,
         .partitions = partitions,
         .streamCache = streamCache,
+        .runtime = runtime,
     };
     errdefer alloc.destroy(store);
 
@@ -98,6 +106,7 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
 }
 
 pub fn deinit(self: *Store, allocator: Allocator) void {
+    self.runtime.deinit(allocator);
     for (self.partitions.items) |partition| {
         partition.release();
     }
@@ -393,7 +402,7 @@ fn openPartition(
     try self.partitions.ensureUnusedCapacity(alloc, 1);
     try self.pathsBuf.ensureUnusedCapacity(alloc, 3);
 
-    const partition = try Partition.open(alloc, path, indexPath, dataPath, day, self.streamCache);
+    const partition = try Partition.open(alloc, path, indexPath, dataPath, day, self.streamCache, self.runtime);
 
     self.pathsBuf.appendAssumeCapacity(path);
     self.pathsBuf.appendAssumeCapacity(indexPath);
@@ -562,8 +571,6 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
 
 test "init opens existing partitions, sorts them and sets lru" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -737,8 +744,6 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

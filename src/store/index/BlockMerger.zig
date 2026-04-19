@@ -41,10 +41,8 @@ lastItem: []const u8 = "",
 /// be aware it mutates readers list inside
 pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerger {
     // TODO: collect metrics and experiment with flat array on 1-3 elements
-
     // TODO: experiment with Loser tree intead of heap:
     // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
-
     var exhaustedReaders = try std.ArrayList(*BlockReader).initCapacity(alloc, readers.items.len);
     errdefer exhaustedReaders.deinit(alloc);
 
@@ -63,10 +61,12 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
     var heap = Heap(*BlockReader, BlockReader.blockReaderLessThan).init(alloc, readers);
     heap.heapify();
 
+    const maxIndexMemBlockSize = Conf.default(alloc).app.maxIndexMemBlockSize;
+
     return .{
         .heap = heap,
         .exhaustedReaders = exhaustedReaders,
-        .block = try MemBlock.init(alloc, Conf.getConf().app.maxIndexMemBlockSize),
+        .block = try MemBlock.init(alloc, maxIndexMemBlockSize),
     };
 }
 

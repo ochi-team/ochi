@@ -4,8 +4,6 @@ const Allocator = std.mem.Allocator;
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
 
-const Conf = @import("../../Conf.zig");
-
 const TableContract = @import("contract.zig").TableContract;
 
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
@@ -100,11 +98,11 @@ pub fn Merger(
         // TODO: try designing a destination in a way that skips merging multiple mem tables to a larger one
         // in order to reduce unncecessary load,
         // we can skip a merge and wait a bit to flush them all together immediately to disk
-        pub fn getDestinationTableKind(tables: []T, force: bool) TableKind {
+        pub fn getDestinationTableKind(tables: []T, force: bool, maxInmemoryTableSize: u64) TableKind {
             if (force) return .disk;
 
             const size = getTablesSize(tables);
-            if (size > getMaxInmemoryTableSize()) return .disk;
+            if (size > maxInmemoryTableSize) return .disk;
             if (!areTablesMem(tables)) return .disk;
 
             return .mem;
@@ -118,12 +116,10 @@ pub fn Merger(
             return n;
         }
 
-        // TODO: make it as a config field instead of calculated property
-        pub fn getMaxInmemoryTableSize() u64 {
-            const conf = Conf.getConf();
-            // only 10% of cache available for mem index
-            // TODO: experiment with tuning cache size to 5%, 15%
-            const maxmem = (conf.sys.cacheSize / 10) / maxMemTables;
+        // only 10% of cache available for mem index
+        // TODO: experiment with tuning cache size to 5%, 15%
+        pub fn getMaxInmemoryTableSize(cacheSize: u64) u64 {
+            const maxmem = (cacheSize / 10) / maxMemTables;
             return @max(maxmem, minMemTableSize);
         }
 
@@ -144,9 +140,8 @@ pub fn Merger(
         // TODO: ideally we move the division per table to availble mem calculation side,
         // to make the operation rarely happen and keep the calculated value ready
         // TODO: we must experiment with different min sizes like 4 and 2 mb
-        pub fn maxCachableTableSize() u64 {
-            const sysConf = Conf.getConf().sys;
-            const restMem = sysConf.maxMem - sysConf.cacheSize;
+        pub fn maxCachableTableSize(maxMem: u64, cacheSize: u64) u64 {
+            const restMem = maxMem - cacheSize;
             // 8mb min page cache size
             // TODO: better to make it configurable
             const freePerTable = @max(restMem / amountOfTablesToMerge, tablePageCacheSize);
@@ -375,8 +370,6 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
 
 test "getDestinationTableKind rules" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     const small1 = try createSizedMemTable(alloc, 256);
     defer small1.close();
@@ -385,14 +378,15 @@ test "getDestinationTableKind rules" {
 
     var bothSmall = [_]*Table{ small1, small2 };
     const merger = Merger(*Table, *MemTable, 16);
+    const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(1024 * 1024 * 1024);
 
-    try testing.expectEqual(TableKind.mem, merger.getDestinationTableKind(bothSmall[0..], false));
-    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(bothSmall[0..], true));
+    try testing.expectEqual(TableKind.mem, merger.getDestinationTableKind(bothSmall[0..], false, maxInmemoryTableSize));
+    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(bothSmall[0..], true, maxInmemoryTableSize));
 
-    const large = try createSizedMemTable(alloc, @intCast(merger.getMaxInmemoryTableSize() + 1));
+    const large = try createSizedMemTable(alloc, @intCast(maxInmemoryTableSize + 1));
     defer large.close();
     var onlyLarge = [_]*Table{large};
-    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(onlyLarge[0..], false));
+    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(onlyLarge[0..], false, maxInmemoryTableSize));
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -403,5 +397,5 @@ test "getDestinationTableKind rules" {
     const disk = try createDiskTableFromItems(alloc, diskPath, &.{ "a", "b", "c" });
     defer disk.close();
     var mixed = [_]*Table{ small1, disk };
-    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(mixed[0..], false));
+    try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(mixed[0..], false, maxInmemoryTableSize));
 }

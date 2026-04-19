@@ -5,7 +5,6 @@ const Allocator = std.mem.Allocator;
 
 const fs = @import("fs.zig");
 
-const Conf = @import("Conf.zig");
 const Line = @import("store/lines.zig").Line;
 const Query = @import("store/query.zig").Query;
 const SID = @import("store/lines.zig").SID;
@@ -17,6 +16,7 @@ const TableHeader = @import("store/inmem/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 const mergeData = @import("store/data/merge.zig").mergeData;
+const Runtime = @import("Runtime.zig");
 
 const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
@@ -119,14 +119,14 @@ memTablesSem: std.Thread.Semaphore = .{
 stopped: std.atomic.Value(bool) = .init(false),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
+runtime: *Runtime,
 
-pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder {
+pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
+    const concurrency = runtime.cpus;
     std.debug.assert(concurrency != 0);
-
-    const conf = Conf.getConf();
 
     const shards = try alloc.alloc(DataShard, concurrency);
     errdefer alloc.free(shards);
@@ -138,7 +138,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
     errdefer alloc.destroy(pool);
     try pool.init(.{
         .allocator = alloc,
-        .n_jobs = conf.server.pools.workerThreads,
+        .n_jobs = runtime.workerThreads,
     });
     errdefer pool.deinit();
 
@@ -171,6 +171,7 @@ pub fn init(alloc: Allocator, path: []const u8, concurrency: u16) !*DataRecorder
         .pool = pool,
         .stopped = std.atomic.Value(bool).init(false),
         .path = path,
+        .runtime = runtime,
     };
 
     for (0..concurrency) |_| {
@@ -226,7 +227,6 @@ pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
 
     self.memTables.deinit(allocator);
     self.diskTables.deinit(allocator);
-    _ = Conf.removeDiskSpace(self.path);
     self.pool.deinit();
     allocator.destroy(self.pool);
     allocator.free(self.shards);
@@ -413,7 +413,7 @@ fn tablesMerger(
     defer tablesToMerge.deinit(alloc);
 
     while (!self.stopped.load(.acquire)) {
-        const maxDiskTableSize = cap.getMaxTableSize(self.path);
+        const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace());
 
         self.mxTables.lock();
         // TODO: we have to know the max amount of tables in advance
@@ -460,7 +460,8 @@ fn mergeTables(
         }
     }
 
-    const tableKind = merger.getDestinationTableKind(tables, force);
+    const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(self.runtime.cacheSize);
+    const tableKind = merger.getDestinationTableKind(tables, force, maxInmemoryTableSize);
 
     const destinationTablePath: []u8 =
         if (tableKind == .disk) blk: {
@@ -502,7 +503,7 @@ fn mergeTables(
             for (tables) |table| {
                 sourceCompressedSizeTotal += table.tableHeader.compressedSize;
             }
-            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize();
+            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize(self.runtime.maxMem, self.runtime.cacheSize);
             break :blk try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
     };
@@ -840,15 +841,16 @@ test "selectTablesInRange selects overlap and handles gaps" {
 
 test "flushDataShards non-force respects flush deadline" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try DataRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try DataRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -872,15 +874,16 @@ test "flushDataShards non-force respects flush deadline" {
 
 test "mergeTables force single mem table creates disk table" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try DataRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try DataRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -903,8 +906,6 @@ test "mergeTables force single mem table creates disk table" {
 
 test "DataRecorder.addAndReopenPreservesLineCount" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -913,7 +914,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
     const inserted: usize = 96;
     {
-        const recorder = try DataRecorder.init(alloc, rootPath, 4);
+        const runtime = try Runtime.init(alloc, rootPath, 0.5);
+        defer runtime.deinit(alloc);
+
+        const recorder = try DataRecorder.init(alloc, rootPath, runtime);
         defer recorder.deinit(alloc);
 
         for (0..inserted) |i| {
@@ -932,7 +936,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
     }
 
     {
-        const reopened = try DataRecorder.init(alloc, rootPath, 4);
+        const runtime = try Runtime.init(alloc, rootPath, 0.5);
+        defer runtime.deinit(alloc);
+
+        const reopened = try DataRecorder.init(alloc, rootPath, runtime);
         reopened.stopped.store(true, .release);
         reopened.wg.wait();
         defer reopened.deinit(alloc);

@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Heap = @import("../../../stds/heap.zig").Heap;
-const Conf = @import("../../../Conf.zig");
+const Runtime = @import("../../../Runtime.zig");
 
 const IndexRecorder = @import("../IndexRecorder.zig");
 const MemBlock = @import("../MemBlock.zig");
@@ -237,15 +237,16 @@ fn createDiskTableFromItems(
 
 test "Lookup.findFirstByPrefix returns null on empty recorder" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -266,15 +267,16 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
 test "Lookup.findAllByPrefixes returns empty on empty recorder" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -297,15 +299,16 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
 
 test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -383,15 +386,16 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
 test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);
@@ -517,15 +521,16 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
 
 test "Lookup.findAllByPrefixes respects result limit cutoff" {
     const alloc = testing.allocator;
-    _ = try Conf.default(alloc);
-    defer Conf.deinit();
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
     defer alloc.free(rootPath);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, 4);
+    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(alloc);

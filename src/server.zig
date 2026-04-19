@@ -87,8 +87,7 @@ test {
 test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
 
-    const conf = try Conf.default(allocator);
-    defer Conf.deinit();
+    const conf = Conf.default(allocator);
     // Start the server in a separate thread
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {

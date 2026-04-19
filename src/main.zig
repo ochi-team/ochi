@@ -42,7 +42,7 @@ pub fn main() !void {
 fn runServer() !void {
     std.debug.print("Ochi version {s}", .{build.version});
 
-    const config = try Conf.init(std.heap.page_allocator, cli_config.config);
+    const config = Conf.default(std.heap.page_allocator);
     const now = try zeit.instant(.{ .source = .now });
     var nowBuf: [32]u8 = undefined;
     const nowStr = try now.time().bufPrint(&nowBuf, .rfc3339);
