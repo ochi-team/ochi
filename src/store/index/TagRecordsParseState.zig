@@ -80,11 +80,11 @@ pub fn encodePrefixBound(self: *const Self) usize {
     return 1 + maxTenantIDLen + self.tag.encodeIndexTagBound();
 }
 
-pub fn encodePrefix(self: *const Self, dst: []u8) void {
+pub fn encodePrefix(dst: []u8, tenantID: []const u8, tag: Field) void {
     dst[0] = @intFromEnum(IndexKind.tagToSids);
     var enc = Encoder.init(dst[1..]);
-    enc.writePadded(self.tenantID, maxTenantIDLen);
-    _ = self.tag.encodeIndexTag(enc.buf[enc.offset..]);
+    enc.writePadded(tenantID, maxTenantIDLen);
+    _ = tag.encodeIndexTag(enc.buf[enc.offset..]);
 }
 
 pub fn encodeRecordBound(tag: Field, streamIDsLen: usize) usize {
@@ -135,7 +135,7 @@ test "setup parses tag record" {
     // Test encodePrefix
     const prefixLen = state.encodePrefixBound();
     var outBuf: [128]u8 = undefined;
-    state.encodePrefix(&outBuf);
+    Self.encodePrefix(&outBuf, state.tenantID, state.tag);
 
     try testing.expectEqualSlices(u8, buf[0..prefixLen], outBuf[0..prefixLen]);
 }

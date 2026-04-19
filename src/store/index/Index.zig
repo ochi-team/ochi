@@ -5,7 +5,7 @@ const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
 const Query = @import("../query.zig").Query;
-const Trps = @import("TagRecordsParseState.zig");
+const TagRecordsParseState = @import("TagRecordsParseState.zig");
 
 const Lookup = @import("lookup/Lookup.zig");
 
@@ -52,7 +52,7 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
     defer lookup.deinit(alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
-    // defer??
+    defer alloc.free(sidBuf);
     var enc = Encoder.init(sidBuf);
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
@@ -121,40 +121,25 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     var lookup = try Lookup.init(alloc, self.recorder);
     defer lookup.deinit(alloc);
 
-    const state = try Trps.init(alloc);
+    var prefixes: std.ArrayList([]const u8) = try .initCapacity(alloc, tags.len);
+    defer {
+        for (prefixes.items) |p| {
+            alloc.free(p);
+        }
+        prefixes.deinit(alloc);
+    }
+
+    const state = try TagRecordsParseState.init(alloc);
     defer state.deinit(alloc);
 
-    const bufSize = blk: {
-        var max: usize = 0;
-        for (tags) |tag| {
-            const size = Trps.encodeRecordBound(tag, 0);
-
-            if (size > max) max = size;
-        }
-        break :blk max;
-    };
-
-    const buf = try alloc.alloc(u8, bufSize);
-    defer alloc.free(buf);
-
-    var prefixes: std.ArrayList([]const u8) = .empty;
-    defer prefixes.deinit(alloc);
-
     for (tags) |tag| {
-        const totalLen = Trps.encodeRecord(buf, tenantID, tag, &[_]u128{});
-
-        try state.setup(buf[0..totalLen]);
-
-        try prefixes.ensureUnusedCapacity(alloc, 1);
-
         const prefix = try alloc.alloc(u8, state.encodePrefixBound());
-        state.encodePrefix(prefix);
+
+        TagRecordsParseState.encodePrefix(prefix, tenantID, tag);
 
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    // rename to be more specific
-    // not sure what items are
     const items =
         try lookup.findAllByPrefixes(alloc, prefixes.items) orelse
         return .empty;
@@ -170,7 +155,6 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
 
     var sids: std.ArrayList(SID) = try .initCapacity(alloc, items.result.len);
 
-    // parse items to SIDs
     for (items.result) |i| {
         const sid = SID.decode(i);
         sids.appendAssumeCapacity(sid);
