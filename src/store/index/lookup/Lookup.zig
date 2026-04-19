@@ -88,6 +88,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// with given prefixes, or null if none exist. The following flag determines
 /// if the result was cut off or not.
 /// TODO: make it configurable and reduce for tests to 10
+/// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
 const FindAllByPrefixesResult = struct {
     result: []const []const u8,
@@ -110,6 +111,9 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
 
     // TODO optimize so we dont iterate over next entries multiple times,
     // the isuue is seek resets the state and for every key we must restart the seek
+    // we can pass a sorted list of prefixes and:
+    // 1. split them into groups so we know if they share the same block/prefix
+    // 2. if they ordered in .seek call we can skip previous block and continue from the current position
     for (prefixes) |prefix| {
         try self.seek(alloc, prefix);
 

@@ -154,6 +154,8 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     var sids: std.ArrayList(SID) = .empty;
 
     for (items.result) |i| {
+        // TODO: we can setup it from the tail, not the full entry and save a bit on the parsing,
+        // the tail is like i[prefix.len..]
         try state.setup(i);
 
         try state.parseStreamIDs(alloc);
@@ -161,6 +163,8 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         try sids.ensureUnusedCapacity(alloc, state.streamIDs.items.len);
 
         for (state.streamIDs.items) |s|
+            // TODO: ideally we look only for streams, the tenant is known in advance,
+            // we must design the API to return only Array(streams)
             sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
