@@ -5,6 +5,7 @@ const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
 const Query = @import("../query.zig").Query;
+const Trps = @import("TagRecordsParseState.zig");
 
 const Lookup = @import("lookup/Lookup.zig");
 
@@ -51,11 +52,13 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
     defer lookup.deinit(alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
+    // defer??
     var enc = Encoder.init(sidBuf);
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
 
     const maybeItem = try lookup.findFirstByPrefix(alloc, sidBuf);
+    // defer??
     if (maybeItem) |item| {
         return item.len == sidBuf.len;
     }
@@ -119,10 +122,29 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     var lookup = try Lookup.init(alloc, self.recorder);
     defer lookup.deinit(alloc);
 
-    _ = tenantID;
+    const state = try Trps.init(alloc);
+    defer state.deinit(alloc);
+
+    const bufSize = blk: {
+        var max: usize = 0;
+        for (tags) |tag| {
+            const size = Trps.encodeRecordBound(tag, 0);
+
+            if (size > max) max = size;
+        }
+        break :blk max;
+    };
+
+    const buf = try alloc.alloc(u8, bufSize);
+    defer alloc.free(buf);
 
     for (tags) |tag| {
-        _ = tag;
+        const totalLen = Trps.encodeRecord(buf, tenantID, tag, &[_]u128{});
+
+        try state.setup(buf[0..totalLen]);
+
+        const prefix = try alloc.alloc(u8, state.encodePrefixBound());
+        state.encodePrefix(prefix);
     }
 
     return .empty;
