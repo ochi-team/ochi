@@ -58,7 +58,6 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
     enc.writeInt(u128, sid.id);
 
     const maybeItem = try lookup.findFirstByPrefix(alloc, sidBuf);
-    // defer??
     if (maybeItem) |item| {
         return item.len == sidBuf.len;
     }
@@ -165,6 +164,9 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         }
         alloc.free(items.result);
     }
+
+    // handle somehow
+    _ = items.cutoff;
 
     var sids: std.ArrayList(SID) = try .initCapacity(alloc, items.result.len);
     _ = &sids;
