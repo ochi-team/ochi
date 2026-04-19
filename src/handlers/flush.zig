@@ -14,12 +14,6 @@ pub fn flushHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
         return ApiError.ContentTypeNotSupported;
     }
 
-    const body = r.body() orelse return ApiError.EmptyBody;
-
-    if (body.len > ctx.conf.maxRequestSize) {
-        return ApiError.MaxBodySize;
-    }
-
     ctx.store.flush(res.arena) catch |err| {
         std.debug.print("[ERROR] Failed to flush store: {s}\n", .{@errorName(err)});
         return ApiError.InternalError;

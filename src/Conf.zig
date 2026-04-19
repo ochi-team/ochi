@@ -173,7 +173,7 @@ pub fn default(alloc: Allocator) !Conf {
     const sys = try makeSys(alloc);
     conf = Conf{
         .server = .{
-            .port = 9012,
+            .port = 9014,
             .pools = pools,
         },
         .app = .{},
