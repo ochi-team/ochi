@@ -154,7 +154,25 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    _ = try lookup.findAllByPrefixes(alloc, prefixes.items);
+    // rename to be more specific
+    // not sure what items are
+    const items =
+        try lookup.findAllByPrefixes(alloc, prefixes.items) orelse
+        return .empty;
+    defer {
+        for (items.result) |i| {
+            alloc.free(i);
+        }
+        alloc.free(items.result);
+    }
+
+    var sids: std.ArrayList(SID) = try .initCapacity(alloc, items.result.len);
+    _ = &sids;
+
+    // parse items to SIDs
+    for (items.result) |i| {
+        _ = i;
+    }
 
     return .empty;
 }
