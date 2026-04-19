@@ -199,10 +199,13 @@ pub fn addLines(
 pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    var streamIDs = try self.index.queryStreams(alloc, tenantID, query.tags);
-    defer streamIDs.deinit(alloc);
+    var result = try self.index.queryStreams(alloc, tenantID, query.tags);
+    defer result.streamIDs.deinit(alloc);
 
-    return self.data.queryLines(alloc, streamIDs.items, query);
+    // TODO handle cutOff
+    _ = result.cutOff;
+
+    return self.data.queryLines(alloc, result.streamIDs.items, query);
 }
 
 pub fn flushForce(self: *Partition, alloc: Allocator) !void {

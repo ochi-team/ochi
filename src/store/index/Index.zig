@@ -5,6 +5,7 @@ const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
 const Query = @import("../query.zig").Query;
+const TagRecordsParseState = @import("TagRecordsParseState.zig");
 
 const Lookup = @import("lookup/Lookup.zig");
 
@@ -51,6 +52,7 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
     defer lookup.deinit(alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
+    defer alloc.free(sidBuf);
     var enc = Encoder.init(sidBuf);
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
@@ -114,16 +116,53 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !std.ArrayList(SID) {
+const QueryStreamsResult = struct { streamIDs: std.ArrayList(SID), cutOff: bool };
+pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(alloc, self.recorder);
     defer lookup.deinit(alloc);
 
-    _ = tenantID;
-
-    for (tags) |tag| {
-        _ = tag;
+    var prefixes: std.ArrayList([]const u8) = try .initCapacity(alloc, tags.len);
+    defer {
+        for (prefixes.items) |p| {
+            alloc.free(p);
+        }
+        prefixes.deinit(alloc);
     }
 
-    return .empty;
+    const state = try TagRecordsParseState.init(alloc);
+    defer state.deinit(alloc);
+
+    for (tags) |tag| {
+        const prefix = try alloc.alloc(u8, TagRecordsParseState.encodePrefixBound(tag));
+
+        TagRecordsParseState.encodePrefix(prefix, tenantID, tag);
+
+        prefixes.appendAssumeCapacity(prefix);
+    }
+
+    const items =
+        try lookup.findAllByPrefixes(alloc, prefixes.items) orelse
+        return .{ .streamIDs = .empty, .cutOff = false };
+    defer {
+        for (items.result) |i| {
+            alloc.free(i);
+        }
+        alloc.free(items.result);
+    }
+
+    var sids: std.ArrayList(SID) = .empty;
+
+    for (items.result) |i| {
+        try state.setup(i);
+
+        try state.parseStreamIDs(alloc);
+
+        try sids.ensureUnusedCapacity(alloc, state.streamIDs.items.len);
+
+        for (state.streamIDs.items) |s|
+            sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
+    }
+
+    return .{ .streamIDs = sids, .cutOff = items.cutOff };
 }

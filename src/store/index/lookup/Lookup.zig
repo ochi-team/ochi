@@ -91,7 +91,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 const resultLimit = 1000;
 const FindAllByPrefixesResult = struct {
     result: []const []const u8,
-    cutoff: bool,
+    cutOff: bool,
 };
 pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?FindAllByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
@@ -130,7 +130,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
                 // TODO log warning
                 return .{
                     .result = try alloc.dupe([]const u8, ahm.keys()),
-                    .cutoff = true,
+                    .cutOff = true,
                 };
         }
     }
@@ -140,7 +140,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
 
     return .{
         .result = try alloc.dupe([]const u8, ahm.keys()),
-        .cutoff = false,
+        .cutOff = false,
     };
 }
 
@@ -506,7 +506,7 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
             for (actual.?.result, want) |a, w| {
                 try testing.expectEqualStrings(a, w);
             }
-            try testing.expect(actual.?.cutoff == false);
+            try testing.expect(actual.?.cutOff == false);
         } else {
             try testing.expect(actual == null);
         }
@@ -561,7 +561,7 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
     };
 
     try testing.expect(actual != null);
-    try testing.expect(actual.?.cutoff);
+    try testing.expect(actual.?.cutOff);
     try testing.expectEqual(@as(usize, resultLimit), actual.?.result.len);
     try testing.expectEqualStrings("key:aa:0000", actual.?.result[0]);
     try testing.expectEqualStrings("key:aa:0999", actual.?.result[resultLimit - 1]);
