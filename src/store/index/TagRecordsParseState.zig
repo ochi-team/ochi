@@ -56,6 +56,12 @@ pub fn setup(self: *Self, item: []const u8) !void {
     self.streamsRaw = item[tenantOffset + offset ..];
 }
 
+pub fn setupStreamsRaw(self: *Self, streamsRaw: []const u8) !void {
+    self.streamIDs.clearRetainingCapacity();
+
+    self.streamsRaw = streamsRaw;
+}
+
 pub fn streamsLen(self: *const Self) usize {
     return self.streamsRaw.len / 16;
 }
@@ -174,8 +180,42 @@ test "setup resets parsed stream ids" {
     try state.setup(first);
     try state.parseStreamIDs(alloc);
     try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
+    try testing.expectEqualDeep(tag, state.tag);
 
     try state.setup(second);
+    try state.parseStreamIDs(alloc);
+    try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
+    try testing.expectEqualDeep(tag, state.tag);
+}
+
+test "setupStreamsRaw resets parsed stream ids" {
+    const alloc = testing.allocator;
+    const state = try Self.init(alloc);
+    defer state.deinit(alloc);
+
+    var tag = Field{ .key = "k", .value = "v" };
+
+    const firstBuf = try alloc.alloc(u8, encodeRecordBound(tag, 3));
+    const first = firstBuf[0..encodeRecord(firstBuf, "tenant1", tag, &[_]u128{ 1, 2, 3 })];
+    defer alloc.free(first);
+
+    const secondBuf = try alloc.alloc(u8, encodeRecordBound(tag, 1));
+    const second = secondBuf[0..encodeRecord(secondBuf, "tenant1", tag, &[_]u128{9})];
+    defer alloc.free(second);
+
+    const tenantOffset = 1 + maxTenantIDLen;
+    const tagPortion = @constCast(first[tenantOffset..]);
+    const offset = tag.decodeIndexTag(tagPortion);
+
+    // make a slice of the streams part only
+    const firstStreamsRaw = first[tenantOffset + offset ..];
+    const secondStreamsRaw = second[tenantOffset + offset ..];
+
+    try state.setupStreamsRaw(firstStreamsRaw);
+    try state.parseStreamIDs(alloc);
+    try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
+
+    try state.setupStreamsRaw(secondStreamsRaw);
     try state.parseStreamIDs(alloc);
     try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
 }

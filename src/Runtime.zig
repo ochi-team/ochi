@@ -51,7 +51,7 @@ pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtim
             break :blk memsize;
         },
         .linux => {
-            var info: std.os.linux.Sysinfo = .{};
+            var info: std.os.linux.Sysinfo = undefined;
             const result: usize = std.os.linux.sysinfo(&info);
             if (std.os.linux.E.init(result) != .SUCCESS) {
                 return error.UnknownTotalSystemMemory;
