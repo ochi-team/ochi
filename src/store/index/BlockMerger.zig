@@ -85,12 +85,12 @@ pub fn merge(
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
     var tableHeader = TableHeader{};
+    errdefer tableHeader.deinit(alloc);
     while (true) {
         if (self.heap.len() == 0) {
             // done, exit path
             try self.flush(alloc, writer, &tableHeader);
-            // make a table header alive even when a merger is dead
-            return tableHeader.dupe(alloc);
+            return tableHeader;
         }
 
         if (stopped) |s| {
@@ -174,9 +174,12 @@ fn flush(
 
     tableHeader.entriesCount += self.block.memEntries.items.len;
     if (tableHeader.firstEntry.len == 0) {
-        tableHeader.firstEntry = self.block.memEntries.items[0];
+        tableHeader.firstEntry = try alloc.dupe(u8, self.block.memEntries.items[0]);
     }
-    tableHeader.lastEntry = blockLastEntry;
+    if (tableHeader.lastEntry.len > 0) {
+        alloc.free(tableHeader.lastEntry);
+    }
+    tableHeader.lastEntry = try alloc.dupe(u8, blockLastEntry);
     try writer.writeBlock(alloc, self.block);
     tableHeader.blocksCount += 1;
     self.block.reset();
