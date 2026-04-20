@@ -36,14 +36,11 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
     var store = try Store.init(allocator, path);
     defer store.deinit(allocator);
 
-    const dispatcher = try allocator.create(Dispatcher);
-    defer allocator.destroy(dispatcher);
-
-    dispatcher.* = Dispatcher{
+    var dispatcher: Dispatcher = .{
         .conf = conf.app,
         .store = &store,
     };
-    var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.server.port }, dispatcher);
+    var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.server.port }, &dispatcher);
     defer server.deinit();
 
     global_server = &server;
