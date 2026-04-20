@@ -90,9 +90,7 @@ pub fn statesPrefixEqual(self: *const Self) bool {
 
 pub fn moveParsedState(self: *Self, alloc: Allocator) !void {
     try self.streamIDs.appendSlice(alloc, self.state.streamIDs.items);
-    const tmp = self.state;
-    self.state = self.prevState;
-    self.prevState = tmp;
+    std.mem.swap(*TagRecordsParseState, &self.state, &self.prevState);
 }
 
 const testing = std.testing;

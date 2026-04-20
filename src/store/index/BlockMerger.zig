@@ -34,8 +34,6 @@ const BlockMerger = @This();
 heap: Heap(*BlockReader, BlockReader.blockReaderLessThan),
 exhaustedReaders: std.ArrayList(*BlockReader),
 block: *MemBlock,
-firstItem: []const u8 = "",
-lastItem: []const u8 = "",
 
 /// init creates a BlockMerger instance from the readers
 /// be aware it mutates readers list inside
@@ -94,8 +92,6 @@ pub fn merge(
         }
 
         if (stopped) |s| {
-            // TODO: move the error to a generic workers error,
-            // it must be handled to stop all the mergers
             if (s.load(.acquire)) return error.Stopped;
         }
 
@@ -158,8 +154,11 @@ fn flush(
         return;
     }
 
-    self.firstItem = items[0];
-    self.lastItem = items[items.len - 1];
+    const originalFirst = try alloc.dupe(u8, items[0]);
+    defer alloc.free(originalFirst);
+    const originalLast = try alloc.dupe(u8, items[items.len - 1]);
+    defer alloc.free(originalLast);
+
     try self.mergeTagsRecords(alloc);
 
     if (self.block.memEntries.items.len == 0) {
@@ -170,8 +169,8 @@ fn flush(
     const blockLastEntry = self.block.memEntries.items[self.block.memEntries.items.len - 1];
 
     // TODO: move this validation to tests and test the block is sorted
-    std.debug.assert(std.mem.order(u8, self.block.memEntries.items[0], self.firstItem) != .lt);
-    std.debug.assert(std.mem.order(u8, blockLastEntry, self.lastItem) != .gt);
+    std.debug.assert(std.mem.order(u8, self.block.memEntries.items[0], originalFirst) != .lt);
+    std.debug.assert(std.mem.order(u8, blockLastEntry, originalLast) != .gt);
     std.debug.assert(std.sort.isSorted([]const u8, self.block.memEntries.items, {}, MemOrder(u8).lessThanConst));
 
     tableHeader.entriesCount += self.block.memEntries.items.len;
@@ -223,7 +222,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     // and avoid block copy;
 
     // TODO: don't copy the items since the beginning, but create a destination and build it,
-    // then as a fallback returns src
+    // then as a fallback returns src, it allows not to dupe firstItem/lastItem in flush above
 
     // Copy source bytes so merged output never aliases mutable destination memory.
     var sourceBuf = try std.ArrayList(u8).initCapacity(alloc, maxMergedBytes);
@@ -244,15 +243,6 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
     const stateBuf = &self.block.buf;
 
-    const appendOwned = struct {
-        fn f(block: *MemBlock, a: Allocator, item: []const u8) !void {
-            const start = block.buf.items.len;
-            try block.buf.appendSlice(a, item);
-            try block.memEntries.append(a, block.buf.items[start .. start + item.len]);
-            block.size += @intCast(item.len);
-        }
-    }.f;
-
     var tagRecordsMerger = try TagRecordsMerger.init(alloc);
     defer tagRecordsMerger.deinit(alloc);
 
@@ -262,7 +252,9 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
             const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
             self.block.size += @intCast(stateBuf.items.len - prevLen);
-            try appendOwned(self.block, alloc, item);
+
+            const ok = self.block.add(item);
+            std.debug.assert(ok);
             continue;
         }
 
@@ -271,7 +263,9 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
             const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
             self.block.size += @intCast(stateBuf.items.len - prevLen);
-            try appendOwned(self.block, alloc, item);
+
+            const ok = self.block.add(item);
+            std.debug.assert(ok);
             continue;
         }
 
@@ -300,7 +294,8 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         self.block.memEntries.clearRetainingCapacity();
         self.block.size = 0;
         for (sourceEntries.items) |item| {
-            try appendOwned(self.block, alloc, item);
+            const ok = self.block.add(item);
+            std.debug.assert(ok);
         }
     }
 }
