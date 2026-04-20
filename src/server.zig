@@ -33,7 +33,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const path = try std.fs.cwd().realpath(storePath, &storePathBuf);
 
-    const store = try Store.init(allocator, path);
+    var store = try Store.init(allocator, path);
     defer store.deinit(allocator);
 
     const dispatcher = try allocator.create(Dispatcher);
@@ -41,7 +41,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
 
     dispatcher.* = Dispatcher{
         .conf = conf.app,
-        .store = store,
+        .store = &store,
     };
     var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.server.port }, dispatcher);
     defer server.deinit();
