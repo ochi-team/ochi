@@ -198,13 +198,20 @@ pub fn addLines(
 pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    var result = try self.index.queryStreams(alloc, tenantID, query.tags);
+    var result = try self.index.queryStreamIDs(alloc, tenantID, query.tags);
     defer result.streamIDs.deinit(alloc);
 
     // TODO handle cutOff
     _ = result.cutOff;
 
-    return self.data.queryLines(alloc, result.streamIDs.items, query);
+    const sids = try alloc.alloc(SID, result.streamIDs.items.len);
+    defer alloc.free(sids);
+
+    for (result.streamIDs.items, sids) |streamID, *sid| {
+        sid.* = .{ .id = streamID, .tenantID = tenantID };
+    }
+
+    return self.data.queryLines(alloc, sids, query);
 }
 
 pub fn flushForce(self: *Partition, alloc: Allocator) !void {

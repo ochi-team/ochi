@@ -116,8 +116,8 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-const QueryStreamsResult = struct { streamIDs: std.ArrayList(SID), cutOff: bool };
-pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamsResult {
+const QueryStreamIDsResult = struct { streamIDs: std.ArrayList(u128), cutOff: bool };
+pub fn queryStreamIDs(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamIDsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(alloc, self.recorder);
     defer lookup.deinit(alloc);
@@ -141,32 +141,30 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    const items =
+    var items =
         try lookup.findAllByPrefixes(alloc, prefixes.items) orelse
         return .{ .streamIDs = .empty, .cutOff = false };
     defer {
-        for (items.result) |i| {
+        for (items.result.keys()) |i| {
             alloc.free(i);
         }
-        alloc.free(items.result);
+        items.result.deinit(alloc);
     }
 
-    var sids: std.ArrayList(SID) = .empty;
+    var streamIDs: std.ArrayList(u128) = .empty;
 
-    for (items.result) |i| {
+    for (items.result.keys()) |i| {
         // TODO: we can setup it from the tail, not the full entry and save a bit on the parsing,
         // the tail is like i[prefix.len..]
         try state.setup(i);
 
         try state.parseStreamIDs(alloc);
 
-        try sids.ensureUnusedCapacity(alloc, state.streamIDs.items.len);
+        try streamIDs.ensureUnusedCapacity(alloc, state.streamIDs.items.len);
 
         for (state.streamIDs.items) |s|
-            // TODO: ideally we look only for streams, the tenant is known in advance,
-            // we must design the API to return only Array(streams)
-            sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
+            streamIDs.appendAssumeCapacity(s);
     }
 
-    return .{ .streamIDs = sids, .cutOff = items.cutOff };
+    return .{ .streamIDs = streamIDs, .cutOff = items.cutOff };
 }

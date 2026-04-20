@@ -91,7 +91,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
 const FindAllByPrefixesResult = struct {
-    result: []const []const u8,
+    result: std.StringArrayHashMapUnmanaged(void),
     cutOff: bool,
 };
 pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?FindAllByPrefixesResult {
@@ -100,11 +100,11 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
         std.debug.assert(prefix.len > 0);
 
     var ahm: std.StringArrayHashMapUnmanaged(void) = .empty;
-    defer ahm.deinit(alloc);
     errdefer {
         var it = ahm.iterator();
         while (it.next()) |i|
             alloc.free(i.key_ptr.*);
+        ahm.deinit(alloc);
     }
 
     var count: usize = 0;
@@ -133,7 +133,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             if (count >= resultLimit)
                 // TODO log warning
                 return .{
-                    .result = try alloc.dupe([]const u8, ahm.keys()),
+                    .result = ahm,
                     .cutOff = true,
                 };
         }
@@ -143,7 +143,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
         return null;
 
     return .{
-        .result = try alloc.dupe([]const u8, ahm.keys()),
+        .result = ahm,
         .cutOff = false,
     };
 }
@@ -292,10 +292,10 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    const actual = try lookup.findAllByPrefixes(alloc, &prefixes);
-    defer if (actual) |a| {
-        for (a.result) |i| alloc.free(i);
-        alloc.free(a.result);
+    var actual = try lookup.findAllByPrefixes(alloc, &prefixes);
+    defer if (actual) |*a| {
+        for (a.result.keys()) |i| alloc.free(i);
+        a.result.deinit(alloc);
     };
 
     try testing.expect(actual == null);
@@ -501,17 +501,15 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     defer lookup.deinit(alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
-        defer if (actual) |a| {
-            for (a.result) |i| {
-                alloc.free(i);
-            }
-            alloc.free(a.result);
+        var actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
+        defer if (actual) |*a| {
+            for (a.result.keys()) |i| alloc.free(i);
+            a.result.deinit(alloc);
         };
 
         if (case.expected) |want| {
             try testing.expect(actual != null);
-            for (actual.?.result, want) |a, w| {
+            for (actual.?.result.keys(), want) |a, w| {
                 try testing.expectEqualStrings(a, w);
             }
             try testing.expect(actual.?.cutOff == false);
@@ -561,19 +559,17 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    const actual = try lookup.findAllByPrefixes(alloc, &[_][]const u8{"key:aa:"});
-    defer if (actual) |a| {
-        for (a.result) |i| {
-            alloc.free(i);
-        }
-        alloc.free(a.result);
+    var actual = try lookup.findAllByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    defer if (actual) |*a| {
+        for (a.result.keys()) |i| alloc.free(i);
+        a.result.deinit(alloc);
     };
 
     try testing.expect(actual != null);
     try testing.expect(actual.?.cutOff);
-    try testing.expectEqual(@as(usize, resultLimit), actual.?.result.len);
-    try testing.expectEqualStrings("key:aa:0000", actual.?.result[0]);
-    try testing.expectEqualStrings("key:aa:0999", actual.?.result[resultLimit - 1]);
+    try testing.expectEqual(@as(usize, resultLimit), actual.?.result.keys().len);
+    try testing.expectEqualStrings("key:aa:0000", actual.?.result.keys()[0]);
+    try testing.expectEqualStrings("key:aa:0999", actual.?.result.keys()[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }
