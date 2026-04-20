@@ -40,7 +40,7 @@ runtime: *Runtime,
 // 1. expose it as a metric in order to alert to OPS to expand disk or remove the stale data
 // 2. handle eviction policy based on the config (e.g. free GB or free % of the disk)
 // TODO: start partitions retention watcher
-pub fn init(alloc: Allocator, path: []const u8) !*Store {
+pub fn init(alloc: Allocator, path: []const u8) !Store {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
@@ -70,15 +70,13 @@ pub fn init(alloc: Allocator, path: []const u8) !*Store {
         partitions.deinit(alloc);
     }
 
-    const store = try alloc.create(Store);
-    store.* = .{
+    var store: Store = .{
         .path = path,
         .lockFile = file,
         .partitions = partitions,
         .streamCache = streamCache,
         .runtime = runtime,
     };
-    errdefer alloc.destroy(store);
 
     // TODO: try making it parallel, it speed up start up time
     var it = partitionsDir.iterate();
@@ -119,7 +117,6 @@ pub fn deinit(self: *Store, allocator: Allocator) void {
     self.streamCache.deinit();
 
     self.lockFile.close();
-    allocator.destroy(self);
 }
 
 pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !std.fs.Dir {
@@ -600,7 +597,7 @@ test "init opens existing partitions, sorts them and sets lru" {
         try std.fs.makeDirAbsolute(dataPath);
     }
 
-    const store = try Store.init(alloc, storePath);
+    var store = try Store.init(alloc, storePath);
     defer store.deinit(alloc);
 
     try testing.expectEqual(keys.len, store.partitions.items.len);
@@ -754,7 +751,7 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     defer alloc.free(partitionsRoot);
     try std.fs.makeDirAbsolute(partitionsRoot);
 
-    const store = try Store.init(alloc, rootPath);
+    var store = try Store.init(alloc, rootPath);
     defer store.deinit(alloc);
 
     const dayOne: u64 = 10;
