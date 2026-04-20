@@ -56,10 +56,10 @@ pub fn setup(self: *Self, item: []const u8) !void {
     self.streamsRaw = item[tenantOffset + offset ..];
 }
 
-pub fn setupStreamsRaw(self: *Self, item: []const u8) !void {
+pub fn setupStreamsRaw(self: *Self, streamsRaw: []const u8) !void {
     self.streamIDs.clearRetainingCapacity();
 
-    self.streamsRaw = item;
+    self.streamsRaw = streamsRaw;
 }
 
 pub fn streamsLen(self: *const Self) usize {
