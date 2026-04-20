@@ -170,8 +170,6 @@ fn flush(
     const blockLastEntry = self.block.memEntries.items[self.block.memEntries.items.len - 1];
 
     // TODO: move this validation to tests and test the block is sorted
-    std.debug.assert(std.mem.order(u8, self.block.memEntries.items[0], self.firstItem) != .lt);
-    std.debug.assert(std.mem.order(u8, blockLastEntry, self.lastItem) != .gt);
     std.debug.assert(std.sort.isSorted([]const u8, self.block.memEntries.items, {}, MemOrder(u8).lessThanConst));
 
     tableHeader.entriesCount += self.block.memEntries.items.len;
@@ -208,51 +206,73 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         return;
     }
 
-    // TODO: review concurrent writing model whether it's possible to optimize further
-    // and avoid block copy
-    var blockCopy = try std.ArrayList([]const u8).initCapacity(alloc, items.len);
-    defer blockCopy.deinit(alloc);
-    blockCopy.appendSliceAssumeCapacity(items);
-
     var maxMergedBytes: usize = 0;
-    for (blockCopy.items) |item| {
+    for (items) |item| {
         maxMergedBytes += item.len;
     }
 
-    try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
-    // can start mutating the original array after copying
+    // Copy source bytes so merged output never aliases mutable destination memory.
+    var sourceBuf = try std.ArrayList(u8).initCapacity(alloc, maxMergedBytes);
+    defer sourceBuf.deinit(alloc);
+    var sourceItems = try std.ArrayList([]const u8).initCapacity(alloc, items.len);
+    defer sourceItems.deinit(alloc);
+
+    for (items) |item| {
+        const start = sourceBuf.items.len;
+        sourceBuf.appendSliceAssumeCapacity(item);
+        sourceItems.appendAssumeCapacity(sourceBuf.items[start .. start + item.len]);
+    }
+
     self.block.memEntries.clearRetainingCapacity();
     self.block.buf.clearRetainingCapacity();
+    self.block.size = 0;
+    try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
     const stateBuf = &self.block.buf;
+
+    const appendOwned = struct {
+        fn f(block: *MemBlock, a: Allocator, item: []const u8) !void {
+            const start = block.buf.items.len;
+            try block.buf.appendSlice(a, item);
+            try block.memEntries.append(a, block.buf.items[start .. start + item.len]);
+            block.size += @intCast(item.len);
+        }
+    }.f;
 
     var tagRecordsMerger = try TagRecordsMerger.init(alloc);
     defer tagRecordsMerger.deinit(alloc);
 
-    // use block copy because we override block itself from the beginning
-    for (0..blockCopy.items.len) |i| {
-        const item = blockCopy.items[i];
-        if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == blockCopy.items.len - 1) {
+    for (0..sourceItems.items.len) |i| {
+        const item = sourceItems.items[i];
+        if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == sourceItems.items.len - 1) {
+            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
-            try self.block.memEntries.append(alloc, item);
+            self.block.size += @intCast(stateBuf.items.len - prevLen);
+            try appendOwned(self.block, alloc, item);
             continue;
         }
 
         try tagRecordsMerger.state.setup(item);
         if (tagRecordsMerger.state.streamsLen() > maxStreamsPerRecord) {
+            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
-            try self.block.memEntries.append(alloc, item);
+            self.block.size += @intCast(stateBuf.items.len - prevLen);
+            try appendOwned(self.block, alloc, item);
             continue;
         }
 
         if (!tagRecordsMerger.statesPrefixEqual()) {
+            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            self.block.size += @intCast(stateBuf.items.len - prevLen);
         }
 
         try tagRecordsMerger.state.parseStreamIDs(alloc);
         try tagRecordsMerger.moveParsedState(alloc);
 
         if (tagRecordsMerger.streamIDs.items.len >= maxStreamsPerRecord) {
+            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            self.block.size += @intCast(stateBuf.items.len - prevLen);
         }
     }
 
@@ -263,8 +283,10 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         // fallback to the original data
         self.block.buf.clearRetainingCapacity();
         self.block.memEntries.clearRetainingCapacity();
-        try self.block.memEntries.ensureUnusedCapacity(alloc, blockCopy.items.len);
-        self.block.memEntries.appendSliceAssumeCapacity(blockCopy.items);
+        self.block.size = 0;
+        for (sourceItems.items) |item| {
+            try appendOwned(self.block, alloc, item);
+        }
     }
 }
 

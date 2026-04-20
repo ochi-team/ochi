@@ -38,10 +38,14 @@ pub fn init(
     var data = try std.ArrayList([]const u8).initCapacity(alloc, maxMemBlockSize);
     errdefer data.deinit(alloc);
 
+    var buf = try std.ArrayList(u8).initCapacity(alloc, maxMemBlockSize);
+    errdefer buf.deinit(alloc);
+
     const b = try alloc.create(MemBlock);
     b.* = .{
         .memEntries = data,
         .size = 0,
+        .buf = buf,
     };
     return b;
 }
@@ -63,7 +67,13 @@ pub fn add(self: *MemBlock, entry: []const u8) bool {
     std.debug.assert(entry.len > 0);
     if ((self.size + entry.len) > self.memEntries.capacity) return false;
 
-    self.memEntries.appendAssumeCapacity(entry);
+    if (self.buf.capacity - self.buf.items.len < entry.len) {
+        return false;
+    }
+
+    const start = self.buf.items.len;
+    self.buf.appendSliceAssumeCapacity(entry);
+    self.memEntries.appendAssumeCapacity(self.buf.items[start .. start + entry.len]);
     self.size += @intCast(entry.len);
     return true;
 }
@@ -78,6 +88,17 @@ pub fn sortData(self: *MemBlock) void {
 
 pub fn setPrefix(self: *MemBlock) void {
     if (self.memEntries.items.len == 0) return;
+
+    if (builtin.mode == .Debug) {
+        const bufStart = @intFromPtr(self.buf.items.ptr);
+        const bufEnd = bufStart + self.buf.items.len;
+        for (self.memEntries.items) |entry| {
+            const entryStart = @intFromPtr(entry.ptr);
+            const entryEnd = entryStart + entry.len;
+            std.debug.assert(entryStart >= bufStart);
+            std.debug.assert(entryEnd <= bufEnd);
+        }
+    }
 
     if (self.memEntries.items.len == 1) {
         self.prefix = self.memEntries.items[0];

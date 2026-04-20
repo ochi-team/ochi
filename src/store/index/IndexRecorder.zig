@@ -273,16 +273,11 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
-    // enough for 256 tables, which a way beyond the expected amount
-    var fba = std.heap.stackFallback(2048, alloc);
-    const fbaAlloc = fba.get();
+    if (blocks.len == 0) return;
 
     const tablesSize = (blocks.len + blocksInMemTable - 1) / blocksInMemTable;
-    var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
-    defer memTables.deinit(fbaAlloc);
-    errdefer {
-        for (memTables.items) |memTable| memTable.close();
-    }
+    var memTables = try std.ArrayList(*Table).initCapacity(alloc, tablesSize);
+    defer memTables.deinit(alloc);
 
     var tail = blocks[0..];
     // TODO: benchmark parallel mem table creation
@@ -376,7 +371,7 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
 fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, force: bool) !void {
     // TODO: add a limit to wait max 3 minutes, otherwise something is broken
 
-    var semaphoreAcuired = true;
+    var semaphoreAcquired = false;
     while (true) {
         self.memTablesSem.timedWait(std.time.ns_per_s) catch |err| {
             switch (err) {
@@ -384,19 +379,24 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
                     if (self.stopped.load(.acquire)) {
                         // TODO: audit all semaphore as a state usage, it can happen
                         // a background task fails and  doesn't post semaphore back
-                        semaphoreAcuired = false;
                         break;
                     }
                 },
             }
+            continue;
         };
+
+        semaphoreAcquired = true;
+        break;
     }
+
+    if (!semaphoreAcquired) return error.Stopped;
 
     // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lock();
     self.memTables.append(alloc, memTable) catch {
         self.mxTables.unlock();
-        if (semaphoreAcuired) self.memTablesSem.post();
+        self.memTablesSem.post();
         return;
     };
     self.startMemTablesMerge(alloc);
@@ -531,25 +531,59 @@ fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) void {
 
 fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
     const nowUs = std.time.microTimestamp();
-    const bufsize = 1024;
-    // TODO: metric to understand whether it's enough
-    var fba = std.heap.stackFallback(bufsize, alloc);
-    const fbaAlloc = fba.get();
-
-    var toFlush = try std.ArrayList(*Table).initCapacity(fbaAlloc, bufsize / 64);
-    defer toFlush.deinit(fbaAlloc);
+    var toFlush = std.ArrayList(*Table).empty;
+    defer {
+        for (toFlush.items) |table| table.release();
+        toFlush.deinit(alloc);
+    }
 
     self.mxTables.lock();
-    errdefer self.mxTables.unlock();
+    toFlush.ensureUnusedCapacity(alloc, self.memTables.items.len) catch |err| {
+        self.mxTables.unlock();
+        return err;
+    };
     for (self.memTables.items) |memTable| {
         if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
             memTable.inMerge = true;
-            try toFlush.append(fbaAlloc, memTable);
+            memTable.retain();
+            toFlush.appendAssumeCapacity(memTable);
         }
     }
     self.mxTables.unlock();
 
-    try self.flushMemTablesInChunks(alloc, toFlush);
+    if (force) {
+        var i: usize = 0;
+        errdefer {
+            self.mxTables.lock();
+            defer self.mxTables.unlock();
+            for (toFlush.items[i..]) |table| {
+                table.inMerge = false;
+            }
+        }
+
+        while (i < toFlush.items.len) : (i += 1) {
+            const table = toFlush.items[i];
+            const mem = table.mem orelse {
+                table.inMerge = false;
+                continue;
+            };
+
+            var destinationTablePath = try alloc.alloc(u8, self.path.len + 1 + 16);
+            errdefer alloc.free(destinationTablePath);
+            const idx = self.nextMergeIdx();
+            _ = try std.fmt.bufPrint(destinationTablePath, "{s}/{X:0>16}", .{ self.path, idx });
+
+            try mem.storeToDisk(alloc, destinationTablePath);
+
+            var single = [_]*Table{table};
+            const newTable = try openCreatedTable(alloc, destinationTablePath, single[0..], null);
+            destinationTablePath = "";
+            try swapper.swapTables(self, alloc, single[0..], newTable, .disk);
+        }
+        return;
+    }
+
+    try self.flushMemTablesInChunks(alloc, toFlush, false);
 }
 
 fn flushMemEntries(
@@ -573,13 +607,31 @@ fn flushMemEntries(
     try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
 }
 
-fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
+fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table), force: bool) !void {
     if (toFlush.items.len == 0) return;
+
+    if (!force and self.stopped.load(.acquire)) {
+        self.mxTables.lock();
+        defer self.mxTables.unlock();
+        for (toFlush.items) |table| {
+            table.inMerge = false;
+        }
+        return;
+    }
 
     // TODO: consider running chunks merging in parallel
     var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
     left.items.len = toFlush.items.len;
     while (left.items.len > 0) {
+        if (!force and self.stopped.load(.acquire)) {
+            self.mxTables.lock();
+            defer self.mxTables.unlock();
+            for (left.items) |table| {
+                table.inMerge = false;
+            }
+            return;
+        }
+
         const n = merger.selectTablesToMerge(&left);
         std.debug.assert(n > 0);
 
@@ -668,6 +720,10 @@ pub fn mergeTables(
             "{s}/{X:0>16}",
             .{ self.path, idx },
         );
+    }
+
+    if (!force and stopped == null and self.stopped.load(.acquire)) {
+        return error.Stopped;
     }
 
     if (force and tables.len == 1 and tables[0].mem != null) {
@@ -1088,7 +1144,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
         try testing.expectEqual(1, shard.blocks.items.len);
         try testing.expectEqual(1, shard.blocks.items[0].memEntries.items.len);
-        try testing.expectEqual(shortValue, shard.blocks.items[0].memEntries.items[0]);
+        try testing.expectEqualStrings(shortValue, shard.blocks.items[0].memEntries.items[0]);
     }
 
     try recorder.stop(alloc);

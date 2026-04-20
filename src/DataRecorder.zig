@@ -54,6 +54,7 @@ pub const DataShard = struct {
 
     mx: std.Thread.Mutex = .{},
     lines: std.ArrayList(Line) = .empty,
+    arena: std.heap.ArenaAllocator,
 
     /// size defines the amount of space is take by the shard,
     /// raw bytes required to hold the lines
@@ -61,6 +62,12 @@ pub const DataShard = struct {
     // TODO: currently there is a single background process flushing the data shards
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
+
+    fn deinitOwnedLines(self: *DataShard, alloc: Allocator) void {
+        _ = alloc;
+        self.lines.clearRetainingCapacity();
+        _ = self.arena.reset(.free_all);
+    }
 
     // threshold as 90% of a max block size
     const flushSizeThreshold = 9 * (MemTable.maxBlockSize / 10);
@@ -87,7 +94,7 @@ pub const DataShard = struct {
             sem.post();
             return err;
         };
-        self.lines.clearRetainingCapacity();
+        self.deinitOwnedLines(alloc);
 
         sem.post();
 
@@ -131,7 +138,9 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
     const shards = try alloc.alloc(DataShard, concurrency);
     errdefer alloc.free(shards);
     for (shards) |*shard| {
-        shard.* = .{};
+        shard.* = .{
+            .arena = std.heap.ArenaAllocator.init(alloc),
+        };
     }
 
     var pool = try alloc.create(std.Thread.Pool);
@@ -216,7 +225,9 @@ pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
     std.debug.assert(self.memTables.items.len == 0);
 
     for (self.shards) |*shard| {
+        shard.deinitOwnedLines(allocator);
         shard.lines.deinit(allocator);
+        shard.arena.deinit();
     }
     for (self.diskTables.items) |table| {
         table.release();
@@ -283,6 +294,7 @@ fn runDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
 }
 
 fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void {
+    const alloc = allocator;
     const nowUs = std.time.microTimestamp();
 
     self.mxTables.lock();
@@ -297,6 +309,7 @@ fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void 
         const isTimeToMerge = memTable.mem.?.flushAtUs <= nowUs;
         if (!memTable.inMerge and (force or isTimeToMerge)) {
             memTable.inMerge = true;
+            memTable.retain();
             tables.appendAssumeCapacity(memTable);
         }
     }
@@ -304,6 +317,41 @@ fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void 
     self.mxTables.unlock();
 
     if (tables.items.len == 0) {
+        return;
+    }
+
+    defer {
+        for (tables.items) |table| table.release();
+    }
+
+    if (force) {
+        var i: usize = 0;
+        errdefer {
+            self.mxTables.lock();
+            defer self.mxTables.unlock();
+            for (tables.items[i..]) |table| {
+                table.inMerge = false;
+            }
+        }
+
+        while (i < tables.items.len) : (i += 1) {
+            const table = tables.items[i];
+            const mem = table.mem orelse {
+                table.inMerge = false;
+                continue;
+            };
+
+            const destinationTablePath = try alloc.alloc(u8, self.path.len + 1 + 16);
+            errdefer alloc.free(destinationTablePath);
+            const mergeIdx = self.nextMergeIdx();
+            _ = try std.fmt.bufPrint(destinationTablePath, "{s}/{X:0>16}", .{ self.path, mergeIdx });
+
+            try mem.storeToDisk(alloc, destinationTablePath);
+
+            var single = [_]*Table{table};
+            const newTable = try openCreatedTable(alloc, destinationTablePath, single[0..], null);
+            try swapper.swapTables(self, alloc, single[0..], newTable, .disk);
+        }
         return;
     }
 
@@ -554,8 +602,27 @@ pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line, size
     shard.mx.lock();
     defer shard.mx.unlock();
 
-    // TODO: we must now the limit on amount of lines per shard and append a known amount
-    try shard.lines.appendSlice(alloc, lines);
+    const arenaAlloc = shard.arena.allocator();
+    for (lines) |line| {
+        const fieldsCopy = try arenaAlloc.alloc(Field, line.fields.len);
+        for (line.fields, 0..) |field, fieldIndex| {
+            fieldsCopy[fieldIndex] = .{
+                .key = try arenaAlloc.dupe(u8, field.key),
+                .value = try arenaAlloc.dupe(u8, field.value),
+            };
+        }
+
+        const tenantIDCopy = try arenaAlloc.dupe(u8, line.sid.tenantID);
+        try shard.lines.append(alloc, .{
+            .timestampNs = line.timestampNs,
+            .sid = .{
+                .tenantID = tenantIDCopy,
+                .id = line.sid.id,
+                .buf = null,
+            },
+            .fields = fieldsCopy,
+        });
+    }
     shard.size += size;
     if (shard.mustFlush()) {
         try self.flushShard(alloc, shard);

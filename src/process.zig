@@ -57,6 +57,7 @@ pub const Processor = struct {
     lines: std.ArrayList(Line) = .empty,
     tags: []Field,
     encodedTags: []const u8,
+    tenantIDOwned: []u8,
     sid: SID,
 
     pub fn empty(store: *Store) Processor {
@@ -66,6 +67,7 @@ pub const Processor = struct {
             .lines = std.ArrayList(Line).empty,
             .tags = &[_]Field{},
             .encodedTags = &[_]u8{},
+            .tenantIDOwned = &[_]u8{},
             .sid = SID{ .tenantID = "", .id = 0 },
         };
     }
@@ -76,24 +78,38 @@ pub const Processor = struct {
         tags: []Field,
         tenantID: []const u8,
     ) !void {
-        self.lines.clearRetainingCapacity();
-        self.size = 0;
-
         // use unstable sort because we don't expect duplicated keys
         std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
 
         const encodedTags = try encodeTags(alloc, tags);
-        const streamID = makeStreamID(tenantID, encodedTags);
+        const tenantIDOwned = try alloc.dupe(u8, tenantID);
+        const streamID = makeStreamID(tenantIDOwned, encodedTags);
+
+        if (self.encodedTags.len > 0) {
+            alloc.free(self.encodedTags);
+        }
+        if (self.tenantIDOwned.len > 0) {
+            alloc.free(self.tenantIDOwned);
+        }
+        self.clearLines(alloc);
+        self.size = 0;
 
         self.tags = tags;
         self.encodedTags = encodedTags;
+        self.tenantIDOwned = tenantIDOwned;
         self.sid = streamID;
     }
 
     pub fn deinit(self: *Processor, alloc: std.mem.Allocator) void {
+        if (self.encodedTags.len > 0) {
+            alloc.free(self.encodedTags);
+        }
+        if (self.tenantIDOwned.len > 0) {
+            alloc.free(self.tenantIDOwned);
+        }
+        self.clearLines(alloc);
         self.lines.deinit(alloc);
         self.size = 0;
-        alloc.destroy(self);
         self.* = undefined;
     }
 
@@ -103,10 +119,33 @@ pub const Processor = struct {
         timestampNs: u64,
         fields: []Field,
     ) !void {
+        const copiedFields = try alloc.alloc(Field, fields.len);
+        var i: usize = 0;
+        errdefer {
+            for (0..i) |j| {
+                alloc.free(copiedFields[j].key);
+                alloc.free(copiedFields[j].value);
+            }
+            alloc.free(copiedFields);
+        }
+        while (i < fields.len) : (i += 1) {
+            copiedFields[i] = .{
+                .key = try alloc.dupe(u8, fields[i].key),
+                .value = try alloc.dupe(u8, fields[i].value),
+            };
+        }
+
+        const tenantOwned = try alloc.dupe(u8, self.sid.tenantID);
+        errdefer alloc.free(tenantOwned);
+
         const line = Line{
             .timestampNs = timestampNs,
-            .sid = self.sid,
-            .fields = fields,
+            .sid = .{
+                .tenantID = tenantOwned,
+                .id = self.sid.id,
+                .buf = tenantOwned,
+            },
+            .fields = copiedFields,
         };
 
         const size = line.rawSizeValidate() catch |err| {
@@ -145,7 +184,19 @@ pub const Processor = struct {
 
     pub fn flush(self: *Processor, alloc: std.mem.Allocator) !void {
         try self.store.addLines(alloc, self.lines.items, self.tags, self.encodedTags);
-        self.lines.clearRetainingCapacity();
+        self.clearLines(alloc);
         self.size = 0;
+    }
+
+    fn clearLines(self: *Processor, alloc: std.mem.Allocator) void {
+        for (self.lines.items) |*line| {
+            for (line.fields) |field| {
+                alloc.free(field.key);
+                alloc.free(field.value);
+            }
+            alloc.free(line.fields);
+            line.sid.deinit(alloc);
+        }
+        self.lines.clearRetainingCapacity();
     }
 };

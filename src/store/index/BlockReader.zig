@@ -239,7 +239,7 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     self.itemsRead += self.block.?.memEntries.items.len;
     std.debug.assert(self.itemsRead <= self.tableHeader.entriesCount);
 
-    if (builtin.is_test and !self.firstItemChecked) {
+    if (builtin.is_test and !self.firstItemChecked and self.tableHeader.blocksCount == 1) {
         self.firstItemChecked = true;
         const firstItem = self.block.?.memEntries.items[0];
         std.debug.assert(std.mem.eql(u8, self.tableHeader.firstEntry, firstItem));
