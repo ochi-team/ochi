@@ -56,6 +56,20 @@ pub fn setup(self: *Self, item: []const u8) !void {
     self.streamsRaw = item[tenantOffset + offset ..];
 }
 
+// Keeps the old kind and tenantID, ignores the ones from item.
+pub fn setupTagAndStreamsOnly(self: *Self, item: []const u8) !void {
+    self.streamIDs.clearRetainingCapacity();
+
+    const tenantOffset = 1 + maxTenantIDLen;
+
+    // We need to modify the buffer in-place for unescaping
+    // This is safe because we're only unescaping (making it shorter)
+    const tagPortion = @constCast(item[tenantOffset..]);
+    const offset = self.tag.decodeIndexTag(tagPortion);
+
+    self.streamsRaw = item[tenantOffset + offset ..];
+}
+
 pub fn streamsLen(self: *const Self) usize {
     return self.streamsRaw.len / 16;
 }
@@ -174,8 +188,47 @@ test "setup resets parsed stream ids" {
     try state.setup(first);
     try state.parseStreamIDs(alloc);
     try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
+    try testing.expectEqualDeep(tag, state.tag);
 
     try state.setup(second);
     try state.parseStreamIDs(alloc);
     try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
+    try testing.expectEqualDeep(tag, state.tag);
+}
+
+test "setupTagAndStreamsOnly uses already setup kind and tenantID" {
+    const alloc = testing.allocator;
+    const state = try Self.init(alloc);
+    defer state.deinit(alloc);
+
+    const firstTag = Field{ .key = "k", .value = "v" };
+    const firstBuf = try alloc.alloc(u8, encodeRecordBound(firstTag, 3));
+    const first = firstBuf[0..encodeRecord(firstBuf, "tenant1", firstTag, &[_]u128{ 1, 2, 3 })];
+    defer alloc.free(first);
+
+    const secondTag = Field{ .key = "a", .value = "b" };
+    const secondBuf = try alloc.alloc(u8, encodeRecordBound(firstTag, 1));
+    const second = secondBuf[0..encodeRecord(secondBuf, "tenant1", secondTag, &[_]u128{9})];
+    defer alloc.free(second);
+
+    try state.setup(first);
+
+    const tenantID = try alloc.dupe(u8, state.tenantID);
+    defer alloc.free(tenantID);
+
+    const kind = state.streamsRaw[0];
+
+    try state.parseStreamIDs(alloc);
+    try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
+    try testing.expectEqualDeep(firstTag, state.tag);
+
+    // Uses the old kind and tenantID loaded above
+    try state.setupTagAndStreamsOnly(second);
+
+    try testing.expectEqualStrings(tenantID, state.tenantID);
+    try testing.expectEqual(kind, state.streamsRaw[0]);
+
+    try state.parseStreamIDs(alloc);
+    try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
+    try testing.expectEqualDeep(secondTag, state.tag);
 }
