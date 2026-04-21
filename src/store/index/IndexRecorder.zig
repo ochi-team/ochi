@@ -539,22 +539,23 @@ fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) void {
 
 fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
     const nowUs = std.time.microTimestamp();
-    var toFlush = std.ArrayList(*Table).empty;
-    defer {
-        for (toFlush.items) |table| table.release();
-        toFlush.deinit(alloc);
-    }
+    const bufsize = 256;
+    // TODO: metric to understand whether it's enough
+    var fba = std.heap.stackFallback(bufsize, alloc);
+    const fbaAlloc = fba.get();
+
+    var toFlush = try std.ArrayList(*Table).initCapacity(fbaAlloc, bufsize / @sizeOf(*Table));
+    defer toFlush.deinit(fbaAlloc);
 
     self.mxTables.lock();
-    toFlush.ensureUnusedCapacity(alloc, self.memTables.items.len) catch |err| {
-        self.mxTables.unlock();
-        return err;
-    };
     for (self.memTables.items) |memTable| {
         if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
             memTable.inMerge = true;
-            memTable.retain();
-            toFlush.appendAssumeCapacity(memTable);
+            toFlush.append(alloc, memTable) catch |err| {
+                for (toFlush.items) |table| table.inMerge = false;
+                self.mxTables.unlock();
+                return err;
+            };
         }
     }
     self.mxTables.unlock();
