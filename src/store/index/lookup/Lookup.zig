@@ -91,15 +91,15 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: make it configurable and reduce for tests to 10
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
-const FindAllTenantStreamsByPrefixesResult = struct {
+const FindAllStreamsByPrefixesResult = struct {
     result: []const u128,
     cutOff: bool,
 };
-pub fn findAllTenantStreamsByPrefixes(
+pub fn findAllStreamsByPrefixes(
     self: *Lookup,
     alloc: Allocator,
     prefixes: []const []const u8,
-) !?FindAllTenantStreamsByPrefixesResult {
+) !?FindAllStreamsByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
@@ -298,7 +298,7 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    const actual = try lookup.findAllTenantStreamsByPrefixes(alloc, &prefixes);
+    const actual = try lookup.findAllStreamsByPrefixes(alloc, &prefixes);
     defer if (actual) |a| {
         alloc.free(a.result);
     };
@@ -481,7 +481,7 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     defer lookup.deinit(alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findAllTenantStreamsByPrefixes(alloc, case.prefixes);
+        const actual = try lookup.findAllStreamsByPrefixes(alloc, case.prefixes);
         defer if (actual) |a| {
             alloc.free(a.result);
         };
@@ -538,7 +538,7 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    const actual = try lookup.findAllTenantStreamsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    const actual = try lookup.findAllStreamsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
     defer if (actual) |a| {
         alloc.free(a.result);
     };
