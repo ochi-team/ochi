@@ -294,7 +294,6 @@ fn runDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
 }
 
 fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void {
-    const alloc = allocator;
     const nowUs = std.time.microTimestamp();
 
     self.mxTables.lock();
@@ -309,7 +308,6 @@ fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void 
         const isTimeToMerge = memTable.mem.?.flushAtUs <= nowUs;
         if (!memTable.inMerge and (force or isTimeToMerge)) {
             memTable.inMerge = true;
-            memTable.retain();
             tables.appendAssumeCapacity(memTable);
         }
     }
@@ -317,41 +315,6 @@ fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void 
     self.mxTables.unlock();
 
     if (tables.items.len == 0) {
-        return;
-    }
-
-    defer {
-        for (tables.items) |table| table.release();
-    }
-
-    if (force) {
-        var i: usize = 0;
-        errdefer {
-            self.mxTables.lock();
-            defer self.mxTables.unlock();
-            for (tables.items[i..]) |table| {
-                table.inMerge = false;
-            }
-        }
-
-        while (i < tables.items.len) : (i += 1) {
-            const table = tables.items[i];
-            const mem = table.mem orelse {
-                table.inMerge = false;
-                continue;
-            };
-
-            const destinationTablePath = try alloc.alloc(u8, self.path.len + 1 + 16);
-            errdefer alloc.free(destinationTablePath);
-            const mergeIdx = self.nextMergeIdx();
-            _ = try std.fmt.bufPrint(destinationTablePath, "{s}/{X:0>16}", .{ self.path, mergeIdx });
-
-            try mem.storeToDisk(alloc, destinationTablePath);
-
-            var single = [_]*Table{table};
-            const newTable = try openCreatedTable(alloc, destinationTablePath, single[0..], null);
-            try swapper.swapTables(self, alloc, single[0..], newTable, .disk);
-        }
         return;
     }
 
@@ -551,7 +514,10 @@ fn mergeTables(
             for (tables) |table| {
                 sourceCompressedSizeTotal += table.tableHeader.compressedSize;
             }
-            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize(self.runtime.maxMem, self.runtime.cacheSize);
+            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize(
+                self.runtime.maxMem,
+                self.runtime.cacheSize,
+            );
             break :blk try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
         }
     };
