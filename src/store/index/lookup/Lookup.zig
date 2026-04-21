@@ -9,6 +9,7 @@ const MemBlock = @import("../MemBlock.zig");
 const MemTable = @import("../MemTable.zig");
 const Table = @import("../Table.zig");
 const LookupTable = @import("LookupTable.zig");
+const TagRecordsParseState = @import("../TagRecordsParseState.zig");
 
 const Lookup = @This();
 
@@ -90,24 +91,26 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: make it configurable and reduce for tests to 10
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
-const FindAllByPrefixesResult = struct {
-    result: []const []const u8,
+const FindAllTenantStreamsByPrefixesResult = struct {
+    result: []const u128,
     cutOff: bool,
 };
-pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?FindAllByPrefixesResult {
+pub fn findAllTenantStreamsByPrefixes(
+    self: *Lookup,
+    alloc: Allocator,
+    prefixes: []const []const u8,
+) !?FindAllTenantStreamsByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
 
-    var ahm: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var ahm: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
     defer ahm.deinit(alloc);
-    errdefer {
-        var it = ahm.iterator();
-        while (it.next()) |i|
-            alloc.free(i.key_ptr.*);
-    }
 
     var count: usize = 0;
+
+    const state = try TagRecordsParseState.init(alloc);
+    defer state.deinit(alloc);
 
     // TODO optimize so we dont iterate over next entries multiple times,
     // the isuue is seek resets the state and for every key we must restart the seek
@@ -121,19 +124,22 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             if (self.current.len >= prefix.len and
                 std.mem.eql(u8, self.current[0..prefix.len], prefix))
             {
-                if (ahm.contains(self.current)) continue;
+                try state.setupStreamsRaw(self.current[prefix.len + 1 ..]);
+                try state.parseStreamIDs(alloc);
 
-                count += 1;
+                for (state.streamIDs.items) |streamID| {
+                    if (ahm.contains(streamID)) continue;
 
-                try ahm.ensureUnusedCapacity(alloc, 1);
-                const copy = try alloc.dupe(u8, self.current);
-                ahm.putAssumeCapacity(copy, {});
+                    count += 1;
+
+                    try ahm.put(alloc, streamID, {});
+                }
             }
 
             if (count >= resultLimit)
                 // TODO log warning
                 return .{
-                    .result = try alloc.dupe([]const u8, ahm.keys()),
+                    .result = try alloc.dupe(u128, ahm.keys()),
                     .cutOff = true,
                 };
         }
@@ -143,7 +149,7 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
         return null;
 
     return .{
-        .result = try alloc.dupe([]const u8, ahm.keys()),
+        .result = try alloc.dupe(u128, ahm.keys()),
         .cutOff = false,
     };
 }
@@ -292,9 +298,8 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    const actual = try lookup.findAllByPrefixes(alloc, &prefixes);
+    const actual = try lookup.findAllTenantStreamsByPrefixes(alloc, &prefixes);
     defer if (actual) |a| {
-        for (a.result) |i| alloc.free(i);
         alloc.free(a.result);
     };
 
@@ -438,58 +443,33 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
 
     const Case = struct {
         prefixes: []const []const u8,
-        expected: ?[]const []const u8,
+        expected: ?[]const u128,
     };
 
     const cases = [_]Case{
         .{
             .prefixes = &[_][]const u8{"key:aa"},
-            .expected = &[_][]const u8{
-                "key:aa:001",
-                "key:aa:002",
-                "key:aa:099",
-            },
+            .expected = &[_]u128{ 1, 2, 99 },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
-            .expected = &[_][]const u8{
-                "key:aa:001",
-                "key:aa:002",
-                "key:aa:099",
-                "key:bb:001",
-                "key:bb:010",
-            },
+            .expected = &[_]u128{ 1, 2, 99, 1, 10 },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:bb" },
-            .expected = &[_][]const u8{
-                "key:cc:002",
-                "key:bb:001",
-                "key:bb:010",
-            },
+            .expected = &[_]u128{ 2, 1, 10 },
         },
         .{
             .prefixes = &[_][]const u8{ "key:bb:00", "key:cc", "key:bb" },
-            .expected = &[_][]const u8{
-                "key:bb:001",
-                "key:cc:002",
-                "key:bb:010",
-            },
+            .expected = &[_]u128{ 1, 2, 10 },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:aa" },
-            .expected = &[_][]const u8{
-                "key:aa:001",
-                "key:aa:002",
-                "key:aa:099",
-            },
+            .expected = &[_]u128{ 1, 2, 99 },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
-            .expected = &[_][]const u8{
-                "key:cc:002",
-                "key:dd:000",
-            },
+            .expected = &[_]u128{ 2, 0 },
         },
         .{
             .prefixes = &[_][]const u8{"zzz"},
@@ -501,18 +481,15 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     defer lookup.deinit(alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
+        const actual = try lookup.findAllTenantStreamsByPrefixes(alloc, case.prefixes);
         defer if (actual) |a| {
-            for (a.result) |i| {
-                alloc.free(i);
-            }
             alloc.free(a.result);
         };
 
         if (case.expected) |want| {
             try testing.expect(actual != null);
             for (actual.?.result, want) |a, w| {
-                try testing.expectEqualStrings(a, w);
+                try testing.expectEqual(a, w);
             }
             try testing.expect(actual.?.cutOff == false);
         } else {
@@ -561,19 +538,16 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    const actual = try lookup.findAllByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    const actual = try lookup.findAllTenantStreamsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
     defer if (actual) |a| {
-        for (a.result) |i| {
-            alloc.free(i);
-        }
         alloc.free(a.result);
     };
 
     try testing.expect(actual != null);
     try testing.expect(actual.?.cutOff);
     try testing.expectEqual(@as(usize, resultLimit), actual.?.result.len);
-    try testing.expectEqualStrings("key:aa:0000", actual.?.result[0]);
-    try testing.expectEqualStrings("key:aa:0999", actual.?.result[resultLimit - 1]);
+    try testing.expectEqual(0, actual.?.result[0]);
+    try testing.expectEqual(999, actual.?.result[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }
