@@ -238,7 +238,6 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
 
     self.block.memEntries.clearRetainingCapacity();
     self.block.buf.clearRetainingCapacity();
-    self.block.size = 0;
     self.block.prefix = "";
     try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
     const stateBuf = &self.block.buf;
@@ -249,9 +248,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     for (0..sourceEntries.items.len) |i| {
         const item = sourceEntries.items[i];
         if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == sourceEntries.items.len - 1) {
-            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
-            self.block.size += @intCast(stateBuf.items.len - prevLen);
 
             const ok = self.block.add(item);
             std.debug.assert(ok);
@@ -260,9 +257,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
 
         try tagRecordsMerger.state.setup(item);
         if (tagRecordsMerger.state.streamsLen() > maxStreamsPerRecord) {
-            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
-            self.block.size += @intCast(stateBuf.items.len - prevLen);
 
             const ok = self.block.add(item);
             std.debug.assert(ok);
@@ -270,18 +265,14 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         }
 
         if (!tagRecordsMerger.statesPrefixEqual()) {
-            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
-            self.block.size += @intCast(stateBuf.items.len - prevLen);
         }
 
         try tagRecordsMerger.state.parseStreamIDs(alloc);
         try tagRecordsMerger.moveParsedState(alloc);
 
         if (tagRecordsMerger.streamIDs.items.len >= maxStreamsPerRecord) {
-            const prevLen = stateBuf.items.len;
             try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
-            self.block.size += @intCast(stateBuf.items.len - prevLen);
         }
     }
 
@@ -292,7 +283,6 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         // fallback to the original data
         self.block.buf.clearRetainingCapacity();
         self.block.memEntries.clearRetainingCapacity();
-        self.block.size = 0;
         for (sourceEntries.items) |item| {
             const ok = self.block.add(item);
             std.debug.assert(ok);
