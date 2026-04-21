@@ -92,7 +92,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
 const FindAllStreamIDsByPrefixesResult = struct {
-    streamIDs: []const u128,
+    streamIDs: std.AutoArrayHashMapUnmanaged(u128, void),
     cutOff: bool,
 };
 pub fn findAllStreamIDsByPrefixes(
@@ -104,8 +104,8 @@ pub fn findAllStreamIDsByPrefixes(
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
 
-    var ahm: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
-    errdefer ahm.deinit(alloc);
+    var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
+    errdefer streamIDs.deinit(alloc);
 
     var count: usize = 0;
 
@@ -124,32 +124,32 @@ pub fn findAllStreamIDsByPrefixes(
             if (self.current.len >= prefix.len and
                 std.mem.eql(u8, self.current[0..prefix.len], prefix))
             {
-                try state.setupStreamsRaw(self.current[prefix.len + 1 ..]);
+                try state.setupStreamsRaw(self.current[prefix.len..]);
                 try state.parseStreamIDs(alloc);
 
                 for (state.streamIDs.items) |streamID| {
-                    if (ahm.contains(streamID)) continue;
+                    if (streamIDs.contains(streamID)) continue;
 
                     count += 1;
 
-                    try ahm.put(alloc, streamID, {});
+                    try streamIDs.put(alloc, streamID, {});
                 }
             }
 
             if (count >= resultLimit)
                 // TODO log warning
                 return .{
-                    .streamIDs = try alloc.dupe(u128, ahm.keys()),
+                    .streamIDs = streamIDs,
                     .cutOff = true,
                 };
         }
     }
 
-    if (ahm.count() == 0)
+    if (streamIDs.count() == 0)
         return null;
 
     return .{
-        .streamIDs = try alloc.dupe(u128, ahm.keys()),
+        .streamIDs = streamIDs,
         .cutOff = false,
     };
 }
@@ -481,14 +481,14 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     defer lookup.deinit(alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findAllStreamIDsByPrefixes(alloc, case.prefixes);
-        defer if (actual) |a| {
-            alloc.free(a.streamIDs);
+        var actual = try lookup.findAllStreamIDsByPrefixes(alloc, case.prefixes);
+        defer if (actual) |*a| {
+            a.streamIDs.deinit(alloc);
         };
 
         if (case.expected) |want| {
             try testing.expect(actual != null);
-            for (actual.?.streamIDs, want) |a, w| {
+            for (actual.?.streamIDs.keys(), want) |a, w| {
                 try testing.expectEqual(a, w);
             }
             try testing.expect(actual.?.cutOff == false);
@@ -538,16 +538,16 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    const actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
-    defer if (actual) |a| {
-        alloc.free(a.streamIDs);
+    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    defer if (actual) |*a| {
+        a.streamIDs.deinit(alloc);
     };
 
     try testing.expect(actual != null);
     try testing.expect(actual.?.cutOff);
-    try testing.expectEqual(@as(usize, resultLimit), actual.?.streamIDs.len);
-    try testing.expectEqual(0, actual.?.streamIDs[0]);
-    try testing.expectEqual(999, actual.?.streamIDs[resultLimit - 1]);
+    try testing.expectEqual(@as(usize, resultLimit), actual.?.streamIDs.keys().len);
+    try testing.expectEqual(0, actual.?.streamIDs.keys()[0]);
+    try testing.expectEqual(999, actual.?.streamIDs.keys()[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }

@@ -138,14 +138,14 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    const result =
+    var result =
         try lookup.findAllStreamIDsByPrefixes(alloc, prefixes.items) orelse
         return .{ .sids = .empty, .cutOff = false };
-    defer alloc.free(result.streamIDs);
+    defer result.streamIDs.deinit(alloc);
 
     var sids: std.ArrayList(SID) = .empty;
 
-    for (result.streamIDs) |s| {
+    for (result.streamIDs.keys()) |s| {
         // TODO: ideally we look only for streams, the tenant is known in advance,
         // we must design the API to return only Array(streams)
         sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
