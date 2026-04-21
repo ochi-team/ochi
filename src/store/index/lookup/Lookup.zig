@@ -91,21 +91,21 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: make it configurable and reduce for tests to 10
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
-const FindAllStreamsByPrefixesResult = struct {
-    result: []const u128,
+const FindAllStreamIDsByPrefixesResult = struct {
+    streamIDs: []const u128,
     cutOff: bool,
 };
-pub fn findAllStreamsByPrefixes(
+pub fn findAllStreamIDsByPrefixes(
     self: *Lookup,
     alloc: Allocator,
     prefixes: []const []const u8,
-) !?FindAllStreamsByPrefixesResult {
+) !?FindAllStreamIDsByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
 
     var ahm: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
-    defer ahm.deinit(alloc);
+    errdefer ahm.deinit(alloc);
 
     var count: usize = 0;
 
@@ -139,7 +139,7 @@ pub fn findAllStreamsByPrefixes(
             if (count >= resultLimit)
                 // TODO log warning
                 return .{
-                    .result = try alloc.dupe(u128, ahm.keys()),
+                    .streamIDs = try alloc.dupe(u128, ahm.keys()),
                     .cutOff = true,
                 };
         }
@@ -149,7 +149,7 @@ pub fn findAllStreamsByPrefixes(
         return null;
 
     return .{
-        .result = try alloc.dupe(u128, ahm.keys()),
+        .streamIDs = try alloc.dupe(u128, ahm.keys()),
         .cutOff = false,
     };
 }
@@ -275,7 +275,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     }
 }
 
-test "Lookup.findAllByPrefixes returns empty on empty recorder" {
+test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     const alloc = testing.allocator;
 
     var tmp = testing.tmpDir(.{});
@@ -298,9 +298,9 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    const actual = try lookup.findAllStreamsByPrefixes(alloc, &prefixes);
+    const actual = try lookup.findAllStreamIDsByPrefixes(alloc, &prefixes);
     defer if (actual) |a| {
-        alloc.free(a.result);
+        alloc.free(a.streamIDs);
     };
 
     try testing.expect(actual == null);
@@ -393,7 +393,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     try recorder.flushForce(alloc);
 }
 
-test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tables" {
+test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
 
     var tmp = testing.tmpDir(.{});
@@ -481,14 +481,14 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     defer lookup.deinit(alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findAllStreamsByPrefixes(alloc, case.prefixes);
+        const actual = try lookup.findAllStreamIDsByPrefixes(alloc, case.prefixes);
         defer if (actual) |a| {
-            alloc.free(a.result);
+            alloc.free(a.streamIDs);
         };
 
         if (case.expected) |want| {
             try testing.expect(actual != null);
-            for (actual.?.result, want) |a, w| {
+            for (actual.?.streamIDs, want) |a, w| {
                 try testing.expectEqual(a, w);
             }
             try testing.expect(actual.?.cutOff == false);
@@ -500,7 +500,7 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     }
 }
 
-test "Lookup.findAllByPrefixes respects result limit cutoff" {
+test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     const alloc = testing.allocator;
 
     var tmp = testing.tmpDir(.{});
@@ -538,16 +538,16 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    const actual = try lookup.findAllStreamsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    const actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
     defer if (actual) |a| {
-        alloc.free(a.result);
+        alloc.free(a.streamIDs);
     };
 
     try testing.expect(actual != null);
     try testing.expect(actual.?.cutOff);
-    try testing.expectEqual(@as(usize, resultLimit), actual.?.result.len);
-    try testing.expectEqual(0, actual.?.result[0]);
-    try testing.expectEqual(999, actual.?.result[resultLimit - 1]);
+    try testing.expectEqual(@as(usize, resultLimit), actual.?.streamIDs.len);
+    try testing.expectEqual(0, actual.?.streamIDs[0]);
+    try testing.expectEqual(999, actual.?.streamIDs[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }

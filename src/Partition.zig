@@ -199,12 +199,12 @@ pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, quer
     // TODO: query cancelation
 
     var result = try self.index.queryStreams(alloc, tenantID, query.tags);
-    defer result.streamIDs.deinit(alloc);
+    defer result.sids.deinit(alloc);
 
     // TODO handle cutOff
     _ = result.cutOff;
 
-    return self.data.queryLines(alloc, result.streamIDs.items, query);
+    return self.data.queryLines(alloc, result.sids.items, query);
 }
 
 pub fn flushForce(self: *Partition, alloc: Allocator) !void {

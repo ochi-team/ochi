@@ -116,7 +116,7 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-const QueryStreamsResult = struct { streamIDs: std.ArrayList(SID), cutOff: bool };
+const QueryStreamsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
 pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(alloc, self.recorder);
@@ -138,18 +138,18 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    const streamIDs =
-        try lookup.findAllStreamsByPrefixes(alloc, prefixes.items) orelse
-        return .{ .streamIDs = .empty, .cutOff = false };
-    defer alloc.free(streamIDs.result);
+    const result =
+        try lookup.findAllStreamIDsByPrefixes(alloc, prefixes.items) orelse
+        return .{ .sids = .empty, .cutOff = false };
+    defer alloc.free(result.streamIDs);
 
     var sids: std.ArrayList(SID) = .empty;
 
-    for (streamIDs.result) |s| {
+    for (result.streamIDs) |s| {
         // TODO: ideally we look only for streams, the tenant is known in advance,
         // we must design the API to return only Array(streams)
         sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
-    return .{ .streamIDs = sids, .cutOff = streamIDs.cutOff };
+    return .{ .sids = sids, .cutOff = result.cutOff };
 }
