@@ -273,11 +273,18 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
-    if (blocks.len == 0) return;
+    std.debug.assert(blocks.len > 0);
+
+    // enough for 256 tables, which a way beyond the expected amount
+    var fba = std.heap.stackFallback(2048, alloc);
+    const fbaAlloc = fba.get();
 
     const tablesSize = (blocks.len + blocksInMemTable - 1) / blocksInMemTable;
-    var memTables = try std.ArrayList(*Table).initCapacity(alloc, tablesSize);
-    defer memTables.deinit(alloc);
+    var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
+    defer memTables.deinit(fbaAlloc);
+    errdefer {
+        for (memTables.items) |memTable| memTable.close();
+    }
 
     var tail = blocks[0..];
     // TODO: benchmark parallel mem table creation
@@ -379,7 +386,10 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
                     if (self.stopped.load(.acquire)) {
                         // TODO: audit all semaphore as a state usage, it can happen
                         // a background task fails and  doesn't post semaphore back
-                        break;
+
+                        // if force we don't care about semaphore, just need to flush it
+                        if (force) break;
+                        return error.Stopped;
                     }
                 },
             }
@@ -390,13 +400,11 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
         break;
     }
 
-    if (!semaphoreAcquired) return error.Stopped;
-
     // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lock();
     self.memTables.append(alloc, memTable) catch {
+        if (semaphoreAcquired) self.memTablesSem.post();
         self.mxTables.unlock();
-        self.memTablesSem.post();
         return;
     };
     self.startMemTablesMerge(alloc);
@@ -604,7 +612,7 @@ fn flushMemEntries(
         try shard.collectBlocks(alloc, blocksDestination, nowUs, force);
     }
 
-    try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
+    if (blocksDestination.items.len > 0) try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
 }
 
 fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table), force: bool) !void {
