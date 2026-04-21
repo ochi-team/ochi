@@ -298,9 +298,9 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    const actual = try lookup.findAllStreamIDsByPrefixes(alloc, &prefixes);
-    defer if (actual) |a| {
-        alloc.free(a.streamIDs);
+    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &prefixes);
+    defer if (actual) |*a| {
+        a.streamIDs.deinit(alloc);
     };
 
     try testing.expect(actual == null);
@@ -410,19 +410,19 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     defer recorder.deinit(alloc);
 
     const tableAItems = [_][]const u8{
-        "key:aa:002",
-        "key:cc:002",
-        "key:zz:100",
+        "key:aa0000000000000002",
+        "key:cc0000000000000002",
+        "key:zz0000000000000100",
     };
     const tableBItems = [_][]const u8{
-        "key:aa:001",
-        "key:bb:010",
-        "key:mm:900",
+        "key:aa0000000000000001",
+        "key:bb0000000000000010",
+        "key:mm0000000000000900",
     };
     const tableDiskItems = [_][]const u8{
-        "key:aa:099",
-        "key:bb:001",
-        "key:dd:000",
+        "key:aa0000000000000099",
+        "key:bb0000000000000001",
+        "key:dd0000000000000000",
     };
 
     {
@@ -449,27 +449,51 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     const cases = [_]Case{
         .{
             .prefixes = &[_][]const u8{"key:aa"},
-            .expected = &[_]u128{ 1, 2, 99 },
+            .expected = &[_]u128{
+                64053151420411946063694043751862251569,
+                64053151420411946063694043751862251570,
+                64053151420411946063694043751862253881,
+            },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
-            .expected = &[_]u128{ 1, 2, 99, 1, 10 },
+            .expected = &[_]u128{
+                64053151420411946063694043751862251569,
+                64053151420411946063694043751862251570,
+                64053151420411946063694043751862253881,
+                64053151420411946063694043751862251824,
+            },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:bb" },
-            .expected = &[_]u128{ 2, 1, 10 },
+            .expected = &[_]u128{
+                64053151420411946063694043751862251570,
+                64053151420411946063694043751862251569,
+                64053151420411946063694043751862251824,
+            },
         },
         .{
             .prefixes = &[_][]const u8{ "key:bb:00", "key:cc", "key:bb" },
-            .expected = &[_]u128{ 1, 2, 10 },
+            .expected = &[_]u128{
+                64053151420411946063694043751862251570,
+                64053151420411946063694043751862251569,
+                64053151420411946063694043751862251824,
+            },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:aa" },
-            .expected = &[_]u128{ 1, 2, 99 },
+            .expected = &[_]u128{
+                64053151420411946063694043751862251569,
+                64053151420411946063694043751862251570,
+                64053151420411946063694043751862253881,
+            },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
-            .expected = &[_]u128{ 2, 0 },
+            .expected = &[_]u128{
+                64053151420411946063694043751862251570,
+                64053151420411946063694043751862251568,
+            },
         },
         .{
             .prefixes = &[_][]const u8{"zzz"},
@@ -519,7 +543,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
     defer items.deinit(alloc);
     for (0..resultLimit + 1) |i| {
-        const item = try std.fmt.allocPrint(alloc, "key:aa:{d:0>4}", .{i});
+        const item = try std.fmt.allocPrint(alloc, "keyaa{x:0>16}", .{i});
         errdefer alloc.free(item);
         items.appendAssumeCapacity(item);
     }
@@ -538,7 +562,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{"key:aa:"});
+    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{"keyaa"});
     defer if (actual) |*a| {
         a.streamIDs.deinit(alloc);
     };
@@ -546,8 +570,14 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     try testing.expect(actual != null);
     try testing.expect(actual.?.cutOff);
     try testing.expectEqual(@as(usize, resultLimit), actual.?.streamIDs.keys().len);
-    try testing.expectEqual(0, actual.?.streamIDs.keys()[0]);
-    try testing.expectEqual(999, actual.?.streamIDs.keys()[resultLimit - 1]);
+    try testing.expectEqual(
+        64053151420411946063694043751862251568,
+        actual.?.streamIDs.keys()[0],
+    );
+    try testing.expectEqual(
+        64053151420411946063694043751862461751,
+        actual.?.streamIDs.keys()[resultLimit - 1],
+    );
 
     try recorder.flushForce(alloc);
 }
