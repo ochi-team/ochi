@@ -68,10 +68,10 @@ pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
 pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
     var ei: usize = 0;
-    errdefer {
+    defer {
         for (0..ei) |i| alloc.free(entries[i]);
+        alloc.free(entries);
     }
-    defer alloc.free(entries);
 
     // index stream existence
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);

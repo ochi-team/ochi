@@ -115,12 +115,12 @@ pub fn deinit(self: *Store, allocator: Allocator) void {
     self.pathsBuf.deinit(allocator);
     self.streamCache.deinit();
 
+    // close lock file later, it unlocks potentially another Ochi process
+    self.lockFile.close();
     // deinit runtime the last, because partitions (recorders) need it
     // in order to flush the last mem tables
     self.runtime.deinit(allocator);
     allocator.destroy(self);
-    // close lock file the very last, to unlock potentially another process
-    self.lockFile.close();
 }
 
 pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !std.fs.Dir {
