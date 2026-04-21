@@ -117,7 +117,7 @@ fn expectField(line: QueryLine, expectedKey: []const u8, expectedValue: []const 
     return error.FieldNotFound;
 }
 
-test "server end-to-end via HTTP" {
+test "serverEndToEndViaHTTP" {
     const alloc = std.testing.allocator;
 
     const oldCwd = try std.process.getCwdAlloc(alloc);

@@ -104,7 +104,6 @@ pub fn init(alloc: Allocator, path: []const u8) !Store {
 }
 
 pub fn deinit(self: *Store, allocator: Allocator) void {
-    self.runtime.deinit(allocator);
     for (self.partitions.items) |partition| {
         partition.release();
     }
@@ -116,6 +115,11 @@ pub fn deinit(self: *Store, allocator: Allocator) void {
     self.pathsBuf.deinit(allocator);
     self.streamCache.deinit();
 
+    // deinit runtime the last, because partitions (recorders) need it
+    // in order to flush the last mem tables
+    self.runtime.deinit(allocator);
+    allocator.destroy(self);
+    // close lock file the very last, to unlock potentially another process
     self.lockFile.close();
 }
 

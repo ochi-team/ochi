@@ -551,7 +551,7 @@ fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
     for (self.memTables.items) |memTable| {
         if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
             memTable.inMerge = true;
-            toFlush.append(alloc, memTable) catch |err| {
+            toFlush.append(fbaAlloc, memTable) catch |err| {
                 for (toFlush.items) |table| table.inMerge = false;
                 self.mxTables.unlock();
                 return err;
@@ -559,38 +559,6 @@ fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
         }
     }
     self.mxTables.unlock();
-
-    if (force) {
-        var i: usize = 0;
-        errdefer {
-            self.mxTables.lock();
-            defer self.mxTables.unlock();
-            for (toFlush.items[i..]) |table| {
-                table.inMerge = false;
-            }
-        }
-
-        while (i < toFlush.items.len) : (i += 1) {
-            const table = toFlush.items[i];
-            const mem = table.mem orelse {
-                table.inMerge = false;
-                continue;
-            };
-
-            var destinationTablePath = try alloc.alloc(u8, self.path.len + 1 + 16);
-            errdefer alloc.free(destinationTablePath);
-            const idx = self.nextMergeIdx();
-            _ = try std.fmt.bufPrint(destinationTablePath, "{s}/{X:0>16}", .{ self.path, idx });
-
-            try mem.storeToDisk(alloc, destinationTablePath);
-
-            var single = [_]*Table{table};
-            const newTable = try openCreatedTable(alloc, destinationTablePath, single[0..], null);
-            destinationTablePath = "";
-            try swapper.swapTables(self, alloc, single[0..], newTable, .disk);
-        }
-        return;
-    }
 
     try self.flushMemTablesInChunks(alloc, toFlush);
 }
