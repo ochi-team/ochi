@@ -139,7 +139,7 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
     }
 
     const streamIDs =
-        try lookup.findAllTenantStreamsByPrefixes(alloc, prefixes.items) orelse
+        try lookup.findAllStreamsByPrefixes(alloc, prefixes.items) orelse
         return .{ .streamIDs = .empty, .cutOff = false };
     defer alloc.free(streamIDs.result);
 
