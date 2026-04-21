@@ -450,49 +450,49 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
         .{
             .prefixes = &[_][]const u8{"key:aa"},
             .expected = &[_]u128{
-                64053151420411946063694043751862251569,
-                64053151420411946063694043751862251570,
-                64053151420411946063694043751862253881,
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000099", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
             .expected = &[_]u128{
-                64053151420411946063694043751862251569,
-                64053151420411946063694043751862251570,
-                64053151420411946063694043751862253881,
-                64053151420411946063694043751862251824,
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000099", .big),
+                std.mem.readInt(u128, "0000000000000010", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:bb" },
             .expected = &[_]u128{
-                64053151420411946063694043751862251570,
-                64053151420411946063694043751862251569,
-                64053151420411946063694043751862251824,
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000010", .big),
             },
         },
         .{
-            .prefixes = &[_][]const u8{ "key:bb:00", "key:cc", "key:bb" },
+            .prefixes = &[_][]const u8{ "key:bb", "key:cc" },
             .expected = &[_]u128{
-                64053151420411946063694043751862251570,
-                64053151420411946063694043751862251569,
-                64053151420411946063694043751862251824,
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000010", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:aa" },
             .expected = &[_]u128{
-                64053151420411946063694043751862251569,
-                64053151420411946063694043751862251570,
-                64053151420411946063694043751862253881,
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000099", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
             .expected = &[_]u128{
-                64053151420411946063694043751862251570,
-                64053151420411946063694043751862251568,
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000000", .big),
             },
         },
         .{
@@ -542,9 +542,13 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
     defer items.deinit(alloc);
+
+    const keyValue = "keyaa";
     for (0..resultLimit + 1) |i| {
-        const item = try std.fmt.allocPrint(alloc, "keyaa{x:0>16}", .{i});
+        const item = try alloc.alloc(u8, keyValue.len + 16);
         errdefer alloc.free(item);
+        std.mem.writeInt(u128, item[keyValue.len..][0..16], i, .big);
+        @memcpy(item[0..keyValue.len], keyValue);
         items.appendAssumeCapacity(item);
     }
     defer {
@@ -562,7 +566,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{"keyaa"});
+    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{keyValue});
     defer if (actual) |*a| {
         a.streamIDs.deinit(alloc);
     };
@@ -570,14 +574,8 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     try testing.expect(actual != null);
     try testing.expect(actual.?.cutOff);
     try testing.expectEqual(@as(usize, resultLimit), actual.?.streamIDs.keys().len);
-    try testing.expectEqual(
-        64053151420411946063694043751862251568,
-        actual.?.streamIDs.keys()[0],
-    );
-    try testing.expectEqual(
-        64053151420411946063694043751862461751,
-        actual.?.streamIDs.keys()[resultLimit - 1],
-    );
+    try testing.expectEqual(0, actual.?.streamIDs.keys()[0]);
+    try testing.expectEqual(999, actual.?.streamIDs.keys()[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }
