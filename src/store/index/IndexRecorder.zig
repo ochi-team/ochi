@@ -591,7 +591,7 @@ fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
         return;
     }
 
-    try self.flushMemTablesInChunks(alloc, toFlush, false);
+    try self.flushMemTablesInChunks(alloc, toFlush);
 }
 
 fn flushMemEntries(
@@ -615,31 +615,13 @@ fn flushMemEntries(
     if (blocksDestination.items.len > 0) try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
 }
 
-fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table), force: bool) !void {
+fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
     if (toFlush.items.len == 0) return;
-
-    if (!force and self.stopped.load(.acquire)) {
-        self.mxTables.lock();
-        defer self.mxTables.unlock();
-        for (toFlush.items) |table| {
-            table.inMerge = false;
-        }
-        return;
-    }
 
     // TODO: consider running chunks merging in parallel
     var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
     left.items.len = toFlush.items.len;
     while (left.items.len > 0) {
-        if (!force and self.stopped.load(.acquire)) {
-            self.mxTables.lock();
-            defer self.mxTables.unlock();
-            for (left.items) |table| {
-                table.inMerge = false;
-            }
-            return;
-        }
-
         const n = merger.selectTablesToMerge(&left);
         std.debug.assert(n > 0);
 
@@ -728,10 +710,6 @@ pub fn mergeTables(
             "{s}/{X:0>16}",
             .{ self.path, idx },
         );
-    }
-
-    if (!force and stopped == null and self.stopped.load(.acquire)) {
-        return error.Stopped;
     }
 
     if (force and tables.len == 1 and tables[0].mem != null) {
