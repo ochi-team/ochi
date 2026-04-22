@@ -87,7 +87,7 @@ pub const Processor = struct {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        self.clearLines(alloc);
+        self.lines.clearRetainingCapacity();
         self.size = 0;
 
         self.tags = tags;
@@ -100,7 +100,7 @@ pub const Processor = struct {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        self.clearLines(alloc);
+        self.lines.clearRetainingCapacity();
         self.sid.deinit(alloc);
         self.lines.deinit(alloc);
         self.size = 0;
@@ -113,26 +113,10 @@ pub const Processor = struct {
         timestampNs: u64,
         fields: []Field,
     ) !void {
-        const copiedFields = try alloc.alloc(Field, fields.len);
-        var i: usize = 0;
-        errdefer {
-            for (0..i) |j| {
-                alloc.free(copiedFields[j].key);
-                alloc.free(copiedFields[j].value);
-            }
-            alloc.free(copiedFields);
-        }
-        while (i < fields.len) : (i += 1) {
-            copiedFields[i] = .{
-                .key = try alloc.dupe(u8, fields[i].key),
-                .value = try alloc.dupe(u8, fields[i].value),
-            };
-        }
-
         const line = Line{
             .timestampNs = timestampNs,
             .sid = self.sid,
-            .fields = copiedFields,
+            .fields = fields,
         };
 
         const size = line.rawSizeValidate() catch |err| {
@@ -171,19 +155,7 @@ pub const Processor = struct {
 
     pub fn flush(self: *Processor, alloc: std.mem.Allocator) !void {
         try self.store.addLines(alloc, self.lines.items, self.tags, self.encodedTags);
-        self.clearLines(alloc);
-        self.size = 0;
-    }
-
-    fn clearLines(self: *Processor, alloc: std.mem.Allocator) void {
-        for (self.lines.items) |*line| {
-            for (line.fields) |field| {
-                alloc.free(field.key);
-                alloc.free(field.value);
-            }
-            alloc.free(line.fields);
-            line.sid.deinit(alloc);
-        }
         self.lines.clearRetainingCapacity();
+        self.size = 0;
     }
 };
