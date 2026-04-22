@@ -187,12 +187,7 @@ pub fn addLines(
         try self.cache(sid);
     }
 
-    // TODO: revisit when we understand the lines life cycle
-    var size: u32 = 0;
-    for (lines.items) |line| {
-        size += line.rawSize();
-    }
-    try self.data.addLines(allocator, lines.items, size);
+    try self.data.addLines(allocator, lines.items);
 }
 
 pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
