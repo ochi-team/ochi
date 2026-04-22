@@ -5,7 +5,7 @@ const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
 const Query = @import("../query.zig").Query;
-const TagRecordsParseState = @import("TagRecordsParseState.zig");
+const TagRecordsParser = @import("TagRecordsParser.zig");
 
 const Lookup = @import("lookup/Lookup.zig");
 
@@ -131,9 +131,9 @@ pub fn querySIDs(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []co
     }
 
     for (tags) |tag| {
-        const prefix = try alloc.alloc(u8, TagRecordsParseState.encodePrefixBound(tag));
+        const prefix = try alloc.alloc(u8, TagRecordsParser.encodePrefixBound(tag));
 
-        TagRecordsParseState.encodePrefix(prefix, tenantID, tag);
+        TagRecordsParser.encodePrefix(prefix, tenantID, tag);
 
         prefixes.appendAssumeCapacity(prefix);
     }

@@ -7,19 +7,19 @@
 ///
 /// Constraints:
 /// - Operates on sorted input; records must be processed in order
-/// - Uses two TagRecordsParseState instances for comparing consecutive records
+/// - Uses two TagRecordsParser instances for comparing consecutive records
 /// - Output streamIDs are sorted and deduplicated
 /// - Caller must call writeState() before switching to a different prefix
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const TagRecordsParseState = @import("TagRecordsParseState.zig");
+const TagRecordsParser = @import("TagRecordsParser.zig");
 
 const Self = @This();
 
 streamIDs: std.ArrayList(u128) = .empty,
-state: TagRecordsParseState = .{},
-prevState: TagRecordsParseState = .{},
+state: TagRecordsParser = .{},
+prevState: TagRecordsParser = .{},
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
     self.streamIDs.deinit(alloc);
@@ -35,10 +35,10 @@ pub fn writeState(self: *Self, alloc: Allocator, buf: *std.ArrayList(u8), target
     std.mem.sortUnstable(u128, self.streamIDs.items, {}, std.sort.asc(u128));
     self.removeDuplicatedStreams();
 
-    const bound = TagRecordsParseState.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);
+    const bound = TagRecordsParser.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);
     try buf.ensureUnusedCapacity(alloc, bound);
     const slice = buf.unusedCapacitySlice();
-    const recordLen = TagRecordsParseState.encodeRecord(
+    const recordLen = TagRecordsParser.encodeRecord(
         slice,
         self.prevState.tenantID,
         self.prevState.tag,
@@ -125,9 +125,9 @@ pub fn createTagRecord(
     tag: Field,
     streamIDs: []const u128,
 ) ![]const u8 {
-    const bufSize = TagRecordsParseState.encodeRecordBound(tag, streamIDs.len);
+    const bufSize = TagRecordsParser.encodeRecordBound(tag, streamIDs.len);
     const buf = try alloc.alloc(u8, bufSize);
-    const recordLen = TagRecordsParseState.encodeRecord(buf, tenantID, tag, streamIDs);
+    const recordLen = TagRecordsParser.encodeRecord(buf, tenantID, tag, streamIDs);
     return buf[0..recordLen];
 }
 
@@ -267,7 +267,7 @@ test "writeState" {
         try testing.expectEqual(@as(usize, 1), target.items.len);
         try testing.expectEqual(@as(usize, 0), m.streamIDs.items.len);
 
-        var verifyState: TagRecordsParseState = .{};
+        var verifyState: TagRecordsParser = .{};
         defer verifyState.deinit(alloc);
 
         try verifyState.setup(target.items[0]);

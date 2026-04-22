@@ -1,4 +1,4 @@
-/// TagRecordsParseState: Parses and encodes tagToSids index records.
+/// TagRecordsParser: Parses and encodes tagToSids index records.
 ///
 /// Use cases:
 /// - Parsing raw index bytes into structured fields (tenantID, tag, streamIDs)

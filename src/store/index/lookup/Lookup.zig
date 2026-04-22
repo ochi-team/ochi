@@ -9,7 +9,7 @@ const MemBlock = @import("../MemBlock.zig");
 const MemTable = @import("../MemTable.zig");
 const Table = @import("../Table.zig");
 const LookupTable = @import("LookupTable.zig");
-const TagRecordsParseState = @import("../TagRecordsParseState.zig");
+const TagRecordsParser = @import("../TagRecordsParser.zig");
 
 const Lookup = @This();
 
@@ -107,7 +107,7 @@ pub fn findAllStreamIDsByPrefixes(
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
     errdefer streamIDs.deinit(alloc);
 
-    var state: TagRecordsParseState = .{};
+    var state: TagRecordsParser = .{};
     defer state.deinit(alloc);
 
     // TODO optimize so we dont iterate over next entries multiple times,
