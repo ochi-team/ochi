@@ -70,6 +70,7 @@ pub fn parseStreamIDs(self: *Self, alloc: Allocator) !void {
     if (self.streamsRaw.len == 0) {
         return;
     }
+    std.debug.assert(self.streamsRaw.len % 16 == 0);
     const n = self.streamsRaw.len / 16;
     try self.streamIDs.ensureUnusedCapacity(alloc, n);
     for (0..n) |i| {

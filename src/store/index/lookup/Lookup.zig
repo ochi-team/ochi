@@ -9,6 +9,7 @@ const MemBlock = @import("../MemBlock.zig");
 const MemTable = @import("../MemTable.zig");
 const Table = @import("../Table.zig");
 const LookupTable = @import("LookupTable.zig");
+const TagRecordsParseState = @import("../TagRecordsParseState.zig");
 
 const Lookup = @This();
 
@@ -90,24 +91,24 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: make it configurable and reduce for tests to 10
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
-const FindAllByPrefixesResult = struct {
-    result: []const []const u8,
+const FindAllStreamIDsByPrefixesResult = struct {
+    streamIDs: std.AutoArrayHashMapUnmanaged(u128, void),
     cutOff: bool,
 };
-pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []const u8) !?FindAllByPrefixesResult {
+pub fn findAllStreamIDsByPrefixes(
+    self: *Lookup,
+    alloc: Allocator,
+    prefixes: []const []const u8,
+) !FindAllStreamIDsByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
 
-    var ahm: std.StringArrayHashMapUnmanaged(void) = .empty;
-    defer ahm.deinit(alloc);
-    errdefer {
-        var it = ahm.iterator();
-        while (it.next()) |i|
-            alloc.free(i.key_ptr.*);
-    }
+    var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
+    errdefer streamIDs.deinit(alloc);
 
-    var count: usize = 0;
+    const state = try TagRecordsParseState.init(alloc);
+    defer state.deinit(alloc);
 
     // TODO optimize so we dont iterate over next entries multiple times,
     // the isuue is seek resets the state and for every key we must restart the seek
@@ -121,29 +122,29 @@ pub fn findAllByPrefixes(self: *Lookup, alloc: Allocator, prefixes: []const []co
             if (self.current.len >= prefix.len and
                 std.mem.eql(u8, self.current[0..prefix.len], prefix))
             {
-                if (ahm.contains(self.current)) continue;
+                try state.setupStreamsRaw(self.current[prefix.len..]);
+                try state.parseStreamIDs(alloc);
 
-                count += 1;
+                for (state.streamIDs.items) |streamID| {
+                    const gop = try streamIDs.getOrPut(alloc, streamID);
 
-                try ahm.ensureUnusedCapacity(alloc, 1);
-                const copy = try alloc.dupe(u8, self.current);
-                ahm.putAssumeCapacity(copy, {});
+                    if (gop.found_existing) continue;
+
+                    gop.key_ptr.* = streamID;
+                }
             }
 
-            if (count >= resultLimit)
+            if (streamIDs.count() >= resultLimit)
                 // TODO log warning
                 return .{
-                    .result = try alloc.dupe([]const u8, ahm.keys()),
+                    .streamIDs = streamIDs,
                     .cutOff = true,
                 };
         }
     }
 
-    if (ahm.count() == 0)
-        return null;
-
     return .{
-        .result = try alloc.dupe([]const u8, ahm.keys()),
+        .streamIDs = streamIDs,
         .cutOff = false,
     };
 }
@@ -269,7 +270,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     }
 }
 
-test "Lookup.findAllByPrefixes returns empty on empty recorder" {
+test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     const alloc = testing.allocator;
 
     var tmp = testing.tmpDir(.{});
@@ -292,13 +293,10 @@ test "Lookup.findAllByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    const actual = try lookup.findAllByPrefixes(alloc, &prefixes);
-    defer if (actual) |a| {
-        for (a.result) |i| alloc.free(i);
-        alloc.free(a.result);
-    };
+    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &prefixes);
+    defer actual.streamIDs.deinit(alloc);
 
-    try testing.expect(actual == null);
+    try testing.expectEqual(actual.streamIDs.keys().len, 0);
 }
 
 test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tables" {
@@ -388,7 +386,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     try recorder.flushForce(alloc);
 }
 
-test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tables" {
+test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
 
     var tmp = testing.tmpDir(.{});
@@ -405,19 +403,19 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     defer recorder.deinit(alloc);
 
     const tableAItems = [_][]const u8{
-        "key:aa:002",
-        "key:cc:002",
-        "key:zz:100",
+        "key:aa0000000000000002",
+        "key:cc0000000000000002",
+        "key:zz0000000000000100",
     };
     const tableBItems = [_][]const u8{
-        "key:aa:001",
-        "key:bb:010",
-        "key:mm:900",
+        "key:aa0000000000000001",
+        "key:bb0000000000000010",
+        "key:mm0000000000000900",
     };
     const tableDiskItems = [_][]const u8{
-        "key:aa:099",
-        "key:bb:001",
-        "key:dd:000",
+        "key:aa0000000000000099",
+        "key:bb0000000000000001",
+        "key:dd0000000000000000",
     };
 
     {
@@ -438,57 +436,56 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
 
     const Case = struct {
         prefixes: []const []const u8,
-        expected: ?[]const []const u8,
+        expected: ?[]const u128,
     };
 
     const cases = [_]Case{
         .{
             .prefixes = &[_][]const u8{"key:aa"},
-            .expected = &[_][]const u8{
-                "key:aa:001",
-                "key:aa:002",
-                "key:aa:099",
+            .expected = &[_]u128{
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000099", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:bb" },
-            .expected = &[_][]const u8{
-                "key:aa:001",
-                "key:aa:002",
-                "key:aa:099",
-                "key:bb:001",
-                "key:bb:010",
+            .expected = &[_]u128{
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000099", .big),
+                std.mem.readInt(u128, "0000000000000010", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:bb" },
-            .expected = &[_][]const u8{
-                "key:cc:002",
-                "key:bb:001",
-                "key:bb:010",
+            .expected = &[_]u128{
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000010", .big),
             },
         },
         .{
-            .prefixes = &[_][]const u8{ "key:bb:00", "key:cc", "key:bb" },
-            .expected = &[_][]const u8{
-                "key:bb:001",
-                "key:cc:002",
-                "key:bb:010",
+            .prefixes = &[_][]const u8{ "key:bb", "key:cc" },
+            .expected = &[_]u128{
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000010", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:aa", "key:aa" },
-            .expected = &[_][]const u8{
-                "key:aa:001",
-                "key:aa:002",
-                "key:aa:099",
+            .expected = &[_]u128{
+                std.mem.readInt(u128, "0000000000000001", .big),
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000099", .big),
             },
         },
         .{
             .prefixes = &[_][]const u8{ "key:cc", "key:dd" },
-            .expected = &[_][]const u8{
-                "key:cc:002",
-                "key:dd:000",
+            .expected = &[_]u128{
+                std.mem.readInt(u128, "0000000000000002", .big),
+                std.mem.readInt(u128, "0000000000000000", .big),
             },
         },
         .{
@@ -501,29 +498,21 @@ test "Lookup.findAllByPrefixes matches lower-bound prefix behavior on mixed tabl
     defer lookup.deinit(alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findAllByPrefixes(alloc, case.prefixes);
-        defer if (actual) |a| {
-            for (a.result) |i| {
-                alloc.free(i);
-            }
-            alloc.free(a.result);
-        };
+        var actual = try lookup.findAllStreamIDsByPrefixes(alloc, case.prefixes);
+        defer actual.streamIDs.deinit(alloc);
 
         if (case.expected) |want| {
-            try testing.expect(actual != null);
-            for (actual.?.result, want) |a, w| {
-                try testing.expectEqualStrings(a, w);
-            }
-            try testing.expect(actual.?.cutOff == false);
+            try testing.expectEqualSlices(u128, want, actual.streamIDs.keys());
+            try testing.expect(!actual.cutOff);
         } else {
-            try testing.expect(actual == null);
+            try testing.expectEqual(actual.streamIDs.keys().len, 0);
         }
 
         try recorder.flushForce(alloc);
     }
 }
 
-test "Lookup.findAllByPrefixes respects result limit cutoff" {
+test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     const alloc = testing.allocator;
 
     var tmp = testing.tmpDir(.{});
@@ -541,9 +530,13 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
     defer items.deinit(alloc);
+
+    const keyValue = "keyaa";
     for (0..resultLimit + 1) |i| {
-        const item = try std.fmt.allocPrint(alloc, "key:aa:{d:0>4}", .{i});
+        const item = try alloc.alloc(u8, keyValue.len + 16);
         errdefer alloc.free(item);
+        std.mem.writeInt(u128, item[keyValue.len..][0..16], i, .big);
+        @memcpy(item[0..keyValue.len], keyValue);
         items.appendAssumeCapacity(item);
     }
     defer {
@@ -561,19 +554,14 @@ test "Lookup.findAllByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
 
-    const actual = try lookup.findAllByPrefixes(alloc, &[_][]const u8{"key:aa:"});
-    defer if (actual) |a| {
-        for (a.result) |i| {
-            alloc.free(i);
-        }
-        alloc.free(a.result);
-    };
+    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{keyValue});
+    defer actual.streamIDs.deinit(alloc);
 
-    try testing.expect(actual != null);
-    try testing.expect(actual.?.cutOff);
-    try testing.expectEqual(@as(usize, resultLimit), actual.?.result.len);
-    try testing.expectEqualStrings("key:aa:0000", actual.?.result[0]);
-    try testing.expectEqualStrings("key:aa:0999", actual.?.result[resultLimit - 1]);
+    try testing.expect(actual.streamIDs.keys().len != 0);
+    try testing.expect(actual.cutOff);
+    try testing.expectEqual(@as(usize, resultLimit), actual.streamIDs.keys().len);
+    try testing.expectEqual(0, actual.streamIDs.keys()[0]);
+    try testing.expectEqual(999, actual.streamIDs.keys()[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }
