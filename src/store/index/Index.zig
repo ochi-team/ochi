@@ -138,10 +138,11 @@ pub fn querySIDs(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []co
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    var result =
-        try lookup.findAllStreamIDsByPrefixes(alloc, prefixes.items) orelse
-        return .{ .sids = .empty, .cutOff = false };
+    var result = try lookup.findAllStreamIDsByPrefixes(alloc, prefixes.items);
     defer result.streamIDs.deinit(alloc);
+
+    if (result.streamIDs.keys().len == 0)
+        return .{ .sids = .empty, .cutOff = false };
 
     var sids: std.ArrayList(SID) = try .initCapacity(alloc, result.streamIDs.keys().len);
 

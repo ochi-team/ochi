@@ -99,7 +99,7 @@ pub fn findAllStreamIDsByPrefixes(
     self: *Lookup,
     alloc: Allocator,
     prefixes: []const []const u8,
-) !?FindAllStreamIDsByPrefixesResult {
+) !FindAllStreamIDsByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);
@@ -144,9 +144,6 @@ pub fn findAllStreamIDsByPrefixes(
                 };
         }
     }
-
-    if (streamIDs.count() == 0)
-        return null;
 
     return .{
         .streamIDs = streamIDs,
@@ -299,11 +296,9 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
         "zzzz",
     };
     var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &prefixes);
-    defer if (actual) |*a| {
-        a.streamIDs.deinit(alloc);
-    };
+    defer actual.streamIDs.deinit(alloc);
 
-    try testing.expect(actual == null);
+    try testing.expectEqual(actual.streamIDs.keys().len, 0);
 }
 
 test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tables" {
@@ -506,18 +501,16 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     for (cases) |case| {
         var actual = try lookup.findAllStreamIDsByPrefixes(alloc, case.prefixes);
-        defer if (actual) |*a| {
-            a.streamIDs.deinit(alloc);
-        };
+        defer actual.streamIDs.deinit(alloc);
 
         if (case.expected) |want| {
-            try testing.expect(actual != null);
-            for (actual.?.streamIDs.keys(), want) |a, w| {
+            try testing.expect(actual.streamIDs.keys().len != 0);
+            for (actual.streamIDs.keys(), want) |a, w| {
                 try testing.expectEqual(a, w);
             }
-            try testing.expect(actual.?.cutOff == false);
+            try testing.expect(!actual.cutOff);
         } else {
-            try testing.expect(actual == null);
+            try testing.expectEqual(actual.streamIDs.keys().len, 0);
         }
 
         try recorder.flushForce(alloc);
@@ -567,15 +560,13 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     defer lookup.deinit(alloc);
 
     var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{keyValue});
-    defer if (actual) |*a| {
-        a.streamIDs.deinit(alloc);
-    };
+    defer actual.streamIDs.deinit(alloc);
 
-    try testing.expect(actual != null);
-    try testing.expect(actual.?.cutOff);
-    try testing.expectEqual(@as(usize, resultLimit), actual.?.streamIDs.keys().len);
-    try testing.expectEqual(0, actual.?.streamIDs.keys()[0]);
-    try testing.expectEqual(999, actual.?.streamIDs.keys()[resultLimit - 1]);
+    try testing.expect(actual.streamIDs.keys().len != 0);
+    try testing.expect(actual.cutOff);
+    try testing.expectEqual(@as(usize, resultLimit), actual.streamIDs.keys().len);
+    try testing.expectEqual(0, actual.streamIDs.keys()[0]);
+    try testing.expectEqual(999, actual.streamIDs.keys()[resultLimit - 1]);
 
     try recorder.flushForce(alloc);
 }
