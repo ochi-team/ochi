@@ -56,20 +56,17 @@ fn process(
     data: []const u8,
     params: Params,
 ) !void {
-    // TODO: consider implementing a zero allocation parsing
+    // TODO: implement a zero allocation parsing
 
-    // TODO: if we use arena for parsing we can do Leaky
-    const parsed = try std.json.parseFromSlice(std.json.Value, parseAlloc, data, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value;
+    const root = try std.json.parseFromSliceLeaky(std.json.Value, parseAlloc, data, .{
+        .allocate = .alloc_if_needed,
+    });
 
     // Get "streams" array
     const streams = root.object.get("streams") orelse return error.MissingStreams;
     if (streams != .array) return error.StreamsNotArray;
 
     // pre allocate labels list
-    // TODO: reuse for next requests, put back to the pool
     var labels: std.ArrayList(Field) = .empty;
     defer labels.deinit(parseAlloc);
 
