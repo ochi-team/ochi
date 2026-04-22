@@ -504,10 +504,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
         defer actual.streamIDs.deinit(alloc);
 
         if (case.expected) |want| {
-            try testing.expect(actual.streamIDs.keys().len != 0);
-            for (actual.streamIDs.keys(), want) |a, w| {
-                try testing.expectEqual(a, w);
-            }
+            try testing.expectEqualSlices(u128, want, actual.streamIDs.keys());
             try testing.expect(!actual.cutOff);
         } else {
             try testing.expectEqual(actual.streamIDs.keys().len, 0);
