@@ -7,31 +7,19 @@
 ///
 /// Constraints:
 /// - Operates on sorted input; records must be processed in order
-/// - Uses two TagRecordsParseState instances for comparing consecutive records
+/// - Uses two TagRecordsParser instances for comparing consecutive records
 /// - Output streamIDs are sorted and deduplicated
 /// - Caller must call writeState() before switching to a different prefix
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const TagRecordsParseState = @import("TagRecordsParseState.zig");
+const TagRecordsParser = @import("TagRecordsParser.zig");
 
 const Self = @This();
 
 streamIDs: std.ArrayList(u128) = .empty,
-state: *TagRecordsParseState,
-prevState: *TagRecordsParseState,
-
-pub fn init(alloc: Allocator) !Self {
-    const state = try TagRecordsParseState.init(alloc);
-    errdefer state.deinit(alloc);
-    const prevState = try TagRecordsParseState.init(alloc);
-    errdefer prevState.deinit(alloc);
-
-    return .{
-        .state = state,
-        .prevState = prevState,
-    };
-}
+state: TagRecordsParser = .{},
+prevState: TagRecordsParser = .{},
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
     self.streamIDs.deinit(alloc);
@@ -47,9 +35,10 @@ pub fn writeState(self: *Self, alloc: Allocator, buf: *std.ArrayList(u8), target
     std.mem.sortUnstable(u128, self.streamIDs.items, {}, std.sort.asc(u128));
     self.removeDuplicatedStreams();
 
-    const bound = TagRecordsParseState.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);
+    const bound = TagRecordsParser.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);
     try buf.ensureUnusedCapacity(alloc, bound);
     const slice = buf.unusedCapacitySlice();
+
     // TODO: this API is kinda private,
     // block.add call does it for us, this manipulates the buffer state implicitly,
     // e.g. we can do:
@@ -126,7 +115,7 @@ test "removeDuplicatedStreams" {
 
     for (cases) |case| {
         const alloc = testing.allocator;
-        var m = try Self.init(alloc);
+        var m: Self = .{};
         defer m.deinit(alloc);
         try m.streamIDs.appendSlice(alloc, case.input);
 
@@ -144,9 +133,9 @@ pub fn createTagRecord(
     tag: Field,
     streamIDs: []const u128,
 ) ![]const u8 {
-    const bufSize = TagRecordsParseState.encodeRecordBound(tag, streamIDs.len);
+    const bufSize = TagRecordsParser.encodeRecordBound(tag, streamIDs.len);
     const buf = try alloc.alloc(u8, bufSize);
-    const recordLen = TagRecordsParseState.encodeRecord(buf, tenantID, tag, streamIDs);
+    const recordLen = TagRecordsParser.encodeRecord(buf, tenantID, tag, streamIDs);
     return buf[0..recordLen];
 }
 
@@ -184,7 +173,7 @@ test "statesPrefixEqual" {
 
     for (cases) |case| {
         const alloc = testing.allocator;
-        var m = try Self.init(alloc);
+        var m: Self = .{};
         defer m.deinit(alloc);
 
         const record1 = try createTagRecord(alloc, case.tenantA, case.tagA, &[_]u128{100});
@@ -201,7 +190,7 @@ test "statesPrefixEqual" {
 
 test "moveParsedState" {
     const alloc = testing.allocator;
-    var m = try Self.init(alloc);
+    var m: Self = .{};
     defer m.deinit(alloc);
 
     const tag = Field{ .key = "app", .value = "web" };
@@ -228,7 +217,7 @@ test "moveParsedState" {
 
 test "writeState empty" {
     const alloc = testing.allocator;
-    var m = try Self.init(alloc);
+    var m: Self = .{};
     defer m.deinit(alloc);
 
     var buf = std.ArrayList(u8){};
@@ -267,7 +256,7 @@ test "writeState" {
     };
 
     for (cases) |case| {
-        var m = try Self.init(alloc);
+        var m: Self = .{};
         defer m.deinit(alloc);
 
         const record = try createTagRecord(alloc, "tenant1", case.tag, case.recordStreamIDs);
@@ -286,8 +275,9 @@ test "writeState" {
         try testing.expectEqual(@as(usize, 1), target.items.len);
         try testing.expectEqual(@as(usize, 0), m.streamIDs.items.len);
 
-        var verifyState = try TagRecordsParseState.init(alloc);
+        var verifyState: TagRecordsParser = .{};
         defer verifyState.deinit(alloc);
+
         try verifyState.setup(target.items[0]);
         try verifyState.parseStreamIDs(alloc);
 

@@ -242,7 +242,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
     const stateBuf = &self.block.buf;
 
-    var tagRecordsMerger = try TagRecordsMerger.init(alloc);
+    var tagRecordsMerger: TagRecordsMerger = .{};
     defer tagRecordsMerger.deinit(alloc);
 
     for (0..sourceEntries.items.len) |i| {

@@ -1,4 +1,4 @@
-/// TagRecordsParseState: Parses and encodes tagToSids index records.
+/// TagRecordsParser: Parses and encodes tagToSids index records.
 ///
 /// Use cases:
 /// - Parsing raw index bytes into structured fields (tenantID, tag, streamIDs)
@@ -28,15 +28,8 @@ tenantID: []const u8 = undefined,
 tag: Field = undefined,
 streamsRaw: []const u8 = undefined,
 
-pub fn init(alloc: Allocator) !*Self {
-    const s = try alloc.create(Self);
-    s.* = .{};
-    return s;
-}
-
 pub fn deinit(self: *Self, alloc: Allocator) void {
     self.streamIDs.deinit(alloc);
-    alloc.destroy(self);
 }
 
 pub fn setup(self: *Self, item: []const u8) !void {
@@ -115,7 +108,7 @@ const testing = std.testing;
 
 test "setup parses tag record" {
     const alloc = testing.allocator;
-    const state = try Self.init(alloc);
+    var state: Self = .{};
     defer state.deinit(alloc);
 
     const tag = Field{ .key = "env", .value = "prod" };
@@ -149,7 +142,7 @@ test "setup parses tag record" {
 
 test "parseStreamIDs empty" {
     const alloc = testing.allocator;
-    const state = try Self.init(alloc);
+    var state: Self = .{};
     defer state.deinit(alloc);
 
     const tag = Field{ .key = "k", .value = "v" };
@@ -167,7 +160,7 @@ test "parseStreamIDs empty" {
 
 test "setup resets parsed stream ids" {
     const alloc = testing.allocator;
-    const state = try Self.init(alloc);
+    var state: Self = .{};
     defer state.deinit(alloc);
 
     const tag = Field{ .key = "k", .value = "v" };
@@ -191,7 +184,7 @@ test "setup resets parsed stream ids" {
 
 test "setupStreamsRaw resets parsed stream ids" {
     const alloc = testing.allocator;
-    const state = try Self.init(alloc);
+    var state: Self = .{};
     defer state.deinit(alloc);
 
     var tag = Field{ .key = "k", .value = "v" };
