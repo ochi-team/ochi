@@ -130,7 +130,7 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.deinit(alloc);
     }
 
-    const state = try TagRecordsParseState.init(alloc);
+    var state: TagRecordsParseState = .{};
     defer state.deinit(alloc);
 
     for (tags) |tag| {

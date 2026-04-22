@@ -18,13 +18,14 @@ const TagRecordsParseState = @import("TagRecordsParseState.zig");
 const Self = @This();
 
 streamIDs: std.ArrayList(u128) = .empty,
-state: *TagRecordsParseState,
-prevState: *TagRecordsParseState,
+state: TagRecordsParseState = .{},
+prevState: TagRecordsParseState = .{},
 
 pub fn init(alloc: Allocator) !Self {
-    const state = try TagRecordsParseState.init(alloc);
+    var state: TagRecordsParseState = .{};
     errdefer state.deinit(alloc);
-    const prevState = try TagRecordsParseState.init(alloc);
+
+    var prevState: TagRecordsParseState = .{};
     errdefer prevState.deinit(alloc);
 
     return .{
@@ -279,8 +280,9 @@ test "writeState" {
         try testing.expectEqual(@as(usize, 1), target.items.len);
         try testing.expectEqual(@as(usize, 0), m.streamIDs.items.len);
 
-        var verifyState = try TagRecordsParseState.init(alloc);
+        var verifyState: TagRecordsParseState = .{};
         defer verifyState.deinit(alloc);
+
         try verifyState.setup(target.items[0]);
         try verifyState.parseStreamIDs(alloc);
 
