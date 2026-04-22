@@ -107,8 +107,6 @@ pub fn findAllStreamIDsByPrefixes(
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
     errdefer streamIDs.deinit(alloc);
 
-    var count: usize = 0;
-
     const state = try TagRecordsParseState.init(alloc);
     defer state.deinit(alloc);
 
@@ -128,15 +126,15 @@ pub fn findAllStreamIDsByPrefixes(
                 try state.parseStreamIDs(alloc);
 
                 for (state.streamIDs.items) |streamID| {
-                    if (streamIDs.contains(streamID)) continue;
+                    const gop = try streamIDs.getOrPut(alloc, streamID);
 
-                    count += 1;
+                    if (gop.found_existing) continue;
 
-                    try streamIDs.put(alloc, streamID, {});
+                    gop.key_ptr.* = streamID;
                 }
             }
 
-            if (count >= resultLimit)
+            if (streamIDs.count() >= resultLimit)
                 // TODO log warning
                 return .{
                     .streamIDs = streamIDs,
