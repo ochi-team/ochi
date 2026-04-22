@@ -116,8 +116,8 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
     try self.recorder.add(alloc, entries);
 }
 
-const QueryStreamsResult = struct { streamIDs: std.ArrayList(SID), cutOff: bool };
-pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QueryStreamsResult {
+const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
+pub fn querySIDs(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QuerySIDsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(alloc, self.recorder);
     defer lookup.deinit(alloc);
@@ -130,9 +130,6 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.deinit(alloc);
     }
 
-    var state: TagRecordsParseState = .{};
-    defer state.deinit(alloc);
-
     for (tags) |tag| {
         const prefix = try alloc.alloc(u8, TagRecordsParseState.encodePrefixBound(tag));
 
@@ -141,32 +138,19 @@ pub fn queryStreams(self: *Self, alloc: Allocator, tenantID: []const u8, tags: [
         prefixes.appendAssumeCapacity(prefix);
     }
 
-    const items =
-        try lookup.findAllByPrefixes(alloc, prefixes.items) orelse
-        return .{ .streamIDs = .empty, .cutOff = false };
-    defer {
-        for (items.result) |i| {
-            alloc.free(i);
-        }
-        alloc.free(items.result);
+    var result = try lookup.findAllStreamIDsByPrefixes(alloc, prefixes.items);
+    defer result.streamIDs.deinit(alloc);
+
+    if (result.streamIDs.keys().len == 0)
+        return .{ .sids = .empty, .cutOff = false };
+
+    var sids: std.ArrayList(SID) = try .initCapacity(alloc, result.streamIDs.keys().len);
+
+    for (result.streamIDs.keys()) |s| {
+        // TODO: ideally we look only for streams, the tenant is known in advance,
+        // we must design the API to return only Array(streams)
+        sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
-    var sids: std.ArrayList(SID) = .empty;
-
-    for (items.result) |i| {
-        // TODO: we can setup it from the tail, not the full entry and save a bit on the parsing,
-        // the tail is like i[prefix.len..]
-        try state.setup(i);
-
-        try state.parseStreamIDs(alloc);
-
-        try sids.ensureUnusedCapacity(alloc, state.streamIDs.items.len);
-
-        for (state.streamIDs.items) |s|
-            // TODO: ideally we look only for streams, the tenant is known in advance,
-            // we must design the API to return only Array(streams)
-            sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
-    }
-
-    return .{ .streamIDs = sids, .cutOff = items.cutOff };
+    return .{ .sids = sids, .cutOff = result.cutOff };
 }
