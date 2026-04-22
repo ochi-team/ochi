@@ -225,7 +225,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     self.block.buf.clearRetainingCapacity();
     const stateBuf = &self.block.buf;
 
-    var tagRecordsMerger = try TagRecordsMerger.init(alloc);
+    var tagRecordsMerger: TagRecordsMerger = .{};
     defer tagRecordsMerger.deinit(alloc);
 
     // use block copy because we override block itself from the beginning

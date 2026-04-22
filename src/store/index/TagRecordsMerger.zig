@@ -21,19 +21,6 @@ streamIDs: std.ArrayList(u128) = .empty,
 state: TagRecordsParseState = .{},
 prevState: TagRecordsParseState = .{},
 
-pub fn init(alloc: Allocator) !Self {
-    var state: TagRecordsParseState = .{};
-    errdefer state.deinit(alloc);
-
-    var prevState: TagRecordsParseState = .{};
-    errdefer prevState.deinit(alloc);
-
-    return .{
-        .state = state,
-        .prevState = prevState,
-    };
-}
-
 pub fn deinit(self: *Self, alloc: Allocator) void {
     self.streamIDs.deinit(alloc);
     self.state.deinit(alloc);
@@ -120,7 +107,7 @@ test "removeDuplicatedStreams" {
 
     for (cases) |case| {
         const alloc = testing.allocator;
-        var m = try Self.init(alloc);
+        var m: Self = .{};
         defer m.deinit(alloc);
         try m.streamIDs.appendSlice(alloc, case.input);
 
@@ -178,7 +165,7 @@ test "statesPrefixEqual" {
 
     for (cases) |case| {
         const alloc = testing.allocator;
-        var m = try Self.init(alloc);
+        var m: Self = .{};
         defer m.deinit(alloc);
 
         const record1 = try createTagRecord(alloc, case.tenantA, case.tagA, &[_]u128{100});
@@ -195,7 +182,7 @@ test "statesPrefixEqual" {
 
 test "moveParsedState" {
     const alloc = testing.allocator;
-    var m = try Self.init(alloc);
+    var m: Self = .{};
     defer m.deinit(alloc);
 
     const tag = Field{ .key = "app", .value = "web" };
@@ -222,7 +209,7 @@ test "moveParsedState" {
 
 test "writeState empty" {
     const alloc = testing.allocator;
-    var m = try Self.init(alloc);
+    var m: Self = .{};
     defer m.deinit(alloc);
 
     var buf = std.ArrayList(u8){};
@@ -261,7 +248,7 @@ test "writeState" {
     };
 
     for (cases) |case| {
-        var m = try Self.init(alloc);
+        var m: Self = .{};
         defer m.deinit(alloc);
 
         const record = try createTagRecord(alloc, "tenant1", case.tag, case.recordStreamIDs);
