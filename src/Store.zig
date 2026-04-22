@@ -120,7 +120,6 @@ pub fn deinit(self: *Store, allocator: Allocator) void {
     // deinit runtime the last, because partitions (recorders) need it
     // in order to flush the last mem tables
     self.runtime.deinit(allocator);
-    allocator.destroy(self);
 }
 
 pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !std.fs.Dir {

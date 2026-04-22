@@ -54,17 +54,15 @@ fn request(
 
     try stream.writeAll(req.items);
 
-    var rawList = std.ArrayList(u8).empty;
-    defer rawList.deinit(alloc);
+    req.clearRetainingCapacity();
     var buf: [4096]u8 = undefined;
     while (true) {
         const n = try stream.read(&buf);
         if (n == 0) break;
-        try rawList.appendSlice(alloc, buf[0..n]);
+        try req.appendSlice(alloc, buf[0..n]);
     }
 
-    const raw = try alloc.dupe(u8, rawList.items);
-    errdefer alloc.free(raw);
+    const raw = try req.toOwnedSlice(alloc);
 
     const sep = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.InvalidResponse;
     const head = raw[0..sep];
