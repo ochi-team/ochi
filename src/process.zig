@@ -31,18 +31,19 @@ fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
     return buf;
 }
 
-const magic = "xxhash";
+const magicStr = "xxhash";
 fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
     var hasher = std.hash.XxHash64.init(0);
     hasher.update(encodedStream);
     const first = hasher.final();
-    hasher.update(magic);
+    hasher.update(magicStr);
     const second = hasher.final();
     const id = @as(u128, first) << 64 | second;
 
     return SID{
         .tenantID = tenantID,
         .id = id,
+        .buf = tenantID,
     };
 }
 
@@ -57,7 +58,6 @@ pub const Processor = struct {
     lines: std.ArrayList(Line) = .empty,
     tags: []Field,
     encodedTags: []const u8,
-    tenantIDOwned: []u8,
     sid: SID,
 
     pub fn empty(store: *Store) Processor {
@@ -66,8 +66,7 @@ pub const Processor = struct {
             .size = 0,
             .lines = std.ArrayList(Line).empty,
             .tags = &[_]Field{},
-            .encodedTags = &[_]u8{},
-            .tenantIDOwned = &[_]u8{},
+            .encodedTags = "",
             .sid = SID{ .tenantID = "", .id = 0 },
         };
     }
@@ -88,15 +87,12 @@ pub const Processor = struct {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        if (self.tenantIDOwned.len > 0) {
-            alloc.free(self.tenantIDOwned);
-        }
         self.clearLines(alloc);
         self.size = 0;
 
         self.tags = tags;
         self.encodedTags = encodedTags;
-        self.tenantIDOwned = tenantIDOwned;
+        self.sid.deinit(alloc);
         self.sid = streamID;
     }
 
@@ -104,10 +100,8 @@ pub const Processor = struct {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        if (self.tenantIDOwned.len > 0) {
-            alloc.free(self.tenantIDOwned);
-        }
         self.clearLines(alloc);
+        self.sid.deinit(alloc);
         self.lines.deinit(alloc);
         self.size = 0;
         self.* = undefined;
@@ -135,16 +129,9 @@ pub const Processor = struct {
             };
         }
 
-        const tenantOwned = try alloc.dupe(u8, self.sid.tenantID);
-        errdefer alloc.free(tenantOwned);
-
         const line = Line{
             .timestampNs = timestampNs,
-            .sid = .{
-                .tenantID = tenantOwned,
-                .id = self.sid.id,
-                .buf = tenantOwned,
-            },
+            .sid = self.sid,
             .fields = copiedFields,
         };
 
