@@ -35,9 +35,8 @@ pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
     defer res.arena.free(uncompressed);
 
     const params = Params{ .tenantID = ctx.tenantID };
-    const ingestAlloc = std.heap.page_allocator;
 
-    process(res.arena, ingestAlloc, ctx, uncompressed, params) catch
+    process(res.arena, std.heap.page_allocator, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
 
     res.status = 200;
@@ -49,20 +48,17 @@ pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) 
     res.body = "ready";
 }
 
-fn process(parseAlloc: std.mem.Allocator, ingestAlloc: std.mem.Allocator, ctx: *AppContext, data: []const u8, params: Params) !void {
-    try parseJson(parseAlloc, ingestAlloc, ctx, data, params);
-}
-
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
-fn parseJson(parseAlloc: std.mem.Allocator, ingestAlloc: std.mem.Allocator, ctx: *AppContext, data: []const u8, params: Params) !void {
-    // TODO: consider implementing a zero allocation json parsing
+fn process(
+    parseAlloc: std.mem.Allocator,
+    ingestAlloc: std.mem.Allocator,
+    ctx: *AppContext,
+    data: []const u8,
+    params: Params,
+) !void {
+    // TODO: consider implementing a zero allocation parsing
 
-    // FIXME: allocator there is a request arena, so the labels values disappear when the request is done
-    // it requires 2 things to fix it:
-    // 1. use another "globalish like" allocator(arena perhaps), so when request is done we don't clean the values in the unerlying json object
-    // 2. follow life time of labels, ArrayList(Fields), only when the collected fields are flushed
-    // we can return the memory back, or better put it back to a pool
-
+    // TODO: if we use arena for parsing we can do Leaky
     const parsed = try std.json.parseFromSlice(std.json.Value, parseAlloc, data, .{});
     defer parsed.deinit();
 
@@ -115,8 +111,7 @@ fn parseJson(parseAlloc: std.mem.Allocator, ingestAlloc: std.mem.Allocator, ctx:
         }
 
         const tagsLen = labels.items.len;
-        const streamTags = try cloneFields(ingestAlloc, labels.items[0..tagsLen]);
-        defer freeFields(ingestAlloc, streamTags);
+        const streamTags = labels.items[0..tagsLen];
 
         try processor.reinit(ingestAlloc, streamTags, params.tenantID);
 
@@ -175,33 +170,4 @@ fn parseJson(parseAlloc: std.mem.Allocator, ingestAlloc: std.mem.Allocator, ctx:
         // clean len of the labels len, but retain allocated memory
         labels.clearRetainingCapacity();
     }
-}
-
-fn cloneFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
-    const dst = try alloc.alloc(Field, fields.len);
-    var i: usize = 0;
-    errdefer {
-        for (0..i) |j| {
-            alloc.free(dst[j].key);
-            alloc.free(dst[j].value);
-        }
-        alloc.free(dst);
-    }
-
-    while (i < fields.len) : (i += 1) {
-        dst[i] = .{
-            .key = try alloc.dupe(u8, fields[i].key),
-            .value = try alloc.dupe(u8, fields[i].value),
-        };
-    }
-
-    return dst;
-}
-
-fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
-    for (fields) |field| {
-        alloc.free(field.key);
-        alloc.free(field.value);
-    }
-    alloc.free(fields);
 }
