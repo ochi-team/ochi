@@ -79,6 +79,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
 
 test {
     std.testing.refAllDeclsRecursive(@This());
+    _ = @import("server_test.zig");
 }
 
 test "serverWithSIGTERM" {

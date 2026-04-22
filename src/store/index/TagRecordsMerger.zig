@@ -38,7 +38,17 @@ pub fn writeState(self: *Self, alloc: Allocator, buf: *std.ArrayList(u8), target
     const bound = TagRecordsParser.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);
     try buf.ensureUnusedCapacity(alloc, bound);
     const slice = buf.unusedCapacitySlice();
-    const recordLen = TagRecordsParser.encodeRecord(
+
+    // TODO: this API is kinda private,
+    // block.add call does it for us, this manipulates the buffer state implicitly,
+    // e.g. we can do:
+    // ```zig
+    // const slice = ...;
+    // const ok = block.addOwned(slice, recordLen);
+    // std.debug.assert(ok);
+    // ```
+    // eventually it must to id similar to block.add API
+    const recordLen = TagRecordsParseState.encodeRecord(
         slice,
         self.prevState.tenantID,
         self.prevState.tag,
@@ -78,9 +88,7 @@ pub fn statesPrefixEqual(self: *const Self) bool {
 
 pub fn moveParsedState(self: *Self, alloc: Allocator) !void {
     try self.streamIDs.appendSlice(alloc, self.state.streamIDs.items);
-    const tmp = self.state;
-    self.state = self.prevState;
-    self.prevState = tmp;
+    std.mem.swap(*TagRecordsParseState, &self.state, &self.prevState);
 }
 
 const testing = std.testing;

@@ -24,14 +24,12 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
         return ApiError.MaxBodySize;
     }
 
-    const parsed = parseQuery(res.arena, body) catch return ApiError.FailedToParse;
+    const value = parseQuery(res.arena, body) catch return ApiError.FailedToParse;
 
-    var lines = ctx.store.queryLines(res.arena, ctx.tenantID, parsed.value) catch {
-        parsed.deinit();
+    var lines = ctx.store.queryLines(res.arena, ctx.tenantID, value) catch {
         return ApiError.FailedToProccess;
     };
     defer lines.deinit(res.arena);
-    parsed.deinit();
 
     writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;
 
@@ -72,6 +70,6 @@ fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
 /// ```
 /// `start` and `end` are nanosecond Unix timestamps encoded as strings.
 /// `tags` and `fields` are optional label-filter maps.
-fn parseQuery(alloc: Allocator, data: []const u8) !std.json.Parsed(Query) {
-    return std.json.parseFromSlice(Query, alloc, data, .{});
+fn parseQuery(alloc: Allocator, data: []const u8) !Query {
+    return std.json.parseFromSliceLeaky(Query, alloc, data, .{ .allocate = .alloc_if_needed });
 }

@@ -25,7 +25,7 @@ pub const SID = struct {
     tenantID: []const u8,
     id: u128,
     // buf holds ownership of tenant id
-    buf: ?[]u8 = null,
+    buf: ?[]const u8 = null,
 
     pub fn order(one: SID, another: SID) std.math.Order {
         if (one.lessThan(&another)) {

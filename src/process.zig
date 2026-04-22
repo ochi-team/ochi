@@ -31,18 +31,19 @@ fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
     return buf;
 }
 
-const magic = "xxhash";
+const magicStr = "xxhash";
 fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
     var hasher = std.hash.XxHash64.init(0);
     hasher.update(encodedStream);
     const first = hasher.final();
-    hasher.update(magic);
+    hasher.update(magicStr);
     const second = hasher.final();
     const id = @as(u128, first) << 64 | second;
 
     return SID{
         .tenantID = tenantID,
         .id = id,
+        .buf = tenantID,
     };
 }
 
@@ -65,7 +66,7 @@ pub const Processor = struct {
             .size = 0,
             .lines = std.ArrayList(Line).empty,
             .tags = &[_]Field{},
-            .encodedTags = &[_]u8{},
+            .encodedTags = "",
             .sid = SID{ .tenantID = "", .id = 0 },
         };
     }
@@ -76,24 +77,33 @@ pub const Processor = struct {
         tags: []Field,
         tenantID: []const u8,
     ) !void {
-        self.lines.clearRetainingCapacity();
-        self.size = 0;
-
         // use unstable sort because we don't expect duplicated keys
         std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
 
         const encodedTags = try encodeTags(alloc, tags);
-        const streamID = makeStreamID(tenantID, encodedTags);
+        const tenantIDOwned = try alloc.dupe(u8, tenantID);
+        const streamID = makeStreamID(tenantIDOwned, encodedTags);
+
+        if (self.encodedTags.len > 0) {
+            alloc.free(self.encodedTags);
+        }
+        self.lines.clearRetainingCapacity();
+        self.size = 0;
 
         self.tags = tags;
         self.encodedTags = encodedTags;
+        self.sid.deinit(alloc);
         self.sid = streamID;
     }
 
     pub fn deinit(self: *Processor, alloc: std.mem.Allocator) void {
+        if (self.encodedTags.len > 0) {
+            alloc.free(self.encodedTags);
+        }
+        self.lines.clearRetainingCapacity();
+        self.sid.deinit(alloc);
         self.lines.deinit(alloc);
         self.size = 0;
-        alloc.destroy(self);
         self.* = undefined;
     }
 

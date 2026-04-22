@@ -273,6 +273,8 @@ fn flushBlocks(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock) !voi
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+    std.debug.assert(blocks.len > 0);
+
     // enough for 256 tables, which a way beyond the expected amount
     var fba = std.heap.stackFallback(2048, alloc);
     const fbaAlloc = fba.get();
@@ -376,7 +378,7 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
 fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, force: bool) !void {
     // TODO: add a limit to wait max 3 minutes, otherwise something is broken
 
-    var semaphoreAcuired = true;
+    var semaphoreAcquired = false;
     while (true) {
         self.memTablesSem.timedWait(std.time.ns_per_s) catch |err| {
             switch (err) {
@@ -384,19 +386,25 @@ fn addToMemTables(self: *IndexRecorder, alloc: Allocator, memTable: *Table, forc
                     if (self.stopped.load(.acquire)) {
                         // TODO: audit all semaphore as a state usage, it can happen
                         // a background task fails and  doesn't post semaphore back
-                        semaphoreAcuired = false;
-                        break;
+
+                        // if force we don't care about semaphore, just need to flush it
+                        if (force) break;
+                        return error.Stopped;
                     }
                 },
             }
+            continue;
         };
+
+        semaphoreAcquired = true;
+        break;
     }
 
     // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lock();
     self.memTables.append(alloc, memTable) catch {
+        if (semaphoreAcquired) self.memTablesSem.post();
         self.mxTables.unlock();
-        if (semaphoreAcuired) self.memTablesSem.post();
         return;
     };
     self.startMemTablesMerge(alloc);
@@ -531,20 +539,23 @@ fn runMemTablesMerger(self: *IndexRecorder, alloc: Allocator) void {
 
 fn flushMemTables(self: *IndexRecorder, alloc: Allocator, force: bool) !void {
     const nowUs = std.time.microTimestamp();
-    const bufsize = 1024;
+    const bufsize = 256;
     // TODO: metric to understand whether it's enough
     var fba = std.heap.stackFallback(bufsize, alloc);
     const fbaAlloc = fba.get();
 
-    var toFlush = try std.ArrayList(*Table).initCapacity(fbaAlloc, bufsize / 64);
+    var toFlush = try std.ArrayList(*Table).initCapacity(fbaAlloc, bufsize / @sizeOf(*Table));
     defer toFlush.deinit(fbaAlloc);
 
     self.mxTables.lock();
-    errdefer self.mxTables.unlock();
     for (self.memTables.items) |memTable| {
         if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
             memTable.inMerge = true;
-            try toFlush.append(fbaAlloc, memTable);
+            toFlush.append(fbaAlloc, memTable) catch |err| {
+                for (toFlush.items) |table| table.inMerge = false;
+                self.mxTables.unlock();
+                return err;
+            };
         }
     }
     self.mxTables.unlock();
@@ -570,7 +581,7 @@ fn flushMemEntries(
         try shard.collectBlocks(alloc, blocksDestination, nowUs, force);
     }
 
-    try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
+    if (blocksDestination.items.len > 0) try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
 }
 
 fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
@@ -1088,7 +1099,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
         try testing.expectEqual(1, shard.blocks.items.len);
         try testing.expectEqual(1, shard.blocks.items[0].memEntries.items.len);
-        try testing.expectEqual(shortValue, shard.blocks.items[0].memEntries.items[0]);
+        try testing.expectEqualStrings(shortValue, shard.blocks.items[0].memEntries.items[0]);
     }
 
     try recorder.stop(alloc);
