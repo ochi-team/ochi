@@ -180,7 +180,7 @@ pub fn blockReaderLessThan(one: *BlockReader, another: *BlockReader) bool {
     return std.mem.lessThan(u8, first, second);
 }
 
-pub inline fn current(self: *BlockReader) []const u8 {
+pub fn current(self: *BlockReader) []const u8 {
     return self.block.?.memEntries.items[self.currentI];
 }
 
@@ -241,8 +241,8 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
 
     if (builtin.is_test and !self.firstItemChecked) {
         self.firstItemChecked = true;
-        const firstItem = self.block.?.memEntries.items[0];
-        std.debug.assert(std.mem.eql(u8, self.tableHeader.firstEntry, firstItem));
+        const firstEntry = self.block.?.memEntries.items[0];
+        std.debug.assert(std.mem.eql(u8, self.tableHeader.firstEntry, firstEntry));
     }
     return true;
 }

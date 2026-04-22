@@ -71,7 +71,7 @@ pub fn varIntsBound(comptime T: type, values: []T) usize {
 
 /// writeVarInt uses leb128 to encode a u64 into a variable-length byte sequence.
 /// Returns error.OutOfMemory if the buffer has not enough capacity.
-/// TODO: migrate to std.leb
+/// TODO: take tricks from std.leb AND add short values (1-3 signs)
 pub fn writeVarInt(self: *Self, value: u64) void {
     const slice = self.buf[self.offset..];
 

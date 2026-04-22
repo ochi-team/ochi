@@ -10,7 +10,7 @@ const Encoder = encoding.Encoder;
 const EntrieBlock = @import("EntrieBlock.zig");
 const EncodingType = @import("BlockHeader.zig").EncodingType;
 
-// TODO: tune the value
+// TODO: tune the value, e.g. try it 128
 const maxPlainMemBlockLen = 64;
 
 const EncodedMemBlock = struct {
@@ -22,26 +22,38 @@ const EncodedMemBlock = struct {
 
 const MemBlock = @This();
 
-// TODO: rename it, having items.items is not readable
 memEntries: std.ArrayList([]const u8),
-size: u32,
 prefix: []const u8 = "",
 
 // buf may hold the underlying data memory in order be the memory owner,
 // it happens in reading or merging path when we decode the stored content
+// TODO: it's necessary to own the data during merging and reading,
+// but probably we might find tricks not to own, but borrow the memory in some cases,
+// e.g. during ingestion, but:
+// 1. it requires storing block size,
+// 2. it requires storing max mem block size
 buf: std.ArrayList(u8) = .empty,
+
+// data entries are expected to have [kind, 1 byte][tenant: 16 bytes][stream id: 16] for every entry
+// plus tag is optional
+// TODO: this is a joke, but no idea what to do
+const minEntrySizeHint = if (!builtin.is_test) 33 else 1;
 
 pub fn init(
     alloc: Allocator,
     maxMemBlockSize: u32,
 ) !*MemBlock {
-    var data = try std.ArrayList([]const u8).initCapacity(alloc, maxMemBlockSize);
+    // TODO: instead of a buf we can hold a slice of integers u32 to point to an index in the slice
+    var data = try std.ArrayList([]const u8).initCapacity(alloc, maxMemBlockSize / minEntrySizeHint);
     errdefer data.deinit(alloc);
+
+    var buf = try std.ArrayList(u8).initCapacity(alloc, maxMemBlockSize);
+    errdefer buf.deinit(alloc);
 
     const b = try alloc.create(MemBlock);
     b.* = .{
         .memEntries = data,
-        .size = 0,
+        .buf = buf,
     };
     return b;
 }
@@ -55,16 +67,16 @@ pub fn deinit(self: *MemBlock, alloc: Allocator) void {
 pub fn reset(self: *MemBlock) void {
     self.memEntries.clearRetainingCapacity();
     self.buf.clearRetainingCapacity();
-    self.size = 0;
     self.prefix = undefined;
 }
 
 pub fn add(self: *MemBlock, entry: []const u8) bool {
     std.debug.assert(entry.len > 0);
-    if ((self.size + entry.len) > self.memEntries.capacity) return false;
+    if (self.buf.capacity - self.buf.items.len < entry.len) return false;
 
-    self.memEntries.appendAssumeCapacity(entry);
-    self.size += @intCast(entry.len);
+    const start = self.buf.items.len;
+    self.buf.appendSliceAssumeCapacity(entry);
+    self.memEntries.appendAssumeCapacity(self.buf.items[start .. start + entry.len]);
     return true;
 }
 
@@ -136,8 +148,7 @@ pub fn encode(
     self.setPrefixSorted();
     const firstEntry = self.memEntries.items[0];
 
-    // TODO: consider making len limit 128
-    if (self.size - self.prefix.len * self.memEntries.items.len < maxPlainMemBlockLen or self.memEntries.items.len < 2) {
+    if (self.buf.items.len - self.prefix.len * self.memEntries.items.len < maxPlainMemBlockLen or self.memEntries.items.len < 2) {
         try self.encodePlain(alloc, entriesBlock);
         return EncodedMemBlock{
             .firstEntry = firstEntry,
@@ -147,9 +158,9 @@ pub fn encode(
         };
     }
 
-    var entriesBuf = try std.ArrayList(u8).initCapacity(alloc, self.size - self.prefix.len * self.memEntries.items.len);
+    var entriesBuf = try std.ArrayList(u8).initCapacity(alloc, self.buf.items.len - self.prefix.len * self.memEntries.items.len);
     defer entriesBuf.deinit(alloc);
-    // TODO: make it a simple array
+    // TODO: make it a slice if it works for us
     var lens = try std.ArrayList(u32).initCapacity(alloc, self.memEntries.items.len - 1);
     defer lens.deinit(alloc);
 
@@ -211,7 +222,7 @@ pub fn encode(
     // if compressed content is more than 90% of the original size - not worth it
     // TODO: consider tweaking the value up to 80-85%
     if (@as(f64, @floatFromInt(entriesBlock.lensBuf.items.len)) >
-        0.9 * @as(f64, @floatFromInt(self.size - self.prefix.len * self.memEntries.items.len)))
+        0.9 * @as(f64, @floatFromInt(self.buf.items.len - self.prefix.len * self.memEntries.items.len)))
     {
         entriesBlock.reset();
         try self.encodePlain(alloc, entriesBlock);
@@ -234,7 +245,7 @@ pub fn encode(
 fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock) !void {
     try entriesBlock.entriesBuf.ensureUnusedCapacity(
         alloc,
-        self.size - self.prefix.len * self.memEntries.items.len + self.prefix.len - self.memEntries.items[0].len,
+        self.buf.items.len - self.prefix.len * self.memEntries.items.len + self.prefix.len - self.memEntries.items[0].len,
     );
     try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, 2 * (self.memEntries.items.len - 1));
 
@@ -425,13 +436,13 @@ test "MemBlock.add respects max size and reset clears state" {
     try testing.expect(block.add("abc"));
     try testing.expect(block.add("de"));
     try testing.expect(block.add("f"));
-    try testing.expectEqual(@as(u32, 6), block.size);
+    try testing.expectEqual(@as(u32, 6), block.buf.items.len);
     try testing.expect(!block.add("g"));
-    try testing.expectEqual(@as(u32, 6), block.size);
+    try testing.expectEqual(@as(u32, 6), block.buf.items.len);
 
     block.reset();
     try testing.expectEqual(@as(usize, 0), block.memEntries.items.len);
-    try testing.expectEqual(@as(u32, 0), block.size);
+    try testing.expectEqual(@as(u32, 0), block.buf.items.len);
 }
 
 test "MemBlock.encode/decode plain and zstd cases" {

@@ -278,7 +278,7 @@ test "EntriesShard.add" {
         if (case.fill_block_after_setup and shard.blocks.items.len > 0) {
             const block = shard.blocks.items[shard.blocks.items.len - 1];
             const filler = "y" ** (maxIndexMemBlockSize - 100);
-            while (block.size + filler.len <= maxIndexMemBlockSize) {
+            while (block.buf.items.len + filler.len <= maxIndexMemBlockSize) {
                 _ = block.add(filler);
             }
         }
