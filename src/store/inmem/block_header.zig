@@ -876,7 +876,6 @@ test "ColumnsHeaderEncode" {
 }
 
 test "ColumnHeaderEncode" {
-    // TODO handle memory properly
     const alloc = std.testing.allocator;
 
     const Case = struct {
@@ -896,11 +895,32 @@ test "ColumnHeaderEncode" {
         }
     };
 
-    var cases = [_]Case{
+    var dict1 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict1.deinit(alloc);
+    var dict2 = try Case.makeDict(alloc, &[_][]const u8{ "value1", "value2", "value3" });
+    defer dict2.deinit(alloc);
+    var dict3 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict3.deinit(alloc);
+    var dict4 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict4.deinit(alloc);
+    var dict5 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict5.deinit(alloc);
+    var dict6 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict6.deinit(alloc);
+    var dict7 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict7.deinit(alloc);
+    var dict8 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict8.deinit(alloc);
+    var dict9 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict9.deinit(alloc);
+    var dict10 = try Case.makeDict(alloc, &[_][]const u8{});
+    defer dict10.deinit(alloc);
+
+    const cases = [_]Case{
         .{
             .header = .{
                 .key = "string_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict1,
                 .type = .string,
                 .min = 0,
                 .max = 0,
@@ -914,7 +934,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "dict_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{ "value1", "value2", "value3" }),
+                .dict = dict2,
                 .type = .dict,
                 .min = 0,
                 .max = 0,
@@ -928,7 +948,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint8_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict3,
                 .type = .uint8,
                 .min = 0,
                 .max = 255,
@@ -942,7 +962,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint16_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict4,
                 .type = .uint16,
                 .min = 0,
                 .max = 65535,
@@ -956,7 +976,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint32_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict5,
                 .type = .uint32,
                 .min = 10,
                 .max = 1000,
@@ -970,7 +990,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "uint64_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict6,
                 .type = .uint64,
                 .min = 100,
                 .max = 10000,
@@ -984,7 +1004,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "int64_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict7,
                 .type = .int64,
                 .min = 0,
                 .max = 5000,
@@ -998,7 +1018,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "float64_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict8,
                 .type = .float64,
                 .min = 0,
                 .max = 1000,
@@ -1012,7 +1032,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "ipv4_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict9,
                 .type = .ipv4,
                 .min = 0,
                 .max = 4294967295,
@@ -1026,7 +1046,7 @@ test "ColumnHeaderEncode" {
         .{
             .header = .{
                 .key = "timestamp_col",
-                .dict = try Case.makeDict(alloc, &[_][]const u8{}),
+                .dict = dict10,
                 .type = .timestampIso8601,
                 .min = 1000000,
                 .max = 2000000,
@@ -1038,11 +1058,6 @@ test "ColumnHeaderEncode" {
             .description = "timestamp type",
         },
     };
-    defer {
-        for (&cases) |*case| {
-            case.header.dict.deinit(alloc);
-        }
-    }
 
     for (cases) |case| {
         // Encode
