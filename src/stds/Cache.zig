@@ -34,6 +34,7 @@ pub fn Cache(comptime V: type) type {
 
         pub fn set(self: *Self, key: []const u8, value: V) !void {
             const k = try self.alloc.dupe(u8, key);
+            errdefer self.alloc.free(k);
             try self.map.put(k, value);
         }
 

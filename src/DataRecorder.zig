@@ -163,6 +163,8 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
     }
 
     const t = try alloc.create(DataRecorder);
+    errdefer alloc.destroy(t);
+
     t.* = DataRecorder{
         .shards = shards,
         .nextShard = std.atomic.Value(usize).init(0),
@@ -482,8 +484,12 @@ fn mergeTables(
             // 1 for / and 16 for 16 bytes of idx representation,
             // we can't bitcast it to [8]u8 because we need human readlable file names
             const mergeIdx = self.nextMergeIdx();
+
             const path = try alloc.alloc(u8, self.path.len + 1 + 16);
+            errdefer alloc.free(path);
+
             _ = try std.fmt.bufPrint(path, "{s}/{X:0>16}", .{ self.path, mergeIdx });
+
             break :blk path;
         } else "";
     errdefer if (destinationTablePath.len > 0)
@@ -492,7 +498,10 @@ fn mergeTables(
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
         try table.storeToDisk(alloc, destinationTablePath);
+
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
+        errdefer newTable.release();
+
         try swapper.swapTables(self, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
@@ -560,6 +569,8 @@ fn mergeTables(
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
+    errdefer openTable.release();
+
     try swapper.swapTables(self, alloc, tables, openTable, tableKind);
     swapped = true;
 }
@@ -748,6 +759,8 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
 
 fn createMemTableFromLines(alloc: Allocator, lines: []Line) !*Table {
     const memTable = try MemTable.init(alloc);
+    errdefer memTable.deinit(alloc);
+
     try memTable.addLines(alloc, lines);
     return Table.fromMem(alloc, memTable);
 }
@@ -919,9 +932,9 @@ test "flushDataShards non-force respects flush deadline" {
     defer runtime.deinit(alloc);
 
     const recorder = try DataRecorder.init(alloc, rootPath, runtime);
+    defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
 
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
@@ -952,9 +965,9 @@ test "mergeTables force single mem table creates disk table" {
     defer runtime.deinit(alloc);
 
     const recorder = try DataRecorder.init(alloc, rootPath, runtime);
+    defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
 
     var lines = [_]Line{
         stableLine(1, 1, 0),
@@ -962,6 +975,8 @@ test "mergeTables force single mem table creates disk table" {
         stableLine(3, 1, 2),
     };
     const table = try createMemTableFromLines(alloc, lines[0..]);
+    errdefer table.close();
+
     try recorder.memTables.append(alloc, table);
     table.inMerge = true;
 
@@ -1008,9 +1023,9 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         defer runtime.deinit(alloc);
 
         const reopened = try DataRecorder.init(alloc, rootPath, runtime);
+        defer reopened.deinit(alloc);
         reopened.stopped.store(true, .release);
         reopened.wg.wait();
-        defer reopened.deinit(alloc);
 
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));

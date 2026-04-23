@@ -6,7 +6,7 @@ const MemBlock = @import("../MemBlock.zig");
 const Table = @import("../Table.zig");
 const BlockHeader = @import("../BlockHeader.zig");
 const MetaIndex = @import("../MetaIndex.zig");
-const EntriesBlock = @import("../EntrieBlock.zig");
+const EntriesBlock = @import("../EntriesBlock.zig");
 const strings = @import("../../../stds/strings.zig");
 
 const LookupTable = @This();
@@ -300,6 +300,7 @@ fn readMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
     self.entriesBlock.lensBuf.items.len = blockHeader.lensBlockSize;
 
     var memBlock = try MemBlock.init(alloc, self.maxMemBlockSize);
+    errdefer memBlock.deinit(alloc);
     try memBlock.decode(
         alloc,
         &self.entriesBlock,

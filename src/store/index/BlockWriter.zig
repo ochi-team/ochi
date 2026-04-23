@@ -8,7 +8,7 @@ const filenames = @import("../../filenames.zig");
 
 const BlockHeader = @import("BlockHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
-const EntriesBlock = @import("EntrieBlock.zig");
+const EntriesBlock = @import("EntriesBlock.zig");
 const MemTable = @import("MemTable.zig");
 const MemBlock = @import("MemBlock.zig");
 
@@ -351,10 +351,12 @@ test "BlockWriter metaindexBuf may contain multiple records" {
     // Simulate a compaction/merge path calling writeBlock() many times.
     for (0..blocksCount) |i| {
         const item = try std.fmt.allocPrint(alloc, "merge-item-{d:0>6}", .{i});
+        errdefer alloc.free(item);
         try itemsOwned.append(alloc, item);
 
         const items = [_][]const u8{item};
         const block = try createTestMemBlock(alloc, &items);
+        errdefer block.deinit(alloc);
         try blocks.append(alloc, block);
 
         try writer.writeBlock(alloc, block);
