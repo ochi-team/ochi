@@ -7,7 +7,7 @@ const strings = @import("../../stds/strings.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
-const EntrieBlock = @import("EntrieBlock.zig");
+const EntriesBlock = @import("EntriesBlock.zig");
 const EncodingType = @import("BlockHeader.zig").EncodingType;
 
 // TODO: tune the value, e.g. try it 128
@@ -139,7 +139,7 @@ inline fn assertIsSorted(self: *MemBlock) void {
 pub fn encode(
     self: *MemBlock,
     alloc: Allocator,
-    entriesBlock: *EntrieBlock,
+    entriesBlock: *EntriesBlock,
 ) !EncodedMemBlock {
     std.debug.assert(self.memEntries.items.len != 0);
     // this API can't be called on unsorted data
@@ -242,7 +242,7 @@ pub fn encode(
     };
 }
 
-fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock) !void {
+fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntriesBlock) !void {
     try entriesBlock.entriesBuf.ensureUnusedCapacity(
         alloc,
         self.buf.items.len - self.prefix.len * self.memEntries.items.len + self.prefix.len - self.memEntries.items[0].len,
@@ -267,7 +267,7 @@ fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock) !v
 pub fn decode(
     self: *MemBlock,
     alloc: Allocator,
-    entriesBlock: *EntrieBlock,
+    entriesBlock: *EntriesBlock,
     firstItem: []const u8,
     prefix: []const u8,
     itemsCount: u32,
@@ -372,7 +372,7 @@ pub fn decode(
     }
 }
 
-pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntrieBlock, firstEntry: []const u8, itemsCount: u32) !void {
+pub fn decodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntriesBlock, firstEntry: []const u8, itemsCount: u32) !void {
     // decode lens
     const lensBuf = try alloc.alloc(u64, itemsCount);
     defer alloc.free(lensBuf);
@@ -493,7 +493,7 @@ test "MemBlock.encode/decode plain and zstd cases" {
         defer block.deinit(alloc);
         block.sortData();
 
-        var entriesBlock = EntrieBlock{};
+        var entriesBlock = EntriesBlock{};
         defer entriesBlock.deinit(alloc);
         const encoded = try block.encode(alloc, &entriesBlock);
         try testing.expectEqualDeep(case.expectedEncodedBlock, encoded);
@@ -530,7 +530,7 @@ test "MemBlock.decodePlain handles min and max lens values" {
     };
 
     for (cases) |case| {
-        var entriesBlock = EntrieBlock{};
+        var entriesBlock = EntriesBlock{};
         defer entriesBlock.deinit(alloc);
 
         // Only append item bytes when the second item is non-empty. This ensures

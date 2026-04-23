@@ -8,7 +8,7 @@ const filenames = @import("../../filenames.zig");
 
 const BlockHeader = @import("BlockHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
-const EntriesBlock = @import("EntrieBlock.zig");
+const EntriesBlock = @import("EntriesBlock.zig");
 const MemTable = @import("MemTable.zig");
 const MemBlock = @import("MemBlock.zig");
 

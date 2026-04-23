@@ -6,7 +6,7 @@ const MemBlock = @import("../MemBlock.zig");
 const Table = @import("../Table.zig");
 const BlockHeader = @import("../BlockHeader.zig");
 const MetaIndex = @import("../MetaIndex.zig");
-const EntriesBlock = @import("../EntrieBlock.zig");
+const EntriesBlock = @import("../EntriesBlock.zig");
 const strings = @import("../../../stds/strings.zig");
 
 const LookupTable = @This();

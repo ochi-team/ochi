@@ -10,7 +10,7 @@ const fs = @import("../../fs.zig");
 const MemBlock = @import("MemBlock.zig");
 const MemTable = @import("MemTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
-const EntriesBlock = @import("EntrieBlock.zig");
+const EntriesBlock = @import("EntriesBlock.zig");
 const TableHeader = @import("TableHeader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 
@@ -312,7 +312,6 @@ fn allocIndexedItem(alloc: Allocator, index: usize, totalLen: usize) ![]u8 {
     errdefer alloc.free(buf);
 
     const head = try std.fmt.bufPrint(buf, "item-{d:0>4}", .{index});
-    defer alloc.free(head);
 
     if (head.len < totalLen) {
         for (head.len..totalLen) |i| {

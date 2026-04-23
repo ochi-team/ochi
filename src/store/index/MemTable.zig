@@ -11,7 +11,7 @@ const TableHeader = @import("TableHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const MemBlock = @import("MemBlock.zig");
 const BlockReader = @import("BlockReader.zig");
-const EntriesBlock = @import("EntrieBlock.zig");
+const EntriesBlock = @import("EntriesBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockMerger = @import("BlockMerger.zig");
 
