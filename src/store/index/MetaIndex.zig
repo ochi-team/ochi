@@ -44,6 +44,7 @@ pub fn encode(self: *const MetaIndex, buf: []u8) void {
 
 pub fn encodeAlloc(self: *const MetaIndex, alloc: Allocator) ![]u8 {
     const buf = try alloc.alloc(u8, self.bound());
+    errdefer alloc.free(buf);
 
     self.encode(buf);
 

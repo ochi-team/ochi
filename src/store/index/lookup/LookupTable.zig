@@ -300,6 +300,7 @@ fn readMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
     self.entriesBlock.lensBuf.items.len = blockHeader.lensBlockSize;
 
     var memBlock = try MemBlock.init(alloc, self.maxMemBlockSize);
+    errdefer memBlock.deinit(alloc);
     try memBlock.decode(
         alloc,
         &self.entriesBlock,

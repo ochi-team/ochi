@@ -23,6 +23,7 @@ pub fn dupe(self: TableHeader, alloc: Allocator) !TableHeader {
     const firstEntry = try alloc.dupe(u8, self.firstEntry);
     errdefer alloc.free(firstEntry);
     const lastEntry = try alloc.dupe(u8, self.lastEntry);
+    errdefer alloc.free(lastEntry);
 
     return .{
         .blocksCount = self.blocksCount,
@@ -58,6 +59,7 @@ pub fn readFile(alloc: Allocator, path: []const u8) !TableHeader {
     const firstEntry = try alloc.dupe(u8, parsed.value.firstEntry);
     errdefer alloc.free(firstEntry);
     const lastEntry = try alloc.dupe(u8, parsed.value.lastEntry);
+    errdefer alloc.free(lastEntry);
 
     return .{
         .blocksCount = parsed.value.blocksCount,

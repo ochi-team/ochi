@@ -451,6 +451,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
 
         const dstMemTable = try MemTable.init(alloc);
+        errdefer dstMemTable.deinit(alloc);
         const stopped: ?*std.atomic.Value(bool) = null;
         dstMemTable.tableHeader = try mergeData(alloc, dstMemTable.streamWriter, &readers, stopped);
 

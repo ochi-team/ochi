@@ -38,6 +38,7 @@ pub fn init(alloc: Allocator, recorder: *IndexRecorder) !Lookup {
     }
 
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
+    errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
         const lt = LookupTable.init(t, recorder.maxMemBlockSize);
         lookupTables.appendAssumeCapacity(lt);
@@ -221,6 +222,8 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
 
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(alloc, &blocks);
+    errdefer memTable.deinit(alloc);
+
     return Table.fromMem(alloc, memTable);
 }
 
@@ -252,9 +255,9 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
 
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
@@ -282,9 +285,9 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
 
     var lookup = try Lookup.init(alloc, recorder);
     defer lookup.deinit(alloc);
@@ -311,9 +314,9 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
 
     const tableAItems = [_][]const u8{
         "key:aa:002",
@@ -507,9 +510,8 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
         } else {
             try testing.expectEqual(actual.streamIDs.keys().len, 0);
         }
-
-        try recorder.flushForce(alloc);
     }
+    try recorder.flushForce(alloc);
 }
 
 test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
@@ -524,9 +526,9 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
     defer items.deinit(alloc);

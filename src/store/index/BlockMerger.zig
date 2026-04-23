@@ -299,6 +299,7 @@ const Encoder = @import("encoding").Encoder;
 
 fn createTestMemBlock(alloc: Allocator, entries: []const []const u8, maxIndexBlockSize: u32) !*MemBlock {
     const block = try MemBlock.init(alloc, maxIndexBlockSize);
+    errdefer block.deinit(alloc);
     for (entries) |entry| {
         _ = block.add(entry);
     }
@@ -311,9 +312,12 @@ fn createTestReaders(
     maxIndexBlockSize: u32,
 ) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocksData.len);
+    errdefer readers.deinit(alloc);
     for (blocksData) |blockData| {
         const block = try createTestMemBlock(alloc, blockData, maxIndexBlockSize);
+        errdefer block.deinit(alloc);
         const reader = try BlockReader.initFromMemBlock(alloc, block);
+        errdefer reader.deinit(alloc);
         try readers.append(alloc, reader);
     }
     return readers;
@@ -356,6 +360,7 @@ fn createTestEntries(alloc: Allocator, count: usize, size: usize) ![][]const u8 
 
 fn createSidEntry(alloc: Allocator, tenantID: []const u8, streamID: u128) ![]const u8 {
     const buf = try alloc.alloc(u8, 1 + SID.encodeBound);
+    errdefer alloc.free(buf);
     var enc = Encoder.init(buf);
     const sid = SID{ .tenantID = tenantID, .id = streamID };
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
@@ -731,6 +736,7 @@ test "BlockMerger.merge stopped flag" {
 }
 
 test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit" {
+    //TODO manage memory properly
     const alloc = testing.allocator;
     const maxIndexBlockSize = 1024;
 

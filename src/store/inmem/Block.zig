@@ -108,6 +108,7 @@ pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(L
         }
 
         const fields = try alloc.alloc(Field, fieldCount);
+        errdefer alloc.free(fields);
         var fi: usize = 0;
 
         for (cells) |cell| {

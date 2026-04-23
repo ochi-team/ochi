@@ -141,10 +141,14 @@ pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
     defer fbaAlloc.free(lensPath);
 
     const indexBuf = try fs.readAll(alloc, indexPath);
+    errdefer alloc.free(indexBuf);
     const entriesBuf = try fs.readAll(alloc, entriesPath);
+    errdefer alloc.free(entriesBuf);
     const lensBuf = try fs.readAll(alloc, lensPath);
+    errdefer alloc.free(lensBuf);
 
     const r = try alloc.create(BlockReader);
+    errdefer alloc.destroy(r);
     r.* = .{
         .block = null,
         .metaIndexRecords = metaIndex.records,
@@ -305,7 +309,11 @@ fn createTestMemBlockWithMax(alloc: Allocator, items: []const []const u8, maxMem
 
 fn allocIndexedItem(alloc: Allocator, index: usize, totalLen: usize) ![]u8 {
     const buf = try alloc.alloc(u8, totalLen);
+    errdefer alloc.free(buf);
+
     const head = try std.fmt.bufPrint(buf, "item-{d:0>4}", .{index});
+    defer alloc.free(head);
+
     if (head.len < totalLen) {
         for (head.len..totalLen) |i| {
             buf[i] = @intCast((index + i) % 251);
@@ -321,7 +329,10 @@ test "BlockReader.blockReaderLessThan compares items correctly" {
     const items2 = [_][]const u8{ "apricot", "blueberry", "date" };
 
     const block1 = try createTestMemBlock(alloc, &items1);
+    errdefer block1.deinit(alloc);
+
     const block2 = try createTestMemBlock(alloc, &items2);
+    errdefer block2.deinit(alloc);
 
     var reader1 = try BlockReader.initFromMemBlock(alloc, block1);
     defer reader1.deinit(alloc);
@@ -342,6 +353,8 @@ test "BlockReader.current returns correct item at currentI" {
     const items = [_][]const u8{ "first", "second", "third" };
 
     const block = try createTestMemBlock(alloc, &items);
+    errdefer block.deinit(alloc);
+
     var reader = try BlockReader.initFromMemBlock(alloc, block);
     defer reader.deinit(alloc);
 
@@ -382,10 +395,12 @@ test "BlockReader.initFromMemTable reads items" {
     defer alloc.free(long_items);
 
     const long_a = try alloc.alloc(u8, long_len);
-    const long_b = try alloc.alloc(u8, long_len);
-    const long_c = try alloc.alloc(u8, long_len);
     defer alloc.free(long_a);
+
+    const long_b = try alloc.alloc(u8, long_len);
     defer alloc.free(long_b);
+
+    const long_c = try alloc.alloc(u8, long_len);
     defer alloc.free(long_c);
 
     long_a[0] = 'x';
@@ -406,9 +421,11 @@ test "BlockReader.initFromMemTable reads items" {
     defer alloc.free(full_items);
 
     const block_count = item_count / 2;
+
     const block1_items = try alloc.alloc([]const u8, block_count);
-    const block2_items = try alloc.alloc([]const u8, block_count);
     defer alloc.free(block1_items);
+
+    const block2_items = try alloc.alloc([]const u8, block_count);
     defer alloc.free(block2_items);
 
     var owned = try std.ArrayList([]u8).initCapacity(alloc, item_count);
@@ -421,7 +438,10 @@ test "BlockReader.initFromMemTable reads items" {
     var b2: usize = 0;
     for (0..item_count) |i| {
         const item = try allocIndexedItem(alloc, i, item_len);
+        errdefer alloc.free(item);
+
         try owned.append(alloc, item);
+
         full_items[i] = item;
         if (i < block_count) {
             block1_items[b1] = item;
