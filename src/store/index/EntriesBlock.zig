@@ -1,6 +1,5 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-//TODO the file naming is not consistent
 
 const EntriesBlock = @This();
 
