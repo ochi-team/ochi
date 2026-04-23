@@ -736,7 +736,6 @@ test "BlockMerger.merge stopped flag" {
 }
 
 test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit" {
-    //TODO manage memory properly
     const alloc = testing.allocator;
     const maxIndexBlockSize = 1024;
 
@@ -745,18 +744,20 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     const expected = [_][]const u8{ "a1", "b1", "c1", "d1", "e1", "f1" };
 
     var leftBlock = try createTestMemBlock(alloc, &leftItems, maxIndexBlockSize);
+    defer leftBlock.deinit(alloc);
+
     var rightBlock = try createTestMemBlock(alloc, &rightItems, maxIndexBlockSize);
+    defer rightBlock.deinit(alloc);
 
     // memTable is defined out of the block to ensure the source blocks are gone
     const memTable = blk: {
         var leftBlocks = [_]*MemBlock{leftBlock};
-        var rightBlocks = [_]*MemBlock{rightBlock};
         var leftMemTable = try MemTable.init(alloc, &leftBlocks);
-        var rightMemTable = try MemTable.init(alloc, &rightBlocks);
         defer leftMemTable.deinit(alloc);
+
+        var rightBlocks = [_]*MemBlock{rightBlock};
+        var rightMemTable = try MemTable.init(alloc, &rightBlocks);
         defer rightMemTable.deinit(alloc);
-        leftBlock.deinit(alloc);
-        rightBlock.deinit(alloc);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
@@ -764,14 +765,17 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
 
         var mergedMemTable = try MemTable.empty(alloc);
+        errdefer mergedMemTable.deinit(alloc);
+
         var writer = BlockWriter.initFromMemTable(mergedMemTable);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(alloc, &readers);
+        defer merger.deinit(alloc);
+
         mergedMemTable.tableHeader = try merger.merge(alloc, &writer, null);
         try writer.close(alloc);
 
-        merger.deinit(alloc);
         readers.items.len = 0;
 
         try testing.expect(mergedMemTable.entriesBuf.items.len > 0);
@@ -781,7 +785,6 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
 
         break :blk mergedMemTable;
     };
-
     defer memTable.deinit(alloc);
 
     var mergedReader = try BlockReader.initFromMemTable(alloc, memTable);
