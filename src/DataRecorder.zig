@@ -500,7 +500,7 @@ fn mergeTables(
         try table.storeToDisk(alloc, destinationTablePath);
 
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
-        errdefer newTable.close();
+        errdefer newTable.release();
 
         try swapper.swapTables(self, alloc, tables, newTable, tableKind);
         swapped = true;
@@ -569,7 +569,7 @@ fn mergeTables(
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
-    errdefer openTable.close();
+    errdefer openTable.release();
 
     try swapper.swapTables(self, alloc, tables, openTable, tableKind);
     swapped = true;
