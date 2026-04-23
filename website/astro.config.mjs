@@ -1,52 +1,56 @@
 // @ts-check
-import { defineConfig } from 'astro/config';
+import { defineConfig } from "astro/config";
 
-import tailwindcss from '@tailwindcss/vite';
+import tailwindcss from "@tailwindcss/vite";
 
-import starlight from '@astrojs/starlight';
+import starlight from "@astrojs/starlight";
 
 // https://astro.build/config
 export default defineConfig({
   vite: {
-    plugins: [tailwindcss()]
+    plugins: [tailwindcss()],
   },
 
   integrations: [
     starlight({
-      title: 'Ochi Documentation',
-      customCss: ['./src/styles/theme.css'],
-      favicon: '/favicon.ico',
+      title: "Ochi Documentation",
+      customCss: ["./src/styles/theme.css"],
+      favicon: "/favicon.ico",
       social: [
-        { icon: 'discord', label: 'Discord', href: 'https://discord.gg/AsCKpCNp5c' },
         {
-          icon: 'github',
-          label: 'GitHub',
-          href: 'https://github.com/ochi-team/ochi',
+          icon: "discord",
+          label: "Discord",
+          href: "https://discord.gg/AsCKpCNp5c",
+        },
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/ochi-team/ochi",
         },
       ],
       logo: {
-        src: '/src/assets/logo.svg',
+        src: "/src/assets/logo.svg",
         replacesTitle: true,
       },
       sidebar: [
         {
-          label: 'Guides',
-          items: [
-            { label: 'Installation', slug: 'docs/guides/installation' },
-          ],
+          label: "Guides",
+          autogenerate: { directory: "guides" },
         },
         {
-          label: 'Changelog',
-          items: [
-            { label: '0.1', slug: 'docs/changelog/0.1' },
-          ],
+          label: "API Reference",
+          autogenerate: { directory: "reference" },
+        },
+        {
+          label: "Changelog",
+          autogenerate: { directory: "changelog" },
         },
       ],
-      defaultLocale: 'en',
+      defaultLocale: "en",
       locales: {
         root: {
-          label: 'English',
-          lang: 'en',
+          label: "English",
+          lang: "en",
         },
       },
     }),

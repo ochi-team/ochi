@@ -45,3 +45,21 @@
   --sl-color-banner-text: var(--landing-text);
   --sl-color-banner-bg: var(--landing-accent-alt);
 }
+
+.sl-markdown-content :where(ul, ol) {
+  list-style-position: outside;
+  padding-inline-start: 1.25rem;
+}
+
+.sl-markdown-content ul {
+  list-style-type: disc;
+}
+
+.sl-markdown-content ol {
+  list-style-type: decimal;
+}
+
+.sl-markdown-content :where(ul, ol) > li::marker {
+  color: var(--sl-color-gray-4);
+  font-weight: 700;
+}
