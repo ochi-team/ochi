@@ -109,12 +109,15 @@ pub fn initMem(allocator: Allocator, maxColI: u16) !*Self {
 
     const columnIDGen = try ColumnIDGen.init(allocator);
     errdefer columnIDGen.deinit(allocator);
-    const colIdx = std.AutoHashMap(u16, u16).init(allocator);
+    var colIdx = std.AutoHashMap(u16, u16).init(allocator);
+    errdefer colIdx.deinit();
 
     const timestampsEncoder = try TimestampsEncoder.init(allocator);
     errdefer timestampsEncoder.deinit(allocator);
 
     const w = try allocator.create(Self);
+    errdefer allocator.destroy(w);
+
     w.* = Self{
         .timestampsDst = timestampsDst,
         .indexDst = indexDst,
@@ -228,12 +231,15 @@ pub fn initDisk(alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
 
     const columnIDGen = try ColumnIDGen.init(alloc);
     errdefer columnIDGen.deinit(alloc);
-    const colIdx = std.AutoHashMap(u16, u16).init(alloc);
+    var colIdx = std.AutoHashMap(u16, u16).init(alloc);
+    errdefer colIdx.deinit();
 
     const timestampsEncoder = try TimestampsEncoder.init(alloc);
     errdefer timestampsEncoder.deinit(alloc);
 
     const w = try alloc.create(Self);
+    errdefer alloc.destroy(w);
+
     w.* = Self{
         .timestampsDst = timestampsDst,
         .indexDst = indexDst,

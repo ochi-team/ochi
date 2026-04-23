@@ -876,6 +876,7 @@ test "ColumnsHeaderEncode" {
 }
 
 test "ColumnHeaderEncode" {
+    // TODO handle memory properly
     const alloc = std.testing.allocator;
 
     const Case = struct {

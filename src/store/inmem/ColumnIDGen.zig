@@ -10,8 +10,12 @@ keyIDs: std.StringArrayHashMap(u16),
 keysBuf: ?[]u8,
 
 pub fn init(allocator: Allocator) !*ColumnIDGen {
-    const nameIDs = std.StringArrayHashMap(u16).init(allocator);
+    var nameIDs = std.StringArrayHashMap(u16).init(allocator);
+    errdefer nameIDs.deinit();
+
     const s = try allocator.create(ColumnIDGen);
+    errdefer s.deinit(allocator);
+
     s.* = ColumnIDGen{
         .keyIDs = nameIDs,
         .keysBuf = null,
@@ -95,6 +99,8 @@ pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
 
 pub fn decodeColumnIdxs(columnIDGen: *ColumnIDGen, alloc: Allocator, src: []const u8) !std.StringHashMapUnmanaged(u16) {
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
+    errdefer columnIdxs.deinit(alloc);
+
     var dec = encoding.Decoder.init(src);
 
     const count = dec.readVarInt();

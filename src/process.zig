@@ -18,6 +18,7 @@ fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
         size += tag.key.len + tag.value.len;
     }
     const buf = try allocator.alloc(u8, size);
+    errdefer allocator.free(buf);
 
     var enc = Encoder.init(buf);
     enc.writeVarInt(tags.len);
@@ -81,7 +82,11 @@ pub const Processor = struct {
         std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
 
         const encodedTags = try encodeTags(alloc, tags);
+        errdefer alloc.free(encodedTags);
+
         const tenantIDOwned = try alloc.dupe(u8, tenantID);
+        errdefer alloc.free(tenantIDOwned);
+
         const streamID = makeStreamID(tenantIDOwned, encodedTags);
 
         if (self.encodedTags.len > 0) {
