@@ -5,41 +5,8 @@ const zeit = @import("zeit");
 const build = @import("build");
 const Conf = @import("Conf.zig");
 const server = @import("server.zig");
-const cli = @import("cli");
-
-var cli_config = struct {
-    config: []const u8 = "", // e.g. "ochi.yaml",
-}{};
 
 pub fn main() !void {
-    var runner = try cli.AppRunner.init(std.heap.page_allocator);
-
-    const app = cli.App{
-        .author = "Ochi",
-        .version = build.version,
-        .command = cli.Command{
-            .name = "run",
-            .description = cli.Description{
-                .one_line = "Start the Ochi server",
-            },
-            .options = try runner.allocOptions(&.{
-                .{
-                    .long_name = "config",
-                    .short_alias = 'c',
-                    .help = "file path to configuration file",
-                    .value_ref = runner.mkRef(&cli_config.config),
-                },
-            }),
-            .target = cli.CommandTarget{
-                .action = cli.CommandAction{ .exec = runServer },
-            },
-        },
-    };
-
-    return runner.run(&app);
-}
-
-fn runServer() !void {
     std.debug.print("Ochi version {s}", .{build.version});
 
     const config = Conf.default(std.heap.page_allocator);
