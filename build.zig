@@ -1,31 +1,38 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const target = b.graph.host;
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
     // 3d party dependencies
     const zeit = b.dependency("zeit", .{
         .target = target,
+        .optimize = optimize,
     });
     const httpz = b.dependency("httpz", .{
         .target = target,
+        .optimize = optimize,
     });
     const snappy = b.dependency("snappy", .{
         .target = target,
+        .optimize = optimize,
     });
     const zint = b.dependency("zint", .{
         .target = target,
+        .optimize = optimize,
     });
 
     // C dependencies
     const zstd_dependency = b.dependency("zstd", .{
         .target = target,
+        .optimize = optimize,
     });
 
     // Create C bindings module
     const cModule = b.createModule(.{
         .root_source_file = b.path("src/lib/c/c.zig"),
         .target = target,
+        .optimize = optimize,
     });
     cModule.linkLibrary(zstd_dependency.artifact("zstd"));
 
@@ -33,6 +40,7 @@ pub fn build(b: *std.Build) void {
     const encodeModule = b.createModule(.{
         .root_source_file = b.path("src/lib/encoding/root.zig"),
         .target = target,
+        .optimize = optimize,
         .imports = &.{
             .{ .name = "c", .module = cModule },
         },
@@ -53,6 +61,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
+            .optimize = optimize,
             .imports = &imports,
             // TODO: keep it only for debug mode
             .sanitize_c = .full,
@@ -84,6 +93,7 @@ pub fn build(b: *std.Build) void {
             // std.testing.refAllDecls(@This())
             .root_source_file = b.path("src/server.zig"),
             .target = target,
+            .optimize = optimize,
             .imports = &imports,
         }),
         // example to run: zig build test -Dtest-filter="SIGTERM"
@@ -96,6 +106,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/lib/encoding/root.zig"),
             .target = target,
+            .optimize = optimize,
             .imports = &.{
                 .{ .name = "c", .module = cModule },
             },
