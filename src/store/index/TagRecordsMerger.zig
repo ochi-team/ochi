@@ -48,7 +48,7 @@ pub fn writeState(self: *Self, alloc: Allocator, buf: *std.ArrayList(u8), target
     // std.debug.assert(ok);
     // ```
     // eventually it must to id similar to block.add API
-    const recordLen = TagRecordsParseState.encodeRecord(
+    const recordLen = TagRecordsParser.encodeRecord(
         slice,
         self.prevState.tenantID,
         self.prevState.tag,
@@ -88,7 +88,7 @@ pub fn statesPrefixEqual(self: *const Self) bool {
 
 pub fn moveParsedState(self: *Self, alloc: Allocator) !void {
     try self.streamIDs.appendSlice(alloc, self.state.streamIDs.items);
-    std.mem.swap(*TagRecordsParseState, &self.state, &self.prevState);
+    std.mem.swap(TagRecordsParser, &self.state, &self.prevState);
 }
 
 const testing = std.testing;
