@@ -35,6 +35,12 @@ export default defineConfig({
             { label: 'Installation', slug: 'docs/guides/installation' },
           ],
         },
+        {
+          label: 'Changelog',
+          items: [
+            { label: '0.1', slug: 'docs/changelog/0.1' },
+          ],
+        },
       ],
       defaultLocale: 'en',
       locales: {
