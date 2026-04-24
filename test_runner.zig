@@ -2,6 +2,7 @@
 const builtin = @import("builtin");
 
 const std = @import("std");
+const Io = std.Io;
 const testing = std.testing;
 
 pub const std_options: std.Options = .{
@@ -131,7 +132,7 @@ fn mainTerminal() void {
 
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -151,7 +152,7 @@ pub fn log(
 /// work-in-progress backends can handle it.
 pub fn mainSimple() anyerror!void {
     @disableInstrumentation();
-    // is the backend capable of calling `std.fs.File.writeAll`?
+    // is the backend capable of calling `Io.File.writeAll`?
     const enable_write = switch (builtin.zig_backend) {
         .stage2_aarch64, .stage2_riscv64 => true,
         else => false,
@@ -167,7 +168,7 @@ pub fn mainSimple() anyerror!void {
     var failed: u64 = 0;
 
     // we don't want to bring in File and Writer if the backend doesn't support it
-    const stdout = if (enable_write) std.fs.File.stdout() else {};
+    const stdout = if (enable_write) Io.File.stdout() else {};
 
     for (builtin.test_functions) |test_fn| {
         if (enable_write) {

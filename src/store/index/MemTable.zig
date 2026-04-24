@@ -197,7 +197,7 @@ pub fn size(self: *MemTable) u64 {
 }
 
 pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
-    fs.makeDirAssert(path);
+    fs.createDirAssert(io, path);
 
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();

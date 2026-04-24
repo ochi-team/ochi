@@ -49,7 +49,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 refCounter: std.atomic.Value(u32),
 
 pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
-    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+    std.fs.createDirAbsolute(io, path) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
         std.posix.MakeDirError.PathAlreadyExists => {},
@@ -317,7 +317,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
@@ -342,13 +342,13 @@ test "release fromMem does not affect filesystem path" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const sentinelPath = try std.fs.path.join(alloc, &.{ rootPath, "sentinel" });
     defer alloc.free(sentinelPath);
     // create a real directory to verify it remains
     try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(sentinelPath, .{}));
-    try std.fs.makeDirAbsolute(sentinelPath);
+    try std.fs.createDirAbsolute(io, sentinelPath);
 
     const memTable = try MemTable.empty(alloc);
 
@@ -409,7 +409,7 @@ test "open reads table from disk" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);

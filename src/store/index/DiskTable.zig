@@ -7,9 +7,9 @@ const DiskTable = @This();
 
 tableHeader: TableHeader,
 
-indexFile: std.fs.File,
-entriesFile: std.fs.File,
-lensFile: std.fs.File,
+indexFile: Io.File,
+entriesFile: Io.File,
+lensFile: Io.File,
 
 pub fn deinit(self: *DiskTable, alloc: Allocator) void {
     // TODO: close files in parallel

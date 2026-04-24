@@ -23,10 +23,10 @@ const MemDestination = struct {
 
 // TODO: refactor this garbage to work with Wrter interface
 const DiskDestination = struct {
-    entriesFile: std.fs.File,
-    lensFile: std.fs.File,
-    indexFile: std.fs.File,
-    metaindexFile: std.fs.File,
+    entriesFile: Io.File,
+    lensFile: Io.File,
+    indexFile: Io.File,
+    metaindexFile: Io.File,
 
     fn sync(self: *DiskDestination) !void {
         try self.entriesFile.sync();
@@ -82,7 +82,7 @@ pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitsInCache: bool) 
     // TODO: apply fitsInCache to create a component to write into a file taking OS cache into account
     _ = fitsInCache;
 
-    fs.makeDirAssert(path);
+    fs.createDirAssert(io, path);
 
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
@@ -300,7 +300,7 @@ test "BlockWriter disk output matches mem output" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
     defer alloc.free(tablePath);

@@ -126,7 +126,7 @@ pub fn close(
 }
 
 pub fn createDir(path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
-    fs.makeDirAssert(path);
+    fs.createDirAssert(io, path);
 
     IndexRecorder.createDir(indexPath);
     DataRecorder.createDir(dataPath);

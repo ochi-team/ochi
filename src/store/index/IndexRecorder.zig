@@ -156,7 +156,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*IndexRecord
 }
 
 pub fn createDir(path: []const u8) void {
-    fs.makeDirAssert(path);
+    fs.createDirAssert(io, path);
     fs.syncPathAndParentDir(path);
 }
 
@@ -838,7 +838,7 @@ test "flushMemEntries non-force respects flush deadline" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const runtime = try Runtime.init(alloc, rootPath, 0.5);
@@ -876,7 +876,7 @@ test "mergeTables force single mem table creates disk table" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const runtime = try Runtime.init(alloc, rootPath, 0.5);
@@ -904,7 +904,7 @@ test "IndexRecorder add and reopen preserves item count" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const inserted: usize = 128;
@@ -968,7 +968,7 @@ test "IndexRecorder concurrent add preserves item count" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const runtime = try Runtime.init(alloc, rootPath, 0.5);
@@ -1006,7 +1006,7 @@ test "IndexRecorder reads free disk space from runtime" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, "./");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, "./");
 
     defer alloc.free(rootPath);
 
@@ -1035,7 +1035,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const maxIndexMemBlockSize = 32 * 1024;
     const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
@@ -1077,7 +1077,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const shortValue = "short";
 
@@ -1130,7 +1130,7 @@ test "IndexRecorder large entries write to 3 shards" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const maxIndexMemBlockSize = 32 * 1024;
     //countAdditionalEntries < Entries.maxBlocksPerShard

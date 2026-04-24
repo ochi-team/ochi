@@ -127,7 +127,7 @@ test "serverEndToEndViaHTTP" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmpPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const tmpPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(tmpPath);
     try std.posix.chdir(tmpPath);
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const ValuesEncoder = @import("ValuesEncoder.zig");
 
@@ -146,13 +147,13 @@ pub fn initMem(allocator: Allocator, maxColI: u16) !*Self {
     return w;
 }
 
-pub fn initDisk(alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
+pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
     std.debug.assert(path.len != 0);
 
     // TODO: implement page cache support
     _ = fitsInCache;
 
-    fs.makeDirAssert(path);
+    fs.createDirAssert(io, path);
 
     var stack = std.heap.stackFallback(2048, alloc);
     const fba = stack.get();
@@ -575,7 +576,7 @@ fn createBloomValuesFile(alloc: Allocator, tablePath: []const u8, i: usize) !Str
 
     const path = try MemTable.getBloomValuesFilePath(fba, tablePath, i);
     defer fba.free(path);
-    const file = try std.fs.cwd().createFile(path, .{});
+    const file = try std.Io.Dir.cwd().createFile(path, .{});
     errdefer file.close();
     return StreamDestination.initFile(file);
 }
@@ -586,7 +587,7 @@ fn createBloomTokensValues(alloc: Allocator, tablePath: []const u8, i: usize) !S
 
     const path = try MemTable.getBloomTokensFilePath(fba, tablePath, i);
     defer fba.free(path);
-    const file = try std.fs.cwd().createFile(path, .{});
+    const file = try std.Io.Dir.cwd().createFile(path, .{});
     errdefer file.close();
     return StreamDestination.initFile(file);
 }

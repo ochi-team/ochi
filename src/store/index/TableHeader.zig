@@ -92,7 +92,7 @@ test "roundtrip file read/write" {
     defer tmp.cleanup();
 
     try tmp.dir.makePath("table");
-    const tablePath = try tmp.dir.realpathAlloc(alloc, "table");
+    const tablePath = try tmp.dir.realPathFileAlloc(io, alloc, "table");
     defer alloc.free(tablePath);
 
     var tb = TableHeader{

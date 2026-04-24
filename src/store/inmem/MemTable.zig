@@ -102,7 +102,7 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         return error.DirAlreadyExists;
     } else |err| switch (err) {
         error.FileNotFound => {
-            try std.fs.makeDirAbsolute(path);
+            try std.fs.createDirAbsolute(io, path);
         },
         else => return err,
     }
@@ -224,7 +224,7 @@ fn populateSampleLines(sample: *SampleLines) void {
 }
 
 fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    var file = try std.fs.cwd().openFile(path, .{});
+    var file = try std.Io.Dir.cwd().openFile(path, .{});
     defer file.close();
     return file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
@@ -354,7 +354,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const basePath = try tmp.dir.realpathAlloc(allocator, ".");
+    const basePath = try tmp.dir.realPathFileAlloc(io, allocator, ".");
     defer allocator.free(basePath);
     const flushPath = try std.fs.path.join(allocator, &.{ basePath, "flush" });
     defer allocator.free(flushPath);

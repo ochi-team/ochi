@@ -1,8 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 pub const FileDestination = struct {
-    file: std.fs.File,
+    file: Io.File,
     len: usize,
     /// buffer holds allocated chunk to reuse between write operations
     buf: std.ArrayList(u8) = .empty,
@@ -24,7 +25,7 @@ pub const StreamDestination = union(Tag) {
         return .{ .buffer = try std.ArrayList(u8).initCapacity(allocator, capacity) };
     }
 
-    pub fn initFile(file: std.fs.File) !Self {
+    pub fn initFile(file: Io.File) !Self {
         const stat = try file.stat();
         const initialLen: usize = @intCast(stat.size);
         try file.seekTo(stat.size);
@@ -127,11 +128,12 @@ test "StreamDestination buffer destination" {
 
 test "StreamDestination file destination" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const filePath = try std.fs.path.join(alloc, &.{ rootPath, "timestamps.bin" });
     defer alloc.free(filePath);

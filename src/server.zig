@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const httpz = @import("httpz");
 
@@ -25,13 +26,13 @@ fn handleSigterm(_: c_int) callconv(.c) void {
 // TODO: make it configurable
 const storePath = ".ochi";
 
-pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
-    std.fs.cwd().makeDir(storePath) catch |err| switch (err) {
+pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
+    std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try std.fs.cwd().realpath(storePath, &storePathBuf);
+    const path = try std.Io.Dir.cwd().realPathFile(io, storePath, &storePathBuf);
 
     var store = try Store.init(allocator, path);
     defer store.deinit(allocator);
@@ -84,12 +85,13 @@ test {
 
 test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     const conf = Conf.default(allocator);
     // Start the server in a separate thread
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            startServer(threadAllocator, threadConf) catch |err| {
+            startServer(io, threadAllocator, threadConf) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }

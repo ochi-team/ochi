@@ -660,7 +660,7 @@ fn testInitFromDiskTable(allocator: Allocator) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(allocator, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, allocator, ".");
     defer allocator.free(rootPath);
     const tablePath = try std.fs.path.join(allocator, &.{ rootPath, "table-1" });
     defer allocator.free(tablePath);

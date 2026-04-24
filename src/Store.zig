@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const zeit = @import("zeit");
 
@@ -20,7 +21,7 @@ pub const Store = @This();
 path: []const u8,
 /// lockFile is used to ensure only one instance is running
 /// in order to prevent data corruption
-lockFile: std.fs.File,
+lockFile: Io.File,
 
 partitionsMx: std.Thread.Mutex = .{},
 partitions: std.ArrayList(*Partition) = .empty,
@@ -122,7 +123,7 @@ pub fn deinit(self: *Store, allocator: Allocator) void {
     self.runtime.deinit(allocator);
 }
 
-pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !std.fs.Dir {
+pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []const u8) !std.fs.Dir {
     std.fs.accessAbsolute(path, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
@@ -135,7 +136,7 @@ pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !
     std.fs.accessAbsolute(partitionsPath, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                fs.makeDirAssert(partitionsPath);
+                fs.createDirAssert(io, partitionsPath);
                 fs.syncPathAndParentDir(path);
             },
             else => return err,
@@ -145,9 +146,9 @@ pub fn createStoreDirIfNotExists(path: []const u8, partitionsPath: []const u8) !
     return std.fs.openDirAbsolute(partitionsPath, .{ .iterate = true });
 }
 
-pub fn createDir(path: []const u8, partitionsPath: []const u8) void {
-    fs.makeDirAssert(path);
-    fs.makeDirAssert(partitionsPath);
+pub fn createDir(io: Io, path: []const u8, partitionsPath: []const u8) void {
+    fs.createDirAssert(io, path);
+    fs.createDirAssert(io, partitionsPath);
 
     fs.syncPathAndParentDir(path);
 }
@@ -449,7 +450,7 @@ fn dayFromKey(key: []const u8) !u32 {
     return @intCast(ts / std.time.ns_per_day);
 }
 
-fn createLockFile(path: []const u8) !std.fs.File {
+fn createLockFile(path: []const u8) !Io.File {
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
     var lockFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -529,6 +530,7 @@ test "dayFromKey parses partition keys and roundtrips with partitionKeyBuf" {
 
 test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const Case = struct {
         createStoreDir: bool,
@@ -543,7 +545,7 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     for (cases, 0..) |case, i| {
@@ -556,10 +558,10 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
         defer alloc.free(partitionsPath);
 
         if (case.createStoreDir) {
-            try std.fs.makeDirAbsolute(storePath);
+            try std.fs.createDirAbsolute(io, storePath);
         }
         if (case.createPartitionsDir) {
-            try std.fs.makeDirAbsolute(partitionsPath);
+            try std.fs.createDirAbsolute(io, partitionsPath);
         }
 
         _ = try Store.createStoreDirIfNotExists(storePath, partitionsPath);
@@ -571,20 +573,21 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
 
 test "init opens existing partitions, sorts them and sets lru" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const storePath = try std.fs.path.join(alloc, &.{ rootPath, "store" });
     defer alloc.free(storePath);
-    try std.fs.makeDirAbsolute(storePath);
+    try std.fs.createDirAbsolute(io, storePath);
 
     const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, filenames.partitions });
     defer alloc.free(partitionsPath);
-    try std.fs.makeDirAbsolute(partitionsPath);
+    try std.fs.createDirAbsolute(io, partitionsPath);
 
     const keys = [_][]const u8{ "31121999", "01012026", "29022024" };
     for (keys) |key| {
@@ -595,9 +598,9 @@ test "init opens existing partitions, sorts them and sets lru" {
         const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
         defer alloc.free(dataPath);
 
-        try std.fs.makeDirAbsolute(partitionPath);
-        try std.fs.makeDirAbsolute(indexPath);
-        try std.fs.makeDirAbsolute(dataPath);
+        try std.fs.createDirAbsolute(io, partitionPath);
+        try std.fs.createDirAbsolute(io, indexPath);
+        try std.fs.createDirAbsolute(io, dataPath);
     }
 
     var store = try Store.init(alloc, storePath);
@@ -744,15 +747,16 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, filenames.partitions });
     defer alloc.free(partitionsRoot);
-    try std.fs.makeDirAbsolute(partitionsRoot);
+    try std.fs.createDirAbsolute(io, partitionsRoot);
 
     var store = try Store.init(alloc, rootPath);
     defer store.deinit(alloc);

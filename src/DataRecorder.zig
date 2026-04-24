@@ -2,6 +2,7 @@
 // we must desine a single component to manage both
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const fs = @import("fs.zig");
 
@@ -198,8 +199,8 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
     return t;
 }
 
-pub fn createDir(path: []const u8) void {
-    fs.makeDirAssert(path);
+pub fn createDir(io: Io, path: []const u8) void {
+    fs.createDirAssert(io, path);
     fs.syncPathAndParentDir(path);
 }
 
@@ -922,10 +923,11 @@ test "selectTablesInRange selects overlap and handles gaps" {
 
 test "flushDataShards non-force respects flush deadline" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const runtime = try Runtime.init(alloc, rootPath, 0.5);
@@ -955,10 +957,11 @@ test "flushDataShards non-force respects flush deadline" {
 
 test "mergeTables force single mem table creates disk table" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const runtime = try Runtime.init(alloc, rootPath, 0.5);
@@ -989,10 +992,11 @@ test "mergeTables force single mem table creates disk table" {
 
 test "DataRecorder.addAndReopenPreservesLineCount" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
 
     const inserted: usize = 96;

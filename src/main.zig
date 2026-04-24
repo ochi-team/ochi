@@ -27,5 +27,5 @@ pub fn main() !void {
     // TODO: introduce structured logger
     std.debug.print("Ochi in mono mode starting at port={d}, time={s}\n", .{ config.server.port, nowStr });
 
-    try server.startServer(gpa, config);
+    try server.startServer(io, gpa, config);
 }

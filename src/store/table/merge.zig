@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
@@ -217,7 +218,7 @@ pub fn Merger(
 
         const ownerType = switch (@typeInfo(T)) {
             .pointer => |ptr_info| ptr_info.child,
-            .@"struct" => |_| T,
+            .@"struct" => T,
             else => @compileError(std.fmt.comptimePrint(
                 "{s} must be a struct or a pointer to a struct",
                 .{
@@ -370,6 +371,7 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
 
 test "getDestinationTableKind rules" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const small1 = try createSizedMemTable(alloc, 256);
     defer small1.close();
@@ -390,7 +392,7 @@ test "getDestinationTableKind rules" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
     defer alloc.free(rootPath);
     const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
     errdefer alloc.free(diskPath);
