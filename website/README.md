@@ -41,3 +41,27 @@ All commands are run from the root of the project, from a terminal:
 ## 👀 Want to learn more?
 
 Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+
+TODO: setup spellchecker for docs
+TODO: extract website to its repo, leave only related content: docs, changelog, api reference, etc.
+TODO: make the changelog date used from the frontmatter, not the direct paragraph
+TODO: leave a link "edit on github" on a doc page
+
+
+#### changelog
+put Unreleased on top
+
+- date
+- version
+
+- Category (query, ingest, config, install, etc.)
+- action (Added, Changed, Deprecated, Removed, Fixed, Security)
+- description
+- link to the PR/commit
+- link to a doc
+- prefix **BREAKING:** 
+
+
+trailer
+--------
+Change: Added(query)

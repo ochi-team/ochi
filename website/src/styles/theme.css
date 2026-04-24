@@ -63,3 +63,11 @@
   color: var(--sl-color-gray-4);
   font-weight: 700;
 }
+
+.sl-markdown-content .changelog-date {
+  margin-top: -0.5rem;
+  margin-bottom: 1.25rem;
+  color: var(--sl-color-gray-4);
+  font-size: 1rem;
+  font-weight: 400;
+}

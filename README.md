@@ -52,7 +52,3 @@ Ochi is a cost-effective, Loki compatible database for logs.
 - test data and effects separately
 - setup coverage reports
 
-
-TODO: setup spellchecker for docs
-TODO: setup changelog in the docs
-TODO: extract website to its repo, leave only related content: docs, changelog, api reference, etc.
