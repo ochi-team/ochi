@@ -77,13 +77,13 @@ pub fn open(
         DataRecorder.createDir(io, dataPath);
     }
 
-    const indexRecorder = try IndexRecorder.init(alloc, indexPath, runtime);
+    const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
     errdefer indexRecorder.deinit(alloc);
 
     const index = try Index.init(alloc, indexRecorder);
-    errdefer index.deinit(alloc);
+    errdefer index.deinit(io, alloc);
 
-    const data = try DataRecorder.init(alloc, dataPath, runtime);
+    const data = try DataRecorder.init(io, alloc, dataPath, runtime);
     errdefer data.deinit(alloc);
 
     const partition = try alloc.create(Partition);
@@ -104,13 +104,13 @@ pub fn retain(self: *Partition) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-pub fn release(self: *Partition) void {
+pub fn release(self: *Partition, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
     if (prev != 1) return;
 
-    self.close();
+    self.close(io);
 
     // TODO: deletion of the partition due to retention or eviction policy
     // read table release implementation as a sample
@@ -118,8 +118,9 @@ pub fn release(self: *Partition) void {
 
 pub fn close(
     self: *Partition,
+    io: Io,
 ) void {
-    self.index.deinit(self.alloc);
+    self.index.deinit(io, self.alloc);
 
     self.data.stop(self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
@@ -204,9 +205,9 @@ pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, quer
     return self.data.queryLines(alloc, result.sids.items, query);
 }
 
-pub fn flushForce(self: *Partition, alloc: Allocator) !void {
-    try self.index.recorder.flushForce(alloc);
-    try self.data.flushForce(alloc);
+pub fn flushForce(self: *Partition, io: Io, alloc: Allocator) !void {
+    try self.index.recorder.flushForce(io, alloc);
+    try self.data.flushForce(io, alloc);
 }
 
 fn isCached(self: *Partition, sid: SID) bool {

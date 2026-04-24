@@ -104,7 +104,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
         return error.DirAlreadyExists;
     } else |err| switch (err) {
         error.FileNotFound => {
-            try Dir.createDirAbsolute(io, path);
+            try Dir.createDirAbsolute(io, path, .default_dir);
         },
         else => return err,
     }

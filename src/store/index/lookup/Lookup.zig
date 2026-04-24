@@ -389,7 +389,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
             try testing.expect(actual == null);
         }
     }
-    try recorder.flushForce(alloc);
+    try recorder.flushForce(io, alloc);
 }
 
 test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on mixed tables" {
@@ -515,7 +515,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
             try testing.expectEqual(actual.streamIDs.keys().len, 0);
         }
     }
-    try recorder.flushForce(alloc);
+    try recorder.flushForce(io, alloc);
 }
 
 test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
@@ -570,5 +570,5 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     try testing.expectEqual(0, actual.streamIDs.keys()[0]);
     try testing.expectEqual(999, actual.streamIDs.keys()[resultLimit - 1]);
 
-    try recorder.flushForce(alloc);
+    try recorder.flushForce(io, alloc);
 }

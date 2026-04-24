@@ -67,7 +67,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
     var partitions = try std.ArrayList(*Partition).initCapacity(alloc, 30);
     errdefer {
         for (partitions.items) |partition| {
-            partition.close();
+            partition.close(io);
         }
         partitions.deinit(alloc);
     }
@@ -105,9 +105,9 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
     return store;
 }
 
-pub fn deinit(self: *Store, allocator: Allocator) void {
+pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     for (self.partitions.items) |partition| {
-        partition.release();
+        partition.release(io);
     }
     self.partitions.deinit(allocator);
 
@@ -158,6 +158,7 @@ pub fn createDir(io: Io, path: []const u8, partitionsPath: []const u8) void {
 const retentionNs: u64 = 30 * std.time.ns_per_day;
 pub fn addLines(
     self: *Store,
+    io: Io,
     allocator: Allocator,
     lines: []Line,
     tags: []Field,
@@ -190,7 +191,7 @@ pub fn addLines(
 
             break :blk try self.getPartitionOrLru(allocator, firstDay);
         };
-        defer partition.release();
+        defer partition.release(io);
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
@@ -240,13 +241,19 @@ pub fn addLines(
 
             break :blk try self.getPartitionOrLru(allocator, day);
         };
-        defer partition.release();
+        defer partition.release(io);
 
         try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
     }
 }
 
-pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
+pub fn queryLines(
+    self: *Store,
+    io: Io,
+    alloc: Allocator,
+    tenantID: []const u8,
+    query: Query,
+) !std.ArrayList(Line) {
     // TODO: query cancelation
 
     self.partitionsMx.lock();
@@ -264,7 +271,7 @@ pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Q
         return err;
     };
     defer {
-        for (parts.items) |part| part.release();
+        for (parts.items) |part| part.release(io);
         parts.deinit(fbaAlloc);
     }
     for (slice) |part| {
@@ -284,10 +291,10 @@ pub fn queryLines(self: *Store, alloc: Allocator, tenantID: []const u8, query: Q
     return results;
 }
 
-pub fn flush(self: *Store, alloc: Allocator) !void {
+pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
     var parts = try std.ArrayList(*Partition).initCapacity(alloc, self.partitions.items.len);
     defer {
-        for (parts.items) |part| part.release();
+        for (parts.items) |part| part.release(io);
         parts.deinit(alloc);
     }
 
@@ -299,7 +306,7 @@ pub fn flush(self: *Store, alloc: Allocator) !void {
     self.partitionsMx.unlock();
 
     for (self.partitions.items) |part| {
-        try part.flushForce(alloc);
+        try part.flushForce(io, alloc);
     }
 }
 
@@ -562,10 +569,10 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
         defer alloc.free(partitionsPath);
 
         if (case.createStoreDir) {
-            try Dir.createDirAbsolute(io, storePath);
+            try Dir.createDirAbsolute(io, storePath, .default_dir);
         }
         if (case.createPartitionsDir) {
-            try Dir.createDirAbsolute(io, partitionsPath);
+            try Dir.createDirAbsolute(io, partitionsPath, .default_dir);
         }
 
         _ = try Store.createStoreDirIfNotExists(storePath, partitionsPath);
@@ -587,11 +594,11 @@ test "init opens existing partitions, sorts them and sets lru" {
 
     const storePath = try std.fs.path.join(alloc, &.{ rootPath, "store" });
     defer alloc.free(storePath);
-    try Dir.createDirAbsolute(io, storePath);
+    try Dir.createDirAbsolute(io, storePath, .default_dir);
 
     const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, filenames.partitions });
     defer alloc.free(partitionsPath);
-    try Dir.createDirAbsolute(io, partitionsPath);
+    try Dir.createDirAbsolute(io, partitionsPath, .default_dir);
 
     const keys = [_][]const u8{ "31121999", "01012026", "29022024" };
     for (keys) |key| {
@@ -602,9 +609,9 @@ test "init opens existing partitions, sorts them and sets lru" {
         const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
         defer alloc.free(dataPath);
 
-        try Dir.createDirAbsolute(io, partitionPath);
-        try Dir.createDirAbsolute(io, indexPath);
-        try Dir.createDirAbsolute(io, dataPath);
+        try Dir.createDirAbsolute(io, partitionPath, .default_dir);
+        try Dir.createDirAbsolute(io, indexPath, .default_dir);
+        try Dir.createDirAbsolute(io, dataPath, .default_dir);
     }
 
     var store = try Store.init(alloc, storePath);
@@ -760,7 +767,7 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, filenames.partitions });
     defer alloc.free(partitionsRoot);
-    try Dir.createDirAbsolute(io, partitionsRoot);
+    try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
 
     var store = try Store.init(alloc, rootPath);
     defer store.deinit(alloc);

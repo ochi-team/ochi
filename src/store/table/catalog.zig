@@ -228,7 +228,7 @@ test "readNames returns error in validate mode when tables file is missing but t
     const tableDirPath = try std.fs.path.join(alloc, &.{ rootPath, "table-a" });
     defer alloc.free(tableDirPath);
 
-    try Dir.createDirAbsolute(io, tableDirPath);
+    try Dir.createDirAbsolute(io, tableDirPath, .default_dir);
 
     // Validate mode must fail if tables.json is missing while table dirs already exist
     try testing.expectError(error.TableFileExistsWithNoTableEntry, readNames(alloc, tablesFilePath, true));
@@ -248,7 +248,7 @@ test "validateTablesExist" {
     const tableName = "table-a";
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
     defer alloc.free(tablePath);
-    try Dir.createDirAbsolute(io, tablePath);
+    try Dir.createDirAbsolute(io, tablePath, .default_dir);
 
     const Case = struct {
         tableNames: []const []const u8,
@@ -314,7 +314,7 @@ test "removeUnusedTables" {
         for (case.existingTableNames) |tableName| {
             const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
             defer alloc.free(tablePath);
-            try Dir.createDirAbsolute(io, tablePath);
+            try Dir.createDirAbsolute(io, tablePath, .default_dir);
         }
 
         try removeUnusedTables(alloc, rootPath, case.usedTableNames);

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
@@ -39,8 +40,8 @@ pub fn init(allocator: std.mem.Allocator, recorder: *IndexRecorder) !*Self {
     return i;
 }
 
-pub fn deinit(self: *Self, allocator: Allocator) void {
-    self.recorder.stop(allocator) catch |err| {
+pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
+    self.recorder.stop(io, allocator) catch |err| {
         std.debug.panic("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
     };
 

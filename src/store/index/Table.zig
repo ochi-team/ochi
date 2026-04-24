@@ -51,7 +51,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 refCounter: std.atomic.Value(u32),
 
 pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
-    Dir.createDirAbsolute(io, path) catch |err| switch (err) {
+    Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
         std.posix.MakeDirError.PathAlreadyExists => {},
@@ -352,7 +352,7 @@ test "release fromMem does not affect filesystem path" {
     defer alloc.free(sentinelPath);
     // create a real directory to verify it remains
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, sentinelPath, .{}));
-    try Dir.createDirAbsolute(io, sentinelPath);
+    try Dir.createDirAbsolute(io, sentinelPath, .default_dir);
 
     const memTable = try MemTable.empty(alloc);
 
