@@ -43,9 +43,9 @@ fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
 }
 
 // TODO: move flush interval to config
-fn setFlushTime() i64 {
+fn setFlushTime(io: Io) i64 {
     // now + 1s
-    return std.time.microTimestamp() + std.time.us_per_s;
+    return Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
 }
 
 pub const DataRecorder = @This();
@@ -83,7 +83,7 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, alloc: Allocator, sem: *Io.Semaphore) !?*Table {
+    fn flush(self: *DataShard, io: Io, alloc: Allocator, sem: *Io.Semaphore) !?*Table {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -101,7 +101,7 @@ pub const DataShard = struct {
 
         sem.post();
 
-        memTable.flushAtUs = setFlushTime();
+        memTable.flushAtUs = setFlushTime(io);
         return Table.fromMem(alloc, memTable);
     }
 };
@@ -117,8 +117,6 @@ concurrency: u16,
 diskMergeSem: Io.Semaphore,
 memMergeSem: Io.Semaphore,
 
-pool: *Io.Pool,
-wg: Io.WaitGroup = .{},
 // TODO: implement its usage, limit the amount of mem tables similar to index
 // in order to let the mem merger handle it
 memTablesSem: Io.Semaphore = .{
@@ -131,7 +129,7 @@ mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
 
-pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorder {
+pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
@@ -146,18 +144,10 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
         };
     }
 
-    var pool = try alloc.create(Io.Pool);
-    errdefer alloc.destroy(pool);
-    try pool.init(.{
-        .allocator = alloc,
-        .n_jobs = runtime.workerThreads,
-    });
-    errdefer pool.deinit();
-
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    var tables = try Table.openAll(alloc, path);
+    var tables = try Table.openAll(io, alloc, path);
     errdefer {
         for (tables.items) |table| table.close();
         tables.deinit(alloc);
@@ -169,7 +159,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
     t.* = DataRecorder{
         .shards = shards,
         .nextShard = std.atomic.Value(usize).init(0),
-        .mergeIdx = .init(@intCast(std.time.nanoTimestamp())),
+        .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real))),
 
         .mxTables = .{},
         .concurrency = concurrency,
@@ -182,7 +172,6 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
             .permits = @max(4, concurrency),
         },
 
-        .pool = pool,
         .stopped = std.atomic.Value(bool).init(false),
         .path = path,
         .runtime = runtime,
@@ -211,17 +200,16 @@ pub fn createDir(io: Io, path: []const u8) void {
 // TODO: make using this API instead of directly managing stopped state in the tests
 // TODO: this theoretically is not enough to stop the other jobs form starting,
 // either lock stop or find another way to make sure none of the task are running after wg.wait
-pub fn stop(self: *DataRecorder, alloc: Allocator) !void {
+pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
-    self.wg.wait();
 
-    try self.flushForce(alloc);
+    try self.flushForce(io, alloc);
 
     self.deinit(alloc);
 }
 
-pub fn flushForce(self: *DataRecorder, alloc: Allocator) !void {
-    try self.flushDataShards(alloc, true);
+pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    try self.flushDataShards(io, alloc, true);
     try self.flushMemTables(alloc, true);
 }
 
@@ -244,18 +232,18 @@ pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
 
     self.memTables.deinit(allocator);
     self.diskTables.deinit(allocator);
-    self.pool.deinit();
-    allocator.destroy(self.pool);
     allocator.free(self.shards);
     allocator.destroy(self);
 }
 
 fn startMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
-    self.pool.spawnWg(&self.wg, runMemTablesFlusher, .{ self, alloc });
+    _ = self;
+    _ = alloc;
 }
 
 fn startDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
-    self.pool.spawnWg(&self.wg, runDataShardsFlusher, .{ self, alloc });
+    _ = self;
+    _ = alloc;
 }
 
 fn runMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
@@ -273,13 +261,13 @@ fn runMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
     }
 }
 
-fn runDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
+fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
     // half a sec
     // TODO: test it with 1 sec
     const flushInterval = std.time.ns_per_s / 2;
 
     while (!self.stopped.load(.acquire)) {
-        self.flushDataShards(alloc, false) catch |err| {
+        self.flushDataShards(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 
             self.stopped.store(true, .release);
@@ -290,7 +278,7 @@ fn runDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
         sleepOrStop(&self.stopped, flushInterval);
     }
 
-    self.flushDataShards(alloc, true) catch |err| {
+    self.flushDataShards(io, alloc, true) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
@@ -299,13 +287,12 @@ fn runDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
     };
 }
 
-fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void {
-    const nowUs = std.time.microTimestamp();
-
-    self.mxTables.lock();
+fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool) !void {
+    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
+    self.mxTables.lockUncancelable(io);
 
     var tables = std.ArrayList(*Table).initCapacity(allocator, self.memTables.items.len) catch |err| {
-        self.mxTables.unlock();
+        self.mxTables.unlock(io);
         return err;
     };
     defer tables.deinit(allocator);
@@ -318,7 +305,7 @@ fn flushMemTables(self: *DataRecorder, allocator: Allocator, force: bool) !void 
         }
     }
 
-    self.mxTables.unlock();
+    self.mxTables.unlock(io);
 
     if (tables.items.len == 0) {
         return;
@@ -346,13 +333,13 @@ fn flushMemTablesInChunks(self: *DataRecorder, alloc: Allocator, toFlush: std.Ar
     }
 }
 
-fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void {
+fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: bool) !void {
     if (force) {
         for (self.shards) |*shard| {
             // if it's not locked we are adding lines just know, makes no sense to lock it yet
             if (shard.mx.tryLock()) {
-                defer shard.mx.unlock();
-                try self.flushShard(allocator, shard);
+                defer shard.mx.unlock(io);
+                try self.flushShard(io, allocator, shard);
             } else {
                 std.debug.print("[DEBUG] skipping shard flush because it's locked\n", .{});
             }
@@ -360,14 +347,14 @@ fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void
         return;
     }
 
-    const nowUs = std.time.microTimestamp();
+    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
     for (self.shards) |*shard| {
         // if it's not locked we are adding lines just know, makes no sense to lock it yet
         if (shard.mx.tryLock()) {
-            defer shard.mx.unlock();
+            defer shard.mx.unlock(io);
             if (shard.flushAtUs) |flushAtUs| {
                 if (flushAtUs < nowUs) {
-                    try self.flushShard(allocator, shard);
+                    try self.flushShard(io, allocator, shard);
                 }
             }
         } else {
@@ -376,11 +363,11 @@ fn flushDataShards(self: *DataRecorder, allocator: Allocator, force: bool) !void
     }
 }
 
-fn flushShard(self: *DataRecorder, alloc: Allocator, shard: *DataShard) !void {
-    const maybeMemTable = try shard.flush(alloc, &self.memMergeSem);
+fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) !void {
+    const maybeMemTable = try shard.flush(io, alloc, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
-        self.mxTables.lock();
-        defer self.mxTables.unlock();
+        self.mxTables.lockUncancelable(io);
+        defer self.mxTables.unlock(io);
         try self.memTables.append(alloc, memTable);
 
         shard.flushAtUs = null;
@@ -391,15 +378,13 @@ fn flushShard(self: *DataRecorder, alloc: Allocator, shard: *DataShard) !void {
 }
 
 pub fn startDiskTablesMerge(self: *DataRecorder, alloc: Allocator) void {
-    if (self.stopped.load(.acquire)) return;
-
-    self.pool.spawnWg(&self.wg, runDiskTablesMerger, .{ self, alloc });
+    _ = self;
+    _ = alloc;
 }
 
 pub fn startMemTablesMerge(self: *DataRecorder, alloc: Allocator) void {
-    if (self.stopped.load(.acquire)) return;
-
-    self.pool.spawnWg(&self.wg, runMemTableMerger, .{ self, alloc });
+    _ = self;
+    _ = alloc;
 }
 
 fn runDiskTablesMerger(self: *DataRecorder, alloc: Allocator) void {
@@ -422,6 +407,7 @@ fn runMemTableMerger(self: *DataRecorder, alloc: Allocator) void {
 
 fn tablesMerger(
     self: *DataRecorder,
+    io: Io,
     alloc: Allocator,
     tables: *std.ArrayList(*Table),
     sem: *Io.Semaphore,
@@ -432,15 +418,15 @@ fn tablesMerger(
     while (!self.stopped.load(.acquire)) {
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace());
 
-        self.mxTables.lock();
+        self.mxTables.lockUncancelable(io);
         // TODO: we have to know the max amount of tables in advance
         tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
-            self.mxTables.unlock();
+            self.mxTables.unlock(io);
             return err;
         };
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
         const window = merger.filterTablesToMerge(tables.items, &tablesToMerge, maxDiskTableSize);
-        self.mxTables.unlock();
+        self.mxTables.unlock(io);
 
         const w = window orelse return;
         const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
@@ -472,9 +458,9 @@ fn mergeTables(
     var swapped = false;
     defer {
         if (!swapped) {
-            self.mxTables.lock();
+            self.mxTables.lockUncancelable(io);
             for (tables) |table| table.inMerge = false;
-            self.mxTables.unlock();
+            self.mxTables.unlock(io);
         }
     }
 
@@ -577,12 +563,12 @@ fn mergeTables(
     swapped = true;
 }
 
-pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line) !void {
+pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line) !void {
     const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
     var shard = &self.shards[i];
 
-    shard.mx.lock();
-    defer shard.mx.unlock();
+    shard.mx.lockUncancelable(io);
+    defer shard.mx.unlock(io);
 
     var arena = shard.arenaState.promote(alloc);
     defer shard.arenaState = arena.state;
@@ -639,14 +625,14 @@ pub fn addLines(self: *DataRecorder, alloc: Allocator, lines: []const Line) !voi
     }
     shard.size += size;
     if (shard.mustFlush()) {
-        try self.flushShard(alloc, shard);
+        try self.flushShard(io, alloc, shard);
     } else if (shard.flushAtUs == null) {
-        shard.flushAtUs = setFlushTime();
+        shard.flushAtUs = setFlushTime(io);
     }
 }
 
-pub fn queryLines(self: *DataRecorder, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
-    self.mxTables.lock();
+pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
+    self.mxTables.lockUncancelable(io);
 
     const stackSize = 64;
     var fba = std.heap.stackFallback(stackSize, alloc);
@@ -661,14 +647,14 @@ pub fn queryLines(self: *DataRecorder, alloc: Allocator, sids: []SID, query: Que
     }
 
     selectTablesInRange(fbaAlloc, &tables, self.memTables.items, query.start, query.end) catch |err| {
-        self.mxTables.unlock();
+        self.mxTables.unlock(io);
         return err;
     };
     selectTablesInRange(fbaAlloc, &tables, self.diskTables.items, query.start, query.end) catch |err| {
-        self.mxTables.unlock();
+        self.mxTables.unlock(io);
         return err;
     };
-    self.mxTables.unlock();
+    self.mxTables.unlock(io);
 
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
@@ -937,23 +923,22 @@ test "flushDataShards non-force respects flush deadline" {
     const recorder = try DataRecorder.init(alloc, rootPath, runtime);
     defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
-    recorder.wg.wait();
 
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
     recorder.shards[0].size = line.fieldsSize();
 
-    recorder.shards[0].flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
-    try recorder.flushDataShards(alloc, false);
+    recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
+    try recorder.flushDataShards(io, alloc, false);
     try testing.expectEqual(@as(usize, 1), recorder.shards[0].lines.items.len);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
 
-    recorder.shards[0].flushAtUs = std.time.microTimestamp() - std.time.us_per_s;
-    try recorder.flushDataShards(alloc, false);
+    recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() - std.time.us_per_s;
+    try recorder.flushDataShards(io, alloc, false);
     try testing.expectEqual(@as(usize, 0), recorder.shards[0].lines.items.len);
     try testing.expect(recorder.memTables.items.len > 0);
 
-    try recorder.flushForce(alloc);
+    try recorder.flushForce(io, alloc);
 }
 
 test "mergeTables force single mem table creates disk table" {
@@ -971,7 +956,6 @@ test "mergeTables force single mem table creates disk table" {
     const recorder = try DataRecorder.init(alloc, rootPath, runtime);
     defer recorder.deinit(alloc);
     recorder.stopped.store(true, .release);
-    recorder.wg.wait();
 
     var lines = [_]Line{
         stableLine(1, 1, 0),
@@ -1014,8 +998,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         }
 
         recorder.stopped.store(true, .release);
-        recorder.wg.wait();
-        try recorder.flushForce(alloc);
+        try recorder.flushForce(io, alloc);
 
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
         try testing.expect(recorder.diskTables.items.len > 0);
@@ -1030,7 +1013,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         const reopened = try DataRecorder.init(alloc, rootPath, runtime);
         defer reopened.deinit(alloc);
         reopened.stopped.store(true, .release);
-        reopened.wg.wait();
 
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));

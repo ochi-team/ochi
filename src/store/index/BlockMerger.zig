@@ -752,11 +752,11 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     // memTable is defined out of the block to ensure the source blocks are gone
     const memTable = blk: {
         var leftBlocks = [_]*MemBlock{leftBlock};
-        var leftMemTable = try MemTable.init(alloc, &leftBlocks);
+        var leftMemTable = try MemTable.init(io, alloc, &leftBlocks);
         defer leftMemTable.deinit(alloc);
 
         var rightBlocks = [_]*MemBlock{rightBlock};
-        var rightMemTable = try MemTable.init(alloc, &rightBlocks);
+        var rightMemTable = try MemTable.init(io, alloc, &rightBlocks);
         defer rightMemTable.deinit(alloc);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);

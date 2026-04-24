@@ -221,7 +221,7 @@ fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table 
     }
 
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(alloc, &blocks);
+    const memTable = try MemTable.init(io, alloc, &blocks);
     errdefer memTable.deinit(alloc);
 
     return Table.fromMem(alloc, memTable);

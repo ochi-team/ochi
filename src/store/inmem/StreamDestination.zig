@@ -26,19 +26,19 @@ pub const StreamDestination = union(Tag) {
         return .{ .buffer = try std.ArrayList(u8).initCapacity(allocator, capacity) };
     }
 
-    pub fn initFile(file: Io.File) !Self {
-        const stat = try file.stat();
+    pub fn initFile(io: Io, file: Io.File) !Self {
+        const stat = try file.stat(io);
         const initialLen: usize = @intCast(stat.size);
-        try file.seekTo(stat.size);
+        try file.seekTo(io, stat.size);
         return .{ .file = .{ .file = file, .len = initialLen } };
     }
 
-    pub fn deinit(self: *Self, allocator: Allocator) void {
+    pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
         switch (self.*) {
             .buffer => |*buf| buf.deinit(allocator),
             .file => |*f| {
                 f.buf.deinit(allocator);
-                f.file.close();
+                f.file.close(io);
             },
         }
     }
@@ -50,28 +50,30 @@ pub const StreamDestination = union(Tag) {
         };
     }
 
-    pub fn appendSlice(self: *Self, allocator: Allocator, src: []const u8) !void {
+    pub fn appendSlice(self: *Self, io: Io, allocator: Allocator, src: []const u8) !void {
         switch (self.*) {
             .buffer => |*buf| try buf.appendSlice(allocator, src),
             .file => |*f| {
-                try f.file.writeAll(src);
+                try f.file.writeAll(io, src);
                 f.len += src.len;
             },
         }
     }
 
-    fn readAll(self: *Self, allocator: Allocator) ![]u8 {
+    fn readAll(self: *Self, io: Io, allocator: Allocator) ![]u8 {
         switch (self.*) {
             .buffer => |*buf| return allocator.dupe(u8, buf.items),
             .file => |*f| {
-                const size: usize = @intCast((try f.file.stat()).size);
+                const size: usize = @intCast((try f.file.stat(
+                    io,
+                )).size);
                 const dst = try allocator.alloc(u8, size);
                 errdefer allocator.free(dst);
 
-                try f.file.seekTo(0);
-                const readN = try f.file.readAll(dst);
+                try f.file.seekTo(io, 0);
+                const readN = try f.file.readAll(io, dst);
                 std.debug.assert(readN == size);
-                try f.file.seekTo(@intCast(f.len));
+                try f.file.seekTo(io, @intCast(f.len));
                 return dst;
             },
         }
@@ -101,11 +103,11 @@ pub const StreamDestination = union(Tag) {
     }
 
     /// moves items for a buffer, assumes writing to unused capacity slice happened via allocSlice
-    pub fn appendAllocated(self: *Self, slice: []const u8, cap: usize) !void {
+    pub fn appendAllocated(self: *Self, io: Io, slice: []const u8, cap: usize) !void {
         switch (self.*) {
             .buffer => |*buf| buf.items.len += cap,
             .file => |*f| {
-                try f.file.writeAll(slice[0..cap]);
+                try f.file.writeAll(io, slice[0..cap]);
                 f.len += cap;
             },
         }

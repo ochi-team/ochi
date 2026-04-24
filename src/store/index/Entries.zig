@@ -35,16 +35,17 @@ const EntriesShard = struct {
 
     pub fn add(
         self: *EntriesShard,
+        io: Io,
         alloc: Allocator,
         entries: []const []const u8,
         maxMemBlockSize: u32,
     ) !?EntriesShardAddResult {
-        self.mx.lock();
-        defer self.mx.unlock();
+        self.mx.lockUncancelable(io);
+        defer self.mx.unlock(io);
         if (self.blocks.items.len == 0) {
             const b = try MemBlock.init(alloc, maxMemBlockSize);
             try self.blocks.append(alloc, b);
-            self.flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+            self.flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         }
         var block = self.blocks.items[self.blocks.items.len - 1];
         var gatheredEntriesCount: usize = 0;
@@ -100,13 +101,14 @@ const EntriesShard = struct {
 
     pub fn collectBlocks(
         self: *EntriesShard,
+        io: Io,
         alloc: Allocator,
         destination: *std.ArrayList(*MemBlock),
         nowUs: i64,
         force: bool,
     ) !void {
-        self.mx.lock();
-        defer self.mx.unlock();
+        self.mx.lockUncancelable(io);
+        defer self.mx.unlock(io);
 
         if (!force and nowUs < self.flushAtUs) {
             return;
@@ -259,7 +261,7 @@ test "EntriesShard.add" {
 
     for (cases) |case| {
         var shard = EntriesShard{
-            .mx = .{},
+            .mx = .init,
             .blocks = std.ArrayList(*MemBlock).empty,
             .flushAtUs = 0,
         };

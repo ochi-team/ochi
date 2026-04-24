@@ -122,7 +122,7 @@ pub fn close(
 ) void {
     self.index.deinit(io, self.alloc);
 
-    self.data.stop(self.alloc) catch |err| {
+    self.data.stop(io, self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
     self.alloc.destroy(self);

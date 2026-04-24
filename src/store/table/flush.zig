@@ -18,7 +18,7 @@ pub fn getFlushTablesToDiskDeadline(
     }
 
     const interval = Conf.getConf().app.flushIntervalUs;
-    var min: i64 = interval + std.time.microTimestamp();
+    var min: i64 = interval + Io.Timestamp.now(io, .real).toMicroseconds();
     for (memTables) |table| {
         if (table.mem) |memTable| {
             min = @min(memTable.flushAtUs, min);
@@ -40,7 +40,7 @@ pub fn getFlushMemTableToDiskDeadline(
     }
 
     const interval = Conf.getConf().app.flushIntervalUs;
-    var min: i64 = interval + std.time.microTimestamp();
+    var min: i64 = interval + Io.Timestamp.now(io, .real).toMicroseconds();
     for (memTables) |table| {
         min = @min(table.flushAtUs, min);
     }

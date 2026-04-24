@@ -54,7 +54,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
-        std.posix.MakeDirError.PathAlreadyExists => {},
+        error.PathAlreadyExists => {},
         else => std.debug.panic(
             "failed to create a table dir '{s}': {s}",
             .{ path, @errorName(err) },
@@ -71,7 +71,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     // they are given either from a file or listed directories in the path
     const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, filenames.tables });
     defer alloc.free(tablesFilePath);
-    var tableNames = try catalog.readNames(alloc, tablesFilePath, true);
+    var tableNames = try catalog.readNames(io, alloc, tablesFilePath, true);
     defer tableNames.deinit(alloc);
 
     // syncing tables with a json, make sure all the listed dirs exist
@@ -372,13 +372,14 @@ test "release fromMem does not affect filesystem path" {
 
 test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const items = [_][]const u8{ "item-c", "item-a", "item-b" };
     var block = try createTestMemBlock(alloc, &items);
     defer block.deinit(alloc);
 
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(alloc, blocks[0..]);
+    const memTable = try MemTable.init(io, alloc, blocks[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release();

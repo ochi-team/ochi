@@ -40,7 +40,7 @@ pub fn empty(alloc: Allocator) !*MemTable {
     return t;
 }
 
-pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
+pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocks.len);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
@@ -53,7 +53,7 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
         // nothing to merge
         const b = blocks[0];
 
-        const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+        const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         try t.setup(alloc, b, flushAtUs);
         std.debug.assert(t.metaindexBuf.items.len > 0);
         return t;
@@ -64,7 +64,7 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
         readers.appendAssumeCapacity(reader);
     }
 
-    const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+    const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
     try t.mergeIntoMemTable(alloc, &readers, flushAtUs);
     std.debug.assert(t.metaindexBuf.items.len > 0);
     return t;
