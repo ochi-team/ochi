@@ -1,4 +1,6 @@
 const std = @import("std");
+const Io = std.Io;
+const Dir = Io.Dir;
 
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
@@ -42,6 +44,7 @@ pub fn writeFile(
 }
 
 pub fn readFile(
+    io: Io,
     allocator: std.mem.Allocator,
     path: []const u8,
 ) !TableHeader {
@@ -54,7 +57,7 @@ pub fn readFile(
     );
     defer fbaAlloc.free(metadataPath);
 
-    var file = try std.fs.openFileAbsolute(metadataPath, .{});
+    var file = try Dir.openFileAbsolute(io, metadataPath, .{});
     defer file.close();
 
     const data = try file.readToEndAlloc(fbaAlloc, maxFileBytes);

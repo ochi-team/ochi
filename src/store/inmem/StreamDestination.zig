@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const Dir = Io.Dir;
 
 pub const FileDestination = struct {
     file: Io.File,
@@ -138,7 +139,7 @@ test "StreamDestination file destination" {
     const filePath = try std.fs.path.join(alloc, &.{ rootPath, "timestamps.bin" });
     defer alloc.free(filePath);
 
-    const file = try std.fs.createFileAbsolute(filePath, .{ .truncate = true, .read = true });
+    const file = try Dir.createFileAbsolute(io, filePath, .{ .truncate = true, .read = true });
     var dst = try StreamDestination.initFile(file);
     defer dst.deinit(alloc);
 
@@ -151,7 +152,7 @@ test "StreamDestination file destination" {
     defer alloc.free(all);
     try std.testing.expectEqualStrings(res, all);
 
-    var verify = try std.fs.openFileAbsolute(filePath, .{});
+    var verify = try Dir.openFileAbsolute(io, filePath, .{});
     defer verify.close();
     const onDisk = try verify.readToEndAlloc(alloc, std.math.maxInt(usize));
     defer alloc.free(onDisk);

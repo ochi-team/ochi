@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const Dir = Io.Dir;
 
 // TODO: perhaps worth replacing all the panics in the package,
 // and return regular error and handle them outside.
@@ -9,8 +10,8 @@ const Io = std.Io;
 
 var tmpFileNum = std.atomic.Value(u64).init(0);
 
-pub fn pathExists(path: []const u8) !bool {
-    std.fs.accessAbsolute(path, .{}) catch |err| {
+pub fn pathExists(io: Io, path: []const u8) !bool {
+    Dir.accessAbsolute(io, path, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => return false,
             else => return err,
@@ -20,20 +21,20 @@ pub fn pathExists(path: []const u8) !bool {
     return true;
 }
 
-pub fn syncPathAndParentDir(path: []const u8) void {
-    syncPath(path);
+pub fn syncPathAndParentDir(io: Io, path: []const u8) void {
+    syncPath(io, path);
 
     const parent = std.fs.path.dirname(path) orelse std.debug.panic("path has no parent directory: '{s}'", .{path});
-    syncPath(parent);
+    syncPath(io, parent);
 }
 
-fn syncPath(path: []const u8) void {
+fn syncPath(io: Io, path: []const u8) void {
     // TODO: handle the error and write data to a recovery log,
     // panicking here means data loss
-    if (std.fs.openFileAbsolute(path, .{})) |file| {
+    if (Dir.openFileAbsolute(io, path, .{})) |file| {
         var f = file;
-        defer f.close();
-        f.sync() catch |err| {
+        defer f.close(io);
+        f.sync(io) catch |err| {
             std.debug.panic(
                 "FATAL: cannot flush '{s}' to storage: {s}",
                 .{ path, @errorName(err) },
@@ -49,18 +50,20 @@ fn syncPath(path: []const u8) void {
 }
 
 pub fn createDirAssert(io: Io, path: []const u8) void {
-    const e = std.fs.accessAbsolute(path, .{});
+    const e = Dir.accessAbsolute(io, path, .{});
     std.debug.assert(e == error.FileNotFound);
-    std.fs.createDirAbsolute(io, path) catch |err| {
+    Dir.createDirAbsolute(io, path, .default_dir) catch |err| {
         std.debug.panic("failed to make dir {s}: {s}", .{ path, @errorName(err) });
     };
 }
 
 pub fn writeBufferValToFile(
+    io: Io,
     path: []const u8,
     bufferVal: []const u8,
 ) !void {
-    var file = try std.fs.createFileAbsolute(
+    var file = try Dir.createFileAbsolute(
+        io,
         path,
         .{ .truncate = true },
     );
@@ -72,12 +75,13 @@ pub fn writeBufferValToFile(
 
 // TODO: take a look at std.Io.Dir.cwd().atomicFile
 pub fn writeBufferToFileAtomic(
+    io: Io,
     path: []const u8,
     bufferVal: []const u8,
     truncate: bool,
 ) !void {
     if (!truncate) {
-        if (std.fs.accessAbsolute(path, .{})) {
+        if (Dir.accessAbsolute(io, path, .{})) {
             std.debug.panic("failed to write atomic file, path '{s}' already exists", .{path});
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -102,11 +106,11 @@ pub fn writeBufferToFileAtomic(
     // could render a new file inaccessible even if you properly synchronized it.
     // If you did not just create the file, there is no need to synchronize its directory.
     const parent = std.fs.path.dirname(path) orelse return error.PathHasNoParent;
-    syncPath(parent);
+    syncPath(io, parent);
 }
 
-pub fn readAll(alloc: Allocator, path: []const u8) ![]u8 {
-    var file = try std.fs.openFileAbsolute(path, .{});
+pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
+    var file = try Dir.openFileAbsolute(io, path, .{});
     defer file.close();
     const size = (try file.stat()).size;
 

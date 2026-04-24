@@ -1,5 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
+const Dir = Io.Dir;
 const fs = @import("../../fs.zig");
 
 const Field = @import("../lines.zig").Field;
@@ -97,13 +98,13 @@ pub fn getBloomTokensFilePath(alloc: std.mem.Allocator, tablePath: []const u8, s
 
 pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
-    if (std.fs.openDirAbsolute(path, .{})) |dir| {
+    if (Dir.openDirAbsolute(io, path, .{})) |dir| {
         var d = dir;
         d.close();
         return error.DirAlreadyExists;
     } else |err| switch (err) {
         error.FileNotFound => {
-            try std.fs.createDirAbsolute(io, path);
+            try Dir.createDirAbsolute(io, path);
         },
         else => return err,
     }
@@ -186,7 +187,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
 
     try self.tableHeader.writeFile(allocator, path);
 
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }
 
 const BlockHeader = @import("block_header.zig").BlockHeader;

@@ -34,7 +34,7 @@ fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
     while (remaining > 0) {
         if (stopped.load(.acquire)) return;
         const s = @min(remaining, step);
-        std.Thread.sleep(s);
+        Io.sleep(s);
         remaining -= s;
     }
 }
@@ -44,7 +44,7 @@ const IndexRecorder = @This();
 entries: *Entries,
 
 blocksToFlush: std.ArrayList(*MemBlock),
-mxBlocks: std.Thread.Mutex = .{},
+mxBlocks: Io.Mutex = .init,
 // TODO: make it as atomic instead of locking to access this value,
 // we still need mutex to access blocksToFlush (mxBlocks)
 flushEntriesAtUs: i64 = std.math.maxInt(i64),
@@ -54,17 +54,17 @@ blocksThresholdToFlush: u32,
 // TODO: make it as a config access instead of a field
 maxMemBlockSize: u32,
 
-mxTables: std.Thread.Mutex = .{},
+mxTables: Io.Mutex = .init,
 diskTables: std.ArrayList(*Table),
 memTables: std.ArrayList(*Table),
 
 concurrency: u16,
-diskMergeSem: std.Thread.Semaphore,
-memMergeSem: std.Thread.Semaphore,
+diskMergeSem: Io.Semaphore,
+memMergeSem: Io.Semaphore,
 
-pool: *std.Thread.Pool,
+pool: *Io.Pool,
 // wg holds all the running jobs
-wg: std.Thread.WaitGroup = .{},
+wg: Io.WaitGroup = .{},
 stopped: std.atomic.Value(bool) = .init(false),
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
@@ -73,7 +73,7 @@ stopped: std.atomic.Value(bool) = .init(false),
 // 2. extend limit of inmemory tables
 // 3. find a way to make flushing / merging more optimal
 // 4. more aggresive memory merging
-memTablesSem: std.Thread.Semaphore = .{
+memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
 
@@ -99,7 +99,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*IndexRecord
     var blocksToFlush = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksThresholdToFlush);
     errdefer blocksToFlush.deinit(alloc);
 
-    var pool = try alloc.create(std.Thread.Pool);
+    var pool = try alloc.create(Io.Pool);
     errdefer pool.deinit();
     errdefer alloc.destroy(pool);
 
@@ -158,7 +158,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*IndexRecord
 
 pub fn createDir(io: Io, path: []const u8) void {
     fs.createDirAssert(io, path);
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }
 
 // TODO: find an approach to make it never fail,
@@ -607,7 +607,7 @@ fn tablesMerger(
     self: *IndexRecorder,
     alloc: Allocator,
     tables: *std.ArrayList(*Table),
-    sem: *std.Thread.Semaphore,
+    sem: *Io.Semaphore,
 ) anyerror!void {
     var tablesToMerge = std.ArrayList(*Table).empty;
     defer tablesToMerge.deinit(alloc);
@@ -648,6 +648,7 @@ fn invalidateStreamFilterCache(self: *IndexRecorder) void {
 
 pub fn mergeTables(
     self: *IndexRecorder,
+    io: Io,
     alloc: Allocator,
     tables: []*Table,
     force: bool,
@@ -750,7 +751,7 @@ pub fn mergeTables(
         defer tableHeader.deinit(alloc);
         try tableHeader.writeFile(fbaFallback.get(), destinationTablePath);
 
-        fs.syncPathAndParentDir(destinationTablePath);
+        fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
@@ -985,7 +986,7 @@ test "IndexRecorder concurrent add preserves item count" {
     const workers = 4;
     const items_per_worker = 64;
     var ctxs: [workers]AddWorkerCtx = undefined;
-    var threads: [workers]std.Thread = undefined;
+    var threads: [workers]Io = undefined;
 
     for (0..workers) |i| {
         ctxs[i] = .{
@@ -994,7 +995,7 @@ test "IndexRecorder concurrent add preserves item count" {
             .workerID = i,
             .items = items_per_worker,
         };
-        threads[i] = try std.Thread.spawn(.{}, addWorker, .{&ctxs[i]});
+        threads[i] = try Io.spawn(.{}, addWorker, .{&ctxs[i]});
     }
     for (threads) |t| t.join();
 

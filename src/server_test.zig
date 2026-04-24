@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const snappy = @import("snappy");
 
 const Conf = @import("Conf.zig");
@@ -87,7 +88,7 @@ fn waitUntilReady(alloc: std.mem.Allocator) !void {
 
     while (std.time.nanoTimestamp() - start < timeoutNs) {
         const resp = request(alloc, "GET", "/insert/loki/ready", "", null, null) catch {
-            std.Thread.sleep(50 * std.time.ns_per_ms);
+            Io.sleep(50 * std.time.ns_per_ms);
             continue;
         };
         defer {
@@ -98,7 +99,7 @@ fn waitUntilReady(alloc: std.mem.Allocator) !void {
         if (resp.statusCode == 200) {
             return;
         }
-        std.Thread.sleep(50 * std.time.ns_per_ms);
+        Io.sleep(50 * std.time.ns_per_ms);
     }
 
     return error.Timeout;
@@ -142,7 +143,7 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
-    const thread = try std.Thread.spawn(.{}, ServerThread.run, .{ serverAlloc, conf });
+    const thread = try Io.spawn(.{}, ServerThread.run, .{ serverAlloc, conf });
     var stopped = false;
     defer {
         if (!stopped) {
@@ -218,7 +219,7 @@ test "serverEndToEndViaHTTP" {
                 return error.Timeout;
             }
 
-            std.Thread.sleep(50 * std.time.ns_per_ms);
+            Io.sleep(50 * std.time.ns_per_ms);
         }
     }
 

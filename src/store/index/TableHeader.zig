@@ -1,5 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Dir = Io.Dir;
 
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
@@ -34,14 +36,14 @@ pub fn dupe(self: TableHeader, alloc: Allocator) !TableHeader {
 }
 
 // TODO: TableHeader could have a static bound value to give a stack buffer
-pub fn readFile(alloc: Allocator, path: []const u8) !TableHeader {
+pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     var fba = std.heap.stackFallback(1024, alloc);
     const fbaAlloc = fba.get();
 
     const metadataPath = try std.fs.path.join(fbaAlloc, &[_][]const u8{ path, filenames.header });
     defer fbaAlloc.free(metadataPath);
 
-    var file = std.fs.openFileAbsolute(metadataPath, .{}) catch |err| {
+    var file = Dir.openFileAbsolute(io, metadataPath, .{}) catch |err| {
         std.debug.panic("can't open table header '{s}': {s}", .{ metadataPath, @errorName(err) });
     };
     defer file.close();

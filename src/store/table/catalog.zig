@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const Dir = Io.Dir;
 
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
@@ -9,8 +10,13 @@ const strings = @import("../../stds/strings.zig");
 // nothing specific, we simply don't expected a small json file to be larger than that
 const maxFileBytes = 16 * 1024 * 1024;
 
-pub fn readNames(alloc: Allocator, tablesFilePath: []const u8, comptime validate: bool) !std.ArrayList([]const u8) {
-    if (std.fs.openFileAbsolute(tablesFilePath, .{})) |file| {
+pub fn readNames(
+    io: Io,
+    alloc: Allocator,
+    tablesFilePath: []const u8,
+    comptime validate: bool,
+) !std.ArrayList([]const u8) {
+    if (Dir.openFileAbsolute(io, tablesFilePath, .{})) |file| {
         defer file.close();
 
         const data = try file.readToEndAlloc(alloc, maxFileBytes);
@@ -41,7 +47,7 @@ pub fn readNames(alloc: Allocator, tablesFilePath: []const u8, comptime validate
         error.FileNotFound => {
             if (validate) {
                 const parentPath = std.fs.path.dirname(tablesFilePath) orelse return error.TableParentDirNotFound;
-                var parentDir = std.fs.openDirAbsolute(parentPath, .{ .iterate = true }) catch |openErr| switch (openErr) {
+                var parentDir = Dir.openDirAbsolute(io, parentPath, .{ .iterate = true }) catch |openErr| switch (openErr) {
                     error.FileNotFound => return error.TableParentDirNotFound,
                     else => return openErr,
                 };
@@ -55,7 +61,7 @@ pub fn readNames(alloc: Allocator, tablesFilePath: []const u8, comptime validate
                 }
             }
 
-            const f = try std.fs.createFileAbsolute(tablesFilePath, .{});
+            const f = try Dir.createFileAbsolute(io, tablesFilePath, .{});
             defer f.close();
             try f.writeAll("[]");
             std.debug.print("write initial state to '{s}'\n", .{tablesFilePath});
@@ -65,11 +71,11 @@ pub fn readNames(alloc: Allocator, tablesFilePath: []const u8, comptime validate
     }
 }
 
-pub fn validateTablesExist(alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
+pub fn validateTablesExist(io: Io, alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
     for (tableNames) |tableName| {
         const tablePath = try std.fs.path.join(alloc, &.{ path, tableName });
         defer alloc.free(tablePath);
-        std.fs.accessAbsolute(tablePath, .{}) catch |err| switch (err) {
+        Dir.accessAbsolute(io, tablePath, .{}) catch |err| switch (err) {
             error.FileNotFound => return error.TableDoesNotExist,
             else => return err,
         };
@@ -222,12 +228,12 @@ test "readNames returns error in validate mode when tables file is missing but t
     const tableDirPath = try std.fs.path.join(alloc, &.{ rootPath, "table-a" });
     defer alloc.free(tableDirPath);
 
-    try std.fs.createDirAbsolute(io, tableDirPath);
+    try Dir.createDirAbsolute(io, tableDirPath);
 
     // Validate mode must fail if tables.json is missing while table dirs already exist
     try testing.expectError(error.TableFileExistsWithNoTableEntry, readNames(alloc, tablesFilePath, true));
     // Validate mode must not auto-create tables.json in this corruption-like state
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablesFilePath, .{}));
+    try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablesFilePath, .{}));
 }
 
 test "validateTablesExist" {
@@ -242,7 +248,7 @@ test "validateTablesExist" {
     const tableName = "table-a";
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
     defer alloc.free(tablePath);
-    try std.fs.createDirAbsolute(io, tablePath);
+    try Dir.createDirAbsolute(io, tablePath);
 
     const Case = struct {
         tableNames: []const []const u8,
@@ -308,7 +314,7 @@ test "removeUnusedTables" {
         for (case.existingTableNames) |tableName| {
             const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
             defer alloc.free(tablePath);
-            try std.fs.createDirAbsolute(io, tablePath);
+            try Dir.createDirAbsolute(io, tablePath);
         }
 
         try removeUnusedTables(alloc, rootPath, case.usedTableNames);
@@ -317,9 +323,9 @@ test "removeUnusedTables" {
             const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
             defer alloc.free(tablePath);
             if (strings.contains(case.usedTableNames, tableName)) {
-                try std.fs.accessAbsolute(tablePath, .{});
+                try Dir.accessAbsolute(io, tablePath, .{});
             } else {
-                try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
+                try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablePath, .{}));
             }
         }
     }

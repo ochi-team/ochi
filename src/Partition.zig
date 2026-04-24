@@ -47,6 +47,7 @@ refCounter: std.atomic.Value(u32) = .init(1),
 alloc: Allocator,
 
 pub fn open(
+    io: Io,
     alloc: Allocator,
     path: []const u8,
     indexPath: []const u8,
@@ -61,8 +62,8 @@ pub fn open(
     const partitionKey = std.fs.path.basename(path);
     std.debug.assert(partitionKey.len == partitionKeySize);
 
-    const indexExists = try fs.pathExists(indexPath);
-    const dataExists = try fs.pathExists(dataPath);
+    const indexExists = try fs.pathExists(io, indexPath);
+    const dataExists = try fs.pathExists(io, dataPath);
 
     if (!indexExists or !dataExists) {
         if (indexExists != dataExists) {
@@ -72,8 +73,8 @@ pub fn open(
 
         std.debug.print("partition doesn't exist due to recent crash or a data loss," ++
             " creating missing partition, path: {s}\n", .{path});
-        IndexRecorder.createDir(indexPath);
-        DataRecorder.createDir(dataPath);
+        IndexRecorder.createDir(io, indexPath);
+        DataRecorder.createDir(io, dataPath);
     }
 
     const indexRecorder = try IndexRecorder.init(alloc, indexPath, runtime);
@@ -129,10 +130,10 @@ pub fn close(
 pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
     fs.createDirAssert(io, path);
 
-    IndexRecorder.createDir(indexPath);
-    DataRecorder.createDir(dataPath);
+    IndexRecorder.createDir(io, indexPath);
+    DataRecorder.createDir(io, dataPath);
 
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }
 
 // TODO: meter how much it takes usually

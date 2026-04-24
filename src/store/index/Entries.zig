@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const builtin = @import("builtin");
 
@@ -11,7 +12,7 @@ const EntriesShardAddResult = struct {
 };
 
 const EntriesShard = struct {
-    mx: std.Thread.Mutex = .{},
+    mx: Io.Mutex = .init,
     blocks: std.ArrayList(*MemBlock),
     // TODO: perhaps worth making it atomic instead of accessable under a mutex lock
     flushAtUs: i64 = std.math.maxInt(i64),

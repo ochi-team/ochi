@@ -32,9 +32,9 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
         else => return err,
     };
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try std.Io.Dir.cwd().realPathFile(io, storePath, &storePathBuf);
+    const n = try std.Io.Dir.cwd().realPathFile(io, storePath, &storePathBuf);
 
-    var store = try Store.init(allocator, path);
+    var store = try Store.init(io, allocator, storePathBuf[0..n]);
     defer store.deinit(allocator);
 
     var dispatcher: Dispatcher = .{
@@ -97,10 +97,10 @@ test "serverWithSIGTERM" {
         }
     };
 
-    const thread = try std.Thread.spawn(.{}, ServerThread.run, .{ allocator, conf });
+    const thread = try Io.spawn(.{}, ServerThread.run, .{ allocator, conf });
 
     // Give the server time to start
-    std.Thread.sleep(100 * std.time.ns_per_ms);
+    Io.sleep(100 * std.time.ns_per_ms);
 
     // Send SIGTERM to ourselves
     const posix = std.posix;

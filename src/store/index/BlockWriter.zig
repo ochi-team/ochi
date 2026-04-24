@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const Dir = Io.Dir;
 
 const encoding = @import("encoding");
 
@@ -98,13 +99,13 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache
     const metaIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
     defer fbaAlloc.free(metaIndexPath);
 
-    var indexFile = try std.fs.createFileAbsolute(indexPath, .{ .truncate = true });
+    var indexFile = try Dir.createFileAbsolute(io, indexPath, .{ .truncate = true });
     errdefer indexFile.close();
-    var entriesFile = try std.fs.createFileAbsolute(entriesPath, .{ .truncate = true });
+    var entriesFile = try Dir.createFileAbsolute(io, entriesPath, .{ .truncate = true });
     errdefer entriesFile.close();
-    var lensFile = try std.fs.createFileAbsolute(lensPath, .{ .truncate = true });
+    var lensFile = try Dir.createFileAbsolute(io, lensPath, .{ .truncate = true });
     errdefer lensFile.close();
-    var metaindexFile = try std.fs.createFileAbsolute(metaIndexPath, .{ .truncate = true });
+    var metaindexFile = try Dir.createFileAbsolute(io, metaIndexPath, .{ .truncate = true });
     errdefer metaindexFile.close();
 
     return .{

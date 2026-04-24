@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const builtin = @import("builtin");
 
@@ -19,7 +20,7 @@ maxMem: u64,
 cacheSize: u64,
 // disk space for the store
 diskSpace: DiskSpace,
-diskStatsMx: std.Thread.Mutex = .{},
+diskStatsMx: Io.Mutex = .init,
 // path is a disk mount point for the store to get a disk space
 path: []const u8,
 
@@ -30,7 +31,7 @@ httpThreads: u16,
 // worker threads available, derived from cpus
 workerThreads: u16,
 
-pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtime {
+pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtime {
     // TODO: create a designated testing runtime and restrict this init to use inside tests
     const cpus = getCpuCount();
     // 4 is a minimum amount of threads for workers
@@ -53,7 +54,7 @@ pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtim
         .linux => {
             var info: std.os.linux.Sysinfo = undefined;
             const result: usize = std.os.linux.sysinfo(&info);
-            if (std.os.linux.E.init(result) != .SUCCESS) {
+            if (std.os.linux.errno(result) != .SUCCESS) {
                 return error.UnknownTotalSystemMemory;
             }
 
@@ -69,7 +70,7 @@ pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtim
     r.* = .{
         .maxMem = maxMem,
         .cacheSize = @intFromFloat(maxMemF * maxCachePortition),
-        .diskSpace = getDiskSpace(path, @intCast(std.time.milliTimestamp())),
+        .diskSpace = getDiskSpace(path, @intCast(Io.Timestamp.now(io, .real).toMilliseconds())),
         .path = path,
         .cpus = @intCast(cpus),
         .httpThreads = https,

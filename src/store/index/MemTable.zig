@@ -220,5 +220,5 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) 
 
     try self.tableHeader.writeFile(alloc, path);
 
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }

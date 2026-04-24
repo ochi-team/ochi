@@ -37,7 +37,7 @@ fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
     while (remaining > 0) {
         if (stopped.load(.acquire)) return;
         const s = @min(remaining, step);
-        std.Thread.sleep(s);
+        Io.sleep(s);
         remaining -= s;
     }
 }
@@ -53,7 +53,7 @@ pub const DataRecorder = @This();
 pub const DataShard = struct {
     // state
 
-    mx: std.Thread.Mutex = .{},
+    mx: Io.Mutex = .init,
     lines: std.ArrayList(Line) = .empty,
     arenaState: std.heap.ArenaAllocator.State,
 
@@ -83,7 +83,7 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, alloc: Allocator, sem: *std.Thread.Semaphore) !?*Table {
+    fn flush(self: *DataShard, alloc: Allocator, sem: *Io.Semaphore) !?*Table {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -109,19 +109,19 @@ pub const DataShard = struct {
 shards: []DataShard,
 nextShard: std.atomic.Value(usize),
 
-mxTables: std.Thread.Mutex,
+mxTables: Io.Mutex,
 memTables: std.ArrayList(*Table),
 diskTables: std.ArrayList(*Table),
 
 concurrency: u16,
-diskMergeSem: std.Thread.Semaphore,
-memMergeSem: std.Thread.Semaphore,
+diskMergeSem: Io.Semaphore,
+memMergeSem: Io.Semaphore,
 
-pool: *std.Thread.Pool,
-wg: std.Thread.WaitGroup = .{},
+pool: *Io.Pool,
+wg: Io.WaitGroup = .{},
 // TODO: implement its usage, limit the amount of mem tables similar to index
 // in order to let the mem merger handle it
-memTablesSem: std.Thread.Semaphore = .{
+memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
 // TODO: implement atomic value that change it's value depending on how many times it's read,
@@ -146,7 +146,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
         };
     }
 
-    var pool = try alloc.create(std.Thread.Pool);
+    var pool = try alloc.create(Io.Pool);
     errdefer alloc.destroy(pool);
     try pool.init(.{
         .allocator = alloc,
@@ -201,7 +201,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorde
 
 pub fn createDir(io: Io, path: []const u8) void {
     fs.createDirAssert(io, path);
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }
 
 // TODO: find an approach to make it never fail,
@@ -424,7 +424,7 @@ fn tablesMerger(
     self: *DataRecorder,
     alloc: Allocator,
     tables: *std.ArrayList(*Table),
-    sem: *std.Thread.Semaphore,
+    sem: *Io.Semaphore,
 ) !void {
     var tablesToMerge = std.ArrayList(*Table).empty;
     defer tablesToMerge.deinit(alloc);
@@ -460,6 +460,7 @@ fn nextMergeIdx(self: *DataRecorder) usize {
 
 fn mergeTables(
     self: *DataRecorder,
+    io: Io,
     alloc: Allocator,
     tables: []*Table,
     force: bool,
@@ -566,7 +567,7 @@ fn mergeTables(
         var fba = std.heap.stackFallback(256, alloc);
         try tableHeader.writeFile(fba.get(), destinationTablePath);
 
-        fs.syncPathAndParentDir(destinationTablePath);
+        fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);

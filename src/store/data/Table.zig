@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const Dir = Io.Dir;
 
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
@@ -68,7 +69,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 refCounter: std.atomic.Value(u32),
 
 pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
-    std.fs.createDirAbsolute(io, path) catch |err| switch (err) {
+    Dir.createDirAbsolute(io, path) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
         std.posix.MakeDirError.PathAlreadyExists => {},
@@ -79,7 +80,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     };
 
     // fsync after opening tables because it creates the files
-    defer fs.syncPathAndParentDir(path);
+    defer fs.syncPathAndParentDir(io, path);
 
     var fba = std.heap.stackFallback(2048, parentAlloc);
     const alloc = fba.get();
@@ -632,13 +633,13 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     const table1Path = try alloc.dupe(u8, tablePath);
     const table1 = try Table.open(alloc, table1Path);
     table1.release();
-    try std.fs.accessAbsolute(tablePath, .{});
+    try Dir.accessAbsolute(io, tablePath, .{});
 
     const table2Path = try alloc.dupe(u8, tablePath);
     const table2 = try Table.open(alloc, table2Path);
     table2.toRemove.store(true, .release);
     table2.release();
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(tablePath, .{}));
+    try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablePath, .{}));
 }
 
 test "release fromMem does not affect filesystem path" {
@@ -653,8 +654,8 @@ test "release fromMem does not affect filesystem path" {
     const sentinelPath = try std.fs.path.join(alloc, &.{ rootPath, "sentinel" });
     defer alloc.free(sentinelPath);
     // create a real directory to verify it remains
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(sentinelPath, .{}));
-    try std.fs.createDirAbsolute(io, sentinelPath);
+    try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, sentinelPath, .{}));
+    try Dir.createDirAbsolute(io, sentinelPath);
 
     const memTable = try MemTable.init(alloc);
 
@@ -665,11 +666,11 @@ test "release fromMem does not affect filesystem path" {
     // we expected only second release close cleans the table, otherwise it's a memory leak
     table.retain();
 
-    try std.fs.accessAbsolute(sentinelPath, .{});
+    try Dir.accessAbsolute(io, sentinelPath, .{});
     table.release();
-    try std.fs.accessAbsolute(sentinelPath, .{});
+    try Dir.accessAbsolute(io, sentinelPath, .{});
     table.release();
-    try std.fs.accessAbsolute(sentinelPath, .{});
+    try Dir.accessAbsolute(io, sentinelPath, .{});
 }
 
 const Field = @import("../lines.zig").Field;
