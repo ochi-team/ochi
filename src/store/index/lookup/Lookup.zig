@@ -245,6 +245,7 @@ fn createDiskTableFromItems(
 
 test "Lookup.findFirstByPrefix returns null on empty recorder" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -275,6 +276,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
 test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -304,6 +306,7 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
 
 test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -391,6 +394,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
 test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on mixed tables" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -516,6 +520,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
 test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

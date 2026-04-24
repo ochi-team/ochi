@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const fs = @import("../../fs.zig");
 
 const Field = @import("../lines.zig").Field;
@@ -94,7 +95,7 @@ pub fn getBloomTokensFilePath(alloc: std.mem.Allocator, tablePath: []const u8, s
     return path;
 }
 
-pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) !void {
+pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
     if (std.fs.openDirAbsolute(path, .{})) |dir| {
         var d = dir;
@@ -339,7 +340,7 @@ test "flushToDisk writes buffers" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{});
 }
 
-fn testFlushToDisk(allocator: std.mem.Allocator) !void {
+fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const encoding = @import("encoding");
 const filenames = @import("../../filenames.zig");
@@ -634,7 +635,7 @@ fn testReadBlock(allocator: Allocator) !void {
     }
 }
 
-fn testInitFromDiskTable(allocator: Allocator) !void {
+fn testInitFromDiskTable(io: Io, allocator: Allocator) !void {
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
         .{ .key = "app", .value = "seq" },

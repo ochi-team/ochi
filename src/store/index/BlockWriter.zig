@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const encoding = @import("encoding");
 
@@ -78,7 +79,7 @@ pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
     };
 }
 
-pub fn initFromDiskTable(alloc: Allocator, path: []const u8, fitsInCache: bool) !BlockWriter {
+pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !BlockWriter {
     // TODO: apply fitsInCache to create a component to write into a file taking OS cache into account
     _ = fitsInCache;
 
@@ -273,6 +274,7 @@ fn readTableFile(alloc: Allocator, tablePath: []const u8, fileName: []const u8) 
 
 test "BlockWriter disk output matches mem output" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const blockOneItems = [_][]const u8{
         "item-a3",

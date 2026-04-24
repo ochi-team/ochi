@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const fs = @import("../../fs.zig");
 
@@ -155,7 +156,7 @@ pub fn init(alloc: Allocator, path: []const u8, runtime: *Runtime) !*IndexRecord
     return t;
 }
 
-pub fn createDir(path: []const u8) void {
+pub fn createDir(io: Io, path: []const u8) void {
     fs.createDirAssert(io, path);
     fs.syncPathAndParentDir(path);
 }
@@ -835,6 +836,7 @@ const stableItems = [_][]const u8{
 
 test "flushMemEntries non-force respects flush deadline" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -873,6 +875,7 @@ test "flushMemEntries non-force respects flush deadline" {
 
 test "mergeTables force single mem table creates disk table" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -901,6 +904,7 @@ test "mergeTables force single mem table creates disk table" {
 
 test "IndexRecorder add and reopen preserves item count" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -965,6 +969,7 @@ fn addWorker(ctx: *AddWorkerCtx) void {
 
 test "IndexRecorder concurrent add preserves item count" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1003,6 +1008,7 @@ test "IndexRecorder concurrent add preserves item count" {
 
 test "IndexRecorder reads free disk space from runtime" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1032,6 +1038,7 @@ test "IndexRecorder reads free disk space from runtime" {
 
 test "IndexRecorder large entries write to 3 shards sequentially" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1074,6 +1081,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
 
 test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1127,6 +1135,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
 test "IndexRecorder large entries write to 3 shards" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

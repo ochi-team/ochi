@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Encoder = @import("encoding").Encoder;
 
@@ -125,7 +126,7 @@ pub fn close(
     self.alloc.destroy(self);
 }
 
-pub fn createDir(path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
+pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
     fs.createDirAssert(io, path);
 
     IndexRecorder.createDir(indexPath);

@@ -179,6 +179,7 @@ test "MetaIndex decodeDecompress roundtrip" {
 
 test "MetaIndex roundtrip file read/write" {
     const alloc = testing.allocator;
+    const io = testing.io;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 

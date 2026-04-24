@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const encoding = @import("encoding");
 
@@ -196,7 +197,7 @@ pub fn size(self: *MemTable) u64 {
     );
 }
 
-pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
+pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) !void {
     fs.createDirAssert(io, path);
 
     var fba = std.heap.stackFallback(512, alloc);

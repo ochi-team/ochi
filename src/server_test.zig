@@ -117,6 +117,7 @@ fn expectField(line: QueryLine, expectedKey: []const u8, expectedValue: []const 
 
 test "serverEndToEndViaHTTP" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
 
     const oldCwd = try std.process.getCwdAlloc(alloc);
     defer {

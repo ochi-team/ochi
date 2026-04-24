@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
@@ -48,7 +49,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // then readers can retain it
 refCounter: std.atomic.Value(u32),
 
-pub fn openAll(parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
+pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
     std.fs.createDirAbsolute(io, path) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
@@ -313,6 +314,7 @@ fn readTestTableFile(alloc: Allocator, tablePath: []const u8, fileName: []const 
 
 test "release keeps table unless toRemove is set, then removes table dir" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -338,6 +340,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
 test "release fromMem does not affect filesystem path" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -405,6 +408,7 @@ test "fromMem creates proper table from mem table with populated data" {
 
 test "open reads table from disk" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

@@ -119,6 +119,8 @@ pub fn readAll(alloc: Allocator, path: []const u8) ![]u8 {
 
 test "pathExists returns true for existing paths and false for missing path" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
     const Case = struct {
         path: []const u8,
         expected: bool,
@@ -156,6 +158,8 @@ test "pathExists returns true for existing paths and false for missing path" {
 }
 
 test "syncPathAndParentDir fsync file and parent directory" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -173,6 +177,8 @@ test "syncPathAndParentDir fsync file and parent directory" {
 }
 
 test "syncPathAndParentDir fsync directory and parent directory" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -184,6 +190,8 @@ test "syncPathAndParentDir fsync directory and parent directory" {
 }
 
 test "readAll reads full file content from tmp directory" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -206,6 +214,8 @@ test "readAll reads full file content from tmp directory" {
 }
 
 test "writeBufferValToFileAtomic writes and overwrites atomically" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
