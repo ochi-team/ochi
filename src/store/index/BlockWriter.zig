@@ -30,14 +30,14 @@ const DiskDestination = struct {
     indexFile: Io.File,
     metaindexFile: Io.File,
 
-    fn sync(self: *DiskDestination) !void {
-        try self.entriesFile.sync();
-        try self.lensFile.sync();
-        try self.indexFile.sync();
-        try self.metaindexFile.sync();
+    fn sync(self: *DiskDestination, io: Io) !void {
+        try self.entriesFile.sync(io);
+        try self.lensFile.sync(io);
+        try self.indexFile.sync(io);
+        try self.metaindexFile.sync(io);
     }
 
-    fn close(self: *DiskDestination) void {
+    fn close(self: *DiskDestination, io: Io) void {
         self.entriesFile.close(io);
         self.lensFile.close(io);
         self.indexFile.close(io);
@@ -127,7 +127,7 @@ pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
     self.compressedBuf.deinit(alloc);
 }
 
-pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void {
+pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock) !void {
     const encoded = try block.encode(alloc, &self.entriesBlock);
     std.debug.assert(block.memEntries.items.len > 0);
 
@@ -137,13 +137,13 @@ pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void 
     self.bh.encodingType = encoded.encodingType;
 
     // Write data
-    try self.writeData(alloc, self.entriesBlock.entriesBuf.items);
+    try self.writeData(io, alloc, self.entriesBlock.entriesBuf.items);
     self.bh.entriesBlockSize = @intCast(self.entriesBlock.entriesBuf.items.len);
     self.bh.entriesBlockOffset = self.itemsBlockOffset;
     self.itemsBlockOffset += self.bh.entriesBlockSize;
 
     // Write lens
-    try self.writeLens(alloc, self.entriesBlock.lensBuf.items);
+    try self.writeLens(io, alloc, self.entriesBlock.lensBuf.items);
     self.bh.lensBlockSize = @intCast(self.entriesBlock.lensBuf.items.len);
     self.bh.lensBlockOffset = self.lensBlockOffset;
     self.lensBlockOffset += self.bh.lensBlockSize;
@@ -151,7 +151,7 @@ pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void 
     // Write block header
     const bhEncodeBound = self.bh.bound();
     if (self.uncompressedIndexBlockBuf.items.len + bhEncodeBound > maxIndexBlockSize) {
-        try self.flushIndexData(alloc);
+        try self.flushIndexData(io, alloc);
     }
     try self.uncompressedIndexBlockBuf.ensureUnusedCapacity(alloc, bhEncodeBound);
     self.bh.encode(self.uncompressedIndexBlockBuf.unusedCapacitySlice());
@@ -165,23 +165,23 @@ pub fn writeBlock(self: *BlockWriter, alloc: Allocator, block: *MemBlock) !void 
     self.mi.blockHeadersCount += 1;
 }
 
-pub fn close(self: *BlockWriter, alloc: Allocator) !void {
-    try self.flushIndexData(alloc);
-    try self.writeMetaindex(alloc);
+pub fn close(self: *BlockWriter, io: Io, alloc: Allocator) !void {
+    try self.flushIndexData(io, alloc);
+    try self.writeMetaindex(io, alloc);
     switch (self.destination) {
         .mem => {},
         .disk => |*disk| disk.close(io),
     }
 }
 
-fn flushIndexData(self: *BlockWriter, alloc: Allocator) !void {
+fn flushIndexData(self: *BlockWriter, io: Io, alloc: Allocator) !void {
     if (self.uncompressedIndexBlockBuf.items.len == 0) {
         // Nothing to flush.
         return;
     }
 
     // Write indexBlock
-    const n = try self.writeIndexBlock(alloc);
+    const n = try self.writeIndexBlock(io, alloc);
 
     self.mi.indexBlockSize = @intCast(n);
     self.mi.indexBlockOffset = self.indexBlockOffset;
@@ -197,21 +197,21 @@ fn flushIndexData(self: *BlockWriter, alloc: Allocator) !void {
     self.mi.reset();
 }
 
-fn writeData(self: *BlockWriter, alloc: Allocator, data: []const u8) !void {
+fn writeData(self: *BlockWriter, io: Io, alloc: Allocator, data: []const u8) !void {
     switch (self.destination) {
         .mem => |mem| try mem.entriesBuf.appendSlice(alloc, data),
         .disk => |*disk| try disk.entriesFile.writeStreamingAll(io, data),
     }
 }
 
-fn writeLens(self: *BlockWriter, alloc: Allocator, data: []const u8) !void {
+fn writeLens(self: *BlockWriter, io: Io, alloc: Allocator, data: []const u8) !void {
     switch (self.destination) {
         .mem => |mem| try mem.lensBuf.appendSlice(alloc, data),
         .disk => |*disk| try disk.lensFile.writeStreamingAll(io, data),
     }
 }
 
-fn writeIndexBlock(self: *BlockWriter, alloc: Allocator) !usize {
+fn writeIndexBlock(self: *BlockWriter, io: Io, alloc: Allocator) !usize {
     switch (self.destination) {
         .mem => |mem| return compressIntoArrayList(alloc, mem.indexBuf, self.uncompressedIndexBlockBuf.items),
         .disk => |*disk| {
@@ -222,7 +222,7 @@ fn writeIndexBlock(self: *BlockWriter, alloc: Allocator) !usize {
     }
 }
 
-fn writeMetaindex(self: *BlockWriter, alloc: Allocator) !void {
+fn writeMetaindex(self: *BlockWriter, io: Io, alloc: Allocator) !void {
     switch (self.destination) {
         .mem => |mem| {
             _ = try compressIntoArrayList(alloc, mem.metaindexBuf, self.uncompressedMetaindexBuf.items);
@@ -267,7 +267,7 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     return block;
 }
 
-fn readTableFile(alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
+fn readTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
     const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
     defer alloc.free(filePath);
     return fs.readAll(io, alloc, filePath);
@@ -294,12 +294,12 @@ test "BlockWriter disk output matches mem output" {
     defer blockTwo.deinit(alloc);
 
     var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit(alloc);
+    defer memTable.deinit(io, alloc);
     var memWriter = BlockWriter.initFromMemTable(memTable);
     defer memWriter.deinit(alloc);
     try memWriter.writeBlock(io, alloc, blockOne);
     try memWriter.writeBlock(io, alloc, blockTwo);
-    try memWriter.close(alloc);
+    try memWriter.close(io, alloc);
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -312,7 +312,7 @@ test "BlockWriter disk output matches mem output" {
     defer diskWriter.deinit(alloc);
     try diskWriter.writeBlock(io, alloc, blockOne);
     try diskWriter.writeBlock(io, alloc, blockTwo);
-    try diskWriter.close(alloc);
+    try diskWriter.close(io, alloc);
 
     const entries = try readTableFile(alloc, tablePath, filenames.entries);
     defer alloc.free(entries);
@@ -331,10 +331,11 @@ test "BlockWriter disk output matches mem output" {
 
 test "BlockWriter metaindexBuf may contain multiple records" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const blocksCount: usize = 1400;
 
     var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit(alloc);
+    defer memTable.deinit(io, alloc);
 
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);
@@ -364,7 +365,7 @@ test "BlockWriter metaindexBuf may contain multiple records" {
 
         try writer.writeBlock(io, alloc, block);
     }
-    try writer.close(alloc);
+    try writer.close(io, alloc);
 
     const decoded = try MetaIndex.decodeDecompress(
         alloc,

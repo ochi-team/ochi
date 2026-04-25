@@ -117,7 +117,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     return tables;
 }
 
-pub fn open(alloc: Allocator, path: []const u8) !*Table {
+pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     var fba = std.heap.stackFallback(2048, alloc);
     const fbaAlloc = fba.get();
 
@@ -253,7 +253,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     return table;
 }
 
-pub fn close(self: *Table) void {
+pub fn close(self: *Table, io: Io) void {
     if (self.disk) |disk| {
         self.alloc.free(self.indexBuf);
         self.alloc.free(self.columnsHeaderIndexBuf);
@@ -271,7 +271,7 @@ pub fn close(self: *Table) void {
     }
 
     if (self.mem) |mem| {
-        mem.deinit(self.alloc);
+        mem.deinit(io, self.alloc);
     }
 
     for (self.indexBlockHeaders) |*hdr| hdr.deinitRead(self.alloc);
@@ -287,9 +287,10 @@ pub fn close(self: *Table) void {
         // TODO: replace to an error log
         // TODO: review it to make removing more reliable,
         // e.g. deletion must be intrrupted in the middle leaving a half baked table
-        std.fs.deleteTreeAbsolute(self.path) catch |err| {
-            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
-        };
+        // TODO removed without replacement
+        // std.fs.deleteTreeAbsolute(self.path) catch |err| {
+        //     std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
+        // };
     }
 
     if (self.path.len > 0) {
@@ -605,7 +606,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     defer alloc.free(tablePath);
 
     const memTable = try MemTable.init(io, alloc);
-    defer memTable.deinit(alloc);
+    defer memTable.deinit(io, alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -627,7 +628,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLines(alloc, lines[0..]);
+    try memTable.addLines(io, alloc, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
@@ -709,7 +710,7 @@ test "fromMem creates proper table from mem table with populated data" {
 
     var lines = [_]Line{ line1, line2 };
 
-    try memTable.addLines(alloc, lines[0..]);
+    try memTable.addLines(io, alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -745,7 +746,7 @@ test "open reads table from disk" {
     defer alloc.free(tablePath);
 
     const memTable = try MemTable.init(io, alloc);
-    defer memTable.deinit(alloc);
+    defer memTable.deinit(io, alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -767,7 +768,7 @@ test "open reads table from disk" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLines(alloc, lines[0..]);
+    try memTable.addLines(io, alloc, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
@@ -857,7 +858,7 @@ test "queryLines" {
     };
 
     const memTable = try MemTable.init(io, alloc);
-    try memTable.addLines(alloc, lines[0..]);
+    try memTable.addLines(io, alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -938,7 +939,7 @@ test "queryLines" {
         const requested = try alloc.dupe(SID, case.requestedSIDs);
         defer alloc.free(requested);
 
-        try table.queryLines(alloc, &queried, requested, case.query);
+        try table.queryLines(io, alloc, &queried, requested, case.query);
         try testing.expectEqual(case.expected.len, queried.items.len);
 
         for (case.expected, 0..) |expected, i| {

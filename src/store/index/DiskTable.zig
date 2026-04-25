@@ -12,7 +12,7 @@ indexFile: Io.File,
 entriesFile: Io.File,
 lensFile: Io.File,
 
-pub fn deinit(self: *DiskTable, alloc: Allocator) void {
+pub fn deinit(self: *DiskTable, io: Io, alloc: Allocator) void {
     // TODO: close files in parallel
 
     self.indexFile.close(io);

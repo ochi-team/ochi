@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const AllocError = std.mem.Allocator.Error;
 const C = @import("c").C;
 pub const CompressError = error{
@@ -114,6 +115,7 @@ pub fn decompressBuffer(allocator: std.mem.Allocator, src: []const u8) (Decompre
 }
 
 pub fn decompressUnknownSizeToArrayList(
+    io: Io,
     allocator: std.mem.Allocator,
     dst: *std.ArrayList(u8),
     src: []const u8,
@@ -158,7 +160,7 @@ pub fn decompressUnknownSizeToArrayList(
         }
 
         if (output.pos > 0) {
-            try dst.appendSlice(allocator, chunk[0..output.pos]);
+            try dst.appendSlice(io, allocator, chunk[0..output.pos]);
         }
 
         if (res == 0) {
@@ -214,9 +216,10 @@ test "compress decompressArray empty dst" {
 
 test "compress decompressArray dst with elements" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
     var dst: std.ArrayList(u8) = .empty;
     const existsSlice = "aaa";
-    try dst.appendSlice(alloc, existsSlice);
+    try dst.appendSlice(io, alloc, existsSlice);
     defer dst.deinit(alloc);
     const startLen = dst.items.len;
 
@@ -239,9 +242,10 @@ test "compress decompressArray dst with elements" {
 
 test "compress decompressUnknownSizeToArrayList dst with elements" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
     var dst: std.ArrayList(u8) = .empty;
     const existsSlice = "aaa";
-    try dst.appendSlice(alloc, existsSlice);
+    try dst.appendSlice(io, io, alloc, existsSlice);
     defer dst.deinit(alloc);
     const startLen = dst.items.len;
 
@@ -273,7 +277,7 @@ test "compress decompressUnknownSizeToArrayList dst with elements" {
         return DecompressError.Unknown;
     }
 
-    try decompressUnknownSizeToArrayList(alloc, &dst, compressed[0..compressedLen]);
+    try decompressUnknownSizeToArrayList(io, alloc, &dst, compressed[0..compressedLen]);
     try std.testing.expectEqualSlices(u8, case, dst.items[startLen..]);
     try std.testing.expectEqualSlices(u8, existsSlice, dst.items[0..startLen]);
 }

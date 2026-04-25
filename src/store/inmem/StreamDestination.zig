@@ -29,7 +29,11 @@ pub const StreamDestination = union(Tag) {
     pub fn initFile(io: Io, file: Io.File) !Self {
         const stat = try file.stat(io);
         const initialLen: usize = @intCast(stat.size);
-        try file.seekTo(io, stat.size);
+
+        // TODO AUDIT
+        var buffer: [4096]u8 = undefined;
+        var file_reader = file.reader(io, &buffer);
+        try file_reader.seekTo(stat.size);
         return .{ .file = .{ .file = file, .len = initialLen } };
     }
 
@@ -54,7 +58,7 @@ pub const StreamDestination = union(Tag) {
         switch (self.*) {
             .buffer => |*buf| try buf.appendSlice(allocator, src),
             .file => |*f| {
-                try f.file.writeStreamingAll(io, io, src);
+                try f.file.writeStreamingAll(io, src);
                 f.len += src.len;
             },
         }
@@ -70,10 +74,15 @@ pub const StreamDestination = union(Tag) {
                 const dst = try allocator.alloc(u8, size);
                 errdefer allocator.free(dst);
 
-                try f.file.seekTo(io, 0);
+                // TODO AUDIT
+                var buffer: [4096]u8 = undefined;
+                var file_reader = f.file.reader(io, &buffer);
+                try file_reader.seekTo(0);
+
                 const readN = try f.file.readAll(io, dst);
                 std.debug.assert(readN == size);
-                try f.file.seekTo(io, @intCast(f.len));
+
+                try file_reader.seekTo(@intCast(f.len));
                 return dst;
             },
         }
@@ -107,7 +116,7 @@ pub const StreamDestination = union(Tag) {
         switch (self.*) {
             .buffer => |*buf| buf.items.len += cap,
             .file => |*f| {
-                try f.file.writeStreamingAll(io, io, slice[0..cap]);
+                try f.file.writeStreamingAll(io, slice[0..cap]);
                 f.len += cap;
             },
         }
@@ -121,8 +130,8 @@ test "StreamDestination buffer destination" {
     var dst = try StreamDestination.initBuffer(alloc, 8);
     defer dst.deinit(io, alloc);
 
-    try dst.appendSlice(alloc, "abc");
-    try dst.appendSlice(alloc, "1234");
+    try dst.appendSlice(io, io, alloc, "abc");
+    try dst.appendSlice(io, io, alloc, "1234");
 
     try std.testing.expectEqual(7, dst.len());
 
@@ -144,12 +153,12 @@ test "StreamDestination file destination" {
     defer alloc.free(filePath);
 
     const file = try Dir.createFileAbsolute(io, filePath, .{ .truncate = true, .read = true });
-    var dst = try StreamDestination.initFile(file);
+    var dst = try StreamDestination.initFile(io, file);
     defer dst.deinit(io, alloc);
 
     const res = "hello-world";
-    try dst.appendSlice(alloc, "hello");
-    try dst.appendSlice(alloc, "-world");
+    try dst.appendSlice(io, io, alloc, "hello");
+    try dst.appendSlice(io, io, alloc, "-world");
     try std.testing.expectEqual(res.len, dst.len());
 
     const all = try dst.readAll(alloc);

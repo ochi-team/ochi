@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const Conf = @import("../../Conf.zig");
 
@@ -6,6 +7,7 @@ const TableContract = @import("contract.zig").TableContract;
 const FlushableTableContract = @import("contract.zig").FlushableTableContract;
 
 pub fn getFlushTablesToDiskDeadline(
+    io: Io,
     comptime T: type,
     comptime M: type,
     memTables: []T,
@@ -29,6 +31,7 @@ pub fn getFlushTablesToDiskDeadline(
 }
 
 pub fn getFlushMemTableToDiskDeadline(
+    io: Io,
     comptime M: type,
     memTables: []M,
 ) i64 {

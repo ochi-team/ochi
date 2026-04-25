@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const builtin = @import("builtin");
 
 const encoding = @import("encoding");
@@ -117,7 +118,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
 //
 // TODO: we must use Reader interface here instead of plain reading in order to
 // save required RAM to hold the content til it's merged, it lets us opening files one by one
-pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
+pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockReader {
     const tableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer tableHeader.deinit(alloc);
 
@@ -374,6 +375,7 @@ test "BlockReader.current returns correct item at currentI" {
 
 test "BlockReader.initFromMemTable reads items" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const Case = struct {
         name: []const u8,
@@ -495,7 +497,7 @@ test "BlockReader.initFromMemTable reads items" {
                 break :blk try MemTable.init(io, alloc, blocks[0..]);
             }
         };
-        defer memTable.deinit(alloc);
+        defer memTable.deinit(io, alloc);
 
         var reader = try BlockReader.initFromMemTable(alloc, memTable);
         defer reader.deinit(alloc);

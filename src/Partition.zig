@@ -78,7 +78,7 @@ pub fn open(
     }
 
     const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
-    errdefer indexRecorder.deinit(alloc);
+    errdefer indexRecorder.deinit(io, alloc);
 
     const index = try Index.init(alloc, indexRecorder);
     errdefer index.deinit(io, alloc);
@@ -141,6 +141,7 @@ pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []co
 const bufSize = 1024;
 pub fn addLines(
     self: *Partition,
+    io: Io,
     allocator: Allocator,
     lines: std.ArrayList(Line),
     tags: []Field,
@@ -184,25 +185,25 @@ pub fn addLines(
 
         if (self.isCached(lines.items[i].sid)) continue;
 
-        if (!try self.index.hasStream(allocator, sid)) {
+        if (!try self.index.hasStream(io, allocator, sid)) {
             try self.index.indexStream(allocator, sid, tags, encodedTags);
         }
         try self.cache(sid);
     }
 
-    try self.data.addLines(allocator, lines.items);
+    try self.data.addLines(io, allocator, lines.items);
 }
 
-pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
+pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    var result = try self.index.querySIDs(alloc, tenantID, query.tags);
+    var result = try self.index.querySIDs(io, alloc, tenantID, query.tags);
     defer result.sids.deinit(alloc);
 
     // TODO handle cutOff
     _ = result.cutOff;
 
-    return self.data.queryLines(alloc, result.sids.items, query);
+    return self.data.queryLines(io, alloc, result.sids.items, query);
 }
 
 pub fn flushForce(self: *Partition, io: Io, alloc: Allocator) !void {

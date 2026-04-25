@@ -65,12 +65,12 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     }
 
     const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
-    try t.mergeIntoMemTable(alloc, &readers, flushAtUs);
+    try t.mergeIntoMemTable(io, alloc, &readers, flushAtUs);
     std.debug.assert(t.metaindexBuf.items.len > 0);
     return t;
 }
 
-pub fn mergeMemTables(io, alloc: Allocator, memTables: []*MemTable) !*MemTable {
+pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*MemTable) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     defer {
         for (readers.items) |r| r.deinit(alloc);
@@ -83,8 +83,8 @@ pub fn mergeMemTables(io, alloc: Allocator, memTables: []*MemTable) !*MemTable {
     const t = try empty(alloc);
     errdefer t.deinit(alloc);
 
-    const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(*MemTable, memTables);
-    try t.mergeIntoMemTable(alloc, &readers, flushToDiskAtUs);
+    const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(io, *MemTable, memTables);
+    try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs);
     return t;
 }
 
@@ -163,6 +163,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
 
 fn mergeIntoMemTable(
     self: *MemTable,
+    io: Io,
     alloc: Allocator,
     readers: *std.ArrayList(*BlockReader),
     flushAtUs: i64,
@@ -172,11 +173,12 @@ fn mergeIntoMemTable(
     var writer = BlockWriter.initFromMemTable(self);
     defer writer.deinit(alloc);
     self.tableHeader.deinit(alloc);
-    self.tableHeader = try mergeBlocks(alloc, &writer, readers, null);
+    self.tableHeader = try mergeBlocks(io, alloc, &writer, readers, null);
 }
 
 // TODO: move to a better place, it's not related to mem table
 pub fn mergeBlocks(
+    io: Io,
     alloc: Allocator,
     writer: *BlockWriter,
     readers: *std.ArrayList(*BlockReader),
@@ -185,8 +187,8 @@ pub fn mergeBlocks(
     var merger = try BlockMerger.init(alloc, readers);
     defer merger.deinit(alloc);
 
-    const tableHeader = try merger.merge(alloc, writer, stopped);
-    try writer.close(alloc);
+    const tableHeader = try merger.merge(io, alloc, writer, stopped);
+    try writer.close(io, alloc);
 
     return tableHeader;
 }

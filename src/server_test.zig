@@ -26,6 +26,7 @@ const HttpResponse = struct {
 
 fn request(
     alloc: std.mem.Allocator,
+    io: Io,
     method: []const u8,
     path: []const u8,
     body: []const u8,
@@ -82,12 +83,12 @@ fn request(
     return .{ .statusCode = statusCode, .body = responseBody };
 }
 
-fn waitUntilReady(alloc: std.mem.Allocator) !void {
+fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
     const start = std.time.nanoTimestamp();
     const timeoutNs = 10 * std.time.ns_per_s;
 
     while (std.time.nanoTimestamp() - start < timeoutNs) {
-        const resp = request(alloc, "GET", "/insert/loki/ready", "", null, null) catch {
+        const resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
             Io.sleep(50 * std.time.ns_per_ms);
             continue;
         };
@@ -152,7 +153,7 @@ test "serverEndToEndViaHTTP" {
         }
     }
 
-    try waitUntilReady(alloc);
+    try waitUntilReady(io, alloc);
 
     const tsNs: u64 = @intCast(std.time.nanoTimestamp());
     const insertJson = try std.fmt.allocPrint(
@@ -169,6 +170,7 @@ test "serverEndToEndViaHTTP" {
 
     {
         var resp = try request(
+            io,
             alloc,
             "POST",
             "/insert/loki/api/v1/push",

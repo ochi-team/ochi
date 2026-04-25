@@ -89,11 +89,11 @@ pub const DataShard = struct {
         }
 
         const memTable = try MemTable.init(io, alloc);
-        errdefer memTable.deinit(alloc);
+        errdefer memTable.deinit(io, alloc);
 
         sem.waitUncancelable(io);
 
-        memTable.addLines(alloc, self.lines.items) catch |err| {
+        memTable.addLines(io, alloc, self.lines.items) catch |err| {
             sem.post();
             return err;
         };
@@ -159,9 +159,9 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
     t.* = DataRecorder{
         .shards = shards,
         .nextShard = std.atomic.Value(usize).init(0),
-        .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real))),
+        .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real).nanoseconds)),
 
-        .mxTables = .{},
+        .mxTables = .init,
         .concurrency = concurrency,
         .memTables = memTables,
         .diskTables = tables,
@@ -495,7 +495,7 @@ fn mergeTables(
         return;
     }
 
-    var readers = try openTableReaders(alloc, tables);
+    var readers = try openTableReaders(io, alloc, tables);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
@@ -659,27 +659,28 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
     for (tables.items) |table| {
-        try table.queryLines(alloc, &linesDst, sids, query);
+        try table.queryLines(io, alloc, &linesDst, sids, query);
     }
 
     return linesDst;
 }
 
 fn openCreatedTable(
+    io: Io,
     alloc: Allocator,
     tablePath: []const u8,
     tables: []*Table,
     maybeMemTable: ?*MemTable,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(*Table, *MemTable, tables);
+        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, *MemTable, tables);
         return Table.fromMem(alloc, memTable);
     }
 
     return Table.open(io, alloc, tablePath);
 }
 
-fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
     errdefer {
         for (readers.items) |reader| reader.deinit(alloc);
@@ -690,7 +691,7 @@ fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockRea
             const reader = try BlockReader.initFromMemTable(alloc, memTable);
             readers.appendAssumeCapacity(reader);
         } else {
-            const reader = try BlockReader.initFromDiskTable(alloc, table.path);
+            const reader = try BlockReader.initFromDiskTable(io, alloc, table.path);
             readers.appendAssumeCapacity(reader);
         }
     }
@@ -747,9 +748,9 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
 
 fn createMemTableFromLines(io: Io, alloc: Allocator, lines: []Line) !*Table {
     const memTable = try MemTable.init(io, alloc);
-    errdefer memTable.deinit(alloc);
+    errdefer memTable.deinit(io, alloc);
 
-    try memTable.addLines(alloc, lines);
+    try memTable.addLines(io, alloc, lines);
     return Table.fromMem(alloc, memTable);
 }
 
@@ -995,7 +996,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         for (0..inserted) |i| {
             var batch = [_]Line{stableLine(@intCast(i + 1), 1, i)};
-            try recorder.addLines(alloc, batch[0..]);
+            try recorder.addLines(io, alloc, batch[0..]);
         }
 
         recorder.stopped.store(true, .release);

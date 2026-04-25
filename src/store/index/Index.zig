@@ -48,9 +48,9 @@ pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn hasStream(self: *Self, alloc: Allocator, sid: SID) !bool {
-    var lookup = try Lookup.init(alloc, self.recorder);
-    defer lookup.deinit(alloc);
+pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID) !bool {
+    var lookup = try Lookup.init(io, alloc, self.recorder);
+    defer lookup.deinit(io, alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
     defer alloc.free(sidBuf);
@@ -116,10 +116,10 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
 }
 
 const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
-pub fn querySIDs(self: *Self, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QuerySIDsResult {
+pub fn querySIDs(self: *Self, io: Io, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QuerySIDsResult {
     // TODO: cache query => stream
-    var lookup = try Lookup.init(alloc, self.recorder);
-    defer lookup.deinit(alloc);
+    var lookup = try Lookup.init(io, alloc, self.recorder);
+    defer lookup.deinit(io, alloc);
 
     var prefixes: std.ArrayList([]const u8) = try .initCapacity(alloc, tags.len);
     defer {

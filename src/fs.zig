@@ -135,7 +135,7 @@ test "pathExists returns true for existing paths and false for missing path" {
 
     try tmp.dir.makePath("nested");
     {
-        var file = try tmp.dir.createFile("existing.txt", .{});
+        var file = try tmp.dir.createFile(io, "existing.txt", .{});
         defer file.close(io);
         try file.writeStreamingAll(io, "content");
     }
@@ -169,7 +169,7 @@ test "syncPathAndParentDir fsync file and parent directory" {
 
     const file_name = "test.txt";
     {
-        var f = try tmp.dir.createFile(file_name, .{});
+        var f = try tmp.dir.createFile(io, file_name, .{});
         defer f.close(io);
         try f.writeStreamingAll(io, "hello");
     }
@@ -203,7 +203,7 @@ test "readAll reads full file content from tmp directory" {
     const content = "simple content";
 
     {
-        var f = try tmp.dir.createFile(file_name, .{});
+        var f = try tmp.dir.createFile(io, file_name, .{});
         defer f.close(io);
         try f.writeStreamingAll(io, content);
     }

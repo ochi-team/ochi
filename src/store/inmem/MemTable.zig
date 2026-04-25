@@ -44,12 +44,12 @@ pub fn init(io: Io, allocator: std.mem.Allocator) !*MemTable {
 
     return p;
 }
-pub fn deinit(self: *MemTable, allocator: std.mem.Allocator) void {
-    self.streamWriter.deinit(allocator);
+pub fn deinit(self: *MemTable, io: Io, allocator: std.mem.Allocator) void {
+    self.streamWriter.deinit(io, allocator);
     allocator.destroy(self);
 }
 
-pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !void {
+pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []Line) !void {
     if (lines.len == 0) {
         return Error.EmptyLines;
     }
@@ -67,7 +67,7 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !v
         std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
 
         if (blockSize >= maxBlockSize or !line.sid.eql(&prevSID)) {
-            try blockWriter.writeLines(allocator, prevSID, lines[streamI..i], self.streamWriter);
+            try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..i], self.streamWriter);
             prevSID = line.sid;
             blockSize = 0;
             streamI = i;
@@ -75,9 +75,9 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !v
         blockSize += line.fieldsSize();
     }
     if (streamI != lines.len) {
-        try blockWriter.writeLines(allocator, prevSID, lines[streamI..], self.streamWriter);
+        try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..], self.streamWriter);
     }
-    try blockWriter.finish(allocator, self.streamWriter, &self.tableHeader);
+    try blockWriter.finish(io, allocator, self.streamWriter, &self.tableHeader);
 }
 
 // TODO: this is not the best place for bloom path generation
@@ -225,7 +225,7 @@ fn populateSampleLines(sample: *SampleLines) void {
     };
 }
 
-fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     var file = try std.Io.Dir.cwd().openFile(path, .{});
     defer file.close(io);
 
@@ -252,8 +252,8 @@ fn testAddLines(io: Io, allocator: std.mem.Allocator) !void {
     };
 
     const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(allocator);
-    try memTable.addLines(allocator, lines[0..]);
+    defer memTable.deinit(io, allocator);
+    try memTable.addLines(io, allocator, lines[0..]);
 
     const timestampsContent = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer();
     const indexContent = memTable.streamWriter.indexDst.asSliceAssumeBuffer();
@@ -335,7 +335,7 @@ test "addLinesErrorOnEmpty" {
     var lines = [_]Line{};
     const memTable = try MemTable.init(std.testing.allocator);
     defer memTable.deinit(std.testing.allocator);
-    const err = memTable.addLines(std.testing.allocator, lines[0..]);
+    const err = memTable.addLines(std.testing.io, std.testing.allocator, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
@@ -364,9 +364,9 @@ fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
     defer allocator.free(flushPath);
 
     const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(allocator);
+    defer memTable.deinit(io, allocator);
 
-    try memTable.addLines(allocator, lines[0..]);
+    try memTable.addLines(io, allocator, lines[0..]);
     try memTable.storeToDisk(io, allocator, flushPath);
 
     const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnKeys });
@@ -394,51 +394,51 @@ fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
     const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.header });
     defer allocator.free(metadataPath);
 
-    const columnKeysContent = try readFileAll(allocator, columnKeysPath);
+    const columnKeysContent = try readFileAll(io, allocator, columnKeysPath);
     defer allocator.free(columnKeysContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer(), columnKeysContent);
 
-    const columnIdxsContent = try readFileAll(allocator, columnIdxsPath);
+    const columnIdxsContent = try readFileAll(io, allocator, columnIdxsPath);
     defer allocator.free(columnIdxsContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer(), columnIdxsContent);
 
-    const metaindexContent = try readFileAll(allocator, metaindexPath);
+    const metaindexContent = try readFileAll(io, allocator, metaindexPath);
     defer allocator.free(metaindexContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer(), metaindexContent);
 
-    const indexContent = try readFileAll(allocator, indexPath);
+    const indexContent = try readFileAll(io, allocator, indexPath);
     defer allocator.free(indexContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.indexDst.asSliceAssumeBuffer(), indexContent);
 
-    const columnsHeaderIndexContent = try readFileAll(allocator, columnsHeaderIndexPath);
+    const columnsHeaderIndexContent = try readFileAll(io, allocator, columnsHeaderIndexPath);
     defer allocator.free(columnsHeaderIndexContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(), columnsHeaderIndexContent);
 
-    const columnsHeaderContent = try readFileAll(allocator, columnsHeaderPath);
+    const columnsHeaderContent = try readFileAll(io, allocator, columnsHeaderPath);
     defer allocator.free(columnsHeaderContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(), columnsHeaderContent);
 
-    const timestampsContent = try readFileAll(allocator, timestampsPath);
+    const timestampsContent = try readFileAll(io, allocator, timestampsPath);
     defer allocator.free(timestampsContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(), timestampsContent);
 
-    const msgBloomTokensContent = try readFileAll(allocator, messageBloomTokensPath);
+    const msgBloomTokensContent = try readFileAll(io, allocator, messageBloomTokensPath);
     defer allocator.free(msgBloomTokensContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(), msgBloomTokensContent);
 
-    const msgBloomValuesContent = try readFileAll(allocator, messageBloomValuesPath);
+    const msgBloomValuesContent = try readFileAll(io, allocator, messageBloomValuesPath);
     defer allocator.free(msgBloomValuesContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(), msgBloomValuesContent);
 
-    const bloomTokensContent = try readFileAll(allocator, bloomTokensPath);
+    const bloomTokensContent = try readFileAll(io, allocator, bloomTokensPath);
     defer allocator.free(bloomTokensContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer(), bloomTokensContent);
 
-    const bloomValuesContent = try readFileAll(allocator, bloomValuesPath);
+    const bloomValuesContent = try readFileAll(io, allocator, bloomValuesPath);
     defer allocator.free(bloomValuesContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer(), bloomValuesContent);
 
-    const metadataContent = try readFileAll(allocator, metadataPath);
+    const metadataContent = try readFileAll(io, allocator, metadataPath);
     defer allocator.free(metadataContent);
     try std.testing.expect(metadataContent.len > 0);
 

@@ -161,13 +161,13 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     return table;
 }
 
-pub fn close(self: *Table, _: Io) void {
+pub fn close(self: *Table, io: Io) void {
     if (self.disk) |disk| {
         self.alloc.free(self.entriesBuf);
         self.alloc.free(self.lensBuf);
         self.alloc.free(self.indexBuf);
 
-        disk.deinit(self.alloc);
+        disk.deinit(io, self.alloc);
     }
     if (self.mem) |mem| {
         mem.deinit(self.alloc);
@@ -179,9 +179,10 @@ pub fn close(self: *Table, _: Io) void {
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
     if (shouldRemove) {
         // TODO: replace to an error log
-        std.fs.deleteTreeAbsolute(self.path) catch |err| {
-            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
-        };
+        // TODO removed without replacement
+        // std.fs.deleteTreeAbsolute(self.path) catch |err| {
+        //     std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
+        // };
     }
 
     if (self.path.len > 0) {
@@ -296,7 +297,7 @@ fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
     var writer = try BlockWriter.initFromDiskTable(alloc, tablePath, true);
     defer writer.deinit(alloc);
     try writer.writeBlock(io, alloc, block);
-    try writer.close(alloc);
+    try writer.close(io, alloc);
 
     var header = TableHeader{
         .entriesCount = items.len,

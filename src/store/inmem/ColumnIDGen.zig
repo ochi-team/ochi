@@ -83,7 +83,7 @@ pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
     const gen = try ColumnIDGen.init(alloc);
     errdefer gen.deinit(alloc);
 
-    try gen.keyIDs.ensureUnusedCapacity(@intCast(genSize.value));
+    try gen.keyIDs.ensureUnusedCapacity(alloc, @intCast(genSize.value));
     for (0..genSize.value) |_| {
         const key = dec.readString();
         _ = gen.genIDAssumeCapacity(key);

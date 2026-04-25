@@ -195,7 +195,7 @@ pub fn addLines(
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
-        try partition.addLines(allocator, list, tags, encodedTags);
+        try partition.addLines(io, allocator, list, tags, encodedTags);
 
         // Return early since all lines are added to the same Partition
         if (list.items.len == lines.len) return;
@@ -243,7 +243,7 @@ pub fn addLines(
         };
         defer partition.release(io);
 
-        try partition.addLines(allocator, it.value_ptr.*, tags, encodedTags);
+        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags);
     }
 }
 
@@ -282,7 +282,7 @@ pub fn queryLines(
 
     var results = std.ArrayList(Line).empty;
     for (parts.items) |part| {
-        var partResults = try part.queryLines(fbaAlloc, tenantID, query);
+        var partResults = try part.queryLines(io, fbaAlloc, tenantID, query);
         defer partResults.deinit(fbaAlloc);
 
         try results.appendSlice(alloc, partResults.items);

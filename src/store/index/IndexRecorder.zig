@@ -173,7 +173,7 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 
 // TODO: this must assert there is no data inmemory or it flushes it immediately
 // entires, blocks, memtables
-pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
+pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     // make sure deinit is never called outside of stop
     std.debug.assert(self.blocksToFlush.items.len == 0);
     std.debug.assert(self.memTables.items.len == 0);
@@ -258,7 +258,7 @@ fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlo
     }
 }
 
-fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
     std.debug.assert(blocks.len > 0);
 
     // enough for 256 tables, which a way beyond the expected amount
@@ -269,7 +269,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     var memTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, tablesSize);
     defer memTables.deinit(fbaAlloc);
     errdefer {
-        for (memTables.items) |memTable| memTable.close();
+        for (memTables.items) |memTable| memTable.close(io);
     }
 
     var tail = blocks[0..];
@@ -293,11 +293,11 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     // it requires another way to handle mem tables semaphore,
     // but might reduce the load on merging small tables
     while (memTables.items.len > 1) {
-        try mergeMemTables(alloc, &memTables);
+        try mergeMemTables(io, alloc, &memTables);
 
         for (memTables.items) |table| {
             if (table.size >= maxSize) {
-                try self.addToMemTables(alloc, table, force);
+                try self.addToMemTables(io, alloc, table, force);
             } else {
                 left.appendAssumeCapacity(table);
             }
@@ -308,14 +308,14 @@ fn flushBlocksToMemTables(self: *IndexRecorder, alloc: Allocator, blocks: []*Mem
     }
 
     if (memTables.items.len == 1) {
-        try self.addToMemTables(alloc, memTables.items[0], force);
+        try self.addToMemTables(io, alloc, memTables.items[0], force);
     }
 }
 
 /// merges mem tables to a bigger size ones
 /// requires same Allocator that's used to create them,
 /// because it deinits the merged ones
-fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
+fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     // TODO: run merging job in parallel and benchmark whether it doesn't hurt general throughput
 
     // TODO: take a metric to understand if capacity is enough for regular case
@@ -348,10 +348,10 @@ fn mergeMemTables(alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
         }
 
         // TODO: I don't need it, we already have merging from []*Table, replace it
-        const res = try MemTable.mergeMemTables(alloc, memToMerge.items);
+        const res = try MemTable.mergeMemTables(io, alloc, memToMerge.items);
         memToMerge.clearRetainingCapacity();
 
-        for (toMerge) |t| t.close();
+        for (toMerge) |t| t.close(io);
         const t = try Table.fromMem(alloc, res);
         try mergedTables.append(fbaAlloc, t);
     }
@@ -566,7 +566,7 @@ fn flushMemEntries(
         try shard.collectBlocks(io, alloc, blocksDestination, nowUs, force);
     }
 
-    if (blocksDestination.items.len > 0) try self.flushBlocksToMemTables(alloc, blocksDestination.items, force);
+    if (blocksDestination.items.len > 0) try self.flushBlocksToMemTables(io, alloc, blocksDestination.items, force);
 }
 
 fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
@@ -703,6 +703,7 @@ pub fn mergeTables(
     defer blockWriter.deinit(alloc);
 
     const tableHeader = MemTable.mergeBlocks(
+        io,
         alloc,
         &blockWriter,
         &readers,
@@ -771,13 +772,14 @@ fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockRea
 }
 
 fn openCreatedTable(
+    io: Io,
     alloc: Allocator,
     tablePath: []const u8,
     tables: []*Table,
     maybeMemTable: ?*MemTable,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(*Table, *MemTable, tables);
+        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, *MemTable, tables);
         return Table.fromMem(alloc, memTable);
     }
 
@@ -786,7 +788,7 @@ fn openCreatedTable(
 
 const testing = std.testing;
 
-fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table {
+fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) !*Table {
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
     var block = try MemBlock.init(alloc, total + 16);

@@ -80,7 +80,7 @@ pub const StreamReader = struct {
         return r;
     }
 
-    fn initFromDisk(alloc: Allocator, path: []const u8, tableHeader: TableHeader) !*StreamReader {
+    fn initFromDisk(io: Io, alloc: Allocator, path: []const u8, tableHeader: TableHeader) !*StreamReader {
         var fba = std.heap.stackFallback(2048, alloc);
         const fbaAlloc = fba.get();
 
@@ -346,10 +346,10 @@ pub const BlockReader = struct {
         return br;
     }
 
-    pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
+    pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockReader {
         const tableHeader = try TableHeader.readFile(io, alloc, path);
 
-        const streamReader = try StreamReader.initFromDisk(alloc, path, tableHeader);
+        const streamReader = try StreamReader.initFromDisk(io, alloc, path, tableHeader);
         errdefer streamReader.deinit(alloc);
         var indexBlockHeaders: []IndexBlockHeader = &.{};
         if (streamReader.metaIndexBuf.len > 0) {
@@ -574,8 +574,8 @@ fn testReadBlock(allocator: Allocator) !void {
     };
 
     const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(allocator);
-    try memTable.addLines(allocator, lines[0..]);
+    defer memTable.deinit(io, allocator);
+    try memTable.addLines(io, allocator, lines[0..]);
 
     const th = memTable.tableHeader;
     try std.testing.expectEqual(@as(u32, 3), th.len);
@@ -668,11 +668,11 @@ fn testInitFromDiskTable(io: Io, allocator: Allocator) !void {
     defer allocator.free(tablePath);
 
     const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(allocator);
-    try memTable.addLines(allocator, lines[0..]);
+    defer memTable.deinit(io, allocator);
+    try memTable.addLines(io, allocator, lines[0..]);
     try memTable.storeToDisk(io, allocator, tablePath);
 
-    const blockReader = try BlockReader.initFromDiskTable(allocator, tablePath);
+    const blockReader = try BlockReader.initFromDiskTable(io, allocator, tablePath);
     defer blockReader.deinit(allocator);
 
     var blocksRead: u32 = 0;
