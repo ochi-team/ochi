@@ -6,18 +6,15 @@ const encoding = @import("encoding");
 const ColumnIDGen = @This();
 
 // keyIDs must use StringArrayHashMap, it's important to store the keys ordered
-keyIDs: std.StringArrayHashMap(u16),
+keyIDs: std.array_hash_map.String(u16),
 keysBuf: ?[]u8,
 
 pub fn init(allocator: Allocator) !*ColumnIDGen {
-    var nameIDs = std.StringArrayHashMap(u16).init(allocator);
-    errdefer nameIDs.deinit();
-
     const s = try allocator.create(ColumnIDGen);
     errdefer s.deinit(allocator);
 
     s.* = ColumnIDGen{
-        .keyIDs = nameIDs,
+        .keyIDs = .empty,
         .keysBuf = null,
     };
     return s;
@@ -27,7 +24,7 @@ pub fn deinit(self: *ColumnIDGen, allocator: Allocator) void {
     if (self.keysBuf != null) {
         allocator.free(self.keysBuf.?);
     }
-    self.keyIDs.deinit();
+    self.keyIDs.deinit(allocator);
     allocator.destroy(self);
 }
 

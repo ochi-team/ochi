@@ -387,6 +387,8 @@ fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
 
 test "initFromLines and initFromData produce identical blocks" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
     const sid = SID{ .id = 1, .tenantID = "1111" };
 
     var f1 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
@@ -426,7 +428,7 @@ test "initFromLines and initFromData produce identical blocks" {
         const blockA = try Block.initFromLines(alloc, case.lines);
         defer blockA.deinit(alloc);
 
-        const writer = try StreamWriter.initMem(alloc, 128);
+        const writer = try StreamWriter.initMem(io, alloc, 128);
         defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);

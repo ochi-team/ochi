@@ -116,8 +116,10 @@ pub const StreamDestination = union(Tag) {
 
 test "StreamDestination buffer destination" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
     var dst = try StreamDestination.initBuffer(alloc, 8);
-    defer dst.deinit(alloc);
+    defer dst.deinit(io, alloc);
 
     try dst.appendSlice(alloc, "abc");
     try dst.appendSlice(alloc, "1234");
@@ -143,7 +145,7 @@ test "StreamDestination file destination" {
 
     const file = try Dir.createFileAbsolute(io, filePath, .{ .truncate = true, .read = true });
     var dst = try StreamDestination.initFile(file);
-    defer dst.deinit(alloc);
+    defer dst.deinit(io, alloc);
 
     const res = "hello-world";
     try dst.appendSlice(alloc, "hello");

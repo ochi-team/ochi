@@ -670,7 +670,7 @@ pub fn mergeTables(
 
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
-        try table.storeToDisk(alloc, destinationTablePath);
+        try table.storeToDisk(io, alloc, destinationTablePath);
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
         try swapper.swapTables(self, alloc, tables, newTable, tableKind);
         swapped = true;

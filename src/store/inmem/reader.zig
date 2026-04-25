@@ -572,7 +572,7 @@ fn testReadBlock(allocator: Allocator) !void {
         sample.lines[2],
     };
 
-    const memTable = try MemTable.init(allocator);
+    const memTable = try MemTable.init(io, allocator);
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 
@@ -666,10 +666,10 @@ fn testInitFromDiskTable(io: Io, allocator: Allocator) !void {
     const tablePath = try std.fs.path.join(allocator, &.{ rootPath, "table-1" });
     defer allocator.free(tablePath);
 
-    const memTable = try MemTable.init(allocator);
+    const memTable = try MemTable.init(io, allocator);
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
-    try memTable.storeToDisk(allocator, tablePath);
+    try memTable.storeToDisk(io, allocator, tablePath);
 
     const blockReader = try BlockReader.initFromDiskTable(allocator, tablePath);
     defer blockReader.deinit(allocator);

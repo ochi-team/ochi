@@ -31,9 +31,9 @@ tableHeader: TableHeader,
 
 flushAtUs: i64 = std.math.maxInt(i64),
 
-pub fn init(allocator: std.mem.Allocator) !*MemTable {
-    const streamWriter = try StreamWriter.initMem(allocator, 1);
-    errdefer streamWriter.deinit(allocator);
+pub fn init(io: Io, allocator: std.mem.Allocator) !*MemTable {
+    const streamWriter = try StreamWriter.initMem(io, allocator, 1);
+    errdefer streamWriter.deinit(io, allocator);
 
     const p = try allocator.create(MemTable);
     //TODO should it be stack allocated instead?
@@ -232,10 +232,10 @@ fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 }
 
 test "addLines" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{std.testing.io});
 }
 
-fn testAddLines(allocator: std.mem.Allocator) !void {
+fn testAddLines(io: Io, allocator: std.mem.Allocator) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -249,7 +249,7 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         sample.lines[1],
     };
 
-    const memTable = try MemTable.init(allocator);
+    const memTable = try MemTable.init(io, allocator);
     defer memTable.deinit(allocator);
     try memTable.addLines(allocator, lines[0..]);
 
@@ -361,11 +361,11 @@ fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
     const flushPath = try std.fs.path.join(allocator, &.{ basePath, "flush" });
     defer allocator.free(flushPath);
 
-    const memTable = try MemTable.init(allocator);
+    const memTable = try MemTable.init(io, allocator);
     defer memTable.deinit(allocator);
 
     try memTable.addLines(allocator, lines[0..]);
-    try memTable.storeToDisk(allocator, flushPath);
+    try memTable.storeToDisk(io, allocator, flushPath);
 
     const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnKeys });
     defer allocator.free(columnKeysPath);
@@ -440,5 +440,5 @@ fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
     defer allocator.free(metadataContent);
     try std.testing.expect(metadataContent.len > 0);
 
-    try std.testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(allocator, flushPath));
+    try std.testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(io, allocator, flushPath));
 }

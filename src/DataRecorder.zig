@@ -88,7 +88,7 @@ pub const DataShard = struct {
             return null;
         }
 
-        const memTable = try MemTable.init(alloc);
+        const memTable = try MemTable.init(io, alloc);
         errdefer memTable.deinit(alloc);
 
         sem.wait();
@@ -485,7 +485,7 @@ fn mergeTables(
 
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
-        try table.storeToDisk(alloc, destinationTablePath);
+        try table.storeToDisk(io, alloc, destinationTablePath);
 
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
         errdefer newTable.release();
@@ -507,7 +507,7 @@ fn mergeTables(
 
     const streamWriter: *StreamWriter = blk: {
         if (tableKind == .mem) {
-            newMemTable = try MemTable.init(alloc);
+            newMemTable = try MemTable.init(io, alloc);
             break :blk newMemTable.?.streamWriter;
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
@@ -746,7 +746,7 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
 }
 
 fn createMemTableFromLines(alloc: Allocator, lines: []Line) !*Table {
-    const memTable = try MemTable.init(alloc);
+    const memTable = try MemTable.init(io, alloc);
     errdefer memTable.deinit(alloc);
 
     try memTable.addLines(alloc, lines);

@@ -604,7 +604,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
 
-    const memTable = try MemTable.init(alloc);
+    const memTable = try MemTable.init(io, alloc);
     defer memTable.deinit(alloc);
 
     var fields1 = [_]Field{
@@ -628,7 +628,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
     var lines = [_]Line{ line1, line2 };
     try memTable.addLines(alloc, lines[0..]);
-    try memTable.storeToDisk(alloc, tablePath);
+    try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
     const table1 = try Table.open(alloc, table1Path);
@@ -657,7 +657,7 @@ test "release fromMem does not affect filesystem path" {
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, sentinelPath, .{}));
     try Dir.createDirAbsolute(io, sentinelPath, .default_dir);
 
-    const memTable = try MemTable.init(alloc);
+    const memTable = try MemTable.init(io, alloc);
 
     const table = try Table.fromMem(alloc, memTable);
     // eve if set we expect it to keep the created path when disk == null,
@@ -685,7 +685,7 @@ fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
 
 test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
-    const memTable = try MemTable.init(alloc);
+    const memTable = try MemTable.init(io, alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -743,7 +743,7 @@ test "open reads table from disk" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
 
-    const memTable = try MemTable.init(alloc);
+    const memTable = try MemTable.init(io, alloc);
     defer memTable.deinit(alloc);
 
     var fields1 = [_]Field{
@@ -767,7 +767,7 @@ test "open reads table from disk" {
 
     var lines = [_]Line{ line1, line2 };
     try memTable.addLines(alloc, lines[0..]);
-    try memTable.storeToDisk(alloc, tablePath);
+    try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
     const table = try Table.open(alloc, tablePathOwned);
@@ -854,7 +854,7 @@ test "queryLines" {
         .{ .timestampNs = 2, .sid = sidTenantB, .fields = tenantBFields[0..] },
     };
 
-    const memTable = try MemTable.init(alloc);
+    const memTable = try MemTable.init(io, alloc);
     try memTable.addLines(alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);

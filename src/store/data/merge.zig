@@ -423,9 +423,9 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     const fieldKey = "key";
 
     const mergedMemTable = blk: {
-        const leftMemTable = try MemTable.init(alloc);
+        const leftMemTable = try MemTable.init(io, alloc);
         defer leftMemTable.deinit(alloc);
-        const rightMemTable = try MemTable.init(alloc);
+        const rightMemTable = try MemTable.init(io, alloc);
         defer rightMemTable.deinit(alloc);
 
         var leftFields1 = [_]Field{.{ .key = fieldKey, .value = "left-1" }};
@@ -451,7 +451,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
 
-        const dstMemTable = try MemTable.init(alloc);
+        const dstMemTable = try MemTable.init(io, alloc);
         errdefer dstMemTable.deinit(alloc);
         const stopped: ?*std.atomic.Value(bool) = null;
         dstMemTable.tableHeader = try mergeData(alloc, dstMemTable.streamWriter, &readers, stopped);

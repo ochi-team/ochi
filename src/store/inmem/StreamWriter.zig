@@ -82,28 +82,28 @@ timestampsEncoder: *TimestampsEncoder,
 
 path: []const u8,
 
-pub fn initMem(allocator: Allocator, maxColI: u16) !*Self {
+pub fn initMem(io: Io, allocator: Allocator, maxColI: u16) !*Self {
     var timestampsDst = try StreamDestination.initBuffer(allocator, tsBufferSize);
-    errdefer timestampsDst.deinit(allocator);
+    errdefer timestampsDst.deinit(io, allocator);
     var indexDst = try StreamDestination.initBuffer(allocator, indexBufferSize);
-    errdefer indexDst.deinit(allocator);
+    errdefer indexDst.deinit(io, allocator);
     var metaIndexDst = try StreamDestination.initBuffer(allocator, metaIndexBufferSize);
-    errdefer metaIndexDst.deinit(allocator);
+    errdefer metaIndexDst.deinit(io, allocator);
 
     var columnsHeaderDst = try StreamDestination.initBuffer(allocator, columnsHeaderBufferSize);
-    errdefer columnsHeaderDst.deinit(allocator);
+    errdefer columnsHeaderDst.deinit(io, allocator);
     var columnsHeaderIndexDst = try StreamDestination.initBuffer(allocator, columnsHeaderIndexBufferSize);
-    errdefer columnsHeaderIndexDst.deinit(allocator);
+    errdefer columnsHeaderIndexDst.deinit(io, allocator);
 
     var columnKeysBuf = try StreamDestination.initBuffer(allocator, columnKeysBufferSize);
-    errdefer columnKeysBuf.deinit(allocator);
+    errdefer columnKeysBuf.deinit(io, allocator);
     var columnIdxsBuf = try StreamDestination.initBuffer(allocator, columnIndexesBufferSize);
-    errdefer columnIdxsBuf.deinit(allocator);
+    errdefer columnIdxsBuf.deinit(io, allocator);
 
     var msgBloomValuesDst = try StreamDestination.initBuffer(allocator, messageBloomValuesSize);
-    errdefer msgBloomValuesDst.deinit(allocator);
+    errdefer msgBloomValuesDst.deinit(io, allocator);
     var msgBloomTokensDst = try StreamDestination.initBuffer(allocator, messageBloomTokensSize);
-    errdefer msgBloomTokensDst.deinit(allocator);
+    errdefer msgBloomTokensDst.deinit(io, allocator);
     var bloomValuesList = try std.ArrayList(StreamDestination).initCapacity(allocator, maxColI);
     errdefer bloomValuesList.deinit(allocator);
     var bloomTokensList = try std.ArrayList(StreamDestination).initCapacity(allocator, maxColI);
@@ -185,47 +185,47 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     var columnKeysFile = try Dir.createFileAbsolute(io, columnKeysPath, .{ .truncate = true, .read = true });
     errdefer columnKeysFile.close();
     var columnKeysBuf = try StreamDestination.initFile(columnKeysFile);
-    errdefer columnKeysBuf.deinit(alloc);
+    errdefer columnKeysBuf.deinit(io, alloc);
 
     var columnIdxsFile = try Dir.createFileAbsolute(io, columnIdxsPath, .{ .truncate = true, .read = true });
     errdefer columnIdxsFile.close();
     var columnIdxsBuf = try StreamDestination.initFile(columnIdxsFile);
-    errdefer columnIdxsBuf.deinit(alloc);
+    errdefer columnIdxsBuf.deinit(io, alloc);
 
     var metaindexFile = try Dir.createFileAbsolute(io, metaindexPath, .{ .truncate = true, .read = true });
     errdefer metaindexFile.close();
     var metaIndexDst = try StreamDestination.initFile(metaindexFile);
-    errdefer metaIndexDst.deinit(alloc);
+    errdefer metaIndexDst.deinit(io, alloc);
 
     var indexFile = try Dir.createFileAbsolute(io, indexPath, .{ .truncate = true, .read = true });
     errdefer indexFile.close();
     var indexDst = try StreamDestination.initFile(indexFile);
-    errdefer indexDst.deinit(alloc);
+    errdefer indexDst.deinit(io, alloc);
 
     var columnsHeaderIndexFile = try Dir.createFileAbsolute(io, columnsHeaderIndexPath, .{ .truncate = true, .read = true });
     errdefer columnsHeaderIndexFile.close();
     var columnsHeaderIndexDst = try StreamDestination.initFile(columnsHeaderIndexFile);
-    errdefer columnsHeaderIndexDst.deinit(alloc);
+    errdefer columnsHeaderIndexDst.deinit(io, alloc);
 
     var columnsHeaderFile = try Dir.createFileAbsolute(io, columnsHeaderPath, .{ .truncate = true, .read = true });
     errdefer columnsHeaderFile.close();
     var columnsHeaderDst = try StreamDestination.initFile(columnsHeaderFile);
-    errdefer columnsHeaderDst.deinit(alloc);
+    errdefer columnsHeaderDst.deinit(io, alloc);
 
     var timestampsFile = try Dir.createFileAbsolute(io, timestampsPath, .{ .truncate = true, .read = true });
     errdefer timestampsFile.close();
     var timestampsDst = try StreamDestination.initFile(timestampsFile);
-    errdefer timestampsDst.deinit(alloc);
+    errdefer timestampsDst.deinit(io, alloc);
 
     var messageBloomTokensFile = try Dir.createFileAbsolute(io, messageBloomTokensPath, .{ .truncate = true, .read = true });
     errdefer messageBloomTokensFile.close();
     var msgBloomTokensDst = try StreamDestination.initFile(messageBloomTokensFile);
-    errdefer msgBloomTokensDst.deinit(alloc);
+    errdefer msgBloomTokensDst.deinit(io, alloc);
 
     var messageBloomValuesFile = try Dir.createFileAbsolute(io, messageBloomValuesPath, .{ .truncate = true, .read = true });
     errdefer messageBloomValuesFile.close();
     var msgBloomValuesDst = try StreamDestination.initFile(messageBloomValuesFile);
-    errdefer msgBloomValuesDst.deinit(alloc);
+    errdefer msgBloomValuesDst.deinit(io, alloc);
     var bloomValuesList = try std.ArrayList(StreamDestination).initCapacity(alloc, bloomValuesMaxShardsCount);
     errdefer bloomValuesList.deinit(alloc);
     var bloomTokensList = try std.ArrayList(StreamDestination).initCapacity(alloc, bloomValuesMaxShardsCount);
@@ -269,30 +269,30 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     return w;
 }
 
-pub fn deinit(self: *Self, allocator: Allocator) void {
-    self.timestampsDst.deinit(allocator);
-    self.indexDst.deinit(allocator);
-    self.metaIndexDst.deinit(allocator);
+pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
+    self.timestampsDst.deinit(io, allocator);
+    self.indexDst.deinit(io, allocator);
+    self.metaIndexDst.deinit(io, allocator);
 
-    self.columnsHeaderDst.deinit(allocator);
-    self.columnsHeaderIndexDst.deinit(allocator);
+    self.columnsHeaderDst.deinit(io, allocator);
+    self.columnsHeaderIndexDst.deinit(io, allocator);
 
-    self.messageBloomValuesDst.deinit(allocator);
-    self.messageBloomTokensDst.deinit(allocator);
+    self.messageBloomValuesDst.deinit(io, allocator);
+    self.messageBloomTokensDst.deinit(io, allocator);
     for (self.bloomValuesList.items) |*bv| {
-        bv.deinit(allocator);
+        bv.deinit(io, allocator);
     }
     self.bloomValuesList.deinit(allocator);
     for (self.bloomTokensList.items) |*bv| {
-        bv.deinit(allocator);
+        bv.deinit(io, allocator);
     }
     self.bloomTokensList.deinit(allocator);
 
     self.columnIDGen.deinit(allocator);
     self.colIdx.deinit();
 
-    self.columnKeysBuf.deinit(allocator);
-    self.columnIdxsBuf.deinit(allocator);
+    self.columnKeysBuf.deinit(io, allocator);
+    self.columnIdxsBuf.deinit(io, allocator);
 
     self.timestampsEncoder.deinit(allocator);
 
@@ -351,6 +351,7 @@ pub fn writeColumnIndexes(self: *Self, allocator: Allocator) !void {
 
 pub fn writeBlock(
     self: *Self,
+    io: Io,
     allocator: Allocator,
     block: *Block,
     blockHeader: *BlockHeader,
@@ -368,7 +369,7 @@ pub fn writeBlock(
     try self.bloomTokensList.ensureUnusedCapacity(allocator, columns.len);
 
     for (columns, 0..) |col, i| {
-        try self.writeColumn(allocator, col, &columnsHeader.headers[i]);
+        try self.writeColumn(io, allocator, col, &columnsHeader.headers[i]);
     }
 
     try self.writeColumnsHeader(allocator, columnsHeader, blockHeader);
@@ -443,7 +444,7 @@ fn writeTimestampsData(
     try self.timestampsDst.appendSlice(alloc, timestampsData.data);
 }
 
-fn writeColumn(self: *Self, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
+fn writeColumn(self: *Self, io: Io, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
     ch.key = col.key;
 
     const valuesEncoder = try ValuesEncoder.init(allocator);
@@ -458,7 +459,7 @@ fn writeColumn(self: *Self, allocator: Allocator, col: Column, ch: *ColumnHeader
     defer allocator.free(packedValues);
     std.debug.assert(packedValues.len <= maxPackedValuesSize);
 
-    const bloomBufI = self.getBloomBufferIndex(allocator, ch.key);
+    const bloomBufI = self.getBloomBufferIndex(io, allocator, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
         error.MessageBloomMustBeUsed => &self.messageBloomValuesDst,
         else => return err,
@@ -492,7 +493,7 @@ fn writeColumn(self: *Self, allocator: Allocator, col: Column, ch: *ColumnHeader
     try bloomTokensBuf.appendSlice(allocator, bloomHash);
 }
 
-fn writeColumnData(self: *Self, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
+fn writeColumnData(self: *Self, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
     const dataLen = col.data.len;
     std.debug.assert(dataLen <= maxValuesBlockSize);
 
@@ -506,7 +507,7 @@ fn writeColumnData(self: *Self, alloc: Allocator, col: ColumnData, ch: *ColumnHe
     std.mem.swap(std.ArrayList([]const u8), &ch.dict.values, &col.dict.values);
     ch.size = dataLen;
 
-    const bloomBufI = self.getBloomBufferIndex(alloc, ch.key);
+    const bloomBufI = self.getBloomBufferIndex(io, alloc, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
         error.MessageBloomMustBeUsed => &self.messageBloomValuesDst,
         else => return err,
@@ -526,7 +527,7 @@ fn writeColumnData(self: *Self, alloc: Allocator, col: ColumnData, ch: *ColumnHe
     if (col.bloomFilterData) |d| try bloomTokensBuf.appendSlice(alloc, d);
 }
 
-fn getBloomBufferIndex(self: *Self, alloc: Allocator, key: []const u8) !u16 {
+fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !u16 {
     if (key.len == 0) {
         return error.MessageBloomMustBeUsed;
     }
@@ -551,13 +552,13 @@ fn getBloomBufferIndex(self: *Self, alloc: Allocator, key: []const u8) !u16 {
         // path if empty for mem table
         if (self.path.len == 0) {
             var valuesBuf = try createBloomBuf(alloc);
-            errdefer valuesBuf.deinit(alloc);
+            errdefer valuesBuf.deinit(io, alloc);
             const tokensBuf = try createBloomBuf(alloc);
             self.bloomValuesList.appendAssumeCapacity(valuesBuf);
             self.bloomTokensList.appendAssumeCapacity(tokensBuf);
         } else {
             var valuesDst = try createBloomValuesFile(alloc, self.path, colI);
-            errdefer valuesDst.deinit(alloc);
+            errdefer valuesDst.deinit(io, alloc);
             const tokensDst = try createBloomTokensValues(alloc, self.path, colI);
             self.bloomValuesList.appendAssumeCapacity(valuesDst);
             self.bloomTokensList.appendAssumeCapacity(tokensDst);
@@ -630,6 +631,7 @@ const StreamReader = @import("reader.zig").StreamReader;
 
 test "writeBlock and writeData produce identical buffer output" {
     const alloc = testing.allocator;
+    const io = std.testing.io;
 
     var fields1 = [_]Field{
         .{ .key = "app", .value = "seq" },
@@ -651,7 +653,7 @@ test "writeBlock and writeData produce identical buffer output" {
 
     // Writer 1: encode via writeBlock
     const maxColI = 128;
-    const writer1 = try Self.initMem(alloc, maxColI);
+    const writer1 = try Self.initMem(io, alloc, maxColI);
     defer writer1.deinit(alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
@@ -691,7 +693,7 @@ test "writeBlock and writeData produce identical buffer output" {
     try bd.readFrom(alloc, &bh1, &sr);
 
     // Writer 2: re-encode the same data via writeData
-    const writer2 = try Self.initMem(alloc, maxColI);
+    const writer2 = try Self.initMem(io, alloc, maxColI);
     defer writer2.deinit(alloc);
 
     var bh2 = BlockHeader.initFromData(&bd, sid);
