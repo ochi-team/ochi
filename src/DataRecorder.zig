@@ -94,12 +94,12 @@ pub const DataShard = struct {
         sem.waitUncancelable(io);
 
         memTable.addLines(io, alloc, self.lines.items) catch |err| {
-            sem.post();
+            sem.post(io);
             return err;
         };
         self.deinitBuffered(alloc);
 
-        sem.post();
+        sem.post(io);
 
         memTable.flushAtUs = setFlushTime(io);
         return Table.fromMem(alloc, memTable);
@@ -210,7 +210,7 @@ pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 
 pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     try self.flushDataShards(io, alloc, true);
-    try self.flushMemTables(alloc, true);
+    try self.flushMemTables(io, alloc, true);
 }
 
 pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
@@ -246,10 +246,10 @@ fn startDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
     _ = alloc;
 }
 
-fn runMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
+fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
     while (!self.stopped.load(.acquire)) {
         // TODO: setup a diagnostic pattern to inject more context about the error and log messages
-        self.flushMemTables(alloc, false) catch |err| {
+        self.flushMemTables(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 
             self.stopped.store(true, .release);
@@ -311,10 +311,10 @@ fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool
         return;
     }
 
-    try self.flushMemTablesInChunks(allocator, tables);
+    try self.flushMemTablesInChunks(io, allocator, tables);
 }
 
-fn flushMemTablesInChunks(self: *DataRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
+fn flushMemTablesInChunks(self: *DataRecorder, io: Io, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
     if (toFlush.items.len == 0) return;
 
     var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
@@ -325,7 +325,7 @@ fn flushMemTablesInChunks(self: *DataRecorder, alloc: Allocator, toFlush: std.Ar
         std.debug.assert(n > 0);
 
         // TODO: attempt to run it in parallel, add a semaphore then
-        try self.mergeTables(alloc, left.items[0..n], true, null);
+        try self.mergeTables(io, alloc, left.items[0..n], true, null);
 
         const tail = left.items[n..];
         left = std.ArrayList(*Table).initBuffer(tail);
@@ -433,9 +433,9 @@ fn tablesMerger(
         if (filteredTablesToMerge.len == 0) return;
 
         sem.waitUncancelable(io);
-        errdefer sem.post();
-        try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
-        sem.post();
+        errdefer sem.post(io);
+        try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
+        sem.post(io);
         tablesToMerge.clearRetainingCapacity();
     }
 }
@@ -487,7 +487,7 @@ fn mergeTables(
         const table = tables[0].mem.?;
         try table.storeToDisk(io, alloc, destinationTablePath);
 
-        const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
+        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
         errdefer newTable.release(io);
 
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
@@ -551,12 +551,12 @@ fn mergeTables(
         // TODO: implement stack fallback that replaces stack size to 1 in tests,
         // add a tidy linter that restricts usage of std.heap.stackFallback
         var fba = std.heap.stackFallback(256, alloc);
-        try tableHeader.writeFile(fba.get(), destinationTablePath);
+        try tableHeader.writeFile(io, fba.get(), destinationTablePath);
 
         fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);
     errdefer openTable.release(io);
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
@@ -971,7 +971,7 @@ test "mergeTables force single mem table creates disk table" {
     table.inMerge = true;
 
     var single = [_]*Table{table};
-    try recorder.mergeTables(alloc, single[0..], true, null);
+    try recorder.mergeTables(io, alloc, single[0..], true, null);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
     try testing.expect(recorder.diskTables.items[0].disk != null);

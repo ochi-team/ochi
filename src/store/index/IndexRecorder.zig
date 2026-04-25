@@ -168,7 +168,7 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     defer blocksDestination.deinit(alloc);
 
     try self.flushMemEntries(io, alloc, &blocksDestination, true);
-    try self.flushMemTables(alloc, true);
+    try self.flushMemTables(io, alloc, true);
 }
 
 // TODO: this must assert there is no data inmemory or it flushes it immediately
@@ -389,7 +389,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
     // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lockUncancelable(io);
     self.memTables.append(alloc, memTable) catch {
-        if (semaphoreAcquired) self.memTablesSem.post();
+        if (semaphoreAcquired) self.memTablesSem.post(io);
         self.mxTables.unlock(io);
         return;
     };
@@ -431,13 +431,13 @@ fn startMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) void {
     _ = alloc;
 }
 
-fn runMemTablesFlusher(self: *IndexRecorder, alloc: Allocator) void {
+fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     while (true) {
         if (self.stopped.load(.acquire)) {
             return;
         }
 
-        self.flushMemTables(alloc, false) catch |err| {
+        self.flushMemTables(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 
             std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
@@ -544,7 +544,7 @@ fn flushMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, force: bool) !
     }
     self.mxTables.unlock(io);
 
-    try self.flushMemTablesInChunks(alloc, toFlush);
+    try self.flushMemTablesInChunks(io, alloc, toFlush);
 }
 
 fn flushMemEntries(
@@ -569,7 +569,7 @@ fn flushMemEntries(
     if (blocksDestination.items.len > 0) try self.flushBlocksToMemTables(io, alloc, blocksDestination.items, force);
 }
 
-fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
+fn flushMemTablesInChunks(self: *IndexRecorder, io: Io, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
     if (toFlush.items.len == 0) return;
 
     // TODO: consider running chunks merging in parallel
@@ -580,7 +580,7 @@ fn flushMemTablesInChunks(self: *IndexRecorder, alloc: Allocator, toFlush: std.A
         std.debug.assert(n > 0);
 
         // pass stopped as null since we must be able to flush data to disk
-        try self.mergeTables(alloc, left.items[0..n], true, null);
+        try self.mergeTables(io, alloc, left.items[0..n], true, null);
         const tail = left.items[n..];
         left = std.ArrayList(*Table).initBuffer(tail);
         left.items.len = tail.len;
@@ -620,9 +620,9 @@ fn tablesMerger(
 
         // TODO: make sure error.Stopped is handled on the upper level
         sem.wait();
-        errdefer sem.post();
-        try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
-        sem.post();
+        errdefer sem.post(io);
+        try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
+        sem.post(io);
         tablesToMerge.clearRetainingCapacity();
     }
 }
@@ -671,8 +671,8 @@ pub fn mergeTables(
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
         try table.storeToDisk(alloc, destinationTablePath);
-        const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
-        try swapper.swapTables(self, alloc, tables, newTable, tableKind);
+        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
+        try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
     }
@@ -735,13 +735,13 @@ pub fn mergeTables(
         // TODO: pass table header to openining a table and use it instead of reading from a file,
         // write a test in advance to confirm it's exact same header
         defer tableHeader.deinit(alloc);
-        try tableHeader.writeFile(fbaFallback.get(), destinationTablePath);
+        try tableHeader.writeFile(io, fbaFallback.get(), destinationTablePath);
 
         fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
-    try swapper.swapTables(self, alloc, tables, openTable, tableKind);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);
+    try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
 }
 
@@ -882,7 +882,7 @@ test "mergeTables force single mem table creates disk table" {
     table.inMerge = true;
 
     var single = [_]*Table{table};
-    try recorder.mergeTables(alloc, single[0..], true, null);
+    try recorder.mergeTables(io, alloc, single[0..], true, null);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
     try testing.expect(recorder.diskTables.items[0].disk != null);

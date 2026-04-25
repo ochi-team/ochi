@@ -72,7 +72,7 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     };
 }
 
-pub fn writeFile(self: *const TableHeader, alloc: Allocator, tablePath: []const u8) !void {
+pub fn writeFile(self: *const TableHeader, io: Io, alloc: Allocator, tablePath: []const u8) !void {
     const json = try std.json.Stringify.valueAlloc(alloc, .{
         .entriesCount = self.entriesCount,
         .blocksCount = self.blocksCount,
@@ -84,7 +84,7 @@ pub fn writeFile(self: *const TableHeader, alloc: Allocator, tablePath: []const 
     const metadataPath = try std.fs.path.join(alloc, &[_][]const u8{ tablePath, filenames.header });
     defer alloc.free(metadataPath);
 
-    try fs.writeBufferValToFile(metadataPath, json);
+    try fs.writeBufferValToFile(io, metadataPath, json);
 }
 
 const testing = std.testing;
@@ -106,7 +106,7 @@ test "roundtrip file read/write" {
         .lastEntry = "omega",
     };
 
-    try tb.writeFile(alloc, tablePath);
+    try tb.writeFile(io, alloc, tablePath);
 
     var readTb = try TableHeader.readFile(io, alloc, tablePath);
     defer readTb.deinit(alloc);

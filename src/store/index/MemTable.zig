@@ -215,12 +215,12 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) 
     const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
     defer fbaAlloc.free(lensPath);
 
-    try fs.writeBufferValToFile(metaindexPath, self.metaindexBuf.items);
-    try fs.writeBufferValToFile(indexPath, self.indexBuf.items);
-    try fs.writeBufferValToFile(entriesPath, self.entriesBuf.items);
-    try fs.writeBufferValToFile(lensPath, self.lensBuf.items);
+    try fs.writeBufferValToFile(io, metaindexPath, self.metaindexBuf.items);
+    try fs.writeBufferValToFile(io, indexPath, self.indexBuf.items);
+    try fs.writeBufferValToFile(io, entriesPath, self.entriesBuf.items);
+    try fs.writeBufferValToFile(io, lensPath, self.lensBuf.items);
 
-    try self.tableHeader.writeFile(alloc, path);
+    try self.tableHeader.writeFile(io, alloc, path);
 
     fs.syncPathAndParentDir(io, path);
 }

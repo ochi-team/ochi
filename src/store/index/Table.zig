@@ -305,7 +305,7 @@ fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
         .firstEntry = items[0],
         .lastEntry = items[items.len - 1],
     };
-    try header.writeFile(alloc, tablePath);
+    try header.writeFile(io, alloc, tablePath);
 }
 
 fn readTestTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {

@@ -70,7 +70,7 @@ pub fn writeBufferValToFile(
     defer file.close(io);
 
     try file.writeStreamingAll(io, bufferVal);
-    try file.sync();
+    try file.sync(io);
 }
 
 // TODO: take a look at std.Io.Dir.cwd().atomicFile

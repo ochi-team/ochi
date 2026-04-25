@@ -152,19 +152,19 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
         try std.fs.path.join(allocator, &.{ path, filenames.messageTokens });
     defer allocator.free(messageBloomFilterPath);
 
-    try fs.writeBufferValToFile(columnKeysPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(columnIdxsPath, self.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(metaindexPath, self.streamWriter.metaIndexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(indexPath, self.streamWriter.indexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(columnsHeaderIndexPath, self.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(columnsHeaderPath, self.streamWriter.columnsHeaderDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnKeysPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnIdxsPath, self.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, metaindexPath, self.streamWriter.metaIndexDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, indexPath, self.streamWriter.indexDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnsHeaderIndexPath, self.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnsHeaderPath, self.streamWriter.columnsHeaderDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
 
-    try fs.writeBufferValToFile(
+    try fs.writeBufferValToFile(io, 
         messageBloomFilterPath,
         self.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
     );
-    try fs.writeBufferValToFile(
+    try fs.writeBufferValToFile(io, 
         messageValuesPath,
         self.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
     );
@@ -175,7 +175,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
         self.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer()
     else
         "";
-    try fs.writeBufferValToFile(bloomTokensPath, bloomTokensContent);
+    try fs.writeBufferValToFile(io, bloomTokensPath, bloomTokensContent);
 
     const bloomValuesPath = try getBloomValuesFilePath(allocator, path, 0);
     defer allocator.free(bloomValuesPath);
@@ -183,9 +183,9 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
         self.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer()
     else
         "";
-    try fs.writeBufferValToFile(bloomValuesPath, bloomValuesContent);
+    try fs.writeBufferValToFile(io, bloomValuesPath, bloomValuesContent);
 
-    try self.tableHeader.writeFile(allocator, path);
+    try self.tableHeader.writeFile(io, allocator, path);
 
     fs.syncPathAndParentDir(io, path);
 }

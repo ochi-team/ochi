@@ -24,6 +24,7 @@ bloomValuesBuffersAmount: u32 = 0,
 /// header is saved as a json structure
 pub fn writeFile(
     self: *const TableHeader,
+    io: Io,
     allocator: std.mem.Allocator,
     path: []const u8,
 ) !void {
@@ -40,7 +41,7 @@ pub fn writeFile(
     );
     defer allocator.free(metadataPath);
 
-    try fs.writeBufferValToFile(metadataPath, json);
+    try fs.writeBufferValToFile(io, metadataPath, json);
 }
 
 pub fn readFile(
@@ -93,7 +94,7 @@ test "roundtrip file read/write" {
         .bloomValuesBuffersAmount = 7,
     };
 
-    try header.writeFile(alloc, tablePath);
+    try header.writeFile(io, alloc, tablePath);
 
     const readHeader = try TableHeader.readFile(io, alloc, tablePath);
     try testing.expectEqualDeep(header, readHeader);

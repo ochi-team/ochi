@@ -228,7 +228,7 @@ test "MetaIndex roundtrip file read/write" {
     var file = try Dir.createFileAbsolute(io, metaindexPath, .{ .truncate = true });
     defer file.close(io);
     try file.writeStreamingAll(io, compressed[0..compressedLen]);
-    try file.sync();
+    try file.sync(io);
 
     const decoded = try MetaIndex.readFile(
         alloc,
