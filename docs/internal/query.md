@@ -74,6 +74,7 @@ The following expressions are supported:
 
 Apart from `=` and `!=` operators:
 - `~` and `!~` - matches if the condition is satisfied or not satisfied respectively, where the value is a regular expression. For example, `tag1~"^alpha.*"` matches if tag1 starts with "alpha".
+- numerical values support comparison operators `>`, `<`, `>=`, `<=`, for example `status>=500` matches if status is greater or equal to 500.
 
 IMPORTANT: regex and wildcards are not supported for tags, tags must be determined and known in advance.
 
@@ -90,6 +91,20 @@ For example, `=*error*` matches if the message contains "error", and `!~"^debug.
 
 To apply the filter rule to every field of the log entry, the `*` key can be used, for example `*="*error*"` matches if any field contains "error", and `*!~"^debug.*"` matches if any field does not start with "debug" (which might be rarely useful, but still supported).
 
-##### Questions:
-- How do we apply filter functions? They are useful to have before the aggregations, e.g. a function `len(message) > 100` to filter out short messages, ideally to have them before we calculate stats.
+### Field functions
+
+Field functions are executed during filtering of the fields, they impact the scan stage, initial filtering, therefore _pushdownable_ to reduce the amount of data we process and transfer.
+
+Examples:
+- `len(x) > 100` - matches if the length of the message is greater than 100 characters, e.g. `len() > 50` matches if the message
+
+#### Log pipelines
+
+Log pipelines are functions applied to the end result.
+
+They can:
+- add new fields, e.g. `concat(field1, ":", field2) as new_field` adds a new field `new_field` which is a concatenation of `field1`, `:` and `field2`.
+- change the order of the fields, e.g. `order(time)` orders the log entries by time in ascending order, and `order(time desc)` orders the log entries by time in descending order.
+- limit the number of log entries, e.g. `limit(100)` limits the result to 100 log entries.
+- change the presentation format, e.g. `json` converts the log entries to JSON format.
 
