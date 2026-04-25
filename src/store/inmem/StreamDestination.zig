@@ -54,7 +54,7 @@ pub const StreamDestination = union(Tag) {
         switch (self.*) {
             .buffer => |*buf| try buf.appendSlice(allocator, src),
             .file => |*f| {
-                try f.file.writeAll(io, src);
+                try f.file.writeStreamingAll(io, io, src);
                 f.len += src.len;
             },
         }
@@ -107,7 +107,7 @@ pub const StreamDestination = union(Tag) {
         switch (self.*) {
             .buffer => |*buf| buf.items.len += cap,
             .file => |*f| {
-                try f.file.writeAll(io, slice[0..cap]);
+                try f.file.writeStreamingAll(io, io, slice[0..cap]);
                 f.len += cap;
             },
         }
@@ -157,7 +157,7 @@ test "StreamDestination file destination" {
     try std.testing.expectEqualStrings(res, all);
 
     var verify = try Dir.openFileAbsolute(io, filePath, .{});
-    defer verify.close();
+    defer verify.close(io);
 
     var verify_reader = file.reader(io, &.{});
     const onDisk = verify_reader.interface.allocRemaining(alloc, .limited(std.math.maxInt(usize)));

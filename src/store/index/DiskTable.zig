@@ -15,9 +15,9 @@ lensFile: Io.File,
 pub fn deinit(self: *DiskTable, alloc: Allocator) void {
     // TODO: close files in parallel
 
-    self.indexFile.close();
-    self.entriesFile.close();
-    self.lensFile.close();
+    self.indexFile.close(io);
+    self.entriesFile.close(io);
+    self.lensFile.close(io);
 
     self.tableHeader.deinit(alloc);
 

@@ -282,7 +282,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
     for (cases) |case| {
         var tables = try std.ArrayList(*Table).initCapacity(alloc, case.sizes.len);
         defer {
-            for (tables.items) |table| table.close();
+            for (tables.items) |table| table.close(io);
             tables.deinit(alloc);
         }
 
@@ -325,7 +325,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     const sizes = [_]u16{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 };
     var tables = try std.ArrayList(*Table).initCapacity(alloc, sizes.len);
     defer {
-        for (tables.items) |table| table.close();
+        for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
     }
     for (sizes) |size| {
@@ -349,10 +349,10 @@ test "filterTablesToMerge marks only selected tables inMerge" {
 
 fn createDiskTableFromItems(alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
     const memTable = try createMemTableFromItems(alloc, items);
-    defer memTable.close();
+    defer memTable.close(io);
     const mem = memTable.mem.?;
     try mem.storeToDisk(io, alloc, tablePath);
-    return Table.open(alloc, tablePath);
+    return Table.open(io, alloc, tablePath);
 }
 
 fn createMemTableFromItems(alloc: Allocator, items: []const []const u8) !*Table {
@@ -374,9 +374,9 @@ test "getDestinationTableKind rules" {
     const io = testing.io;
 
     const small1 = try createSizedMemTable(alloc, 256);
-    defer small1.close();
+    defer small1.close(io);
     const small2 = try createSizedMemTable(alloc, 512);
-    defer small2.close();
+    defer small2.close(io);
 
     var bothSmall = [_]*Table{ small1, small2 };
     const merger = Merger(*Table, *MemTable, 16);
@@ -386,7 +386,7 @@ test "getDestinationTableKind rules" {
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(bothSmall[0..], true, maxInmemoryTableSize));
 
     const large = try createSizedMemTable(alloc, @intCast(maxInmemoryTableSize + 1));
-    defer large.close();
+    defer large.close(io);
     var onlyLarge = [_]*Table{large};
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(onlyLarge[0..], false, maxInmemoryTableSize));
 
@@ -397,7 +397,7 @@ test "getDestinationTableKind rules" {
     const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
     errdefer alloc.free(diskPath);
     const disk = try createDiskTableFromItems(alloc, diskPath, &.{ "a", "b", "c" });
-    defer disk.close();
+    defer disk.close(io);
     var mixed = [_]*Table{ small1, disk };
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(mixed[0..], false, maxInmemoryTableSize));
 }

@@ -33,7 +33,7 @@ fn request(
     contentEncoding: ?[]const u8,
 ) !HttpResponse {
     var stream = try std.net.tcpConnectToHost(alloc, "127.0.0.1", 9014);
-    defer stream.close();
+    defer stream.close(io);
 
     var req = std.ArrayList(u8).empty;
     defer req.deinit(alloc);
@@ -48,12 +48,12 @@ fn request(
     if (contentEncoding) |ce| {
         try req.writer(alloc).print("Content-Encoding: {s}\r\n", .{ce});
     }
-    try req.writer(alloc).writeAll("\r\n");
+    try req.writer(alloc).writeStreamingAll(io, "\r\n");
     if (body.len > 0) {
-        try req.writer(alloc).writeAll(body);
+        try req.writer(alloc).writeStreamingAll(io, body);
     }
 
-    try stream.writeAll(req.items);
+    try stream.writeStreamingAll(io, req.items);
 
     req.clearRetainingCapacity();
     var buf: [4096]u8 = undefined;

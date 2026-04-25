@@ -52,7 +52,7 @@ pub fn readNames(
                     error.FileNotFound => return error.TableParentDirNotFound,
                     else => return openErr,
                 };
-                defer parentDir.close();
+                defer parentDir.close(io);
 
                 var it = parentDir.iterate();
                 while (try it.next(io)) |entry| {
@@ -63,8 +63,8 @@ pub fn readNames(
             }
 
             const f = try Dir.createFileAbsolute(io, tablesFilePath, .{});
-            defer f.close();
-            try f.writeAll("[]");
+            defer f.close(io);
+            try f.writeStreamingAll(io, "[]");
             std.debug.print("write initial state to '{s}'\n", .{tablesFilePath});
             return .empty;
         },
@@ -83,22 +83,23 @@ pub fn validateTablesExist(io: Io, alloc: Allocator, path: []const u8, tableName
     }
 }
 
-pub fn removeUnusedTables(alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
-    var dir = try std.Io.Dir.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
+pub fn removeUnusedTables(io: Io, alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
+    var dir = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
 
     var fba = std.heap.stackFallback(128, alloc);
     const fbaAlloc = fba.get();
 
     var it = dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .directory and entry.kind != .sym_link) continue;
         if (strings.contains(tableNames, entry.name)) continue;
 
         const pathToDelete = try std.fs.path.join(fbaAlloc, &.{ path, entry.name });
         defer fbaAlloc.free(pathToDelete);
         std.debug.print("removing '{s}' file, sycning table dirs\n", .{pathToDelete});
-        try std.fs.deleteTreeAbsolute(pathToDelete);
+        // TODO removed with no replacement
+        // try std.fs.deleteTreeAbsolute(pathToDelete);
     }
 }
 
@@ -147,11 +148,11 @@ test "readNames" {
         try fs.writeBufferToFileAtomic(tablesFilePath, case.content, true);
 
         if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, readNames(alloc, tablesFilePath, false));
+            try testing.expectError(expectedErr, readNames(io, alloc, tablesFilePath, false));
             continue;
         }
 
-        var tableNames = try readNames(alloc, tablesFilePath, false);
+        var tableNames = try readNames(io, alloc, tablesFilePath, false);
         defer {
             for (tableNames.items) |name| alloc.free(name);
             tableNames.deinit(alloc);
@@ -199,16 +200,16 @@ test "readNames handles missing file path cases" {
         defer alloc.free(tablesFilePath);
 
         if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, readNames(alloc, tablesFilePath, false));
+            try testing.expectError(expectedErr, readNames(io, alloc, tablesFilePath, false));
             continue;
         }
 
-        var tableNames = try readNames(alloc, tablesFilePath, false);
+        var tableNames = try readNames(io, alloc, tablesFilePath, false);
         defer tableNames.deinit(alloc);
         try testing.expectEqual(@as(usize, 0), tableNames.items.len);
 
         if (case.expectedFileContent) |content| {
-            const data = try fs.readAll(alloc, tablesFilePath);
+            const data = try fs.readAll(io, alloc, tablesFilePath);
             defer alloc.free(data);
             try testing.expectEqualStrings(content, data);
         }
@@ -232,7 +233,7 @@ test "readNames returns error in validate mode when tables file is missing but t
     try Dir.createDirAbsolute(io, tableDirPath, .default_dir);
 
     // Validate mode must fail if tables.json is missing while table dirs already exist
-    try testing.expectError(error.TableFileExistsWithNoTableEntry, readNames(alloc, tablesFilePath, true));
+    try testing.expectError(error.TableFileExistsWithNoTableEntry, readNames(io, alloc, tablesFilePath, true));
     // Validate mode must not auto-create tables.json in this corruption-like state
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablesFilePath, .{}));
 }
@@ -275,9 +276,9 @@ test "validateTablesExist" {
 
     for (cases) |case| {
         if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, validateTablesExist(alloc, rootPath, case.tableNames));
+            try testing.expectError(expectedErr, validateTablesExist(io, alloc, rootPath, case.tableNames));
         } else {
-            try validateTablesExist(alloc, rootPath, case.tableNames);
+            try validateTablesExist(io, alloc, rootPath, case.tableNames);
         }
     }
 }
@@ -318,7 +319,7 @@ test "removeUnusedTables" {
             try Dir.createDirAbsolute(io, tablePath, .default_dir);
         }
 
-        try removeUnusedTables(alloc, rootPath, case.usedTableNames);
+        try removeUnusedTables(io, alloc, rootPath, case.usedTableNames);
 
         for (case.existingTableNames) |tableName| {
             const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });

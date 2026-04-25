@@ -118,7 +118,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     self.streamCache.deinit();
 
     // close lock file later, it unlocks potentially another Ochi process
-    self.lockFile.close();
+    self.lockFile.close(io);
     // deinit runtime the last, because partitions (recorders) need it
     // in order to flush the last mem tables
     self.runtime.deinit(allocator);
@@ -778,19 +778,19 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try testing.expectEqual(0, store.partitions.items.len);
 
     const first = try store.getPartition(alloc, dayOne);
-    defer first.release();
+    defer first.release(io);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
     const firstAgain = try store.getPartition(alloc, dayOne);
-    defer firstAgain.release();
+    defer firstAgain.release(io);
     try testing.expectEqual(first, firstAgain);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
     const second = try store.getPartition(alloc, dayTwo);
-    defer second.release();
+    defer second.release(io);
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);

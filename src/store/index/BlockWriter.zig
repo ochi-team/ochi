@@ -38,10 +38,10 @@ const DiskDestination = struct {
     }
 
     fn close(self: *DiskDestination) void {
-        self.entriesFile.close();
-        self.lensFile.close();
-        self.indexFile.close();
-        self.metaindexFile.close();
+        self.entriesFile.close(io);
+        self.lensFile.close(io);
+        self.indexFile.close(io);
+        self.metaindexFile.close(io);
     }
 };
 
@@ -100,13 +100,13 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache
     defer fbaAlloc.free(metaIndexPath);
 
     var indexFile = try Dir.createFileAbsolute(io, indexPath, .{ .truncate = true });
-    errdefer indexFile.close();
+    errdefer indexFile.close(io);
     var entriesFile = try Dir.createFileAbsolute(io, entriesPath, .{ .truncate = true });
-    errdefer entriesFile.close();
+    errdefer entriesFile.close(io);
     var lensFile = try Dir.createFileAbsolute(io, lensPath, .{ .truncate = true });
-    errdefer lensFile.close();
+    errdefer lensFile.close(io);
     var metaindexFile = try Dir.createFileAbsolute(io, metaIndexPath, .{ .truncate = true });
-    errdefer metaindexFile.close();
+    errdefer metaindexFile.close(io);
 
     return .{
         .destination = .{
@@ -170,7 +170,7 @@ pub fn close(self: *BlockWriter, alloc: Allocator) !void {
     try self.writeMetaindex(alloc);
     switch (self.destination) {
         .mem => {},
-        .disk => |*disk| disk.close(),
+        .disk => |*disk| disk.close(io),
     }
 }
 
@@ -200,14 +200,14 @@ fn flushIndexData(self: *BlockWriter, alloc: Allocator) !void {
 fn writeData(self: *BlockWriter, alloc: Allocator, data: []const u8) !void {
     switch (self.destination) {
         .mem => |mem| try mem.entriesBuf.appendSlice(alloc, data),
-        .disk => |*disk| try disk.entriesFile.writeAll(data),
+        .disk => |*disk| try disk.entriesFile.writeStreamingAll(io, data),
     }
 }
 
 fn writeLens(self: *BlockWriter, alloc: Allocator, data: []const u8) !void {
     switch (self.destination) {
         .mem => |mem| try mem.lensBuf.appendSlice(alloc, data),
-        .disk => |*disk| try disk.lensFile.writeAll(data),
+        .disk => |*disk| try disk.lensFile.writeStreamingAll(io, data),
     }
 }
 
@@ -216,7 +216,7 @@ fn writeIndexBlock(self: *BlockWriter, alloc: Allocator) !usize {
         .mem => |mem| return compressIntoArrayList(alloc, mem.indexBuf, self.uncompressedIndexBlockBuf.items),
         .disk => |*disk| {
             const compressed = try self.compressToScratch(alloc, self.uncompressedIndexBlockBuf.items);
-            try disk.indexFile.writeAll(compressed);
+            try disk.indexFile.writeStreamingAll(io, compressed);
             return compressed.len;
         },
     }
@@ -229,7 +229,7 @@ fn writeMetaindex(self: *BlockWriter, alloc: Allocator) !void {
         },
         .disk => |*disk| {
             const compressed = try self.compressToScratch(alloc, self.uncompressedMetaindexBuf.items);
-            try disk.metaindexFile.writeAll(compressed);
+            try disk.metaindexFile.writeStreamingAll(io, compressed);
         },
     }
 }
@@ -270,7 +270,7 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
 fn readTableFile(alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
     const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
     defer alloc.free(filePath);
-    return fs.readAll(alloc, filePath);
+    return fs.readAll(io, alloc, filePath);
 }
 
 test "BlockWriter disk output matches mem output" {

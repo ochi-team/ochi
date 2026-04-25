@@ -108,7 +108,7 @@ test "roundtrip file read/write" {
 
     try tb.writeFile(alloc, tablePath);
 
-    var readTb = try TableHeader.readFile(alloc, tablePath);
+    var readTb = try TableHeader.readFile(io, alloc, tablePath);
     defer readTb.deinit(alloc);
 
     try testing.expectEqualDeep(tb, readTb);

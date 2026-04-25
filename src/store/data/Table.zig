@@ -72,7 +72,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
-        std.posix.MakeDirError.PathAlreadyExists => {},
+        error.PathAlreadyExists => {},
         else => std.debug.panic(
             "failed to create a table dir '{s}': {s}",
             .{ path, @errorName(err) },
@@ -89,17 +89,17 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     // they are given either from a file or listed directories in the path
     const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, filenames.tables });
     defer alloc.free(tablesFilePath);
-    var tableNames = try catalog.readNames(alloc, tablesFilePath, true);
+    var tableNames = try catalog.readNames(io, alloc, tablesFilePath, true);
     defer {
         for (tableNames.items) |tableName| alloc.free(tableName);
         tableNames.deinit(alloc);
     }
 
     // syncing tables with a json, make sure all the listed dirs exist
-    try catalog.validateTablesExist(alloc, path, tableNames.items);
+    try catalog.validateTablesExist(io, alloc, path, tableNames.items);
 
     // syncing tables with the given names remove all the not listed dirs
-    try catalog.removeUnusedTables(alloc, path, tableNames.items);
+    try catalog.removeUnusedTables(io, alloc, path, tableNames.items);
 
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
@@ -110,7 +110,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         // don't clean tablePath, Table owns it
         const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
         errdefer parentAlloc.free(tablePath);
-        const table = try Table.open(parentAlloc, tablePath);
+        const table = try Table.open(io, parentAlloc, tablePath);
         tables.appendAssumeCapacity(table);
     }
 
@@ -121,7 +121,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     var fba = std.heap.stackFallback(2048, alloc);
     const fbaAlloc = fba.get();
 
-    const header = try TableHeader.readFile(alloc, path);
+    const header = try TableHeader.readFile(io, alloc, path);
 
     const disk = try alloc.create(DiskTable);
     errdefer alloc.destroy(disk);
@@ -148,7 +148,7 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageValues });
     defer fbaAlloc.free(messageBloomValuesPath);
 
-    const columnKeysContent = try fs.readAll(alloc, columnKeysPath);
+    const columnKeysContent = try fs.readAll(io, alloc, columnKeysPath);
     defer alloc.free(columnKeysContent);
     var columnIDGen: *ColumnIDGen = blk: {
         if (columnKeysContent.len > 0) {
@@ -162,13 +162,13 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
     errdefer columnIdxs.deinit(alloc);
 
-    const columnIdxsContent = try fs.readAll(alloc, columnIdxsPath);
+    const columnIdxsContent = try fs.readAll(io, alloc, columnIdxsPath);
     defer alloc.free(columnIdxsContent);
     if (columnIdxsContent.len > 0) {
         columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, columnIdxsContent);
     }
 
-    const metaindexContent = try fs.readAll(alloc, metaindexPath);
+    const metaindexContent = try fs.readAll(io, alloc, metaindexPath);
     defer alloc.free(metaindexContent);
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     if (metaindexContent.len > 0) {
@@ -179,17 +179,17 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
         if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
     }
 
-    const indexBuf = try fs.readAll(alloc, indexPath);
+    const indexBuf = try fs.readAll(io, alloc, indexPath);
     errdefer alloc.free(indexBuf);
-    const columnsHeaderIndexBuf = try fs.readAll(alloc, columnsHeaderIndexPath);
+    const columnsHeaderIndexBuf = try fs.readAll(io, alloc, columnsHeaderIndexPath);
     errdefer alloc.free(columnsHeaderIndexBuf);
-    const columnsHeaderBuf = try fs.readAll(alloc, columnsHeaderPath);
+    const columnsHeaderBuf = try fs.readAll(io, alloc, columnsHeaderPath);
     errdefer alloc.free(columnsHeaderBuf);
-    const timestampsBuf = try fs.readAll(alloc, timestampsPath);
+    const timestampsBuf = try fs.readAll(io, alloc, timestampsPath);
     errdefer alloc.free(timestampsBuf);
-    const messageBloomTokensBuf = try fs.readAll(alloc, messageBloomTokensPath);
+    const messageBloomTokensBuf = try fs.readAll(io, alloc, messageBloomTokensPath);
     errdefer alloc.free(messageBloomTokensBuf);
-    const messageBloomValuesBuf = try fs.readAll(alloc, messageBloomValuesPath);
+    const messageBloomValuesBuf = try fs.readAll(io, alloc, messageBloomValuesPath);
     errdefer alloc.free(messageBloomValuesBuf);
 
     const shardCount: usize = @intCast(header.bloomValuesBuffersAmount);
@@ -220,9 +220,9 @@ pub fn open(alloc: Allocator, path: []const u8) !*Table {
             @intCast(shardIdx),
         );
         defer fbaAlloc.free(bloomValuesPath);
-        const bloomTokensBuf = try fs.readAll(alloc, bloomTokensPath);
+        const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
         errdefer alloc.free(bloomTokensBuf);
-        const bloomValuesBuf = try fs.readAll(alloc, bloomValuesPath);
+        const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
         errdefer alloc.free(bloomValuesBuf);
         bloomTokensShards[shardIdx] = bloomTokensBuf;
         bloomValuesShards[shardIdx] = bloomValuesBuf;
@@ -396,13 +396,13 @@ pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-pub fn release(self: *Table) void {
+pub fn release(self: *Table, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
     if (prev != 1) return;
 
-    self.close();
+    self.close(io);
 }
 
 pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
@@ -631,14 +631,14 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
-    const table1 = try Table.open(alloc, table1Path);
-    table1.release();
+    const table1 = try Table.open(io, alloc, table1Path);
+    table1.release(io);
     try Dir.accessAbsolute(io, tablePath, .{});
 
     const table2Path = try alloc.dupe(u8, tablePath);
-    const table2 = try Table.open(alloc, table2Path);
+    const table2 = try Table.open(io, alloc, table2Path);
     table2.toRemove.store(true, .release);
-    table2.release();
+    table2.release(io);
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablePath, .{}));
 }
 
@@ -667,9 +667,9 @@ test "release fromMem does not affect filesystem path" {
     table.retain();
 
     try Dir.accessAbsolute(io, sentinelPath, .{});
-    table.release();
+    table.release(io);
     try Dir.accessAbsolute(io, sentinelPath, .{});
-    table.release();
+    table.release(io);
     try Dir.accessAbsolute(io, sentinelPath, .{});
 }
 
@@ -712,7 +712,7 @@ test "fromMem creates proper table from mem table with populated data" {
     try memTable.addLines(alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
+    defer table.release(io);
 
     try testing.expect(table.indexBuf.len > 0);
     try testing.expect(table.columnsHeaderIndexBuf.len > 0);
@@ -771,8 +771,8 @@ test "open reads table from disk" {
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
-    const table = try Table.open(alloc, tablePathOwned);
-    defer table.release();
+    const table = try Table.open(io, alloc, tablePathOwned);
+    defer table.release(io);
 
     try testing.expect(table.disk != null);
     try testing.expectEqual(memTable.streamWriter.indexDst.asSliceAssumeBuffer().len, table.indexBuf.len);
@@ -860,7 +860,7 @@ test "queryLines" {
     try memTable.addLines(alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
+    defer table.release(io);
 
     const cases = [_]Case{
         .{

@@ -75,10 +75,10 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     defer tableNames.deinit(alloc);
 
     // syncing tables with a json, make sure all the listed dirs exist
-    try catalog.validateTablesExist(alloc, path, tableNames.items);
+    try catalog.validateTablesExist(io, alloc, path, tableNames.items);
 
     // syncing tables with the given names remove all the not listed dirs
-    try catalog.removeUnusedTables(alloc, path, tableNames.items);
+    try catalog.removeUnusedTables(io, alloc, path, tableNames.items);
 
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
@@ -89,7 +89,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         // don't clean tablePath, Table owns it
         const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
         errdefer parentAlloc.free(tablePath);
-        const table = try Table.open(parentAlloc, tablePath);
+        const table = try Table.open(io, parentAlloc, tablePath);
         tables.appendAssumeCapacity(table);
     }
 
@@ -100,10 +100,10 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
 
-    var tableHeader = try TableHeader.readFile(alloc, path);
+    var tableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer tableHeader.deinit(alloc);
 
-    const decodedMetaindex = try MetaIndex.readFile(alloc, path, tableHeader.blocksCount);
+    const decodedMetaindex = try MetaIndex.readFile(io, alloc, path, tableHeader.blocksCount);
     errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
@@ -115,16 +115,16 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     defer fbaAlloc.free(lensPath);
 
     var indexFile = try Dir.openFileAbsolute(io, indexPath, .{});
-    errdefer indexFile.close();
-    const indexSize = (try indexFile.stat()).size;
+    errdefer indexFile.close(io);
+    const indexSize = (try indexFile.stat(io)).size;
 
     var entriesFile = try Dir.openFileAbsolute(io, entriesPath, .{});
-    errdefer entriesFile.close();
-    const entriesSize = (try entriesFile.stat()).size;
+    errdefer entriesFile.close(io);
+    const entriesSize = (try entriesFile.stat(io)).size;
 
     var lensFile = try Dir.openFileAbsolute(io, lensPath, .{});
-    errdefer lensFile.close();
-    const lensSize = (try lensFile.stat()).size;
+    errdefer lensFile.close(io);
+    const lensSize = (try lensFile.stat(io)).size;
     const disk = try alloc.create(DiskTable);
     errdefer alloc.destroy(disk);
     disk.* = .{
@@ -136,11 +136,11 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 
     // TODO: this is complete garbage, we must use real reader API here
     const table = try alloc.create(Table);
-    const indexBuf = try fs.readAll(alloc, indexPath);
+    const indexBuf = try fs.readAll(io, alloc, indexPath);
     errdefer alloc.free(indexBuf);
-    const entriesBuf = try fs.readAll(alloc, entriesPath);
+    const entriesBuf = try fs.readAll(io, alloc, entriesPath);
     errdefer alloc.free(entriesBuf);
-    const lensBuf = try fs.readAll(alloc, lensPath);
+    const lensBuf = try fs.readAll(io, alloc, lensPath);
     errdefer alloc.free(lensBuf);
 
     table.* = .{
@@ -161,7 +161,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     return table;
 }
 
-pub fn close(self: *Table) void {
+pub fn close(self: *Table, _: Io) void {
     if (self.disk) |disk| {
         self.alloc.free(self.entriesBuf);
         self.alloc.free(self.lensBuf);
@@ -263,13 +263,13 @@ pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-pub fn release(self: *Table) void {
+pub fn release(self: *Table, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
     if (prev != 1) return;
 
-    self.close();
+    self.close(io);
 }
 
 const testing = std.testing;
@@ -288,7 +288,7 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     return block;
 }
 
-fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
+fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
     const items = [_][]const u8{ "alpha", "beta", "omega" };
     var block = try createTestMemBlock(alloc, &items);
     defer block.deinit(alloc);
@@ -307,10 +307,10 @@ fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
     try header.writeFile(alloc, tablePath);
 }
 
-fn readTestTableFile(alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
+fn readTestTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
     const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
     defer alloc.free(filePath);
-    return fs.readAll(alloc, filePath);
+    return fs.readAll(io, alloc, filePath);
 }
 
 test "release keeps table unless toRemove is set, then removes table dir" {
@@ -325,17 +325,17 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
 
-    try createTestTableDir(alloc, tablePath);
+    try createTestTableDir(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
-    const table1 = try Table.open(alloc, table1Path);
-    table1.release();
+    const table1 = try Table.open(io, alloc, table1Path);
+    table1.release(io);
     try Dir.accessAbsolute(io, tablePath, .{});
 
     const table2Path = try alloc.dupe(u8, tablePath);
-    const table2 = try Table.open(alloc, table2Path);
+    const table2 = try Table.open(io, alloc, table2Path);
     table2.toRemove.store(true, .release);
-    table2.release();
+    table2.release(io);
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablePath, .{}));
 }
 
@@ -364,9 +364,9 @@ test "release fromMem does not affect filesystem path" {
     table.retain();
 
     try Dir.accessAbsolute(io, sentinelPath, .{});
-    table.release();
+    table.release(io);
     try Dir.accessAbsolute(io, sentinelPath, .{});
-    table.release();
+    table.release(io);
     try Dir.accessAbsolute(io, sentinelPath, .{});
 }
 
@@ -382,7 +382,7 @@ test "fromMem creates proper table from mem table with populated data" {
     const memTable = try MemTable.init(io, alloc, blocks[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
-    defer table.release();
+    defer table.release(io);
 
     try testing.expect(table.mem != null);
     try testing.expect(table.disk == null);
@@ -420,21 +420,21 @@ test "open reads table from disk" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
 
-    try createTestTableDir(alloc, tablePath);
+    try createTestTableDir(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
-    const table = try Table.open(alloc, tablePathOwned);
-    defer table.release();
+    const table = try Table.open(io, alloc, tablePathOwned);
+    defer table.release(io);
 
     try testing.expect(table.disk != null);
 
-    const expectedIndex = try readTestTableFile(alloc, tablePath, filenames.index);
+    const expectedIndex = try readTestTableFile(io, alloc, tablePath, filenames.index);
     defer alloc.free(expectedIndex);
-    const expectedEntries = try readTestTableFile(alloc, tablePath, filenames.entries);
+    const expectedEntries = try readTestTableFile(io, alloc, tablePath, filenames.entries);
     defer alloc.free(expectedEntries);
-    const expectedLens = try readTestTableFile(alloc, tablePath, filenames.lens);
+    const expectedLens = try readTestTableFile(io, alloc, tablePath, filenames.lens);
     defer alloc.free(expectedLens);
-    const expectedMetaindexCompressed = try readTestTableFile(alloc, tablePath, filenames.metaindex);
+    const expectedMetaindexCompressed = try readTestTableFile(io, alloc, tablePath, filenames.metaindex);
     defer alloc.free(expectedMetaindexCompressed);
 
     try testing.expectEqualSlices(u8, expectedIndex, table.indexBuf);

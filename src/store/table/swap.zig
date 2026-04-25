@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const merge = @import("merge.zig");
 
@@ -19,6 +20,7 @@ pub fn Swapper(
     return struct {
         pub fn swapTables(
             self: *Self,
+            io: Io,
             alloc: Allocator,
             tables: []*T,
             newTable: *T,
@@ -56,7 +58,7 @@ pub fn Swapper(
                 // it could have been open by a client.
                 // order flag doesn't matter, we don't expect any other part to change it back to
                 table.toRemove.store(true, .unordered);
-                table.release();
+                table.release(io);
             }
         }
 
@@ -98,14 +100,16 @@ fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
 
 test "removeTables removes exact pointers" {
     const alloc = testing.allocator;
+    const io = testing.io;
+
     const one = try createSizedMemTable(alloc, 100);
-    defer one.close();
+    defer one.close(io);
 
     const two = try createSizedMemTable(alloc, 100);
-    defer two.close();
+    defer two.close(io);
 
     const three = try createSizedMemTable(alloc, 100);
-    defer three.close();
+    defer three.close(io);
 
     const swapper = Swapper(IndexRecorder, Table);
 

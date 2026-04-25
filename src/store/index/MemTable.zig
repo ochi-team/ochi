@@ -70,7 +70,7 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     return t;
 }
 
-pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
+pub fn mergeMemTables(io, alloc: Allocator, memTables: []*MemTable) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     defer {
         for (readers.items) |r| r.deinit(alloc);

@@ -183,47 +183,47 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     defer fba.free(messageBloomValuesPath);
 
     var columnKeysFile = try Dir.createFileAbsolute(io, columnKeysPath, .{ .truncate = true, .read = true });
-    errdefer columnKeysFile.close();
+    errdefer columnKeysFile.close(io);
     var columnKeysBuf = try StreamDestination.initFile(columnKeysFile);
     errdefer columnKeysBuf.deinit(io, alloc);
 
     var columnIdxsFile = try Dir.createFileAbsolute(io, columnIdxsPath, .{ .truncate = true, .read = true });
-    errdefer columnIdxsFile.close();
+    errdefer columnIdxsFile.close(io);
     var columnIdxsBuf = try StreamDestination.initFile(columnIdxsFile);
     errdefer columnIdxsBuf.deinit(io, alloc);
 
     var metaindexFile = try Dir.createFileAbsolute(io, metaindexPath, .{ .truncate = true, .read = true });
-    errdefer metaindexFile.close();
+    errdefer metaindexFile.close(io);
     var metaIndexDst = try StreamDestination.initFile(metaindexFile);
     errdefer metaIndexDst.deinit(io, alloc);
 
     var indexFile = try Dir.createFileAbsolute(io, indexPath, .{ .truncate = true, .read = true });
-    errdefer indexFile.close();
+    errdefer indexFile.close(io);
     var indexDst = try StreamDestination.initFile(indexFile);
     errdefer indexDst.deinit(io, alloc);
 
     var columnsHeaderIndexFile = try Dir.createFileAbsolute(io, columnsHeaderIndexPath, .{ .truncate = true, .read = true });
-    errdefer columnsHeaderIndexFile.close();
+    errdefer columnsHeaderIndexFile.close(io);
     var columnsHeaderIndexDst = try StreamDestination.initFile(columnsHeaderIndexFile);
     errdefer columnsHeaderIndexDst.deinit(io, alloc);
 
     var columnsHeaderFile = try Dir.createFileAbsolute(io, columnsHeaderPath, .{ .truncate = true, .read = true });
-    errdefer columnsHeaderFile.close();
+    errdefer columnsHeaderFile.close(io);
     var columnsHeaderDst = try StreamDestination.initFile(columnsHeaderFile);
     errdefer columnsHeaderDst.deinit(io, alloc);
 
     var timestampsFile = try Dir.createFileAbsolute(io, timestampsPath, .{ .truncate = true, .read = true });
-    errdefer timestampsFile.close();
+    errdefer timestampsFile.close(io);
     var timestampsDst = try StreamDestination.initFile(timestampsFile);
     errdefer timestampsDst.deinit(io, alloc);
 
     var messageBloomTokensFile = try Dir.createFileAbsolute(io, messageBloomTokensPath, .{ .truncate = true, .read = true });
-    errdefer messageBloomTokensFile.close();
+    errdefer messageBloomTokensFile.close(io);
     var msgBloomTokensDst = try StreamDestination.initFile(messageBloomTokensFile);
     errdefer msgBloomTokensDst.deinit(io, alloc);
 
     var messageBloomValuesFile = try Dir.createFileAbsolute(io, messageBloomValuesPath, .{ .truncate = true, .read = true });
-    errdefer messageBloomValuesFile.close();
+    errdefer messageBloomValuesFile.close(io);
     var msgBloomValuesDst = try StreamDestination.initFile(messageBloomValuesFile);
     errdefer msgBloomValuesDst.deinit(io, alloc);
     var bloomValuesList = try std.ArrayList(StreamDestination).initCapacity(alloc, bloomValuesMaxShardsCount);

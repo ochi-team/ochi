@@ -102,7 +102,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
 
     var tables = try Table.openAll(io, alloc, path);
     errdefer {
-        for (tables.items) |table| table.close();
+        for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
     }
 
@@ -114,7 +114,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
         .maxMemBlockSize = Conf.getConf().app.maxIndexMemBlockSize,
         .diskTables = tables,
         .memTables = memTables,
-        .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real))),
+        .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real).nanoseconds)),
         .path = path,
         .runtime = runtime,
         .concurrency = concurrency,
@@ -183,10 +183,10 @@ pub fn deinit(self: *IndexRecorder, alloc: Allocator) void {
     }
 
     for (self.diskTables.items) |table| {
-        table.release();
+        table.release(io);
     }
     for (self.memTables.items) |table| {
-        table.release();
+        table.release(io);
     }
 
     self.entries.deinit(alloc);
@@ -619,7 +619,7 @@ fn tablesMerger(
         if (filteredTablesToMerge.len == 0) return;
 
         // TODO: make sure error.Stopped is handled on the upper level
-        sem.waitUncancelable(io);
+        sem.wait();
         errdefer sem.post();
         try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
         sem.post();
@@ -670,7 +670,7 @@ pub fn mergeTables(
 
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
-        try table.storeToDisk(io, alloc, destinationTablePath);
+        try table.storeToDisk(alloc, destinationTablePath);
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
         try swapper.swapTables(self, alloc, tables, newTable, tableKind);
         swapped = true;
@@ -876,7 +876,7 @@ test "mergeTables force single mem table creates disk table" {
 
     const table = try createMemTableFromItems(alloc, &.{ "k1", "k2", "k3" });
     try recorder.memTables.append(alloc, table);
-    recorder.memTablesSem.waitUncancelable(io);
+    recorder.memTablesSem.wait();
     table.inMerge = true;
 
     var single = [_]*Table{table};
@@ -1096,7 +1096,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     var tables = try Table.openAll(alloc, rootPath);
     try testing.expectEqual(tables.items.len, 1);
     defer {
-        for (tables.items) |table| table.release();
+        for (tables.items) |table| table.release(io);
         tables.deinit(alloc);
     }
     const flushedTable = tables.items[0];

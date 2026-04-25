@@ -104,23 +104,23 @@ pub const StreamReader = struct {
         const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnKeys });
         defer fbaAlloc.free(columnNamesPath);
 
-        const columnIdxsBuf = try fs.readAll(alloc, columnIdxsPath);
+        const columnIdxsBuf = try fs.readAll(io, alloc, columnIdxsPath);
         errdefer alloc.free(columnIdxsBuf);
-        const metaIndexBuf = try fs.readAll(alloc, metaindexPath);
+        const metaIndexBuf = try fs.readAll(io, alloc, metaindexPath);
         errdefer alloc.free(metaIndexBuf);
-        const indexBuf = try fs.readAll(alloc, indexPath);
+        const indexBuf = try fs.readAll(io, alloc, indexPath);
         errdefer alloc.free(indexBuf);
-        const columnsHeaderIndexBuf = try fs.readAll(alloc, columnsHeaderIndexPath);
+        const columnsHeaderIndexBuf = try fs.readAll(io, alloc, columnsHeaderIndexPath);
         errdefer alloc.free(columnsHeaderIndexBuf);
-        const columnsHeaderBuf = try fs.readAll(alloc, columnsHeaderPath);
+        const columnsHeaderBuf = try fs.readAll(io, alloc, columnsHeaderPath);
         errdefer alloc.free(columnsHeaderBuf);
-        const timestampsBuf = try fs.readAll(alloc, timestampsPath);
+        const timestampsBuf = try fs.readAll(io, alloc, timestampsPath);
         errdefer alloc.free(timestampsBuf);
-        const messageBloomTokensBuf = try fs.readAll(alloc, messageBloomTokensPath);
+        const messageBloomTokensBuf = try fs.readAll(io, alloc, messageBloomTokensPath);
         errdefer alloc.free(messageBloomTokensBuf);
-        const messageBloomValuesBuf = try fs.readAll(alloc, messageBloomValuesPath);
+        const messageBloomValuesBuf = try fs.readAll(io, alloc, messageBloomValuesPath);
         errdefer alloc.free(messageBloomValuesBuf);
-        const columnsKeysBuf = try fs.readAll(alloc, columnNamesPath);
+        const columnsKeysBuf = try fs.readAll(io, alloc, columnNamesPath);
         errdefer alloc.free(columnsKeysBuf);
 
         const shardCount: usize = @intCast(tableHeader.bloomValuesBuffersAmount);
@@ -146,8 +146,8 @@ pub const StreamReader = struct {
             const bloomValuesPath = try MemTable.getBloomValuesFilePath(fbaAlloc, path, @intCast(shardIdx));
             defer fbaAlloc.free(bloomValuesPath);
 
-            const bloomTokensBuf = try fs.readAll(alloc, bloomTokensPath);
-            const bloomValuesBuf = try fs.readAll(alloc, bloomValuesPath);
+            const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
+            const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
 
             bloomValuesList.appendAssumeCapacity(bloomValuesBuf);
             bloomTokensList.appendAssumeCapacity(bloomTokensBuf);
@@ -347,7 +347,7 @@ pub const BlockReader = struct {
     }
 
     pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
-        const tableHeader = try TableHeader.readFile(alloc, path);
+        const tableHeader = try TableHeader.readFile(io, alloc, path);
 
         const streamReader = try StreamReader.initFromDisk(alloc, path, tableHeader);
         errdefer streamReader.deinit(alloc);

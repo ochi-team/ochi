@@ -149,7 +149,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
 
     var tables = try Table.openAll(io, alloc, path);
     errdefer {
-        for (tables.items) |table| table.close();
+        for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
     }
 
@@ -205,7 +205,7 @@ pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 
     try self.flushForce(io, alloc);
 
-    self.deinit(alloc);
+    self.deinit(io, alloc);
 }
 
 pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
@@ -213,7 +213,7 @@ pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     try self.flushMemTables(alloc, true);
 }
 
-pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
+pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     // make sure deinit is never called outside of stop
     std.debug.assert(self.memTables.items.len == 0);
 
@@ -224,10 +224,10 @@ pub fn deinit(self: *DataRecorder, allocator: Allocator) void {
         arena.deinit();
     }
     for (self.diskTables.items) |table| {
-        table.release();
+        table.release(io);
     }
     for (self.memTables.items) |table| {
-        table.release();
+        table.release(io);
     }
 
     self.memTables.deinit(allocator);
@@ -488,9 +488,9 @@ fn mergeTables(
         try table.storeToDisk(io, alloc, destinationTablePath);
 
         const newTable = try openCreatedTable(alloc, destinationTablePath, tables, null);
-        errdefer newTable.release();
+        errdefer newTable.release(io);
 
-        try swapper.swapTables(self, alloc, tables, newTable, tableKind);
+        try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
     }
@@ -557,9 +557,9 @@ fn mergeTables(
     }
 
     const openTable = try openCreatedTable(alloc, destinationTablePath, tables, newMemTable);
-    errdefer openTable.release();
+    errdefer openTable.release(io);
 
-    try swapper.swapTables(self, alloc, tables, openTable, tableKind);
+    try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
 }
 
@@ -642,7 +642,7 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
         std.debug.panic("failed to allocate tables array list for query: {s}\n", .{@errorName(err)});
     };
     defer {
-        for (tables.items) |table| table.release();
+        for (tables.items) |table| table.release(io);
         tables.deinit(fbaAlloc);
     }
 
@@ -676,7 +676,7 @@ fn openCreatedTable(
         return Table.fromMem(alloc, memTable);
     }
 
-    return Table.open(alloc, tablePath);
+    return Table.open(io, alloc, tablePath);
 }
 
 fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
@@ -771,6 +771,7 @@ fn countDiskLinesInRecorder(recorder: *DataRecorder) u64 {
 
 test "selectTablesInRange selects overlap and handles gaps" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const Range = struct {
         min: u64,
@@ -783,11 +784,11 @@ test "selectTablesInRange selects overlap and handles gaps" {
     };
 
     const check = struct {
-        fn run(alloc_: Allocator, tables: []const *Table, cases: []const Case) !void {
+        fn run(io_: Io, alloc_: Allocator, tables: []const *Table, cases: []const Case) !void {
             for (cases) |case| {
                 var selected = std.ArrayList(*Table).empty;
                 defer {
-                    for (selected.items) |table| table.release();
+                    for (selected.items) |table| table.release(io_);
                     selected.deinit(alloc_);
                 }
 
@@ -830,7 +831,7 @@ test "selectTablesInRange selects overlap and handles gaps" {
 
     {
         const tables = [_]*Table{};
-        try check(alloc, &tables, &[_]Case{
+        try check(io, alloc, &tables, &[_]Case{
             .{ .from = 0, .to = 0, .expected = &.{} },
             .{ .from = 0, .to = 100, .expected = &.{} },
             .{ .from = 10, .to = 20, .expected = &.{} },
@@ -841,7 +842,7 @@ test "selectTablesInRange selects overlap and handles gaps" {
         var h = TableHeader{ .minTimestamp = 100, .maxTimestamp = 110 };
         var t = newTable(&h);
         const tables = [_]*Table{&t};
-        try check(alloc, &tables, &[_]Case{
+        try check(io, alloc, &tables, &[_]Case{
             .{ .from = 100, .to = 110, .expected = &.{.{ .min = 100, .max = 110 }} },
             .{ .from = 90, .to = 120, .expected = &.{.{ .min = 100, .max = 110 }} },
             .{ .from = 99, .to = 100, .expected = &.{.{ .min = 100, .max = 110 }} },
@@ -859,7 +860,7 @@ test "selectTablesInRange selects overlap and handles gaps" {
         var t30 = newTable(&h30);
         var t50 = newTable(&h50);
         const tables = [_]*Table{ &t10, &t30, &t50 };
-        try check(alloc, &tables, &[_]Case{
+        try check(io, alloc, &tables, &[_]Case{
             .{ .from = 20, .to = 29, .expected = &.{} },
             .{ .from = 25, .to = 35, .expected = &.{.{ .min = 30, .max = 39 }} },
             .{ .from = 10, .to = 10, .expected = &.{.{ .min = 10, .max = 19 }} },
@@ -889,7 +890,7 @@ test "selectTablesInRange selects overlap and handles gaps" {
         var t40 = newTable(&h40);
         var t50 = newTable(&h50);
         const tables = [_]*Table{ &t10, &t20, &t30, &t40, &t50 };
-        try check(alloc, &tables, &[_]Case{
+        try check(io, alloc, &tables, &[_]Case{
             .{ .from = 10, .to = 59, .expected = &.{
                 .{ .min = 10, .max = 19 },
                 .{ .min = 20, .max = 29 },
@@ -921,7 +922,7 @@ test "flushDataShards non-force respects flush deadline" {
     defer runtime.deinit(alloc);
 
     const recorder = try DataRecorder.init(alloc, rootPath, runtime);
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
 
     const line = stableLine(1, 1, 0);
@@ -954,7 +955,7 @@ test "mergeTables force single mem table creates disk table" {
     defer runtime.deinit(alloc);
 
     const recorder = try DataRecorder.init(alloc, rootPath, runtime);
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
 
     var lines = [_]Line{
@@ -963,7 +964,7 @@ test "mergeTables force single mem table creates disk table" {
         stableLine(3, 1, 2),
     };
     const table = try createMemTableFromLines(alloc, lines[0..]);
-    errdefer table.close();
+    errdefer table.close(io);
 
     try recorder.memTables.append(alloc, table);
     table.inMerge = true;
@@ -990,7 +991,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         defer runtime.deinit(alloc);
 
         const recorder = try DataRecorder.init(alloc, rootPath, runtime);
-        defer recorder.deinit(alloc);
+        defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
             var batch = [_]Line{stableLine(@intCast(i + 1), 1, i)};
@@ -1011,7 +1012,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         defer runtime.deinit(alloc);
 
         const reopened = try DataRecorder.init(alloc, rootPath, runtime);
-        defer reopened.deinit(alloc);
+        defer reopened.deinit(io, alloc);
         reopened.stopped.store(true, .release);
 
         try testing.expect(reopened.diskTables.items.len > 0);

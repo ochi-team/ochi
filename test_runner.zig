@@ -26,13 +26,21 @@ const crippled = switch (builtin.zig_backend) {
 pub fn main() void {
     @disableInstrumentation();
 
+    var gpa_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa_allocator.deinit();
+    const gpa = gpa_allocator.allocator();
+
+    var io_impl: std.Io.Threaded = .init(gpa, .{});
+    defer io_impl.deinit();
+    const io = io_impl.io();
+
     if (builtin.cpu.arch.isSpirV()) {
         // SPIR-V needs an special test-runner
         return;
     }
 
     if (crippled) {
-        return mainSimple() catch @panic("test failure\n");
+        return mainSimple(io) catch @panic("test failure\n");
     }
 
     const args = std.process.argsAlloc(fba.allocator()) catch
@@ -150,7 +158,7 @@ pub fn log(
 
 /// Simpler main(), exercising fewer language features, so that
 /// work-in-progress backends can handle it.
-pub fn mainSimple() anyerror!void {
+pub fn mainSimple(io: Io) anyerror!void {
     @disableInstrumentation();
     // is the backend capable of calling `Io.File.writeAll`?
     const enable_write = switch (builtin.zig_backend) {
@@ -172,19 +180,19 @@ pub fn mainSimple() anyerror!void {
 
     for (builtin.test_functions) |test_fn| {
         if (enable_write) {
-            stdout.writeAll(test_fn.name) catch {};
-            stdout.writeAll("... ") catch {};
+            stdout.writeStreamingAll(io, test_fn.name) catch {};
+            stdout.writeStreamingAll(io, "... ") catch {};
         }
         if (test_fn.func()) |_| {
-            if (enable_write) stdout.writeAll("PASS\n") catch {};
+            if (enable_write) stdout.writeStreamingAll(io, "PASS\n") catch {};
         } else |err| {
             if (err != error.SkipZigTest) {
-                if (enable_write) stdout.writeAll("FAIL\n") catch {};
+                if (enable_write) stdout.writeStreamingAll(io, "FAIL\n") catch {};
                 failed += 1;
                 if (!enable_write) return err;
                 continue;
             }
-            if (enable_write) stdout.writeAll("SKIP\n") catch {};
+            if (enable_write) stdout.writeStreamingAll(io, "SKIP\n") catch {};
             skipped += 1;
             continue;
         }

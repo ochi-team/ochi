@@ -69,7 +69,7 @@ pub fn writeBufferValToFile(
     );
     defer file.close(io);
 
-    try file.writeAll(bufferVal);
+    try file.writeStreamingAll(io, bufferVal);
     try file.sync();
 }
 
@@ -112,12 +112,12 @@ pub fn writeBufferToFileAtomic(
 pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
     var file = try Dir.openFileAbsolute(io, path, .{});
     defer file.close(io);
-    const size = (try file.stat()).size;
+    const size = (try file.stat(io)).size;
 
     const dst = try alloc.alloc(u8, size);
     errdefer alloc.free(dst);
 
-    _ = try file.readAll(dst);
+    _ = try file.readPositionalAll(io, dst, 0);
     return dst;
 }
 
@@ -137,7 +137,7 @@ test "pathExists returns true for existing paths and false for missing path" {
     {
         var file = try tmp.dir.createFile("existing.txt", .{});
         defer file.close(io);
-        try file.writeAll("content");
+        try file.writeStreamingAll(io, "content");
     }
 
     const tmp_path = try tmp.dir.realPathFileAlloc(io, alloc, ".");
@@ -170,8 +170,8 @@ test "syncPathAndParentDir fsync file and parent directory" {
     const file_name = "test.txt";
     {
         var f = try tmp.dir.createFile(file_name, .{});
-        defer f.close();
-        try f.writeAll("hello");
+        defer f.close(io);
+        try f.writeStreamingAll(io, "hello");
     }
 
     const abs_path = try tmp.dir.realPathFileAlloc(io, std.testing.allocator, file_name);
@@ -204,8 +204,8 @@ test "readAll reads full file content from tmp directory" {
 
     {
         var f = try tmp.dir.createFile(file_name, .{});
-        defer f.close();
-        try f.writeAll(content);
+        defer f.close(io);
+        try f.writeStreamingAll(io, content);
     }
 
     const abs_path = try tmp.dir.realPathFileAlloc(io, std.testing.allocator, file_name);

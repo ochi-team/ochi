@@ -95,6 +95,6 @@ test "roundtrip file read/write" {
 
     try header.writeFile(alloc, tablePath);
 
-    const readHeader = try TableHeader.readFile(alloc, tablePath);
+    const readHeader = try TableHeader.readFile(io, alloc, tablePath);
     try testing.expectEqualDeep(header, readHeader);
 }

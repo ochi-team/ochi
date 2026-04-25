@@ -100,7 +100,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     // TODO: make this function parallel when it comes to writing files
     if (Dir.openDirAbsolute(io, path, .{})) |dir| {
         var d = dir;
-        d.close();
+        d.close(io);
         return error.DirAlreadyExists;
     } else |err| switch (err) {
         error.FileNotFound => {

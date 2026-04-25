@@ -33,7 +33,7 @@ seekedIsCurrent: bool,
 pub fn init(alloc: Allocator, recorder: *IndexRecorder) !Lookup {
     var tables = try recorder.getTables(alloc);
     errdefer {
-        for (tables.items) |t| t.release();
+        for (tables.items) |t| t.release(io);
         tables.deinit(alloc);
     }
 
@@ -62,7 +62,7 @@ pub fn deinit(self: *Lookup, alloc: Allocator) void {
     for (self.lookupTables.items) |*lt| lt.deinit(alloc);
     self.lookupTables.deinit(alloc);
     self.heapArray.deinit(alloc);
-    for (self.tables.items) |t| t.release();
+    for (self.tables.items) |t| t.release(io);
     self.tables.deinit(alloc);
 }
 
@@ -237,10 +237,10 @@ fn createDiskTableFromItems(
     errdefer alloc.free(tablePath);
 
     const memTable = try createMemTableFromItems(alloc, items);
-    defer memTable.close();
+    defer memTable.close(io);
     try memTable.mem.?.storeToDisk(io, alloc, tablePath);
 
-    return Table.open(alloc, tablePath);
+    return Table.open(io, alloc, tablePath);
 }
 
 test "Lookup.findFirstByPrefix returns null on empty recorder" {
@@ -256,7 +256,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
 
@@ -287,7 +287,7 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
 
@@ -317,7 +317,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
 
@@ -339,17 +339,17 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
     {
         const table = try createMemTableFromItems(alloc, &tableAItems);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
         const table = try createMemTableFromItems(alloc, &tableBItems);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
         const table = try createDiskTableFromItems(alloc, rootPath, "lookup-disk-table", &tableDiskItems);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
 
@@ -407,7 +407,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
 
     const tableAItems = [_][]const u8{
         "key:aa0000000000000002",
@@ -427,17 +427,17 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     {
         const table = try createMemTableFromItems(alloc, &tableAItems);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
         const table = try createMemTableFromItems(alloc, &tableBItems);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
         const table = try createDiskTableFromItems(alloc, rootPath, "lookup-disk-table", &tableDiskItems);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
 
@@ -531,7 +531,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
-    defer recorder.deinit(alloc);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
 
@@ -554,7 +554,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     {
         const table = try createMemTableFromItems(alloc, items.items);
-        errdefer table.close();
+        errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
 
