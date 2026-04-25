@@ -58,9 +58,10 @@ pub fn readFile(
     defer fbaAlloc.free(metadataPath);
 
     var file = try Dir.openFileAbsolute(io, metadataPath, .{});
-    defer file.close();
+    defer file.close(io);
 
-    const data = try file.readToEndAlloc(fbaAlloc, maxFileBytes);
+    var file_reader = file.reader(io, &.{});
+    const data = try file_reader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes));
     defer fbaAlloc.free(data);
 
     const parsed = try std.json.parseFromSlice(TableHeader, fbaAlloc, data, .{});

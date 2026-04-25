@@ -91,7 +91,7 @@ pub const DataShard = struct {
         const memTable = try MemTable.init(io, alloc);
         errdefer memTable.deinit(alloc);
 
-        sem.wait();
+        sem.waitUncancelable(io);
 
         memTable.addLines(alloc, self.lines.items) catch |err| {
             sem.post();
@@ -432,7 +432,7 @@ fn tablesMerger(
         const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
         if (filteredTablesToMerge.len == 0) return;
 
-        sem.wait();
+        sem.waitUncancelable(io);
         errdefer sem.post();
         try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
         sem.post();
@@ -745,7 +745,7 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
     };
 }
 
-fn createMemTableFromLines(alloc: Allocator, lines: []Line) !*Table {
+fn createMemTableFromLines(io: Io, alloc: Allocator, lines: []Line) !*Table {
     const memTable = try MemTable.init(io, alloc);
     errdefer memTable.deinit(alloc);
 

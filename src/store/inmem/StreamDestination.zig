@@ -158,7 +158,9 @@ test "StreamDestination file destination" {
 
     var verify = try Dir.openFileAbsolute(io, filePath, .{});
     defer verify.close();
-    const onDisk = try verify.readToEndAlloc(alloc, std.math.maxInt(usize));
+
+    var verify_reader = file.reader(io, &.{});
+    const onDisk = verify_reader.interface.allocRemaining(alloc, .limited(std.math.maxInt(usize)));
     defer alloc.free(onDisk);
     try std.testing.expectEqualStrings(res, onDisk);
 }

@@ -685,6 +685,7 @@ fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
 
 test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const memTable = try MemTable.init(io, alloc);
 
     var fields1 = [_]Field{
@@ -811,6 +812,7 @@ test "open reads table from disk" {
 
 test "queryLines" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const ExpectedLine = struct {
         timestampNs: u64,
         sid: SID,

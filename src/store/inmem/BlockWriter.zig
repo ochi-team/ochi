@@ -90,7 +90,7 @@ pub fn writeLines(
     }
 
     const c = Content{ .block = block };
-    try self.writeBlock(allocator, c, sid, streamWriter);
+    try self.writeBlock(io, allocator, c, sid, streamWriter);
 }
 
 pub fn writeData(
@@ -100,7 +100,7 @@ pub fn writeData(
     streamWriter: *StreamWriter,
 ) !void {
     const c = Content{ .data = data };
-    try self.writeBlock(allocator, c, data.sid, streamWriter);
+    try self.writeBlock(io, allocator, c, data.sid, streamWriter);
 }
 
 fn writeBlock(
@@ -152,7 +152,7 @@ fn writeContent(alloc: Allocator, content: Content, sid: SID, streamWriter: *Str
     switch (content) {
         .block => |block| {
             var blockHeader = BlockHeader.initFromBlock(block, sid);
-            try streamWriter.writeBlock(alloc, block, &blockHeader);
+            try streamWriter.writeBlock(io, alloc, block, &blockHeader);
             return blockHeader;
         },
         .data => |data| {

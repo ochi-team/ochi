@@ -184,7 +184,7 @@ fn flush(
     }
     tableHeader.lastEntry = newLast;
 
-    try writer.writeBlock(alloc, self.block);
+    try writer.writeBlock(io, alloc, self.block);
     tableHeader.blocksCount += 1;
     self.block.reset();
 }

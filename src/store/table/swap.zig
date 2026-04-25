@@ -47,7 +47,7 @@ pub fn Swapper(
             self.mxTables.unlock();
 
             for (0..removedMemTables) |_| self.memTablesSem.post();
-            if (tableKind == .mem) self.memTablesSem.wait();
+            if (tableKind == .mem) self.memTablesSem.waitUncancelable(io);
 
             std.debug.assert(tables.len == removedDiskTables + removedMemTables);
 

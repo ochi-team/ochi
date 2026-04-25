@@ -42,7 +42,7 @@ pub fn mergeData(
         }
 
         const reader = merger.heap.peek().?;
-        try merger.writeBlock(alloc, blockWriter, writer, &reader.blockData);
+        try merger.writeBlock(io, alloc, blockWriter, writer, &reader.blockData);
         if (try reader.nextBlock(alloc)) {
             merger.heap.fix(0);
         } else {

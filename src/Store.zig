@@ -473,7 +473,7 @@ fn createLockFile(io: Io, path: []const u8) !Io.File {
     // we must also test it with different devices: block, s3 fs, nfs (ceph), etc.
     // read "man flock" for details
     var file = try Dir.createFileAbsolute(io, lockFilePath, .{ .lock = .exclusive });
-    errdefer file.close();
+    errdefer file.close(io);
 
     // var i: u8 = 0;
     // while (i < 5) : (i += 1) {

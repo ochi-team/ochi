@@ -227,8 +227,10 @@ fn populateSampleLines(sample: *SampleLines) void {
 
 fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     var file = try std.Io.Dir.cwd().openFile(path, .{});
-    defer file.close();
-    return file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    defer file.close(io);
+
+    var file_reader = file.reader(io, &.{});
+    return file_reader.interface.allocRemaining(allocator, .limited(std.math.maxInt(usize)));
 }
 
 test "addLines" {

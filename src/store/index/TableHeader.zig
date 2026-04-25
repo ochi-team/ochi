@@ -46,9 +46,10 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     var file = Dir.openFileAbsolute(io, metadataPath, .{}) catch |err| {
         std.debug.panic("can't open table header '{s}': {s}", .{ metadataPath, @errorName(err) });
     };
-    defer file.close();
+    defer file.close(io);
 
-    const data = file.readToEndAlloc(fbaAlloc, maxFileBytes) catch |err| {
+    var file_reader = file.reader(io, &.{});
+    const data = file_reader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes)) catch |err| {
         std.debug.panic("can't read table header '{s}': {s}", .{ metadataPath, @errorName(err) });
     };
     defer fbaAlloc.free(data);

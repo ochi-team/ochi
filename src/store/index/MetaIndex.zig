@@ -72,7 +72,9 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !D
     var metaindexFile = try Dir.openFileAbsolute(io, metaindexPath, .{});
     defer metaindexFile.close();
     const metaindexStat = try metaindexFile.stat();
-    const metaindexCompressed = try metaindexFile.readToEndAlloc(fbaAlloc, @intCast(metaindexStat.size));
+
+    var metaindexFileReader = metaindexFile.reader(io, &.{});
+    const metaindexCompressed = try metaindexFileReader.interface.allocRemaining(fbaAlloc, .limited(@intCast(metaindexStat.size)));
     defer fbaAlloc.free(metaindexCompressed);
 
     const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);
@@ -224,7 +226,7 @@ test "MetaIndex roundtrip file read/write" {
     defer alloc.free(metaindexPath);
 
     var file = try Dir.createFileAbsolute(io, metaindexPath, .{ .truncate = true });
-    defer file.close();
+    defer file.close(io);
     try file.writeAll(compressed[0..compressedLen]);
     try file.sync();
 

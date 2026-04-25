@@ -17,9 +17,10 @@ pub fn readNames(
     comptime validate: bool,
 ) !std.ArrayList([]const u8) {
     if (Dir.openFileAbsolute(io, tablesFilePath, .{})) |file| {
-        defer file.close();
+        defer file.close(io);
 
-        const data = try file.readToEndAlloc(alloc, maxFileBytes);
+        var file_reader = file.reader(io, &.{});
+        const data = try file_reader.interface.allocRemaining(alloc, .limited(maxFileBytes));
         defer alloc.free(data);
 
         const parsed = try std.json.parseFromSlice(std.json.Value, alloc, data, .{});
@@ -54,7 +55,7 @@ pub fn readNames(
                 defer parentDir.close();
 
                 var it = parentDir.iterate();
-                while (try it.next()) |entry| {
+                while (try it.next(io)) |entry| {
                     if (entry.kind == .directory or entry.kind == .sym_link) {
                         return error.TableFileExistsWithNoTableEntry;
                     }

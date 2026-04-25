@@ -67,7 +67,7 @@ pub fn writeBufferValToFile(
         path,
         .{ .truncate = true },
     );
-    defer file.close();
+    defer file.close(io);
 
     try file.writeAll(bufferVal);
     try file.sync();
@@ -111,7 +111,7 @@ pub fn writeBufferToFileAtomic(
 
 pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
     var file = try Dir.openFileAbsolute(io, path, .{});
-    defer file.close();
+    defer file.close(io);
     const size = (try file.stat()).size;
 
     const dst = try alloc.alloc(u8, size);
@@ -136,7 +136,7 @@ test "pathExists returns true for existing paths and false for missing path" {
     try tmp.dir.makePath("nested");
     {
         var file = try tmp.dir.createFile("existing.txt", .{});
-        defer file.close();
+        defer file.close(io);
         try file.writeAll("content");
     }
 

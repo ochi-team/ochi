@@ -619,7 +619,7 @@ fn tablesMerger(
         if (filteredTablesToMerge.len == 0) return;
 
         // TODO: make sure error.Stopped is handled on the upper level
-        sem.wait();
+        sem.waitUncancelable(io);
         errdefer sem.post();
         try self.mergeTables(alloc, filteredTablesToMerge, false, &self.stopped);
         sem.post();
@@ -876,7 +876,7 @@ test "mergeTables force single mem table creates disk table" {
 
     const table = try createMemTableFromItems(alloc, &.{ "k1", "k2", "k3" });
     try recorder.memTables.append(alloc, table);
-    recorder.memTablesSem.wait();
+    recorder.memTablesSem.waitUncancelable(io);
     table.inMerge = true;
 
     var single = [_]*Table{table};

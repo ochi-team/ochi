@@ -297,8 +297,8 @@ test "BlockWriter disk output matches mem output" {
     defer memTable.deinit(alloc);
     var memWriter = BlockWriter.initFromMemTable(memTable);
     defer memWriter.deinit(alloc);
-    try memWriter.writeBlock(alloc, blockOne);
-    try memWriter.writeBlock(alloc, blockTwo);
+    try memWriter.writeBlock(io, alloc, blockOne);
+    try memWriter.writeBlock(io, alloc, blockTwo);
     try memWriter.close(alloc);
 
     var tmp = testing.tmpDir(.{});
@@ -310,8 +310,8 @@ test "BlockWriter disk output matches mem output" {
 
     var diskWriter = try BlockWriter.initFromDiskTable(alloc, tablePath, true);
     defer diskWriter.deinit(alloc);
-    try diskWriter.writeBlock(alloc, blockOne);
-    try diskWriter.writeBlock(alloc, blockTwo);
+    try diskWriter.writeBlock(io, alloc, blockOne);
+    try diskWriter.writeBlock(io, alloc, blockTwo);
     try diskWriter.close(alloc);
 
     const entries = try readTableFile(alloc, tablePath, filenames.entries);
@@ -362,7 +362,7 @@ test "BlockWriter metaindexBuf may contain multiple records" {
         errdefer block.deinit(alloc);
         try blocks.append(alloc, block);
 
-        try writer.writeBlock(alloc, block);
+        try writer.writeBlock(io, alloc, block);
     }
     try writer.close(alloc);
 

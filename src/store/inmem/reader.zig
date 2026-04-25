@@ -555,6 +555,7 @@ test "initFromDiskTable reads buffers" {
 }
 
 fn testReadBlock(allocator: Allocator) !void {
+    const io = std.testing.io;
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,

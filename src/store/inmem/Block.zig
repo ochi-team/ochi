@@ -432,7 +432,7 @@ test "initFromLines and initFromData produce identical blocks" {
         defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
-        try writer.writeBlock(alloc, blockA, &bh);
+        try writer.writeBlock(io, alloc, blockA, &bh);
 
         var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomValuesList.items.len);
         defer bloomValuesList.deinit(alloc);

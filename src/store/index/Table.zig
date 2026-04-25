@@ -295,7 +295,7 @@ fn createTestTableDir(alloc: Allocator, tablePath: []const u8) !void {
 
     var writer = try BlockWriter.initFromDiskTable(alloc, tablePath, true);
     defer writer.deinit(alloc);
-    try writer.writeBlock(alloc, block);
+    try writer.writeBlock(io, alloc, block);
     try writer.close(alloc);
 
     var header = TableHeader{

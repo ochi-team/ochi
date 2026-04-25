@@ -579,7 +579,7 @@ fn createBloomValuesFile(alloc: Allocator, tablePath: []const u8, i: usize) !Str
     const path = try MemTable.getBloomValuesFilePath(fba, tablePath, i);
     defer fba.free(path);
     const file = try std.Io.Dir.cwd().createFile(path, .{});
-    errdefer file.close();
+    errdefer file.close(io);
     return StreamDestination.initFile(file);
 }
 
@@ -590,7 +590,7 @@ fn createBloomTokensValues(alloc: Allocator, tablePath: []const u8, i: usize) !S
     const path = try MemTable.getBloomTokensFilePath(fba, tablePath, i);
     defer fba.free(path);
     const file = try std.Io.Dir.cwd().createFile(path, .{});
-    errdefer file.close();
+    errdefer file.close(io);
     return StreamDestination.initFile(file);
 }
 
@@ -660,7 +660,7 @@ test "writeBlock and writeData produce identical buffer output" {
     defer block.deinit(alloc);
 
     var bh1 = BlockHeader.initFromBlock(block, sid);
-    try writer1.writeBlock(alloc, block, &bh1);
+    try writer1.writeBlock(io, alloc, block, &bh1);
 
     // Build StreamReader from writer1's buffers to populate BlockData
     var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomValuesList.items.len);
