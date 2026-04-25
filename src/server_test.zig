@@ -225,3 +225,5 @@ test "serverEndToEndViaHTTP" {
     thread.join();
     stopped = true;
 }
+
+// TODO: test querying fields with "." in a key/value

@@ -1,33 +1,8 @@
-# Astro Starter Kit: Minimal
+# Ochi web page
 
-```sh
-npm create astro@latest -- --template minimal
-```
-
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro project, you'll see the following folders and files:
-
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
-
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
-
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
-
-Any static assets, like images, can be placed in the `public/` directory.
+Holds documentation, blog, landing.
 
 ## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
 
 | Command                   | Action                                           |
 | :------------------------ | :----------------------------------------------- |
@@ -38,30 +13,46 @@ All commands are run from the root of the project, from a terminal:
 | `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
 | `npm run astro -- --help` | Get help using the Astro CLI                     |
 
-## 👀 Want to learn more?
+## Changelog guide
 
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Expected to see on the top
+- date
+- version
+
+The following categories are allowed:
+- query
+- ingest
+- config
+- UI
+- installation
+- others
+
+Every category may have a verb and a change description, for example:
+
+Added: new thing is possible
+
+Possible verbs:
+- Added
+- Changed
+- Deprecated
+- Removed
+- Fixed
+- Security
+- Performance
+
+A verb may be prefixed with **BREAKING:** if the change is breaking.
+Highly encouraged to review on breaking change the verbs Changed, Deprecated, Removed, Fixed, Security.
+
+The following information must be attached:
+- a link to a PR/commit
+- a link to a documentation
+
+
+##### Documentation todo list
 
 TODO: setup spellchecker for docs
 TODO: extract website to its repo, leave only related content: docs, changelog, api reference, etc.
 TODO: make the changelog date used from the frontmatter, not the direct paragraph
 TODO: leave a link "edit on github" on a doc page
+TODO: add a linter to validate all the links are accessible in the content
 
-
-#### changelog
-put Unreleased on top
-
-- date
-- version
-
-- Category (query, ingest, config, install, etc.)
-- action (Added, Changed, Deprecated, Removed, Fixed, Security)
-- description
-- link to the PR/commit
-- link to a doc
-- prefix **BREAKING:** 
-
-
-trailer
---------
-Change: Added(query)
