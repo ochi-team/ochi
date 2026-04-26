@@ -52,7 +52,7 @@ pub fn mergeData(
         }
     }
 
-    try merger.flushStream(alloc, blockWriter, writer);
+    try merger.flushStream(io, alloc, blockWriter, writer);
     var tableHeader = TableHeader{};
     try blockWriter.finish(io, alloc, writer, &tableHeader);
     return tableHeader;
@@ -144,26 +144,26 @@ pub const StreamMerger = struct {
 
         if (!blockData.sid.eql(&self.sid)) {
             // it means next stream begins, we have to flush the data
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
             self.sid = blockData.sid;
 
             if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.decodeLines(alloc, blockData);
+                try self.decodeLines(io, alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
             // we have to flush the data before we can add more
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
             if (totalKeys > Block.maxColumns) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.decodeLines(alloc, blockData);
+                try self.decodeLines(io, alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.size >= MemTable.maxBlockSize) {
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
             try blockWriter.writeData(io, alloc, blockData, writer);
         } else {
             try self.merge(io, alloc, blockData, blockWriter, writer);
@@ -173,9 +173,9 @@ pub const StreamMerger = struct {
 
     // TODO: this and many more demonstartes obvious dependece of block and stream writers,
     // they always go together, I have to inject one into another probably
-    fn flushStream(self: *StreamMerger, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
+    fn flushStream(self: *StreamMerger, io: Io, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
         if (self.lines.items.len > 0) {
-            try writer.writeLines(alloc, self.sid, self.lines.items, streamWriter);
+            try writer.writeLines(io, alloc, self.sid, self.lines.items, streamWriter);
         }
 
         self.reset(alloc);
@@ -183,13 +183,14 @@ pub const StreamMerger = struct {
 
     fn merge(
         self: *StreamMerger,
+        io: Io,
         alloc: Allocator,
         blockData: *BlockData,
         blockWriter: *BlockWriter,
         writer: *StreamWriter,
     ) !void {
         const len = self.lines.items.len;
-        try self.decodeLines(alloc, blockData);
+        try self.decodeLines(io, alloc, blockData);
         std.debug.assert(self.lines.items.len > len);
 
         try self.mergeBufferLines.ensureTotalCapacity(alloc, self.lines.items.len);
@@ -199,12 +200,12 @@ pub const StreamMerger = struct {
         std.mem.swap(std.ArrayList(Line), &self.mergeBufferLines, &self.lines);
 
         if (self.size >= MemTable.maxBlockSize) {
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
         }
     }
 
-    fn decodeLines(self: *StreamMerger, alloc: Allocator, blockData: *BlockData) !void {
-        const block = try Block.initFromData(alloc, blockData, self.unpacker, self.decoder);
+    fn decodeLines(self: *StreamMerger, io: Io, alloc: Allocator, blockData: *BlockData) !void {
+        const block = try Block.initFromData(io, alloc, blockData, self.unpacker, self.decoder);
         defer block.deinit(alloc);
 
         const offset = self.lines.items.len;
@@ -479,7 +480,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
     var expectedI: usize = 0;
     while (try mergedReader.nextBlock(alloc)) {
-        const block = try Block.initFromData(alloc, &mergedReader.blockData, unpacker, decoder);
+        const block = try Block.initFromData(io, alloc, &mergedReader.blockData, unpacker, decoder);
         defer block.deinit(alloc);
 
         var lines = std.ArrayList(Line).empty;

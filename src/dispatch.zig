@@ -1,4 +1,6 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const httpz = @import("httpz");
 
@@ -10,12 +12,16 @@ const Store = @import("Store.zig").Store;
 const ApiError = @import("server/error.zig").ApiError;
 
 pub const AppContext = struct {
+    io: Io,
+    allocator: Allocator,
     conf: AppConfig,
     tenantID: tenant.TenantID,
     store: *Store,
 };
 
 pub const Dispatcher = struct {
+    io: Io,
+    allocator: Allocator,
     conf: AppConfig,
     store: *Store,
 
@@ -28,6 +34,8 @@ pub const Dispatcher = struct {
         const tenantID: tenant.TenantID = req.headers.get("X-Scope-OrgID") orelse "default";
 
         var ctx = AppContext{
+            .io = self.io,
+            .allocator = self.allocator,
             .conf = self.conf,
             .tenantID = tenantID,
             .store = self.store,

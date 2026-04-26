@@ -83,11 +83,11 @@ pub fn deinit(self: *Runtime, alloc: Allocator) void {
     alloc.destroy(self);
 }
 
-pub fn getFreeDiskSpace(self: *Runtime) u64 {
-    self.diskStatsMx.lock();
-    defer self.diskStatsMx.unlock();
+pub fn getFreeDiskSpace(self: *Runtime, io: Io) u64 {
+    self.diskStatsMx.lockUncancelable(io);
+    defer self.diskStatsMx.unlock(io);
 
-    const nowMs: u64 = @intCast(std.time.milliTimestamp());
+    const nowMs: u64 = @intCast(Io.Timestamp.now(io, .real).toMilliseconds());
     if ((nowMs - self.diskSpace.updatedAtMs) < 15 * std.time.ms_per_s) {
         return self.diskSpace.free;
     }
@@ -134,8 +134,8 @@ test "getFreeDiskSpace returns same positive value" {
     const r = try Runtime.init(testing.allocator, ".", 0.5);
     defer r.deinit(testing.allocator);
 
-    const first = r.getFreeDiskSpace();
-    const second = r.getFreeDiskSpace();
+    const first = r.getFreeDiskSpace(std.testing.io);
+    const second = r.getFreeDiskSpace(std.testing.io);
 
     try std.testing.expect(first > 0);
     try std.testing.expectEqual(first, second);

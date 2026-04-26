@@ -368,7 +368,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     return table;
 }
 
-pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
+pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
     var stackFba = std.heap.stackFallback(1024, alloc);
     const fba = stackFba.get();
 
@@ -390,7 +390,7 @@ pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror
     const tablesFilePath = try std.fs.path.join(fba, &.{ path, filenames.tables });
     defer fba.free(tablesFilePath);
 
-    try fs.writeBufferToFileAtomic(tablesFilePath, data, true);
+    try fs.writeBufferToFileAtomic(io, tablesFilePath, data, true);
 }
 
 pub fn retain(self: *Table) void {
@@ -406,7 +406,7 @@ pub fn release(self: *Table, io: Io) void {
     self.close(io);
 }
 
-pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
+pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
     // TODO: assert it's sorted in the tests
     var indexBlockHeaders = self.indexBlockHeaders;
     var sidsToFind = sids;
@@ -465,7 +465,7 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
                     continue;
                 }
 
-                try self.queryBlock(alloc, dst, blockHeader, query);
+                try self.queryBlock(io, alloc, dst, blockHeader, query);
             }
 
             if (blockHeadersToRead.len == 0) {
@@ -487,6 +487,7 @@ pub fn queryLines(self: *Table, alloc: Allocator, dst: *std.ArrayList(Line), sid
 
 fn queryBlock(
     self: *Table,
+    io: Io,
     alloc: Allocator,
     dst: *std.ArrayList(Line),
     blockHeader: BlockHeader,
@@ -532,7 +533,7 @@ fn queryBlock(
     const decoder = try ValuesDecoder.init(alloc);
     defer decoder.deinit();
 
-    const block = try Block.initFromData(alloc, &blockData, unpacker, decoder);
+    const block = try Block.initFromData(io, alloc, &blockData, unpacker, decoder);
     defer block.deinit(alloc);
 
     var i = dst.items.len;

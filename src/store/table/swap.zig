@@ -26,8 +26,8 @@ pub fn Swapper(
             newTable: *T,
             tableKind: merge.TableKind,
         ) !void {
-            self.mxTables.lock();
-            errdefer self.mxTables.unlock();
+            self.mxTables.lockUncancelable(io);
+            errdefer self.mxTables.unlock(io);
 
             const removedMemTables = removeTables(&self.memTables, tables);
             const removedDiskTables = removeTables(&self.diskTables, tables);
@@ -44,9 +44,9 @@ pub fn Swapper(
             }
 
             if (removedDiskTables > 0 or tableKind == .disk) {
-                try T.writeNames(alloc, self.path, self.diskTables.items);
+                try T.writeNames(io, alloc, self.path, self.diskTables.items);
             }
-            self.mxTables.unlock();
+            self.mxTables.unlock(io);
 
             for (0..removedMemTables) |_| self.memTablesSem.post(io);
             if (tableKind == .mem) self.memTablesSem.waitUncancelable(io);

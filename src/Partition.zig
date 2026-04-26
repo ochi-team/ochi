@@ -186,7 +186,7 @@ pub fn addLines(
         if (self.isCached(lines.items[i].sid)) continue;
 
         if (!try self.index.hasStream(io, allocator, sid)) {
-            try self.index.indexStream(allocator, sid, tags, encodedTags);
+            try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
         try self.cache(sid);
     }

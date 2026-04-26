@@ -416,7 +416,7 @@ fn tablesMerger(
     defer tablesToMerge.deinit(alloc);
 
     while (!self.stopped.load(.acquire)) {
-        const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace());
+        const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
         // TODO: we have to know the max amount of tables in advance
@@ -518,22 +518,23 @@ fn mergeTables(
                 self.runtime.maxMem,
                 self.runtime.cacheSize,
             );
-            break :blk try StreamWriter.initDisk(alloc, destinationTablePath, fitsInCache);
+            break :blk try StreamWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
         }
     };
     // TODO: remove this shame after rmoving writer from mem table
-    defer if (tableKind != .mem) streamWriter.deinit(alloc);
+    defer if (tableKind != .mem) streamWriter.deinit(io, alloc);
 
-    const tableHeader = mergeData(alloc, streamWriter, &readers, stopped) catch |err| {
+    const tableHeader = mergeData(io, alloc, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
-                    std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
-                        std.debug.print(
-                            "failed to delete half way merged data table after stopped: {s}\n",
-                            .{@errorName(deleteErr)},
-                        );
-                    };
+                    // TODO removed without replacement
+                    // std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
+                    //     std.debug.print(
+                    //         "failed to delete half way merged data table after stopped: {s}\n",
+                    //         .{@errorName(deleteErr)},
+                    //     );
+                    // };
                 }
                 return err;
             },

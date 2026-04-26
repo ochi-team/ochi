@@ -94,10 +94,10 @@ pub fn writeBufferToFileAtomic(
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const tmpPath = try std.fmt.bufPrint(&buf, "{s}-tmp-{d}", .{ path, n });
 
-    try writeBufferValToFile(tmpPath, bufferVal);
-    errdefer std.fs.deleteFileAbsolute(tmpPath) catch {};
+    try writeBufferValToFile(io, tmpPath, bufferVal);
+    errdefer Dir.deleteFileAbsolute(io, tmpPath) catch {};
 
-    try std.fs.renameAbsolute(tmpPath, path);
+    try Dir.renameAbsolute(tmpPath, path, io);
 
     // This is because fsync() does not guarantee that
     // the directory entry of the given file has also reached the disk;

@@ -32,7 +32,7 @@ seekedIsCurrent: bool,
 // 2. reuse tables and its  lookup list capacity
 /// Initializes lookup cursors for all currently visible recorder tables.
 pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder) !Lookup {
-    var tables = try recorder.getTables(alloc);
+    var tables = try recorder.getTables(io, alloc);
     errdefer {
         for (tables.items) |t| t.release(io);
         tables.deinit(alloc);
@@ -238,7 +238,7 @@ fn createDiskTableFromItems(
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
     errdefer alloc.free(tablePath);
 
-    const memTable = try createMemTableFromItems(io, alloc , items);
+    const memTable = try createMemTableFromItems(io, alloc, items);
     defer memTable.close(io);
     try memTable.mem.?.storeToDisk(io, alloc, tablePath);
 
@@ -340,12 +340,12 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     };
 
     {
-        const table = try createMemTableFromItems(io, alloc , &tableAItems);
+        const table = try createMemTableFromItems(io, alloc, &tableAItems);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createMemTableFromItems(io, alloc , &tableBItems);
+        const table = try createMemTableFromItems(io, alloc, &tableBItems);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
@@ -428,12 +428,12 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     };
 
     {
-        const table = try createMemTableFromItems(io, alloc , &tableAItems);
+        const table = try createMemTableFromItems(io, alloc, &tableAItems);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createMemTableFromItems(io, alloc , &tableBItems);
+        const table = try createMemTableFromItems(io, alloc, &tableBItems);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
@@ -555,7 +555,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     }
 
     {
-        const table = try createMemTableFromItems(io, alloc , items.items);
+        const table = try createMemTableFromItems(io, alloc, items.items);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }

@@ -233,7 +233,7 @@ pub fn lessThan(_: void, one: *Table, another: *Table) bool {
     return one.size < another.size;
 }
 
-pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
+pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
     var tableNames = try std.ArrayList([]const u8).initCapacity(alloc, tables.len);
     defer tableNames.deinit(alloc);
 
@@ -257,7 +257,7 @@ pub fn writeNames(alloc: Allocator, path: []const u8, tables: []*Table) anyerror
     const tablesFilePath = try std.fs.path.join(fba, &.{ path, filenames.tables });
     defer fba.free(tablesFilePath);
 
-    try fs.writeBufferToFileAtomic(tablesFilePath, data, true);
+    try fs.writeBufferToFileAtomic(io, tablesFilePath, data, true);
 }
 
 pub fn retain(self: *Table) void {
@@ -294,7 +294,7 @@ fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
     var block = try createTestMemBlock(alloc, &items);
     defer block.deinit(alloc);
 
-    var writer = try BlockWriter.initFromDiskTable(alloc, tablePath, true);
+    var writer = try BlockWriter.initFromDiskTable(io, alloc, tablePath, true);
     defer writer.deinit(alloc);
     try writer.writeBlock(io, alloc, block);
     try writer.close(io, alloc);

@@ -167,7 +167,7 @@ pub fn addLines(
     if (lines.len == 0) return;
     // TODO: make partition interval configurable
     // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
-    const nowNs: u64 = @intCast(std.time.nanoTimestamp());
+    const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const minDay = (nowNs - retentionNs) / std.time.ns_per_day;
     // limit the incoming logs to now + 1 day,
     // in case an ingestor sends data with broken timezone or timestamp
@@ -186,10 +186,10 @@ pub fn addLines(
             if (day != firstDay) break;
         }
         const partition = blk: {
-            self.partitionsMx.lock();
-            defer self.partitionsMx.unlock();
+            self.partitionsMx.lockUncancelable(io);
+            defer self.partitionsMx.unlock(io);
 
-            break :blk try self.getPartitionOrLru(allocator, firstDay);
+            break :blk try self.getPartitionOrLru(io, allocator, firstDay);
         };
         defer partition.release(io);
 
@@ -236,10 +236,10 @@ pub fn addLines(
         const day = it.key_ptr.*;
 
         const partition = blk: {
-            self.partitionsMx.lock();
-            defer self.partitionsMx.unlock();
+            self.partitionsMx.lockUncancelable(io);
+            defer self.partitionsMx.unlock(io);
 
-            break :blk try self.getPartitionOrLru(allocator, day);
+            break :blk try self.getPartitionOrLru(io, allocator, day);
         };
         defer partition.release(io);
 
@@ -256,7 +256,7 @@ pub fn queryLines(
 ) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    self.partitionsMx.lock();
+    self.partitionsMx.lockUncancelable(io);
 
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
@@ -267,7 +267,7 @@ pub fn queryLines(
     const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
     // copy partitions not to deal with the lock
     var parts = std.ArrayList(*Partition).initCapacity(fbaAlloc, slice.len) catch |err| {
-        self.partitionsMx.unlock();
+        self.partitionsMx.unlock(io);
         return err;
     };
     defer {
@@ -278,7 +278,7 @@ pub fn queryLines(
         part.retain();
         parts.appendAssumeCapacity(part);
     }
-    self.partitionsMx.unlock();
+    self.partitionsMx.unlock(io);
 
     var results = std.ArrayList(Line).empty;
     for (parts.items) |part| {
@@ -298,12 +298,12 @@ pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
         parts.deinit(alloc);
     }
 
-    self.partitionsMx.lock();
+    self.partitionsMx.lockUncancelable(io);
     for (self.partitions.items) |part| {
         parts.appendAssumeCapacity(part);
         part.retain();
     }
-    self.partitionsMx.unlock();
+    self.partitionsMx.unlock(io);
 
     for (self.partitions.items) |part| {
         try part.flushForce(io, alloc);
@@ -359,7 +359,7 @@ fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     // due to being deprecated (identify whether it's out of the retention period)
 
     var partitionKey: [8]u8 = undefined;
-    const partitionKeySlice = try partitionKeyBuf(&partitionKey, day);
+    const partitionKeySlice = try partitionKeyBuf(io, &partitionKey, day);
     std.debug.assert(std.mem.eql(u8, partitionKeySlice, partitionKey[0..]));
 
     const partitionPath = try std.fs.path.join(alloc, &.{ self.path, filenames.partitions, partitionKeySlice });
@@ -374,7 +374,7 @@ fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
     errdefer alloc.free(dataPath);
 
-    Dir.accessAbsolute(io, partitionPath, .{ .mode = .read_write }) catch |err| {
+    Dir.accessAbsolute(io, partitionPath, .{ .read = true, .write = true }) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 Partition.createDir(io, partitionPath, indexPath, dataPath);
@@ -390,12 +390,12 @@ fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     return part;
 }
 
-fn getPartitionOrLru(self: *Store, alloc: Allocator, day: u32) !*Partition {
+fn getPartitionOrLru(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     if (self.getLruPartition()) |part|
         if (part.day == day)
             return part;
 
-    return self.getPartition(alloc, day);
+    return self.getPartition(io, alloc, day);
 }
 
 // TODO: when we get rid of pathsBuf we can path only partitions ref,
@@ -434,9 +434,9 @@ fn orderPartitions(day: u32, part: *Partition) std.math.Order {
 
 const testing = std.testing;
 
-fn partitionKeyBuf(buf: []u8, day: u64) ![]u8 {
+fn partitionKeyBuf(io: Io, buf: []u8, day: u64) ![]u8 {
     const nowNs = day * std.time.ns_per_day;
-    const inst = try zeit.instant(.{ .source = .{ .unix_nano = nowNs } });
+    const inst = try zeit.instant(io, .{ .source = .{ .unix_nano = nowNs } });
     const time = inst.time();
     return std.fmt.bufPrint(buf, "{d:0>2}{d:0>2}{d:0>4}", .{ time.day, time.month, @as(u32, @intCast(time.year)) });
 }
@@ -493,7 +493,8 @@ fn createLockFile(io: Io, path: []const u8) !Io.File {
 }
 
 test "partitionKeyFormat" {
-    const inst = try zeit.instant(.{ .source = .{ .time = .{
+    const io = testing.io;
+    const inst = try zeit.instant(io, .{ .source = .{ .time = .{
         .day = 1,
         .month = .jan,
         .year = 2026,
@@ -501,7 +502,7 @@ test "partitionKeyFormat" {
     var key: [8]u8 = undefined;
     const now: u64 = @intCast(inst.timestamp);
     const day = now / std.time.ns_per_day;
-    const keySlice = try partitionKeyBuf(&key, @intCast(day));
+    const keySlice = try partitionKeyBuf(io, &key, @intCast(day));
     try testing.expectEqualStrings("01012026", key[0..]);
     try testing.expectEqualStrings("01012026", keySlice);
 }
@@ -524,7 +525,7 @@ test "dayFromKey parses partition keys and roundtrips with partitionKeyBuf" {
 
     for (cases) |case| {
         const parsedDay = try dayFromKey(io, case.key);
-        const inst = try zeit.instant(.{ .source = .{ .time = .{
+        const inst = try zeit.instant(io, .{ .source = .{ .time = .{
             .day = case.day,
             .month = case.month,
             .year = case.year,
@@ -534,7 +535,7 @@ test "dayFromKey parses partition keys and roundtrips with partitionKeyBuf" {
         try testing.expectEqual(expectedDay, parsedDay);
 
         var keyBuf: [8]u8 = undefined;
-        const keySlice = try partitionKeyBuf(&keyBuf, parsedDay);
+        const keySlice = try partitionKeyBuf(io, &keyBuf, parsedDay);
         try testing.expectEqualStrings(case.key, keySlice);
     }
 }
@@ -777,19 +778,19 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     try testing.expectEqual(0, store.partitions.items.len);
 
-    const first = try store.getPartition(alloc, dayOne);
+    const first = try store.getPartition(io, alloc, dayOne);
     defer first.release(io);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const firstAgain = try store.getPartition(alloc, dayOne);
+    const firstAgain = try store.getPartition(io, alloc, dayOne);
     defer firstAgain.release(io);
     try testing.expectEqual(first, firstAgain);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const second = try store.getPartition(alloc, dayTwo);
+    const second = try store.getPartition(io, alloc, dayTwo);
     defer second.release(io);
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);

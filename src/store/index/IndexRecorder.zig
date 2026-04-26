@@ -159,7 +159,7 @@ pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 
     try self.flushForce(io, alloc);
 
-    self.deinit(alloc);
+    self.deinit(io, alloc);
 }
 
 pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
@@ -200,17 +200,17 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
     return self.mergeIdx.fetchAdd(1, .acquire);
 }
 
-pub fn add(self: *IndexRecorder, alloc: Allocator, entries: []const []const u8) !void {
+pub fn add(self: *IndexRecorder, io: Io, alloc: Allocator, entries: []const []const u8) !void {
     var entryIndex: usize = 0;
 
     while (entryIndex < entries.len) {
         const shard = self.entries.next();
-        const blocksListResult = try shard.add(alloc, entries[entryIndex..], self.maxMemBlockSize);
+        const blocksListResult = try shard.add(io, alloc, entries[entryIndex..], self.maxMemBlockSize);
 
         var blocksList = blocksListResult orelse return;
         defer blocksList.blocksToFlush.deinit(alloc);
 
-        try self.flushBlocks(alloc, blocksList.blocksToFlush.items);
+        try self.flushBlocks(io, alloc, blocksList.blocksToFlush.items);
         entryIndex += blocksList.gatheredEntriesCount;
     }
 }
@@ -254,7 +254,7 @@ fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlo
         std.mem.swap(std.ArrayList(*MemBlock), &blocksToFlush, &self.blocksToFlush);
         defer blocksToFlush.deinit(alloc);
 
-        try self.flushBlocksToMemTables(alloc, blocksToFlush.items, false);
+        try self.flushBlocksToMemTables(io, alloc, blocksToFlush.items, false);
     }
 }
 
@@ -366,22 +366,23 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
 
     var semaphoreAcquired = false;
     while (true) {
-        self.memTablesSem.timedWait(std.time.ns_per_s) catch |err| {
-            switch (err) {
-                error.Timeout => {
-                    if (self.stopped.load(.acquire)) {
-                        // TODO: audit all semaphore as a state usage, it can happen
-                        // a background task fails and  doesn't post semaphore back
-
-                        // if force we don't care about semaphore, just need to flush it
-                        if (force) break;
-                        return error.Stopped;
-                    }
-                },
-            }
-            continue;
-        };
-
+        // TODO removed with no replacement
+        // self.memTablesSem.timedWait(std.time.ns_per_s) catch |err| {
+        //     switch (err) {
+        //         error.Timeout => {
+        //             if (self.stopped.load(.acquire)) {
+        //                 // TODO: audit all semaphore as a state usage, it can happen
+        //                 // a background task fails and  doesn't post semaphore back
+        //
+        //                 // if force we don't care about semaphore, just need to flush it
+        //                 if (force) break;
+        //                 return error.Stopped;
+        //             }
+        //         },
+        //     }
+        //     continue;
+        // };
+        //
         semaphoreAcquired = true;
         break;
     }
@@ -598,7 +599,7 @@ fn tablesMerger(
     defer tablesToMerge.deinit(alloc);
 
     while (true) {
-        const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace());
+        const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
         // TODO: we have to know the max amount of tables in advance
@@ -670,14 +671,14 @@ pub fn mergeTables(
 
     if (force and tables.len == 1 and tables[0].mem != null) {
         const table = tables[0].mem.?;
-        try table.storeToDisk(alloc, destinationTablePath);
+        try table.storeToDisk(io, alloc, destinationTablePath);
         const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
     }
 
-    var readers = try openTableReaders(alloc, tables);
+    var readers = try openTableReaders(io, alloc, tables);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
@@ -697,7 +698,7 @@ pub fn mergeTables(
             }
             // TODO: test if we can record compressed size and make caching more reliable
             const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable(self.runtime.maxMem, self.runtime.cacheSize);
-            break :blk try BlockWriter.initFromDiskTable(alloc, destinationTablePath, fitsInCache);
+            break :blk try BlockWriter.initFromDiskTable(io, alloc, destinationTablePath, fitsInCache);
         }
     };
     defer blockWriter.deinit(alloc);
@@ -712,12 +713,13 @@ pub fn mergeTables(
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
-                    std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
-                        std.debug.print(
-                            "failed to delete half way merged index table after stopped: {s}\n",
-                            .{@errorName(deleteErr)},
-                        );
-                    };
+                    // TODO removed with no replacement
+                    // std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
+                    //     std.debug.print(
+                    //         "failed to delete half way merged index table after stopped: {s}\n",
+                    //         .{@errorName(deleteErr)},
+                    //     );
+                    // };
                 }
                 return err;
             },
@@ -752,7 +754,7 @@ fn maxItemsPerCachedTable(maxMem: u64, cacheSize: u64) u64 {
     return @max(restMem / (6 * blocksInMemTable), merge.minMemTableSize);
 }
 
-fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
     errdefer {
         for (readers.items) |reader| reader.deinit(alloc);
@@ -763,7 +765,7 @@ fn openTableReaders(alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockRea
             const reader = try BlockReader.initFromMemTable(alloc, memTable);
             readers.appendAssumeCapacity(reader);
         } else {
-            const reader = try BlockReader.initFromDiskTable(alloc, table.path);
+            const reader = try BlockReader.initFromDiskTable(io, alloc, table.path);
             readers.appendAssumeCapacity(reader);
         }
     }
@@ -783,7 +785,7 @@ fn openCreatedTable(
         return Table.fromMem(alloc, memTable);
     }
 
-    return Table.open(alloc, tablePath);
+    return Table.open(io, alloc, tablePath);
 }
 
 const testing = std.testing;
@@ -908,7 +910,7 @@ test "IndexRecorder add and reopen preserves item count" {
         for (0..inserted) |i| {
             const item = stableItems[i % stableItems.len];
             var batch = [_][]const u8{item};
-            try recorder.add(alloc, &batch);
+            try recorder.add(io, alloc, &batch);
         }
 
         recorder.stopped.store(true, .release);
@@ -1005,12 +1007,12 @@ test "IndexRecorder reads free disk space from runtime" {
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     var batch = [_][]const u8{stableItems[1]};
 
-    try recorder.add(alloc, &batch);
+    try recorder.add(io, alloc, &batch);
     // startMemTablesMerge is necessary to call before we stop the recorder
     recorder.startMemTablesMerge(alloc);
 
-    const firstSpace = runtime.getFreeDiskSpace();
-    const secondSpace = runtime.getFreeDiskSpace();
+    const firstSpace = runtime.getFreeDiskSpace(io);
+    const secondSpace = runtime.getFreeDiskSpace(io);
     try testing.expect(firstSpace > 0);
     try testing.expectEqual(firstSpace, secondSpace);
 
@@ -1046,9 +1048,9 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     for (secondShardEntries) |*entry| entry.* = theLargest;
     for (thirdShardEntries) |*entry| entry.* = theLargest;
 
-    try recorder.add(alloc, firstShardEntries);
-    try recorder.add(alloc, secondShardEntries);
-    try recorder.add(alloc, thirdShardEntries);
+    try recorder.add(io, alloc, firstShardEntries);
+    try recorder.add(io, alloc, secondShardEntries);
+    try recorder.add(io, alloc, thirdShardEntries);
 
     try testing.expectEqual(@as(usize, 2 * Entries.maxBlocksPerShard), recorder.blocksToFlush.items.len);
 
@@ -1079,7 +1081,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     try testing.expectEqual(recorder.entries.shards.len, runtime.cpus);
 
     for (0..runtime.cpus) |_| {
-        try recorder.add(alloc, &.{shortValue});
+        try recorder.add(io, alloc, &.{shortValue});
     }
 
     try testing.expectEqual(0, recorder.blocksToFlush.items.len);
@@ -1142,7 +1144,7 @@ test "IndexRecorder large entries write to 3 shards" {
     const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
     defer recorder.deinit(alloc);
 
-    try recorder.add(alloc, testEntries);
+    try recorder.add(io, alloc, testEntries);
 
     try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
 

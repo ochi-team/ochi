@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
@@ -47,7 +48,7 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     return b;
 }
 
-pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
+pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
     std.debug.assert(data.len <= maxLines);
 
     const tsEncoder = try TimestampsEncoder.init(alloc);
@@ -66,7 +67,7 @@ pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, dec
         var col = &columns[i];
         col.key = colData.key;
         col.values = try unpacker.unpackValues(alloc, colData.data, data.len);
-        try decoder.decode(col.values, colData.type, colData.dict.values.items);
+        try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
     }
 
     if (data.celledColumns) |cells| {
@@ -465,7 +466,7 @@ test "initFromLines and initFromData produce identical blocks" {
         const unpacker = try Unpacker.init(alloc);
         const decoder = try ValuesDecoder.init(alloc);
 
-        const blockB = try Block.initFromData(alloc, &bd, unpacker, decoder);
+        const blockB = try Block.initFromData(io, alloc, &bd, unpacker, decoder);
         defer blockB.deinit(alloc);
         defer unpacker.deinit(alloc);
         defer decoder.deinit();

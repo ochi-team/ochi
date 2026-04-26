@@ -84,10 +84,10 @@ fn request(
 }
 
 fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
-    const start = std.time.nanoTimestamp();
+    const start = Io.Timestamp.now(io, .real).nanoseconds;
     const timeoutNs = 10 * std.time.ns_per_s;
 
-    while (std.time.nanoTimestamp() - start < timeoutNs) {
+    while (Io.Timestamp.now(io, .real).nanoseconds - start < timeoutNs) {
         const resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
             Io.sleep(50 * std.time.ns_per_ms);
             continue;
@@ -155,7 +155,7 @@ test "serverEndToEndViaHTTP" {
 
     try waitUntilReady(io, alloc);
 
-    const tsNs: u64 = @intCast(std.time.nanoTimestamp());
+    const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const insertJson = try std.fmt.allocPrint(
         alloc,
         "{{\"streams\":[{{\"stream\":{{\"tag1\":\"alpha\",\"tag2\":\"beta\"}},\"values\":[[\"{d}\",\"same message\",{{\"field1\":\"x\",\"field2\":\"x\"}}]]}}]}}",
@@ -190,7 +190,7 @@ test "serverEndToEndViaHTTP" {
     defer alloc.free(queryJson);
 
     {
-        const queryStart = std.time.nanoTimestamp();
+        const queryStart = Io.Timestamp.now(io, .real).nanoseconds;
         const queryTimeoutNs = 5 * std.time.ns_per_s;
 
         while (true) {
@@ -217,7 +217,7 @@ test "serverEndToEndViaHTTP" {
                 break;
             }
 
-            if (std.time.nanoTimestamp() - queryStart > queryTimeoutNs) {
+            if (Io.Timestamp.now(io, .real).nanoseconds - queryStart > queryTimeoutNs) {
                 return error.Timeout;
             }
 

@@ -308,7 +308,7 @@ test "BlockWriter disk output matches mem output" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
     defer alloc.free(tablePath);
 
-    var diskWriter = try BlockWriter.initFromDiskTable(alloc, tablePath, true);
+    var diskWriter = try BlockWriter.initFromDiskTable(io, alloc, tablePath, true);
     defer diskWriter.deinit(alloc);
     try diskWriter.writeBlock(io, alloc, blockOne);
     try diskWriter.writeBlock(io, alloc, blockTwo);

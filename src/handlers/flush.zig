@@ -14,7 +14,7 @@ pub fn flushHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
         return ApiError.ContentTypeNotSupported;
     }
 
-    ctx.store.flush(res.arena) catch |err| {
+    ctx.store.flush(ctx.io, res.arena) catch |err| {
         std.debug.print("[ERROR] Failed to flush store: {s}\n", .{@errorName(err)});
         return ApiError.InternalError;
     };

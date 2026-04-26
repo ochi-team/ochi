@@ -75,6 +75,7 @@ fn keyValSize(key: []const u8, val: []const u8) u32 {
 }
 
 test "sizingBlockAndFieldsMatch" {
+    const io = std.testing.io;
     const Field = @import("../lines.zig").Field;
 
     var sameField1 = [_]Field{
@@ -191,7 +192,7 @@ test "sizingBlockAndFieldsMatch" {
 
         // Verify size matches actual JSON serialization
         var totalJsonSize: u32 = 0;
-        const timeInst = try zeit.instant(.{ .source = .now });
+        const timeInst = try zeit.instant(io, .{ .source = .now });
         var timeBuf: [36]u8 = undefined;
         const now = try timeInst.time().bufPrint(&timeBuf, .rfc3339Nano);
         for (case.lines) |line| {

@@ -66,7 +66,7 @@ pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID) !bool {
     return false;
 }
 
-pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
+pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
     var ei: usize = 0;
     defer {
@@ -112,7 +112,7 @@ pub fn indexStream(self: *Self, alloc: Allocator, sid: SID, tags: []Field, encod
         ei += 1;
     }
 
-    try self.recorder.add(alloc, entries);
+    try self.recorder.add(io, alloc, entries);
 }
 
 const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };

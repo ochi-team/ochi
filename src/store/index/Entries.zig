@@ -184,6 +184,7 @@ test "Entries.shardIdxOverflow" {
 test "EntriesShard.add" {
     const maxIndexMemBlockSize = 1024;
     const alloc = testing.allocator;
+    const io = testing.io;
     const tooLarge = "x" ** (maxIndexMemBlockSize + 1);
     const theLargest = "x" ** (maxIndexMemBlockSize - 1);
 
@@ -286,7 +287,7 @@ test "EntriesShard.add" {
             }
         }
 
-        const result = try shard.add(alloc, case.test_entries, maxIndexMemBlockSize);
+        const result = try shard.add(io, alloc, case.test_entries, maxIndexMemBlockSize);
 
         // Check if flush happened as expected
         if (case.expected_flush) {

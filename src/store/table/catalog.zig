@@ -145,7 +145,7 @@ test "readNames" {
         const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, "tables.json" });
         defer alloc.free(tablesFilePath);
 
-        try fs.writeBufferToFileAtomic(tablesFilePath, case.content, true);
+        try fs.writeBufferToFileAtomic(io, tablesFilePath, case.content, true);
 
         if (case.expectedErr) |expectedErr| {
             try testing.expectError(expectedErr, readNames(io, alloc, tablesFilePath, false));
