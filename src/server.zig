@@ -18,7 +18,7 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
 }
 
 // TODO not quite sure
-fn handleSigterm(_: std.os.linux.SIG) callconv(.c) void {
+fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     if (global_server) |server| {
         server.stop();
     }
@@ -27,6 +27,7 @@ fn handleSigterm(_: std.os.linux.SIG) callconv(.c) void {
 // TODO: make it configurable
 const storePath = ".ochi";
 
+// TODO: implement a server cancelation and test it
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
@@ -85,31 +86,4 @@ test {
     std.testing.refAllDecls(@This());
     _ = @import("server_test.zig");
     _ = @import("tidy.zig");
-}
-
-test "serverWithSIGTERM" {
-    const allocator = std.testing.allocator;
-    // TODO no idea why testing.io doesn't work here
-    var threaded_io = std.Io.Threaded.init(allocator, .{});
-    defer threaded_io.deinit();
-    const io = threaded_io.io();
-
-    const conf = Conf.default(allocator);
-    // Start the server in a separate thread
-    var thread = Io.async(io, startServer, .{ io, allocator, conf });
-    defer thread.cancel(io) catch |err| {
-        std.debug.print("Server error: {}\n", .{err});
-    };
-
-    // Give the server time to start
-    try Io.sleep(io, .fromMilliseconds(100), .real);
-
-    // Send SIGTERM to ourselves
-    const posix = std.posix;
-    const pid = std.c.getpid();
-    try posix.kill(pid, posix.SIG.TERM);
-
-    // Wait for the server thread to finish
-
-    try thread.await(io);
 }

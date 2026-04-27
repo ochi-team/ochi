@@ -47,7 +47,11 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) 
         .macos => {
             var memsize: u64 = 0;
             var len: usize = @sizeOf(u64);
-            try std.posix.sysctlbynameZ("hw.memsize", &memsize, &len, null, 0);
+            const no = std.posix.system.sysctlbyname("hw.memsize", &memsize, &len, null, 0);
+            if (std.posix.errno(no) != .SUCCESS) {
+                // TODO: handle the error for real adding an error code to a diagnostic
+                return error.UnknownTotalSystemMemory;
+            }
 
             break :blk memsize;
         },
