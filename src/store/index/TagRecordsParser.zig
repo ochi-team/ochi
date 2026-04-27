@@ -120,7 +120,7 @@ test "setup parses tag record" {
 
     try state.setup(buf[0..totalLen]);
 
-    try testing.expectEqualStrings("tenant1", std.mem.trimRight(u8, state.tenantID, &[_]u8{0}));
+    try testing.expectEqualStrings("tenant1", std.mem.trimEnd(u8, state.tenantID, &[_]u8{0}));
     try testing.expectEqualStrings("env", state.tag.key);
     try testing.expectEqualStrings("prod", state.tag.value);
     try testing.expectEqual(@as(usize, 2), state.streamsLen());

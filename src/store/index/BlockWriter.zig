@@ -294,7 +294,7 @@ test "BlockWriter disk output matches mem output" {
     defer blockTwo.deinit(alloc);
 
     var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit(io, alloc);
+    defer memTable.deinit( alloc);
     var memWriter = BlockWriter.initFromMemTable(memTable);
     defer memWriter.deinit(alloc);
     try memWriter.writeBlock(io, alloc, blockOne);
@@ -303,7 +303,7 @@ test "BlockWriter disk output matches mem output" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
     defer alloc.free(tablePath);
@@ -314,13 +314,13 @@ test "BlockWriter disk output matches mem output" {
     try diskWriter.writeBlock(io, alloc, blockTwo);
     try diskWriter.close(io, alloc);
 
-    const entries = try readTableFile(alloc, tablePath, filenames.entries);
+    const entries = try readTableFile(io, alloc, tablePath, filenames.entries);
     defer alloc.free(entries);
-    const lens = try readTableFile(alloc, tablePath, filenames.lens);
+    const lens = try readTableFile(io, alloc, tablePath, filenames.lens);
     defer alloc.free(lens);
-    const index = try readTableFile(alloc, tablePath, filenames.index);
+    const index = try readTableFile(io, alloc, tablePath, filenames.index);
     defer alloc.free(index);
-    const metaindex = try readTableFile(alloc, tablePath, filenames.metaindex);
+    const metaindex = try readTableFile(io, alloc, tablePath, filenames.metaindex);
     defer alloc.free(metaindex);
 
     try testing.expectEqualSlices(u8, memTable.entriesBuf.items, entries);
@@ -335,7 +335,7 @@ test "BlockWriter metaindexBuf may contain multiple records" {
     const blocksCount: usize = 1400;
 
     var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit(io, alloc);
+    defer memTable.deinit( alloc);
 
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);

@@ -497,7 +497,7 @@ test "BlockReader.initFromMemTable reads items" {
                 break :blk try MemTable.init(io, alloc, blocks[0..]);
             }
         };
-        defer memTable.deinit(io, alloc);
+        defer memTable.deinit( alloc);
 
         var reader = try BlockReader.initFromMemTable(alloc, memTable);
         defer reader.deinit(alloc);

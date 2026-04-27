@@ -131,7 +131,7 @@ fn getCpuCount() usize {
 const testing = std.testing;
 
 test "getFreeDiskSpace returns same positive value" {
-    const r = try Runtime.init(testing.allocator, ".", 0.5);
+    const r = try Runtime.init(testing.io, testing.allocator, ".", 0.5);
     defer r.deinit(testing.allocator);
 
     const first = r.getFreeDiskSpace(std.testing.io);

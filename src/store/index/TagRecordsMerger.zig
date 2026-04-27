@@ -220,9 +220,9 @@ test "writeState empty" {
     var m: Self = .{};
     defer m.deinit(alloc);
 
-    var buf = std.ArrayList(u8){};
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
-    var target = std.ArrayList([]const u8){};
+    var target: std.ArrayList([]const u8) = .empty;
     defer target.deinit(alloc);
 
     try m.writeState(alloc, &buf, &target);
@@ -265,9 +265,9 @@ test "writeState" {
         try m.prevState.setup(record);
         try m.streamIDs.appendSlice(alloc, case.initial);
 
-        var buf = std.ArrayList(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(alloc);
-        var target = std.ArrayList([]const u8){};
+        var target: std.ArrayList([]const u8) = .empty;
         defer target.deinit(alloc);
 
         try m.writeState(alloc, &buf, &target);

@@ -430,7 +430,7 @@ test "initFromLines and initFromData produce identical blocks" {
         defer blockA.deinit(alloc);
 
         const writer = try StreamWriter.initMem(io, alloc, 128);
-        defer writer.deinit(alloc);
+        defer writer.deinit(io, alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
         try writer.writeBlock(io, alloc, blockA, &bh);

@@ -557,7 +557,7 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
     for (cases, 0..) |case, i| {
@@ -576,7 +576,7 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
             try Dir.createDirAbsolute(io, partitionsPath, .default_dir);
         }
 
-        _ = try Store.createStoreDirIfNotExists(storePath, partitionsPath);
+        _ = try Store.createStoreDirIfNotExists(io, storePath, partitionsPath);
 
         try testing.expect(try fs.pathExists(io, storePath));
         try testing.expect(try fs.pathExists(io, partitionsPath));
@@ -590,7 +590,7 @@ test "init opens existing partitions, sorts them and sets lru" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
     const storePath = try std.fs.path.join(alloc, &.{ rootPath, "store" });
@@ -615,8 +615,8 @@ test "init opens existing partitions, sorts them and sets lru" {
         try Dir.createDirAbsolute(io, dataPath, .default_dir);
     }
 
-    var store = try Store.init(alloc, storePath);
-    defer store.deinit(alloc);
+    var store = try Store.init(io, alloc, storePath);
+    defer store.deinit(io, alloc);
 
     try testing.expectEqual(keys.len, store.partitions.items.len);
 
@@ -763,15 +763,15 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
     const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, filenames.partitions });
     defer alloc.free(partitionsRoot);
     try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
 
-    var store = try Store.init(alloc, rootPath);
-    defer store.deinit(alloc);
+    var store = try Store.init(io, alloc, rootPath);
+    defer store.deinit(io, alloc);
 
     const dayOne: u64 = 10;
     const dayTwo: u64 = 11;

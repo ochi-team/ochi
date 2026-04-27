@@ -160,11 +160,13 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     try fs.writeBufferValToFile(io, columnsHeaderPath, self.streamWriter.columnsHeaderDst.asSliceAssumeBuffer());
     try fs.writeBufferValToFile(io, timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
 
-    try fs.writeBufferValToFile(io, 
+    try fs.writeBufferValToFile(
+        io,
         messageBloomFilterPath,
         self.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
     );
-    try fs.writeBufferValToFile(io, 
+    try fs.writeBufferValToFile(
+        io,
         messageValuesPath,
         self.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
     );
@@ -226,7 +228,7 @@ fn populateSampleLines(sample: *SampleLines) void {
 }
 
 fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    var file = try std.Io.Dir.cwd().openFile(path, .{});
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
 
     var file_reader = file.reader(io, &.{});
@@ -237,7 +239,7 @@ test "addLines" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{std.testing.io});
 }
 
-fn testAddLines(io: Io, allocator: std.mem.Allocator) !void {
+fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -333,17 +335,17 @@ fn testAddLines(io: Io, allocator: std.mem.Allocator) !void {
 
 test "addLinesErrorOnEmpty" {
     var lines = [_]Line{};
-    const memTable = try MemTable.init(std.testing.allocator);
-    defer memTable.deinit(std.testing.allocator);
+    const memTable = try MemTable.init(std.testing.io, std.testing.allocator);
+    defer memTable.deinit(std.testing.io, std.testing.allocator);
     const err = memTable.addLines(std.testing.io, std.testing.allocator, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
 test "flushToDisk writes buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{std.testing.io});
 }
 
-fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
+fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -358,7 +360,7 @@ fn testFlushToDisk(io: Io, allocator: std.mem.Allocator) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const basePath = try tmp.dir.realPathFileAlloc(io, allocator, ".");
+    const basePath = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(basePath);
     const flushPath = try std.fs.path.join(allocator, &.{ basePath, "flush" });
     defer allocator.free(flushPath);

@@ -410,7 +410,7 @@ test "BlockMerger.mergeBasicScenarios" {
         defer cleanupReaders(alloc, &readers);
 
         var memTable = try createTestMemTable(alloc);
-        defer memTable.deinit(io, alloc);
+        defer memTable.deinit(alloc);
 
         var writer = BlockWriter.initFromMemTable(memTable);
         defer writer.deinit(alloc);
@@ -472,7 +472,7 @@ test "BlockMerger.merge block overflow" {
         defer cleanupReaders(alloc, &readers);
 
         var memTable = try createTestMemTable(alloc);
-        defer memTable.deinit(io, alloc);
+        defer memTable.deinit(alloc);
 
         var writer = BlockWriter.initFromMemTable(memTable);
         defer writer.deinit(alloc);
@@ -522,7 +522,7 @@ test "BlockMerger.merge oversized entries" {
     defer cleanupReaders(alloc, &readers);
 
     var memTable = try createTestMemTable(alloc);
-    defer memTable.deinit(io, alloc);
+    defer memTable.deinit(alloc);
 
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);
@@ -706,7 +706,7 @@ test "BlockMerger.merge tag records" {
         defer cleanupReaders(alloc, &readers);
 
         var memTable = try createTestMemTable(alloc);
-        defer memTable.deinit(io, alloc);
+        defer memTable.deinit(alloc);
 
         var writer = BlockWriter.initFromMemTable(memTable);
         defer writer.deinit(alloc);
@@ -731,7 +731,7 @@ test "BlockMerger.merge stopped flag" {
     defer cleanupReaders(alloc, &readers);
 
     var memTable = try createTestMemTable(alloc);
-    defer memTable.deinit(io, alloc);
+    defer memTable.deinit(alloc);
 
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);
@@ -762,11 +762,11 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     const memTable = blk: {
         var leftBlocks = [_]*MemBlock{leftBlock};
         var leftMemTable = try MemTable.init(io, alloc, &leftBlocks);
-        defer leftMemTable.deinit(io, alloc);
+        defer leftMemTable.deinit(alloc);
 
         var rightBlocks = [_]*MemBlock{rightBlock};
         var rightMemTable = try MemTable.init(io, alloc, &rightBlocks);
-        defer rightMemTable.deinit(io, alloc);
+        defer rightMemTable.deinit(alloc);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
@@ -774,7 +774,7 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
 
         var mergedMemTable = try MemTable.empty(alloc);
-        errdefer mergedMemTable.deinit(io, alloc);
+        errdefer mergedMemTable.deinit(alloc);
 
         var writer = BlockWriter.initFromMemTable(mergedMemTable);
         defer writer.deinit(alloc);
@@ -794,7 +794,7 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
 
         break :blk mergedMemTable;
     };
-    defer memTable.deinit(io, alloc);
+    defer memTable.deinit(alloc);
 
     var mergedReader = try BlockReader.initFromMemTable(alloc, memTable);
     defer mergedReader.deinit(alloc);

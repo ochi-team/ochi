@@ -547,15 +547,14 @@ fn populateSampleLines(sample: *SampleLines) void {
 }
 
 test "readBlock reads buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testReadBlock, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testReadBlock, .{std.testing.io});
 }
 
 test "initFromDiskTable reads buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testInitFromDiskTable, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testInitFromDiskTable, .{std.testing.io});
 }
 
-fn testReadBlock(allocator: Allocator) !void {
-    const io = std.testing.io;
+fn testReadBlock(allocator: Allocator, io: Io) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -636,7 +635,7 @@ fn testReadBlock(allocator: Allocator) !void {
     }
 }
 
-fn testInitFromDiskTable(io: Io, allocator: Allocator) !void {
+fn testInitFromDiskTable(allocator: Allocator, io: Io) !void {
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
         .{ .key = "app", .value = "seq" },
@@ -662,7 +661,7 @@ fn testInitFromDiskTable(io: Io, allocator: Allocator) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, allocator, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(rootPath);
     const tablePath = try std.fs.path.join(allocator, &.{ rootPath, "table-1" });
     defer allocator.free(tablePath);

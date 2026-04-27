@@ -187,8 +187,8 @@ test "MetaIndex roundtrip file read/write" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("table");
-    const tablePath = try tmp.dir.realPathFileAlloc(io, alloc, "table");
+    try tmp.dir.createDirPath(io, "table");
+    const tablePath = try tmp.dir.realPathFileAlloc(io, "table", alloc);
     defer alloc.free(tablePath);
 
     const rec1 = MetaIndex{
@@ -231,6 +231,7 @@ test "MetaIndex roundtrip file read/write" {
     try file.sync(io);
 
     const decoded = try MetaIndex.readFile(
+        io,
         alloc,
         tablePath,
         rec1.blockHeadersCount + rec2.blockHeadersCount,

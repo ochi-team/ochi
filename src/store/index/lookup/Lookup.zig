@@ -223,7 +223,7 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
 
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(io, alloc, &blocks);
-    errdefer memTable.deinit(io, alloc);
+    errdefer memTable.deinit( alloc);
 
     return Table.fromMem(alloc, memTable);
 }
@@ -251,13 +251,13 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
@@ -282,13 +282,13 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
@@ -312,13 +312,13 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
@@ -400,13 +400,13 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();
     defer recorder.deinit(io, alloc);
@@ -526,13 +526,13 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     recorder.wg.wait();

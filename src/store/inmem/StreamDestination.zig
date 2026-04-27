@@ -79,7 +79,7 @@ pub const StreamDestination = union(Tag) {
                 var file_reader = f.file.reader(io, &buffer);
                 try file_reader.seekTo(0);
 
-                const readN = try f.file.readAll(io, dst);
+                const readN = try file_reader.interface.readSliceShort(dst);
                 std.debug.assert(readN == size);
 
                 try file_reader.seekTo(@intCast(f.len));
@@ -130,12 +130,12 @@ test "StreamDestination buffer destination" {
     var dst = try StreamDestination.initBuffer(alloc, 8);
     defer dst.deinit(io, alloc);
 
-    try dst.appendSlice(io, io, alloc, "abc");
-    try dst.appendSlice(io, io, alloc, "1234");
+    try dst.appendSlice(io, alloc, "abc");
+    try dst.appendSlice(io, alloc, "1234");
 
     try std.testing.expectEqual(7, dst.len());
 
-    const all = try dst.readAll(alloc);
+    const all = try dst.readAll(io, alloc);
     defer alloc.free(all);
     try std.testing.expectEqualStrings("abc1234", all);
 }
@@ -147,7 +147,7 @@ test "StreamDestination file destination" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const filePath = try std.fs.path.join(alloc, &.{ rootPath, "timestamps.bin" });
     defer alloc.free(filePath);
@@ -157,11 +157,11 @@ test "StreamDestination file destination" {
     defer dst.deinit(io, alloc);
 
     const res = "hello-world";
-    try dst.appendSlice(io, io, alloc, "hello");
-    try dst.appendSlice(io, io, alloc, "-world");
+    try dst.appendSlice(io, alloc, "hello");
+    try dst.appendSlice(io, alloc, "-world");
     try std.testing.expectEqual(res.len, dst.len());
 
-    const all = try dst.readAll(alloc);
+    const all = try dst.readAll(io, alloc);
     defer alloc.free(all);
     try std.testing.expectEqualStrings(res, all);
 
@@ -169,7 +169,7 @@ test "StreamDestination file destination" {
     defer verify.close(io);
 
     var verify_reader = file.reader(io, &.{});
-    const onDisk = verify_reader.interface.allocRemaining(alloc, .limited(std.math.maxInt(usize)));
+    const onDisk = try verify_reader.interface.allocRemaining(alloc, .limited(std.math.maxInt(usize)));
     defer alloc.free(onDisk);
     try std.testing.expectEqualStrings(res, onDisk);
 }

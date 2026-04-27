@@ -196,14 +196,14 @@ test "sizingBlockAndFieldsMatch" {
         var timeBuf: [36]u8 = undefined;
         const now = try timeInst.time().bufPrint(&timeBuf, .rfc3339Nano);
         for (case.lines) |line| {
-            var obj = std.json.ObjectMap.init(alloc);
-            defer obj.deinit();
+            var obj: std.json.ObjectMap = .empty;
+            defer obj.deinit(alloc);
 
-            try obj.put("_time", .{ .string = now });
+            try obj.put(alloc, "_time", .{ .string = now });
             for (line.fields) |f| {
                 if (f.value.len == 0) continue;
                 const key = if (f.key.len == 0) msgKey else f.key;
-                try obj.put(key, .{ .string = f.value });
+                try obj.put(alloc, key, .{ .string = f.value });
             }
 
             const value = std.json.Value{ .object = obj };

@@ -82,7 +82,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 }
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
     _ = @import("server_test.zig");
 }
 
@@ -92,18 +92,13 @@ test "serverWithSIGTERM" {
 
     const conf = Conf.default(allocator);
     // Start the server in a separate thread
-    const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            startServer(io, threadAllocator, threadConf) catch |err| {
-                std.debug.print("Server error: {}\n", .{err});
-            };
-        }
+    var thread = Io.async(io, startServer, .{ io, allocator, conf });
+    defer thread.cancel(io) catch |err| {
+        std.debug.print("Server error: {}\n", .{err});
     };
 
-    const thread = try Io.spawn(.{}, ServerThread.run, .{ allocator, conf });
-
     // Give the server time to start
-    Io.sleep(100 * std.time.ns_per_ms);
+    try Io.sleep(io, .fromMilliseconds(100), .real);
 
     // Send SIGTERM to ourselves
     const posix = std.posix;
@@ -111,15 +106,17 @@ test "serverWithSIGTERM" {
     try posix.kill(pid, posix.SIG.TERM);
 
     // Wait for the server thread to finish
-    thread.join();
+
+    try thread.await(io);
 }
 
 test "tidy" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
     const lint = @import("tidy.zig");
-    const noMergeCommits = try lint.gitHasNoMergeCommits(alloc);
+    const noMergeCommits = try lint.gitHasNoMergeCommits(io, alloc);
     try std.testing.expect(noMergeCommits);
 
-    const isFormatted = try lint.projectIsFormatted(alloc);
+    const isFormatted = try lint.projectIsFormatted(io, alloc);
     try std.testing.expect(isFormatted);
 }

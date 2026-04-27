@@ -601,7 +601,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
@@ -651,7 +651,7 @@ test "release fromMem does not affect filesystem path" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const sentinelPath = try std.fs.path.join(alloc, &.{ rootPath, "sentinel" });
     defer alloc.free(sentinelPath);
@@ -741,7 +741,7 @@ test "open reads table from disk" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);

@@ -133,14 +133,14 @@ test "pathExists returns true for existing paths and false for missing path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("nested");
+    try tmp.dir.createDirPath(io, "nested");
     {
         var file = try tmp.dir.createFile(io, "existing.txt", .{});
         defer file.close(io);
         try file.writeStreamingAll(io, "content");
     }
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(tmp_path);
     const existing_file = try std.fs.path.join(alloc, &.{ tmp_path, "existing.txt" });
     defer alloc.free(existing_file);
@@ -156,7 +156,7 @@ test "pathExists returns true for existing paths and false for missing path" {
     };
 
     for (cases) |case| {
-        const actual = try pathExists(case.path);
+        const actual = try pathExists(io, case.path);
         try std.testing.expectEqual(case.expected, actual);
     }
 }
@@ -174,10 +174,10 @@ test "syncPathAndParentDir fsync file and parent directory" {
         try f.writeStreamingAll(io, "hello");
     }
 
-    const abs_path = try tmp.dir.realPathFileAlloc(io, std.testing.allocator, file_name);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    syncPathAndParentDir(abs_path);
+    syncPathAndParentDir(io, abs_path);
 }
 
 test "syncPathAndParentDir fsync directory and parent directory" {
@@ -186,11 +186,11 @@ test "syncPathAndParentDir fsync directory and parent directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("nested");
-    const abs_path = try tmp.dir.realPathFileAlloc(io, std.testing.allocator, "nested");
+    try tmp.dir.createDirPath(io, "nested");
+    const abs_path = try tmp.dir.realPathFileAlloc(io, "nested", std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    syncPathAndParentDir(abs_path);
+    syncPathAndParentDir(io, abs_path);
 }
 
 test "readAll reads full file content from tmp directory" {
@@ -208,10 +208,10 @@ test "readAll reads full file content from tmp directory" {
         try f.writeStreamingAll(io, content);
     }
 
-    const abs_path = try tmp.dir.realPathFileAlloc(io, std.testing.allocator, file_name);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    const actual = try readAll(std.testing.allocator, abs_path);
+    const actual = try readAll(std.testing.io, std.testing.allocator, abs_path);
     defer std.testing.allocator.free(actual);
 
     try std.testing.expectEqualStrings(content, actual);
@@ -223,21 +223,21 @@ test "writeBufferValToFileAtomic writes and overwrites atomically" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmpPath = try tmp.dir.realPathFileAlloc(io, std.testing.allocator, ".");
+    const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(tmpPath);
     const absPath = try std.fs.path.join(std.testing.allocator, &.{ tmpPath, "atomic.txt" });
     defer std.testing.allocator.free(absPath);
 
     {
-        try writeBufferToFileAtomic(absPath, "first", false);
-        const actual = try readAll(std.testing.allocator, absPath);
+        try writeBufferToFileAtomic(io, absPath, "first", false);
+        const actual = try readAll(std.testing.io, std.testing.allocator, absPath);
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings("first", actual);
     }
 
     {
-        try writeBufferToFileAtomic(absPath, "second", true);
-        const actual = try readAll(std.testing.allocator, absPath);
+        try writeBufferToFileAtomic(io, absPath, "second", true);
+        const actual = try readAll(std.testing.io, std.testing.allocator, absPath);
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings("second", actual);
     }

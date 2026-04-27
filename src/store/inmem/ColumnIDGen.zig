@@ -123,7 +123,7 @@ test "ColumnIDGen" {
     defer gener.deinit(alloc);
 
     const keys = &[_][]const u8{ "key1", "key2", "", "_--=" };
-    try gener.keyIDs.ensureUnusedCapacity(keys.len);
+    try gener.keyIDs.ensureUnusedCapacity(alloc, keys.len);
     for (0..keys.len) |i| {
         const id = gener.genIDAssumeCapacity(keys[i]);
         try std.testing.expectEqual(i, id);

@@ -23,7 +23,7 @@ const crippled = switch (builtin.zig_backend) {
     else => false,
 };
 
-pub fn main() void {
+pub fn main(init: std.process.Init) void {
     @disableInstrumentation();
 
     var gpa_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -42,8 +42,7 @@ pub fn main() void {
     if (crippled) {
         return mainSimple(io) catch @panic("test failure\n");
     }
-
-    const args = std.process.argsAlloc(fba.allocator()) catch
+    const args = init.minimal.args.toSlice(init.arena.allocator()) catch
         @panic("unable to parse command line args");
 
     var opt_cache_dir: ?[]const u8 = null;
@@ -65,17 +64,17 @@ pub fn main() void {
         fuzzer_init(FuzzerSlice.fromSlice(cache_dir));
     }
 
-    return mainTerminal();
+    return mainTerminal(io);
 }
 
-fn mainTerminal() void {
+fn mainTerminal(io: Io) void {
     @disableInstrumentation();
     const test_fn_list = builtin.test_functions;
     var ok_count: usize = 0;
     var skip_count: usize = 0;
     var fail_count: usize = 0;
     var fuzz_count: usize = 0;
-    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(.{
+    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(io, .{
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });
@@ -111,7 +110,7 @@ fn mainTerminal() void {
                 fail_count += 1;
                 std.debug.print("FAIL ({s})\n", .{@errorName(err)});
                 if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
+                    std.debug.dumpErrorReturnTrace(trace);
                 }
                 test_node.end();
             },

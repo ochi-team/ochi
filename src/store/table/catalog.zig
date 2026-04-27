@@ -140,7 +140,7 @@ test "readNames" {
         var tmp = testing.tmpDir(.{});
         defer tmp.cleanup();
 
-        const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
         defer alloc.free(rootPath);
         const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, "tables.json" });
         defer alloc.free(tablesFilePath);
@@ -188,7 +188,7 @@ test "readNames handles missing file path cases" {
         var tmp = testing.tmpDir(.{});
         defer tmp.cleanup();
 
-        const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
         defer alloc.free(rootPath);
 
         var pathSegments = try std.ArrayList([]const u8).initCapacity(alloc, 1 + case.pathParts.len);
@@ -223,7 +223,7 @@ test "readNames returns error in validate mode when tables file is missing but t
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
     defer alloc.free(tablesFilePath);
@@ -244,7 +244,7 @@ test "validateTablesExist" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
     const tableName = "table-a";
@@ -310,7 +310,7 @@ test "removeUnusedTables" {
         var tmp = testing.tmpDir(.{});
         defer tmp.cleanup();
 
-        const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
         defer alloc.free(rootPath);
 
         for (case.existingTableNames) |tableName| {

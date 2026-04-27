@@ -29,15 +29,15 @@ const maxMemTables = 24;
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
 
-fn sleepOrStop(stopped: *const std.atomic.Value(bool), ns: u64) void {
+fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
     // TODO: make this interval configurable,
     // it must be shorter for tests and longer for production
-    const step = 250 * std.time.ns_per_ms;
+    const step = 250;
     var remaining = ns;
     while (remaining > 0) {
         if (stopped.load(.acquire)) return;
         const s = @min(remaining, step);
-        Io.sleep(s);
+        try Io.sleep(io, .fromMilliseconds(50), .real);
         remaining -= s;
     }
 }
@@ -257,7 +257,7 @@ fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
             return;
         };
 
-        sleepOrStop(&self.stopped, std.time.ns_per_s);
+        sleepOrStop(io, &self.stopped, std.time.ns_per_s);
     }
 }
 
@@ -275,7 +275,7 @@ fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
             return;
         };
 
-        sleepOrStop(&self.stopped, flushInterval);
+        sleepOrStop(io, &self.stopped, flushInterval);
     }
 
     self.flushDataShards(io, alloc, true) catch |err| {
@@ -917,13 +917,13 @@ test "flushDataShards non-force respects flush deadline" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try DataRecorder.init(alloc, rootPath, runtime);
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
 
@@ -950,13 +950,13 @@ test "mergeTables force single mem table creates disk table" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const runtime = try Runtime.init(alloc, rootPath, 0.5);
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try DataRecorder.init(alloc, rootPath, runtime);
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
 
@@ -965,7 +965,7 @@ test "mergeTables force single mem table creates disk table" {
         stableLine(2, 1, 1),
         stableLine(3, 1, 2),
     };
-    const table = try createMemTableFromLines(alloc, lines[0..]);
+    const table = try createMemTableFromLines(io, alloc, lines[0..]);
     errdefer table.close(io);
 
     try recorder.memTables.append(alloc, table);
@@ -984,15 +984,15 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
     const inserted: usize = 96;
     {
-        const runtime = try Runtime.init(alloc, rootPath, 0.5);
+        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
         defer runtime.deinit(alloc);
 
-        const recorder = try DataRecorder.init(alloc, rootPath, runtime);
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
@@ -1010,10 +1010,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
     }
 
     {
-        const runtime = try Runtime.init(alloc, rootPath, 0.5);
+        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
         defer runtime.deinit(alloc);
 
-        const reopened = try DataRecorder.init(alloc, rootPath, runtime);
+        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
         reopened.stopped.store(true, .release);
 

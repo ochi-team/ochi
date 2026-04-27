@@ -1,6 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
-const snappy = @import("snappy");
+const snappy = @import("snappy").raw;
 
 const Conf = @import("Conf.zig");
 const server = @import("server.zig");
@@ -25,41 +25,55 @@ const HttpResponse = struct {
 };
 
 fn request(
-    alloc: std.mem.Allocator,
     io: Io,
+    alloc: std.mem.Allocator,
     method: []const u8,
     path: []const u8,
     body: []const u8,
     contentType: ?[]const u8,
     contentEncoding: ?[]const u8,
 ) !HttpResponse {
-    var stream = try std.net.tcpConnectToHost(alloc, "127.0.0.1", 9014);
+    var stream: std.Io.net.Stream = .{
+        .socket = .{
+            // TODO wtf is a handle
+            .handle = 0,
+            .address = try .parse("127.0.0.1", 9014),
+        },
+    };
     defer stream.close(io);
 
-    var req = std.ArrayList(u8).empty;
+    var req: std.ArrayList(u8) = .empty;
     defer req.deinit(alloc);
 
-    try req.writer(alloc).print(
+    try req.print(
+        alloc,
         "{s} {s} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {d}\r\n",
         .{ method, path, body.len },
     );
     if (contentType) |ct| {
-        try req.writer(alloc).print("Content-Type: {s}\r\n", .{ct});
+        try req.print(alloc, "Content-Type: {s}\r\n", .{ct});
     }
     if (contentEncoding) |ce| {
-        try req.writer(alloc).print("Content-Encoding: {s}\r\n", .{ce});
+        try req.print(alloc, "Content-Encoding: {s}\r\n", .{ce});
     }
-    try req.writer(alloc).writeStreamingAll(io, "\r\n");
+    // TODO not sure
+    try req.appendSlice(alloc, "\r\n");
     if (body.len > 0) {
-        try req.writer(alloc).writeStreamingAll(io, body);
+        // TODO not sure
+        try req.appendSlice(alloc, body);
     }
 
-    try stream.writeStreamingAll(io, req.items);
+    var buf: [4096]u8 = undefined;
+
+    var writer = stream.writer(io, &buf);
+    try writer.interface.writeAll(req.items);
 
     req.clearRetainingCapacity();
-    var buf: [4096]u8 = undefined;
+
     while (true) {
-        const n = try stream.read(&buf);
+        var reader = stream.reader(io, &buf);
+        const n = try reader.interface.readSliceShort(&buf);
+
         if (n == 0) break;
         try req.appendSlice(alloc, buf[0..n]);
     }
@@ -89,7 +103,7 @@ fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
 
     while (Io.Timestamp.now(io, .real).nanoseconds - start < timeoutNs) {
         const resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
-            Io.sleep(50 * std.time.ns_per_ms);
+            try Io.sleep(io, .fromMilliseconds(50), .real);
             continue;
         };
         defer {
@@ -100,7 +114,7 @@ fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
         if (resp.statusCode == 200) {
             return;
         }
-        Io.sleep(50 * std.time.ns_per_ms);
+        try Io.sleep(io, .fromMilliseconds(50), .real);
     }
 
     return error.Timeout;
@@ -121,36 +135,35 @@ test "serverEndToEndViaHTTP" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
 
-    const oldCwd = try std.process.getCwdAlloc(alloc);
+    const oldCwd = try std.process.currentPathAlloc(io, alloc);
     defer {
-        std.posix.chdir(oldCwd) catch {};
+        // TODO Not sure
+        std.Io.Threaded.chdir(oldCwd) catch {};
         alloc.free(oldCwd);
     }
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmpPath = try tmp.dir.realPathFileAlloc(io, alloc, ".");
+    const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(tmpPath);
-    try std.posix.chdir(tmpPath);
+    // TODO Not sure
+    try std.Io.Threaded.chdir(tmpPath);
 
     const serverAlloc = std.heap.page_allocator;
     const conf = Conf.default(serverAlloc);
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            server.startServer(threadAllocator, threadConf) catch |err| {
+            server.startServer(io, threadAllocator, threadConf) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }
     };
 
-    const thread = try Io.spawn(.{}, ServerThread.run, .{ serverAlloc, conf });
-    var stopped = false;
-    defer {
-        if (!stopped) {
-            std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
-            thread.join();
-        }
+    var thread = Io.async(io, ServerThread.run, .{ serverAlloc, conf });
+    errdefer {
+        thread.cancel(io);
+        std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
     }
 
     try waitUntilReady(io, alloc);
@@ -194,7 +207,7 @@ test "serverEndToEndViaHTTP" {
         const queryTimeoutNs = 5 * std.time.ns_per_s;
 
         while (true) {
-            var resp = try request(alloc, "POST", "/query", queryJson, "application/json", null);
+            var resp = try request(io, alloc, "POST", "/query", queryJson, "application/json", null);
             defer resp.deinit(alloc);
             try std.testing.expectEqual(@as(u16, 200), resp.statusCode);
 
@@ -221,11 +234,10 @@ test "serverEndToEndViaHTTP" {
                 return error.Timeout;
             }
 
-            Io.sleep(50 * std.time.ns_per_ms);
+            try Io.sleep(io, .fromMilliseconds(50), .real);
         }
     }
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
-    thread.join();
-    stopped = true;
+    thread.await(io);
 }

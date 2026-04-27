@@ -121,61 +121,62 @@ test "contract.satisfies returns errors for invalid shape/signature" {
         mutable: bool = false,
         expected_err: ?VerifyError = null,
     };
+    comptime {
+        const cases = [_]Case{
+            .{
+                .contract = contractFor(Good),
+                .target = Good,
+            },
+            .{
+                .contract = contractFor(Good),
+                .target = *Good,
+                .mutable = true,
+            },
+            .{
+                .contract = contractFor(WrongFieldType),
+                .target = WrongFieldType,
+                .expected_err = error.WrongFieldType,
+            },
+            .{
+                .contract = contractFor(MissingField),
+                .target = MissingField,
+                .expected_err = error.MissingField,
+            },
+            .{
+                .contract = contractFor(MissingFunc),
+                .target = MissingFunc,
+                .expected_err = error.MissingFunc,
+            },
+            .{
+                .contract = contractFor(WrongFuncType),
+                .target = WrongFuncType,
+                .expected_err = error.WrongFuncType,
+            },
+            .{
+                .contract = contractFor(Good),
+                .target = Good,
+                .mutable = true,
+                .expected_err = error.TypeIsNotPointer,
+            },
+            .{
+                .contract = contractFor(Good),
+                .target = u64,
+                .expected_err = error.UnsupportedContractType,
+            },
+            .{
+                .contract = contractFor(Good),
+                .target = []Good,
+                .expected_err = error.UnsupportedContractType,
+            },
+        };
 
-    const cases = [_]Case{
-        .{
-            .contract = contractFor(Good),
-            .target = Good,
-        },
-        .{
-            .contract = contractFor(Good),
-            .target = *Good,
-            .mutable = true,
-        },
-        .{
-            .contract = contractFor(WrongFieldType),
-            .target = WrongFieldType,
-            .expected_err = error.WrongFieldType,
-        },
-        .{
-            .contract = contractFor(MissingField),
-            .target = MissingField,
-            .expected_err = error.MissingField,
-        },
-        .{
-            .contract = contractFor(MissingFunc),
-            .target = MissingFunc,
-            .expected_err = error.MissingFunc,
-        },
-        .{
-            .contract = contractFor(WrongFuncType),
-            .target = WrongFuncType,
-            .expected_err = error.WrongFuncType,
-        },
-        .{
-            .contract = contractFor(Good),
-            .target = Good,
-            .mutable = true,
-            .expected_err = error.TypeIsNotPointer,
-        },
-        .{
-            .contract = contractFor(Good),
-            .target = u64,
-            .expected_err = error.UnsupportedContractType,
-        },
-        .{
-            .contract = contractFor(Good),
-            .target = []Good,
-            .expected_err = error.UnsupportedContractType,
-        },
-    };
-
-    inline for (cases) |case| {
-        const result = case.contract.satisfies(case.target, case.mutable);
-        if (case.expected_err) |expected_err| {
-            try testing.expectError(expected_err, result);
-        } else {
-            try result;
+        for (cases) |case| {
+            const result = case.contract.satisfies(case.target, case.mutable);
+            if (case.expected_err) |expected_err| {
+                try testing.expectError(expected_err, result);
+            } else {
+                try result;
+            }
         }
     }
 }
@@ -227,29 +228,31 @@ test "contract.satisfies applies nested field contracts" {
         mem: ?MemMissingField,
     };
 
-    const cases = [_]Case{
-        .{
-            .contract = tableContract(MemOk),
-            .target = TableOk,
-        },
-        .{
-            .contract = tableContract(MemWrongFieldType),
-            .target = TableWrongFieldType,
-            .expected_err = error.WrongFieldType,
-        },
-        .{
-            .contract = tableContract(MemMissingField),
-            .target = TableMissingField,
-            .expected_err = error.MissingField,
-        },
-    };
+    comptime {
+        const cases = [_]Case{
+            .{
+                .contract = tableContract(MemOk),
+                .target = TableOk,
+            },
+            .{
+                .contract = tableContract(MemWrongFieldType),
+                .target = TableWrongFieldType,
+                .expected_err = error.WrongFieldType,
+            },
+            .{
+                .contract = tableContract(MemMissingField),
+                .target = TableMissingField,
+                .expected_err = error.MissingField,
+            },
+        };
 
-    inline for (cases) |case| {
-        const result = case.contract.satisfies(case.target, false);
-        if (case.expected_err) |expected_err| {
-            try testing.expectError(expected_err, result);
-        } else {
-            try result;
+        for (cases) |case| {
+            const result = case.contract.satisfies(case.target, false);
+            if (case.expected_err) |expected_err| {
+                try testing.expectError(expected_err, result);
+            } else {
+                try result;
+            }
         }
     }
 }

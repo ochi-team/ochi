@@ -658,7 +658,7 @@ test "writeBlock and writeData produce identical buffer output" {
     // Writer 1: encode via writeBlock
     const maxColI = 128;
     const writer1 = try Self.initMem(io, alloc, maxColI);
-    defer writer1.deinit(alloc);
+    defer writer1.deinit(io, alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);
@@ -698,7 +698,7 @@ test "writeBlock and writeData produce identical buffer output" {
 
     // Writer 2: re-encode the same data via writeData
     const writer2 = try Self.initMem(io, alloc, maxColI);
-    defer writer2.deinit(alloc);
+    defer writer2.deinit(io, alloc);
 
     var bh2 = BlockHeader.initFromData(&bd, sid);
     try writer2.writeData(io, alloc, &bh2, &bd);

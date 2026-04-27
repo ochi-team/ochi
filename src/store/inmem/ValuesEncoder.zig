@@ -506,7 +506,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
 
         // Decode the values - decoder reads encoded bytes from decodedValues,
         // writes strings to decoder.buf, and updates decodedValues pointers
-        try decoder.decode(decodedValues, io, valueType.type, cv.values.items);
+        try decoder.decode(io, decodedValues, valueType.type, cv.values.items);
 
         // Compare decoded values with original values
         const expected = if (case.values.len == 0) &[_][]const u8{} else case.values;
