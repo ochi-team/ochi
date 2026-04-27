@@ -64,8 +64,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &imports,
             // TODO: keep it only for debug mode
-            .sanitize_c = .full,
-            .sanitize_thread = true,
+            // .sanitize_c = .full,
+            // .sanitize_thread = true,
         }),
     });
     b.installArtifact(exe);
