@@ -294,7 +294,7 @@ test "BlockWriter disk output matches mem output" {
     defer blockTwo.deinit(alloc);
 
     var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit( alloc);
+    defer memTable.deinit(alloc);
     var memWriter = BlockWriter.initFromMemTable(memTable);
     defer memWriter.deinit(alloc);
     try memWriter.writeBlock(io, alloc, blockOne);
@@ -335,7 +335,7 @@ test "BlockWriter metaindexBuf may contain multiple records" {
     const blocksCount: usize = 1400;
 
     var memTable = try MemTable.empty(alloc);
-    defer memTable.deinit( alloc);
+    defer memTable.deinit(alloc);
 
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);

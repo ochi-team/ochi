@@ -34,6 +34,28 @@ pub fn projectIsFormatted(io: Io, alloc: Allocator) !bool {
     };
 }
 
+test gitHasNoMergeCommits {
+    const alloc = std.testing.allocator;
+    // TODO no idea why testing.io doesn't work here
+    var threaded_io = std.Io.Threaded.init(alloc, .{});
+    defer threaded_io.deinit();
+    const io = threaded_io.io();
+
+    const noMergeCommits = try gitHasNoMergeCommits(io, alloc);
+    try std.testing.expect(noMergeCommits);
+}
+
+test projectIsFormatted {
+    const alloc = std.testing.allocator;
+    // TODO no idea why testing.io doesn't work here
+    var threaded_io = std.Io.Threaded.init(alloc, .{});
+    defer threaded_io.deinit();
+    const io = threaded_io.io();
+
+    const isFormatted = try projectIsFormatted(io, alloc);
+    try std.testing.expect(isFormatted);
+}
+
 // TODO: add linter
 // TODO: validate git history has no large files (256kb+)
 // TODO: ensure the licenses are ok and there are no AGPL

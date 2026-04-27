@@ -150,8 +150,7 @@ test "serverEndToEndViaHTTP" {
     // TODO Not sure
     try std.Io.Threaded.chdir(tmpPath);
 
-    const serverAlloc = std.heap.page_allocator;
-    const conf = Conf.default(serverAlloc);
+    const conf = Conf.default(alloc);
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
             server.startServer(io, threadAllocator, threadConf) catch |err| {
@@ -160,7 +159,7 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
-    var thread = Io.async(io, ServerThread.run, .{ serverAlloc, conf });
+    var thread = Io.async(io, ServerThread.run, .{ alloc, conf });
     errdefer {
         thread.cancel(io);
         std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};

@@ -102,13 +102,13 @@ test "removeTables removes exact pointers" {
     const alloc = testing.allocator;
     const io = testing.io;
 
-    const one = try createSizedMemTable( alloc, 100);
+    const one = try createSizedMemTable(alloc, 100);
     defer one.close(io);
 
-    const two = try createSizedMemTable( alloc, 100);
+    const two = try createSizedMemTable(alloc, 100);
     defer two.close(io);
 
-    const three = try createSizedMemTable( alloc, 100);
+    const three = try createSizedMemTable(alloc, 100);
     defer three.close(io);
 
     const swapper = Swapper(IndexRecorder, Table);

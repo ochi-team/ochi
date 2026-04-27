@@ -84,11 +84,15 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 test {
     std.testing.refAllDecls(@This());
     _ = @import("server_test.zig");
+    _ = @import("tidy.zig");
 }
 
 test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    // TODO no idea why testing.io doesn't work here
+    var threaded_io = std.Io.Threaded.init(allocator, .{});
+    defer threaded_io.deinit();
+    const io = threaded_io.io();
 
     const conf = Conf.default(allocator);
     // Start the server in a separate thread
@@ -108,15 +112,4 @@ test "serverWithSIGTERM" {
     // Wait for the server thread to finish
 
     try thread.await(io);
-}
-
-test "tidy" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
-    const lint = @import("tidy.zig");
-    const noMergeCommits = try lint.gitHasNoMergeCommits(io, alloc);
-    try std.testing.expect(noMergeCommits);
-
-    const isFormatted = try lint.projectIsFormatted(io, alloc);
-    try std.testing.expect(isFormatted);
 }
