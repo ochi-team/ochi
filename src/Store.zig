@@ -96,7 +96,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
         _ = try store.openPartition(io, alloc, partitionPath, indexPath, dataPath, day);
     }
 
-    std.mem.sortUnstable(*Partition, partitions.items, {}, Partition.lessThan);
+    std.mem.sortUnstable(*Partition, store.partitions.items, {}, Partition.lessThan);
 
     store.lruPartition = if (store.partitions.items.len > 0)
         store.partitions.items[store.partitions.items.len - 1]
@@ -624,9 +624,11 @@ test "init opens existing partitions, sorts them and sets lru" {
     const day1 = try dayFromKey(io, "29022024");
     const day2 = try dayFromKey(io, "01012026");
 
-    try testing.expectEqual(day0, store.partitions.items[0].day);
-    try testing.expectEqual(day1, store.partitions.items[1].day);
-    try testing.expectEqual(day2, store.partitions.items[2].day);
+    try testing.expectEqualSlices(u32, &.{day0, day1, day2}, &.{
+        store.partitions.items[0].day,
+        store.partitions.items[1].day,
+        store.partitions.items[2].day,
+    });
 
     const lru = store.lruPartition orelse return error.TestExpectedPartition;
     try testing.expectEqual(day2, lru.day);
