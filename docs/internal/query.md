@@ -114,7 +114,7 @@ Example of a complex query:
 [-5m:] {service=checkout} (
   concat(app.name, order.service.name) @service_name AND
   status=>500 AND
-  message~"*timeout*"
+  ~"*timeout*"
 )
 | count(hits) @count
 | order(hits, desc)
