@@ -624,7 +624,7 @@ test "init opens existing partitions, sorts them and sets lru" {
     const day1 = try dayFromKey(io, "29022024");
     const day2 = try dayFromKey(io, "01012026");
 
-    try testing.expectEqualSlices(u32, &.{day0, day1, day2}, &.{
+    try testing.expectEqualSlices(u32, &.{ day0, day1, day2 }, &.{
         store.partitions.items[0].day,
         store.partitions.items[1].day,
         store.partitions.items[2].day,

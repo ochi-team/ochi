@@ -178,7 +178,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
     };
 
     for (0..concurrency) |_| {
-        t.startDiskTablesMerge(alloc);
+        try t.startDiskTablesMerge(io, alloc);
     }
 
     // TODO: remove background tasks from init to make unit tests real units
@@ -377,9 +377,10 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
     }
 }
 
-pub fn startDiskTablesMerge(self: *DataRecorder, alloc: Allocator) void {
+pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     _ = self;
     _ = alloc;
+    _ = io;
 }
 
 pub fn startMemTablesMerge(self: *DataRecorder, alloc: Allocator) void {
