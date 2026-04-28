@@ -31,6 +31,8 @@ pub const TokenKind = enum {
     Pipe,
     And,
     Or,
+    // literal might be a key, a value, a function argumenl
+    Literal,
 };
 
 pub const Token = struct {
@@ -173,41 +175,22 @@ pub const Scanner = struct {
                     return Error.SyntaxError;
                 }
             },
-            'a' => blk: {
-                if (query.len > 2 and std.mem.eql(u8, query[0..3], "and")) {
-                    break :blk .{
-                        .token = .{
-                            .kind = .And,
-                            .lexeme = query[0..3],
-                            .line = self.line,
-                            .col = self.col,
-                        },
-                        .tail = query[3..],
-                    };
-                }
+            'a'...'z', 'A'...'Z', '0'...'9', '_' => blk: {
+                var idx: usize = 0;
+                while (idx < query.len and (std.ascii.isAlphanumeric(query[idx]) or query[idx] == '_')) : (idx += 1) {}
 
-                reporter.reportSyntaxError(
-                    .{ .line = self.line, .col = self.col, .message = "unexpected token" },
-                );
-                return Error.SyntaxError;
-            },
-            'o' => blk: {
-                if (query.len > 1 and std.mem.eql(u8, query[0..2], "or")) {
-                    break :blk .{
-                        .token = .{
-                            .kind = .Or,
-                            .lexeme = query[0..2],
-                            .line = self.line,
-                            .col = self.col,
-                        },
-                        .tail = query[2..],
-                    };
-                }
+                const word = query[0..idx];
+                const kind = if (isKeyword(word)) |keyword| keyword else TokenKind.Literal;
 
-                reporter.reportSyntaxError(
-                    .{ .line = self.line, .col = self.col, .message = "unexpected token" },
-                );
-                return Error.SyntaxError;
+                break :blk .{
+                    .token = .{
+                        .kind = kind,
+                        .lexeme = word,
+                        .line = self.line,
+                        .col = self.col,
+                    },
+                    .tail = query[idx..],
+                };
             },
             // whitespace
             '\n' => .{ .token = null, .tail = query[1..] },
@@ -243,42 +226,73 @@ pub const Scanner = struct {
     }
 };
 
-test "scan returns token sequence and syntax error position" {
+test "Scanner.scan table-driven" {
     const alloc = testing.allocator;
 
-    var okScanner = Scanner{};
-    defer okScanner.deinit(alloc);
-
-    var okReporter = try ErrorReporter.init(alloc);
-    defer okReporter.deinit(alloc);
-
-    try okScanner.scan(alloc, "[]{or}\n(and)", &okReporter);
-    try testing.expectEqual(@as(usize, 8), okScanner.tokens.items.len);
-
-    const expectedTokens = [_]Token{
-        .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
-        .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 2 },
-        .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 3 },
-        .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 4 },
-        .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 6 },
-        .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 2, .col = 1 },
-        .{ .kind = .And, .lexeme = "and", .line = 2, .col = 2 },
-        .{ .kind = .RightParenthesis, .lexeme = ")", .line = 2, .col = 5 },
+    const Case = struct {
+        query: []const u8,
+        expectedTokens: []const Token,
+        expectedErr: ?anyerror = null,
+        expectedSyntaxErrors: []const ErrorReporter.SyntaxError,
     };
-    try testing.expectEqualDeep(expectedTokens[0..], okScanner.tokens.items);
-    try testing.expectEqual(@as(usize, 0), okReporter.syntaxErrors().len);
 
-    var errScanner = Scanner{};
-    defer errScanner.deinit(alloc);
-
-    var errReporter = try ErrorReporter.init(alloc);
-    defer errReporter.deinit(alloc);
-
-    const err = errScanner.scan(alloc, "[]{}\n()\\", &errReporter);
-    try testing.expectError(Error.SyntaxError, err);
-
-    const expectedErr = [_]ErrorReporter.SyntaxError{
-        .{ .line = 2, .col = 3, .message = "unexpected token" },
+    const cases = [_]Case{
+        .{
+            .query = "[]{or}\n(and)",
+            .expectedTokens = &[_]Token{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 2 },
+                .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 3 },
+                .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 4 },
+                .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 6 },
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 2, .col = 1 },
+                .{ .kind = .And, .lexeme = "and", .line = 2, .col = 2 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 2, .col = 5 },
+            },
+            .expectedSyntaxErrors = &[_]ErrorReporter.SyntaxError{},
+        },
+        .{
+            .query = "andrew and or orban",
+            .expectedTokens = &[_]Token{
+                .{ .kind = .Literal, .lexeme = "andrew", .line = 1, .col = 1 },
+                .{ .kind = .And, .lexeme = "and", .line = 1, .col = 8 },
+                .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 12 },
+                .{ .kind = .Literal, .lexeme = "orban", .line = 1, .col = 15 },
+            },
+            .expectedSyntaxErrors = &[_]ErrorReporter.SyntaxError{},
+        },
+        .{
+            .query = "[]{}\n()\\",
+            .expectedTokens = &[_]Token{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 2 },
+                .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 3 },
+                .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 4 },
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 2, .col = 1 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 2, .col = 2 },
+            },
+            .expectedErr = Error.SyntaxError,
+            .expectedSyntaxErrors = &[_]ErrorReporter.SyntaxError{
+                .{ .line = 2, .col = 3, .message = "unexpected token" },
+            },
+        },
     };
-    try testing.expectEqualDeep(expectedErr[0..], errReporter.syntaxErrors());
+
+    for (cases) |case| {
+        var scanner = Scanner{};
+        defer scanner.deinit(alloc);
+
+        var reporter = try ErrorReporter.init(alloc);
+        defer reporter.deinit(alloc);
+
+        const scanResult = scanner.scan(alloc, case.query, &reporter);
+        if (case.expectedErr) |expectedErr| {
+            try testing.expectError(expectedErr, scanResult);
+        } else {
+            try scanResult;
+        }
+
+        try testing.expectEqualDeep(case.expectedTokens, scanner.tokens.items);
+        try testing.expectEqualDeep(case.expectedSyntaxErrors, reporter.syntaxErrors());
+    }
 }
