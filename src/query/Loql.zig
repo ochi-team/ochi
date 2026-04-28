@@ -15,6 +15,9 @@ pub fn translate(self: *const Loql, fullQuery: []const u8) ![]u8 {
     var query = std.mem.trim(u8, fullQuery, " ");
     query = std.mem.trim(u8, query, "\n");
     query = std.mem.trim(u8, query, "\t");
+    for (query, 0..) |c, i| {
+        query[i] = std.ascii.toLower(c);
+    }
 
     // TODO: validate whether it's a syntax error and return report content
     // or unknown error
