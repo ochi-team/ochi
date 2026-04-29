@@ -390,8 +390,6 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
 
     var semaphoreAcquired = false;
 
-    self.memTablesSem.waitUncancelable(io);
-
     while (true) {
         timedWait(&self.memTablesSem, io, std.time.ns_per_s) catch |err| {
             switch (err) {
@@ -547,7 +545,6 @@ pub fn startMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void
     errdefer self.g.cancel(io);
 
     self.g.async(io, runMemTablesMerge, .{ self, io, alloc });
-    try self.g.await(io);
 }
 
 fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
@@ -913,6 +910,7 @@ test "mergeTables force single mem table creates disk table" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
     defer recorder.deinit(io, alloc);
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
@@ -951,6 +949,7 @@ test "IndexRecorder add and reopen preserves item count" {
         }
 
         recorder.stopped.store(true, .release);
+        try recorder.g.await(io);
         try recorder.flushForce(io, alloc);
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
         try testing.expect(recorder.diskTables.items.len > 0);
@@ -965,6 +964,7 @@ test "IndexRecorder add and reopen preserves item count" {
         const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
         reopened.stopped.store(true, .release);
+        try reopened.g.await(io);
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(reopened));
@@ -1027,6 +1027,7 @@ test "IndexRecorder concurrent add preserves item count" {
     try g.await(io);
 
     recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
     try recorder.flushForce(io, alloc);
 
     try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
@@ -1059,6 +1060,7 @@ test "IndexRecorder reads free disk space from runtime" {
     try testing.expectEqual(firstSpace, secondSpace);
 
     recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
     recorder.deinit(io, alloc);
 }
 
@@ -1191,6 +1193,7 @@ test "IndexRecorder large entries write to 3 shards" {
     try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
 
     recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
 
     try recorder.flushForce(io, alloc);
 
