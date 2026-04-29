@@ -35,9 +35,10 @@ fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
     const step = 250;
     var remaining = ns;
     while (remaining > 0) {
+        // TODO Use signal here to avoid buisy spinning
         if (stopped.load(.acquire)) return;
         const s = @min(remaining, step);
-        try Io.sleep(io, .fromMilliseconds(50), .real);
+        Io.sleep(io, .fromNanoseconds(s), .real) catch {};
         remaining -= s;
     }
 }
@@ -124,6 +125,7 @@ memTablesSem: Io.Semaphore = .{
 },
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
+g: Io.Group = .init,
 stopped: std.atomic.Value(bool) = .init(false),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
@@ -182,8 +184,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
     }
 
     // TODO: remove background tasks from init to make unit tests real units
-    t.startMemTablesFlusher(alloc);
-    t.startDataShardsFlusher(alloc);
+    try t.startMemTablesFlusher(io, alloc);
+    try t.startDataShardsFlusher(io, alloc);
 
     return t;
 }
@@ -202,6 +204,7 @@ pub fn createDir(io: Io, path: []const u8) void {
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
+    try self.g.await(io);
 
     try self.flushForce(io, alloc);
 
@@ -236,14 +239,16 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-fn startMemTablesFlusher(self: *DataRecorder, alloc: Allocator) void {
-    _ = self;
-    _ = alloc;
+fn startMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    errdefer self.g.cancel(io);
+
+    self.g.async(io, runMemTablesFlusher, .{ self, io, alloc });
 }
 
-fn startDataShardsFlusher(self: *DataRecorder, alloc: Allocator) void {
-    _ = self;
-    _ = alloc;
+fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    errdefer self.g.cancel(io);
+
+    self.g.async(io, runDataShardsFlusher, .{ self, io, alloc });
 }
 
 fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
@@ -373,23 +378,28 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
         shard.flushAtUs = null;
         shard.size = 0;
 
-        self.startMemTablesMerge(alloc);
+        try self.startMemTablesMerge(io, alloc);
     }
 }
 
 pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    _ = self;
-    _ = alloc;
-    _ = io;
+    if (self.stopped.load(.acquire)) return;
+
+    errdefer self.g.cancel(io);
+
+    self.g.async(io, runDiskTablesMerger, .{ self, io, alloc });
 }
 
-pub fn startMemTablesMerge(self: *DataRecorder, alloc: Allocator) void {
-    _ = self;
-    _ = alloc;
+pub fn startMemTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    if (self.stopped.load(.acquire)) return;
+
+    errdefer self.g.cancel(io);
+
+    self.g.async(io, runMemTableMerger, .{ self, io, alloc });
 }
 
-fn runDiskTablesMerger(self: *DataRecorder, alloc: Allocator) void {
-    self.tablesMerger(alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
+fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
+    self.tablesMerger(io, alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
@@ -397,8 +407,8 @@ fn runDiskTablesMerger(self: *DataRecorder, alloc: Allocator) void {
     };
 }
 
-fn runMemTableMerger(self: *DataRecorder, alloc: Allocator) void {
-    self.tablesMerger(alloc, &self.memTables, &self.memMergeSem) catch |err| {
+fn runMemTableMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
+    self.tablesMerger(io, alloc, &self.memTables, &self.memMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
@@ -927,6 +937,7 @@ test "flushDataShards non-force respects flush deadline" {
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
 
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
@@ -960,6 +971,7 @@ test "mergeTables force single mem table creates disk table" {
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
 
     var lines = [_]Line{
         stableLine(1, 1, 0),
@@ -1002,6 +1014,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         }
 
         recorder.stopped.store(true, .release);
+        try recorder.g.await(io);
         try recorder.flushForce(io, alloc);
 
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
@@ -1017,6 +1030,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
         reopened.stopped.store(true, .release);
+        try reopened.g.await(io);
 
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));
