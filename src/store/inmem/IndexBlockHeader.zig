@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("StreamWriter.zig");
@@ -43,6 +44,7 @@ pub fn deinitRead(self: *Self, allocator: Allocator) void {
 
 pub fn writeIndexBlock(
     self: *Self,
+    io: Io,
     allocator: Allocator,
     indexBlockBuf: *std.ArrayList(u8),
     sid: SID,
@@ -59,7 +61,7 @@ pub fn writeIndexBlock(
 
     const offset = try encoding.compressAuto(compressed, indexBlockBuf.items);
     const len = streamWriter.indexDst.len();
-    try streamWriter.indexDst.appendAllocated(compressed, offset);
+    try streamWriter.indexDst.appendAllocated(io, compressed, offset);
 
     self.offset = len;
     self.size = offset;

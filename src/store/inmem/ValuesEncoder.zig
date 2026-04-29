@@ -348,6 +348,7 @@ fn parseIPv4(s: []const u8) !u32 {
 test "ValuesEncoder.encodeAndDecodeRoundtrip" {
     const ValuesDecoder = @import("ValuesDecoder.zig");
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var dictValues = try std.ArrayList([]const u8).initCapacity(allocator, 8);
     defer dictValues.deinit(allocator);
     const dictV = [_][]const u8{ "1111", "2222" };
@@ -505,7 +506,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
 
         // Decode the values - decoder reads encoded bytes from decodedValues,
         // writes strings to decoder.buf, and updates decodedValues pointers
-        try decoder.decode(decodedValues, valueType.type, cv.values.items);
+        try decoder.decode(io, decodedValues, valueType.type, cv.values.items);
 
         // Compare decoded values with original values
         const expected = if (case.values.len == 0) &[_][]const u8{} else case.values;

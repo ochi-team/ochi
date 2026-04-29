@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Store = @import("Store.zig").Store;
 const Encoder = @import("encoding").Encoder;
@@ -114,6 +115,7 @@ pub const Processor = struct {
 
     pub fn pushLine(
         self: *Processor,
+        io: Io,
         alloc: std.mem.Allocator,
         timestampNs: u64,
         fields: []Field,
@@ -145,7 +147,7 @@ pub const Processor = struct {
         try self.lines.append(alloc, line);
 
         if (self.mustFlush()) {
-            try self.flush(alloc);
+            try self.flush(io, alloc);
         }
     }
 
@@ -158,8 +160,8 @@ pub const Processor = struct {
         return self.size >= flushSizeThreshold;
     }
 
-    pub fn flush(self: *Processor, alloc: std.mem.Allocator) !void {
-        try self.store.addLines(alloc, self.lines.items, self.tags, self.encodedTags);
+    pub fn flush(self: *Processor, io: Io, alloc: std.mem.Allocator) !void {
+        try self.store.addLines(io, alloc, self.lines.items, self.tags, self.encodedTags);
         self.lines.clearRetainingCapacity();
         self.size = 0;
     }

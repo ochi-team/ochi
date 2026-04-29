@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Encoder = @import("encoding").Encoder;
 
@@ -46,6 +47,7 @@ refCounter: std.atomic.Value(u32) = .init(1),
 alloc: Allocator,
 
 pub fn open(
+    io: Io,
     alloc: Allocator,
     path: []const u8,
     indexPath: []const u8,
@@ -60,8 +62,8 @@ pub fn open(
     const partitionKey = std.fs.path.basename(path);
     std.debug.assert(partitionKey.len == partitionKeySize);
 
-    const indexExists = try fs.pathExists(indexPath);
-    const dataExists = try fs.pathExists(dataPath);
+    const indexExists = try fs.pathExists(io, indexPath);
+    const dataExists = try fs.pathExists(io, dataPath);
 
     if (!indexExists or !dataExists) {
         if (indexExists != dataExists) {
@@ -71,18 +73,18 @@ pub fn open(
 
         std.debug.print("partition doesn't exist due to recent crash or a data loss," ++
             " creating missing partition, path: {s}\n", .{path});
-        IndexRecorder.createDir(indexPath);
-        DataRecorder.createDir(dataPath);
+        IndexRecorder.createDir(io, indexPath);
+        DataRecorder.createDir(io, dataPath);
     }
 
-    const indexRecorder = try IndexRecorder.init(alloc, indexPath, runtime);
-    errdefer indexRecorder.deinit(alloc);
+    const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
+    errdefer indexRecorder.deinit(io, alloc);
 
     const index = try Index.init(alloc, indexRecorder);
-    errdefer index.deinit(alloc);
+    errdefer index.deinit(io, alloc);
 
-    const data = try DataRecorder.init(alloc, dataPath, runtime);
-    errdefer data.deinit(alloc);
+    const data = try DataRecorder.init(io, alloc, dataPath, runtime);
+    errdefer data.deinit(io, alloc);
 
     const partition = try alloc.create(Partition);
     partition.* = Partition{
@@ -102,13 +104,13 @@ pub fn retain(self: *Partition) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-pub fn release(self: *Partition) void {
+pub fn release(self: *Partition, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
     if (prev != 1) return;
 
-    self.close();
+    self.close(io);
 
     // TODO: deletion of the partition due to retention or eviction policy
     // read table release implementation as a sample
@@ -116,28 +118,30 @@ pub fn release(self: *Partition) void {
 
 pub fn close(
     self: *Partition,
+    io: Io,
 ) void {
-    self.index.deinit(self.alloc);
+    self.index.deinit(io, self.alloc);
 
-    self.data.stop(self.alloc) catch |err| {
+    self.data.stop(io, self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
     self.alloc.destroy(self);
 }
 
-pub fn createDir(path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
-    fs.makeDirAssert(path);
+pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
+    fs.createDirAssert(io, path);
 
-    IndexRecorder.createDir(indexPath);
-    DataRecorder.createDir(dataPath);
+    IndexRecorder.createDir(io, indexPath);
+    DataRecorder.createDir(io, dataPath);
 
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }
 
 // TODO: meter how much it takes usually
 const bufSize = 1024;
 pub fn addLines(
     self: *Partition,
+    io: Io,
     allocator: Allocator,
     lines: std.ArrayList(Line),
     tags: []Field,
@@ -181,30 +185,30 @@ pub fn addLines(
 
         if (self.isCached(lines.items[i].sid)) continue;
 
-        if (!try self.index.hasStream(allocator, sid)) {
-            try self.index.indexStream(allocator, sid, tags, encodedTags);
+        if (!try self.index.hasStream(io, allocator, sid)) {
+            try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
         try self.cache(sid);
     }
 
-    try self.data.addLines(allocator, lines.items);
+    try self.data.addLines(io, allocator, lines.items);
 }
 
-pub fn queryLines(self: *Partition, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
+pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    var result = try self.index.querySIDs(alloc, tenantID, query.tags);
+    var result = try self.index.querySIDs(io, alloc, tenantID, query.tags);
     defer result.sids.deinit(alloc);
 
     // TODO handle cutOff
     _ = result.cutOff;
 
-    return self.data.queryLines(alloc, result.sids.items, query);
+    return self.data.queryLines(io, alloc, result.sids.items, query);
 }
 
-pub fn flushForce(self: *Partition, alloc: Allocator) !void {
-    try self.index.recorder.flushForce(alloc);
-    try self.data.flushForce(alloc);
+pub fn flushForce(self: *Partition, io: Io, alloc: Allocator) !void {
+    try self.index.recorder.flushForce(io, alloc);
+    try self.data.flushForce(io, alloc);
 }
 
 fn isCached(self: *Partition, sid: SID) bool {

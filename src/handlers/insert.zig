@@ -1,5 +1,6 @@
 /// insert module provides write path for Ochi
 const std = @import("std");
+const Io = std.Io;
 
 const httpz = @import("httpz");
 const AppContext = @import("../dispatch.zig").AppContext;
@@ -36,7 +37,7 @@ pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
 
     const params = Params{ .tenantID = ctx.tenantID };
 
-    process(res.arena, std.heap.page_allocator, ctx, uncompressed, params) catch
+    process(ctx.io, res.arena, ctx.allocator, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
 
     res.status = 200;
@@ -50,6 +51,7 @@ pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) 
 
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
 fn process(
+    io: Io,
     parseAlloc: std.mem.Allocator,
     ingestAlloc: std.mem.Allocator,
     ctx: *AppContext,
@@ -156,13 +158,13 @@ fn process(
             // second is optional and defines what field in the given json is read as a _msg field
             try labels.append(parseAlloc, .{ .key = "", .value = msg });
 
-            try processor.pushLine(ingestAlloc, tsNs, labels.items);
+            try processor.pushLine(io, ingestAlloc, tsNs, labels.items);
 
             // clean value labels, but retain stream labels
             labels.items.len = tagsLen;
         }
 
-        try processor.flush(ingestAlloc);
+        try processor.flush(io, ingestAlloc);
 
         // clean len of the labels len, but retain allocated memory
         labels.clearRetainingCapacity();

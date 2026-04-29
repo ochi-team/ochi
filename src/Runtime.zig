@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const builtin = @import("builtin");
 
@@ -19,7 +20,7 @@ maxMem: u64,
 cacheSize: u64,
 // disk space for the store
 diskSpace: DiskSpace,
-diskStatsMx: std.Thread.Mutex = .{},
+diskStatsMx: Io.Mutex = .init,
 // path is a disk mount point for the store to get a disk space
 path: []const u8,
 
@@ -30,7 +31,7 @@ httpThreads: u16,
 // worker threads available, derived from cpus
 workerThreads: u16,
 
-pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtime {
+pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtime {
     // TODO: create a designated testing runtime and restrict this init to use inside tests
     const cpus = getCpuCount();
     // 4 is a minimum amount of threads for workers
@@ -46,14 +47,18 @@ pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtim
         .macos => {
             var memsize: u64 = 0;
             var len: usize = @sizeOf(u64);
-            try std.posix.sysctlbynameZ("hw.memsize", &memsize, &len, null, 0);
+            const no = std.posix.system.sysctlbyname("hw.memsize", &memsize, &len, null, 0);
+            if (std.posix.errno(no) != .SUCCESS) {
+                // TODO: handle the error for real adding an error code to a diagnostic
+                return error.UnknownTotalSystemMemory;
+            }
 
             break :blk memsize;
         },
         .linux => {
             var info: std.os.linux.Sysinfo = undefined;
             const result: usize = std.os.linux.sysinfo(&info);
-            if (std.os.linux.E.init(result) != .SUCCESS) {
+            if (std.os.linux.errno(result) != .SUCCESS) {
                 return error.UnknownTotalSystemMemory;
             }
 
@@ -69,7 +74,7 @@ pub fn init(alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtim
     r.* = .{
         .maxMem = maxMem,
         .cacheSize = @intFromFloat(maxMemF * maxCachePortition),
-        .diskSpace = getDiskSpace(path, @intCast(std.time.milliTimestamp())),
+        .diskSpace = getDiskSpace(path, @intCast(Io.Timestamp.now(io, .real).toMilliseconds())),
         .path = path,
         .cpus = @intCast(cpus),
         .httpThreads = https,
@@ -82,11 +87,11 @@ pub fn deinit(self: *Runtime, alloc: Allocator) void {
     alloc.destroy(self);
 }
 
-pub fn getFreeDiskSpace(self: *Runtime) u64 {
-    self.diskStatsMx.lock();
-    defer self.diskStatsMx.unlock();
+pub fn getFreeDiskSpace(self: *Runtime, io: Io) u64 {
+    self.diskStatsMx.lockUncancelable(io);
+    defer self.diskStatsMx.unlock(io);
 
-    const nowMs: u64 = @intCast(std.time.milliTimestamp());
+    const nowMs: u64 = @intCast(Io.Timestamp.now(io, .real).toMilliseconds());
     if ((nowMs - self.diskSpace.updatedAtMs) < 15 * std.time.ms_per_s) {
         return self.diskSpace.free;
     }
@@ -130,11 +135,11 @@ fn getCpuCount() usize {
 const testing = std.testing;
 
 test "getFreeDiskSpace returns same positive value" {
-    const r = try Runtime.init(testing.allocator, ".", 0.5);
+    const r = try Runtime.init(testing.io, testing.allocator, ".", 0.5);
     defer r.deinit(testing.allocator);
 
-    const first = r.getFreeDiskSpace();
-    const second = r.getFreeDiskSpace();
+    const first = r.getFreeDiskSpace(std.testing.io);
+    const second = r.getFreeDiskSpace(std.testing.io);
 
     try std.testing.expect(first > 0);
     try std.testing.expectEqual(first, second);

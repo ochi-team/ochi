@@ -1,8 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Dir = Io.Dir;
 
 pub const FileDestination = struct {
-    file: std.fs.File,
+    file: Io.File,
     len: usize,
     /// buffer holds allocated chunk to reuse between write operations
     buf: std.ArrayList(u8) = .empty,
@@ -24,19 +26,23 @@ pub const StreamDestination = union(Tag) {
         return .{ .buffer = try std.ArrayList(u8).initCapacity(allocator, capacity) };
     }
 
-    pub fn initFile(file: std.fs.File) !Self {
-        const stat = try file.stat();
+    pub fn initFile(io: Io, file: Io.File) !Self {
+        const stat = try file.stat(io);
         const initialLen: usize = @intCast(stat.size);
-        try file.seekTo(stat.size);
+
+        // TODO AUDIT
+        var buffer: [4096]u8 = undefined;
+        var file_reader = file.reader(io, &buffer);
+        try file_reader.seekTo(stat.size);
         return .{ .file = .{ .file = file, .len = initialLen } };
     }
 
-    pub fn deinit(self: *Self, allocator: Allocator) void {
+    pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
         switch (self.*) {
             .buffer => |*buf| buf.deinit(allocator),
             .file => |*f| {
                 f.buf.deinit(allocator);
-                f.file.close();
+                f.file.close(io);
             },
         }
     }
@@ -48,28 +54,35 @@ pub const StreamDestination = union(Tag) {
         };
     }
 
-    pub fn appendSlice(self: *Self, allocator: Allocator, src: []const u8) !void {
+    pub fn appendSlice(self: *Self, io: Io, allocator: Allocator, src: []const u8) !void {
         switch (self.*) {
             .buffer => |*buf| try buf.appendSlice(allocator, src),
             .file => |*f| {
-                try f.file.writeAll(src);
+                try f.file.writeStreamingAll(io, src);
                 f.len += src.len;
             },
         }
     }
 
-    fn readAll(self: *Self, allocator: Allocator) ![]u8 {
+    fn readAll(self: *Self, io: Io, allocator: Allocator) ![]u8 {
         switch (self.*) {
             .buffer => |*buf| return allocator.dupe(u8, buf.items),
             .file => |*f| {
-                const size: usize = @intCast((try f.file.stat()).size);
+                const size: usize = @intCast((try f.file.stat(
+                    io,
+                )).size);
                 const dst = try allocator.alloc(u8, size);
                 errdefer allocator.free(dst);
 
-                try f.file.seekTo(0);
-                const readN = try f.file.readAll(dst);
+                // TODO AUDIT
+                var buffer: [4096]u8 = undefined;
+                var file_reader = f.file.reader(io, &buffer);
+                try file_reader.seekTo(0);
+
+                const readN = try file_reader.interface.readSliceShort(dst);
                 std.debug.assert(readN == size);
-                try f.file.seekTo(@intCast(f.len));
+
+                try file_reader.seekTo(@intCast(f.len));
                 return dst;
             },
         }
@@ -99,11 +112,11 @@ pub const StreamDestination = union(Tag) {
     }
 
     /// moves items for a buffer, assumes writing to unused capacity slice happened via allocSlice
-    pub fn appendAllocated(self: *Self, slice: []const u8, cap: usize) !void {
+    pub fn appendAllocated(self: *Self, io: Io, slice: []const u8, cap: usize) !void {
         switch (self.*) {
             .buffer => |*buf| buf.items.len += cap,
             .file => |*f| {
-                try f.file.writeAll(slice[0..cap]);
+                try f.file.writeStreamingAll(io, slice[0..cap]);
                 f.len += cap;
             },
         }
@@ -112,46 +125,51 @@ pub const StreamDestination = union(Tag) {
 
 test "StreamDestination buffer destination" {
     const alloc = std.testing.allocator;
-    var dst = try StreamDestination.initBuffer(alloc, 8);
-    defer dst.deinit(alloc);
+    const io = std.testing.io;
 
-    try dst.appendSlice(alloc, "abc");
-    try dst.appendSlice(alloc, "1234");
+    var dst = try StreamDestination.initBuffer(alloc, 8);
+    defer dst.deinit(io, alloc);
+
+    try dst.appendSlice(io, alloc, "abc");
+    try dst.appendSlice(io, alloc, "1234");
 
     try std.testing.expectEqual(7, dst.len());
 
-    const all = try dst.readAll(alloc);
+    const all = try dst.readAll(io, alloc);
     defer alloc.free(all);
     try std.testing.expectEqualStrings("abc1234", all);
 }
 
 test "StreamDestination file destination" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realpathAlloc(alloc, ".");
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
     const filePath = try std.fs.path.join(alloc, &.{ rootPath, "timestamps.bin" });
     defer alloc.free(filePath);
 
-    const file = try std.fs.createFileAbsolute(filePath, .{ .truncate = true, .read = true });
-    var dst = try StreamDestination.initFile(file);
-    defer dst.deinit(alloc);
+    const file = try Dir.createFileAbsolute(io, filePath, .{ .truncate = true, .read = true });
+    var dst = try StreamDestination.initFile(io, file);
+    defer dst.deinit(io, alloc);
 
     const res = "hello-world";
-    try dst.appendSlice(alloc, "hello");
-    try dst.appendSlice(alloc, "-world");
+    try dst.appendSlice(io, alloc, "hello");
+    try dst.appendSlice(io, alloc, "-world");
     try std.testing.expectEqual(res.len, dst.len());
 
-    const all = try dst.readAll(alloc);
+    const all = try dst.readAll(io, alloc);
     defer alloc.free(all);
     try std.testing.expectEqualStrings(res, all);
 
-    var verify = try std.fs.openFileAbsolute(filePath, .{});
-    defer verify.close();
-    const onDisk = try verify.readToEndAlloc(alloc, std.math.maxInt(usize));
+    var verify = try Dir.openFileAbsolute(io, filePath, .{});
+    defer verify.close(io);
+
+    var verify_reader = file.reader(io, &.{});
+    const onDisk = try verify_reader.interface.allocRemaining(alloc, .limited(std.math.maxInt(usize)));
     defer alloc.free(onDisk);
     try std.testing.expectEqualStrings(res, onDisk);
 }

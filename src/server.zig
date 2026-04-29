@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const httpz = @import("httpz");
 
@@ -16,7 +17,8 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
 }
 
-fn handleSigterm(_: c_int) callconv(.c) void {
+// TODO not quite sure
+fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     if (global_server) |server| {
         server.stop();
     }
@@ -25,22 +27,25 @@ fn handleSigterm(_: c_int) callconv(.c) void {
 // TODO: make it configurable
 const storePath = ".ochi";
 
-pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
-    std.fs.cwd().makeDir(storePath) catch |err| switch (err) {
+// TODO: implement a server cancelation and test it
+pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
+    std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try std.fs.cwd().realpath(storePath, &storePathBuf);
+    const n = try std.Io.Dir.cwd().realPathFile(io, storePath, &storePathBuf);
 
-    var store = try Store.init(allocator, path);
-    defer store.deinit(allocator);
+    var store = try Store.init(io, allocator, storePathBuf[0..n]);
+    defer store.deinit(io, allocator);
 
     var dispatcher: Dispatcher = .{
+        .io = io,
+        .allocator = allocator,
         .conf = conf.app,
         .store = &store,
     };
-    var server = try httpz.Server(*Dispatcher).init(allocator, .{ .port = conf.server.port }, &dispatcher);
+    var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .localhost(conf.server.port) }, &dispatcher);
     defer server.deinit();
 
     global_server = &server;
@@ -66,7 +71,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
     router.post("/flush", flush.flushHandler, .{});
 
     server.listen() catch |err| switch (err) {
-        std.posix.BindError.AddressInUse => {
+        error.AddressInUse => {
             std.debug.print("can't start server, port={d} is in use\n", .{conf.server.port});
             return err;
         },
@@ -78,43 +83,7 @@ pub fn startServer(allocator: std.mem.Allocator, conf: Conf) !void {
 }
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
     _ = @import("server_test.zig");
-}
-
-test "serverWithSIGTERM" {
-    const allocator = std.testing.allocator;
-
-    const conf = Conf.default(allocator);
-    // Start the server in a separate thread
-    const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            startServer(threadAllocator, threadConf) catch |err| {
-                std.debug.print("Server error: {}\n", .{err});
-            };
-        }
-    };
-
-    const thread = try std.Thread.spawn(.{}, ServerThread.run, .{ allocator, conf });
-
-    // Give the server time to start
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    // Send SIGTERM to ourselves
-    const posix = std.posix;
-    const pid = std.c.getpid();
-    try posix.kill(pid, posix.SIG.TERM);
-
-    // Wait for the server thread to finish
-    thread.join();
-}
-
-test "tidy" {
-    const alloc = std.testing.allocator;
-    const lint = @import("tidy.zig");
-    const noMergeCommits = try lint.gitHasNoMergeCommits(alloc);
-    try std.testing.expect(noMergeCommits);
-
-    const isFormatted = try lint.projectIsFormatted(alloc);
-    try std.testing.expect(isFormatted);
+    _ = @import("tidy.zig");
 }

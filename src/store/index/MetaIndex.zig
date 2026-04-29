@@ -1,5 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Dir = Io.Dir;
 
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
@@ -61,16 +63,19 @@ pub fn decode(self: *MetaIndex, alloc: Allocator, buf: []u8) !usize {
     return dec.offset;
 }
 
-pub fn readFile(alloc: Allocator, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
     var fba = std.heap.stackFallback(256, alloc);
     const fbaAlloc = fba.get();
 
     const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
     defer fbaAlloc.free(metaindexPath);
-    var metaindexFile = try std.fs.openFileAbsolute(metaindexPath, .{});
-    defer metaindexFile.close();
-    const metaindexStat = try metaindexFile.stat();
-    const metaindexCompressed = try metaindexFile.readToEndAlloc(fbaAlloc, @intCast(metaindexStat.size));
+    var metaindexFile = try Dir.openFileAbsolute(io, metaindexPath, .{});
+    defer metaindexFile.close(io);
+    const metaindexStat = try metaindexFile.stat(io);
+
+    var metaindexFileReader = metaindexFile.reader(io, &.{});
+    // TODO this func below is changed, review
+    const metaindexCompressed = try metaindexFileReader.interface.allocRemaining(fbaAlloc, .limited(@intCast(metaindexStat.size + 1)));
     defer fbaAlloc.free(metaindexCompressed);
 
     const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);
@@ -179,11 +184,12 @@ test "MetaIndex decodeDecompress roundtrip" {
 
 test "MetaIndex roundtrip file read/write" {
     const alloc = testing.allocator;
+    const io = testing.io;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("table");
-    const tablePath = try tmp.dir.realpathAlloc(alloc, "table");
+    try tmp.dir.createDirPath(io, "table");
+    const tablePath = try tmp.dir.realPathFileAlloc(io, "table", alloc);
     defer alloc.free(tablePath);
 
     const rec1 = MetaIndex{
@@ -220,12 +226,13 @@ test "MetaIndex roundtrip file read/write" {
     const metaindexPath = try std.fs.path.join(alloc, &.{ tablePath, filenames.metaindex });
     defer alloc.free(metaindexPath);
 
-    var file = try std.fs.createFileAbsolute(metaindexPath, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(compressed[0..compressedLen]);
-    try file.sync();
+    var file = try Dir.createFileAbsolute(io, metaindexPath, .{ .truncate = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, compressed[0..compressedLen]);
+    try file.sync(io);
 
     const decoded = try MetaIndex.readFile(
+        io,
         alloc,
         tablePath,
         rec1.blockHeadersCount + rec2.blockHeadersCount,

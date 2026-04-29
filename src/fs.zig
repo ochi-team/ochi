@@ -1,5 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const Dir = Io.Dir;
 
 // TODO: perhaps worth replacing all the panics in the package,
 // and return regular error and handle them outside.
@@ -8,8 +10,8 @@ const Allocator = std.mem.Allocator;
 
 var tmpFileNum = std.atomic.Value(u64).init(0);
 
-pub fn pathExists(path: []const u8) !bool {
-    std.fs.accessAbsolute(path, .{}) catch |err| {
+pub fn pathExists(io: Io, path: []const u8) !bool {
+    Dir.accessAbsolute(io, path, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => return false,
             else => return err,
@@ -19,20 +21,20 @@ pub fn pathExists(path: []const u8) !bool {
     return true;
 }
 
-pub fn syncPathAndParentDir(path: []const u8) void {
-    syncPath(path);
+pub fn syncPathAndParentDir(io: Io, path: []const u8) void {
+    syncPath(io, path);
 
     const parent = std.fs.path.dirname(path) orelse std.debug.panic("path has no parent directory: '{s}'", .{path});
-    syncPath(parent);
+    syncPath(io, parent);
 }
 
-fn syncPath(path: []const u8) void {
+fn syncPath(io: Io, path: []const u8) void {
     // TODO: handle the error and write data to a recovery log,
     // panicking here means data loss
-    if (std.fs.openFileAbsolute(path, .{})) |file| {
+    if (Dir.openFileAbsolute(io, path, .{})) |file| {
         var f = file;
-        defer f.close();
-        f.sync() catch |err| {
+        defer f.close(io);
+        f.sync(io) catch |err| {
             std.debug.panic(
                 "FATAL: cannot flush '{s}' to storage: {s}",
                 .{ path, @errorName(err) },
@@ -47,36 +49,39 @@ fn syncPath(path: []const u8) void {
     }
 }
 
-pub fn makeDirAssert(path: []const u8) void {
-    const e = std.fs.accessAbsolute(path, .{});
+pub fn createDirAssert(io: Io, path: []const u8) void {
+    const e = Dir.accessAbsolute(io, path, .{});
     std.debug.assert(e == error.FileNotFound);
-    std.fs.makeDirAbsolute(path) catch |err| {
+    Dir.createDirAbsolute(io, path, .default_dir) catch |err| {
         std.debug.panic("failed to make dir {s}: {s}", .{ path, @errorName(err) });
     };
 }
 
 pub fn writeBufferValToFile(
+    io: Io,
     path: []const u8,
     bufferVal: []const u8,
 ) !void {
-    var file = try std.fs.createFileAbsolute(
+    var file = try Dir.createFileAbsolute(
+        io,
         path,
         .{ .truncate = true },
     );
-    defer file.close();
+    defer file.close(io);
 
-    try file.writeAll(bufferVal);
-    try file.sync();
+    try file.writeStreamingAll(io, bufferVal);
+    try file.sync(io);
 }
 
-// TODO: take a look at std.fs.cwd().atomicFile
+// TODO: take a look at std.Io.Dir.cwd().atomicFile
 pub fn writeBufferToFileAtomic(
+    io: Io,
     path: []const u8,
     bufferVal: []const u8,
     truncate: bool,
 ) !void {
     if (!truncate) {
-        if (std.fs.accessAbsolute(path, .{})) {
+        if (Dir.accessAbsolute(io, path, .{})) {
             std.debug.panic("failed to write atomic file, path '{s}' already exists", .{path});
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -89,10 +94,10 @@ pub fn writeBufferToFileAtomic(
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const tmpPath = try std.fmt.bufPrint(&buf, "{s}-tmp-{d}", .{ path, n });
 
-    try writeBufferValToFile(tmpPath, bufferVal);
-    errdefer std.fs.deleteFileAbsolute(tmpPath) catch {};
+    try writeBufferValToFile(io, tmpPath, bufferVal);
+    errdefer Dir.deleteFileAbsolute(io, tmpPath) catch {};
 
-    try std.fs.renameAbsolute(tmpPath, path);
+    try Dir.renameAbsolute(tmpPath, path, io);
 
     // This is because fsync() does not guarantee that
     // the directory entry of the given file has also reached the disk;
@@ -101,23 +106,25 @@ pub fn writeBufferToFileAtomic(
     // could render a new file inaccessible even if you properly synchronized it.
     // If you did not just create the file, there is no need to synchronize its directory.
     const parent = std.fs.path.dirname(path) orelse return error.PathHasNoParent;
-    syncPath(parent);
+    syncPath(io, parent);
 }
 
-pub fn readAll(alloc: Allocator, path: []const u8) ![]u8 {
-    var file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
-    const size = (try file.stat()).size;
+pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
+    var file = try Dir.openFileAbsolute(io, path, .{});
+    defer file.close(io);
+    const size = (try file.stat(io)).size;
 
     const dst = try alloc.alloc(u8, size);
     errdefer alloc.free(dst);
 
-    _ = try file.readAll(dst);
+    _ = try file.readPositionalAll(io, dst, 0);
     return dst;
 }
 
 test "pathExists returns true for existing paths and false for missing path" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
     const Case = struct {
         path: []const u8,
         expected: bool,
@@ -126,14 +133,14 @@ test "pathExists returns true for existing paths and false for missing path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("nested");
+    try tmp.dir.createDirPath(io, "nested");
     {
-        var file = try tmp.dir.createFile("existing.txt", .{});
-        defer file.close();
-        try file.writeAll("content");
+        var file = try tmp.dir.createFile(io, "existing.txt", .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, "content");
     }
 
-    const tmp_path = try tmp.dir.realpathAlloc(alloc, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(tmp_path);
     const existing_file = try std.fs.path.join(alloc, &.{ tmp_path, "existing.txt" });
     defer alloc.free(existing_file);
@@ -149,40 +156,46 @@ test "pathExists returns true for existing paths and false for missing path" {
     };
 
     for (cases) |case| {
-        const actual = try pathExists(case.path);
+        const actual = try pathExists(io, case.path);
         try std.testing.expectEqual(case.expected, actual);
     }
 }
 
 test "syncPathAndParentDir fsync file and parent directory" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const file_name = "test.txt";
     {
-        var f = try tmp.dir.createFile(file_name, .{});
-        defer f.close();
-        try f.writeAll("hello");
+        var f = try tmp.dir.createFile(io, file_name, .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io, "hello");
     }
 
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, file_name);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    syncPathAndParentDir(abs_path);
+    syncPathAndParentDir(io, abs_path);
 }
 
 test "syncPathAndParentDir fsync directory and parent directory" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("nested");
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "nested");
+    try tmp.dir.createDirPath(io, "nested");
+    const abs_path = try tmp.dir.realPathFileAlloc(io, "nested", std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    syncPathAndParentDir(abs_path);
+    syncPathAndParentDir(io, abs_path);
 }
 
 test "readAll reads full file content from tmp directory" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -190,39 +203,41 @@ test "readAll reads full file content from tmp directory" {
     const content = "simple content";
 
     {
-        var f = try tmp.dir.createFile(file_name, .{});
-        defer f.close();
-        try f.writeAll(content);
+        var f = try tmp.dir.createFile(io, file_name, .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io, content);
     }
 
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, file_name);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    const actual = try readAll(std.testing.allocator, abs_path);
+    const actual = try readAll(std.testing.io, std.testing.allocator, abs_path);
     defer std.testing.allocator.free(actual);
 
     try std.testing.expectEqualStrings(content, actual);
 }
 
 test "writeBufferValToFileAtomic writes and overwrites atomically" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmpPath = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(tmpPath);
     const absPath = try std.fs.path.join(std.testing.allocator, &.{ tmpPath, "atomic.txt" });
     defer std.testing.allocator.free(absPath);
 
     {
-        try writeBufferToFileAtomic(absPath, "first", false);
-        const actual = try readAll(std.testing.allocator, absPath);
+        try writeBufferToFileAtomic(io, absPath, "first", false);
+        const actual = try readAll(std.testing.io, std.testing.allocator, absPath);
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings("first", actual);
     }
 
     {
-        try writeBufferToFileAtomic(absPath, "second", true);
-        const actual = try readAll(std.testing.allocator, absPath);
+        try writeBufferToFileAtomic(io, absPath, "second", true);
+        const actual = try readAll(std.testing.io, std.testing.allocator, absPath);
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings("second", actual);
     }

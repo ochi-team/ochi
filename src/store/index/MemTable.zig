@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const encoding = @import("encoding");
 
@@ -39,7 +40,7 @@ pub fn empty(alloc: Allocator) !*MemTable {
     return t;
 }
 
-pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
+pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocks.len);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
@@ -52,7 +53,7 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
         // nothing to merge
         const b = blocks[0];
 
-        const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+        const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         try t.setup(alloc, b, flushAtUs);
         std.debug.assert(t.metaindexBuf.items.len > 0);
         return t;
@@ -63,13 +64,13 @@ pub fn init(alloc: Allocator, blocks: []*MemBlock) !*MemTable {
         readers.appendAssumeCapacity(reader);
     }
 
-    const flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
-    try t.mergeIntoMemTable(alloc, &readers, flushAtUs);
+    const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
+    try t.mergeIntoMemTable(io, alloc, &readers, flushAtUs);
     std.debug.assert(t.metaindexBuf.items.len > 0);
     return t;
 }
 
-pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
+pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*MemTable) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     defer {
         for (readers.items) |r| r.deinit(alloc);
@@ -82,8 +83,8 @@ pub fn mergeMemTables(alloc: Allocator, memTables: []*MemTable) !*MemTable {
     const t = try empty(alloc);
     errdefer t.deinit(alloc);
 
-    const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(*MemTable, memTables);
-    try t.mergeIntoMemTable(alloc, &readers, flushToDiskAtUs);
+    const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(io, *MemTable, memTables);
+    try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs);
     return t;
 }
 
@@ -162,6 +163,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
 
 fn mergeIntoMemTable(
     self: *MemTable,
+    io: Io,
     alloc: Allocator,
     readers: *std.ArrayList(*BlockReader),
     flushAtUs: i64,
@@ -171,11 +173,12 @@ fn mergeIntoMemTable(
     var writer = BlockWriter.initFromMemTable(self);
     defer writer.deinit(alloc);
     self.tableHeader.deinit(alloc);
-    self.tableHeader = try mergeBlocks(alloc, &writer, readers, null);
+    self.tableHeader = try mergeBlocks(io, alloc, &writer, readers, null);
 }
 
 // TODO: move to a better place, it's not related to mem table
 pub fn mergeBlocks(
+    io: Io,
     alloc: Allocator,
     writer: *BlockWriter,
     readers: *std.ArrayList(*BlockReader),
@@ -184,8 +187,8 @@ pub fn mergeBlocks(
     var merger = try BlockMerger.init(alloc, readers);
     defer merger.deinit(alloc);
 
-    const tableHeader = try merger.merge(alloc, writer, stopped);
-    try writer.close(alloc);
+    const tableHeader = try merger.merge(io, alloc, writer, stopped);
+    try writer.close(io, alloc);
 
     return tableHeader;
 }
@@ -196,8 +199,8 @@ pub fn size(self: *MemTable) u64 {
     );
 }
 
-pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
-    fs.makeDirAssert(path);
+pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) !void {
+    fs.createDirAssert(io, path);
 
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
@@ -212,12 +215,12 @@ pub fn storeToDisk(self: *MemTable, alloc: Allocator, path: []const u8) !void {
     const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
     defer fbaAlloc.free(lensPath);
 
-    try fs.writeBufferValToFile(metaindexPath, self.metaindexBuf.items);
-    try fs.writeBufferValToFile(indexPath, self.indexBuf.items);
-    try fs.writeBufferValToFile(entriesPath, self.entriesBuf.items);
-    try fs.writeBufferValToFile(lensPath, self.lensBuf.items);
+    try fs.writeBufferValToFile(io, metaindexPath, self.metaindexBuf.items);
+    try fs.writeBufferValToFile(io, indexPath, self.indexBuf.items);
+    try fs.writeBufferValToFile(io, entriesPath, self.entriesBuf.items);
+    try fs.writeBufferValToFile(io, lensPath, self.lensBuf.items);
 
-    try self.tableHeader.writeFile(alloc, path);
+    try self.tableHeader.writeFile(io, alloc, path);
 
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }

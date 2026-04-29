@@ -1,4 +1,6 @@
 const std = @import("std");
+const Io = std.Io;
+const Dir = Io.Dir;
 const fs = @import("../../fs.zig");
 
 const Field = @import("../lines.zig").Field;
@@ -29,9 +31,9 @@ tableHeader: TableHeader,
 
 flushAtUs: i64 = std.math.maxInt(i64),
 
-pub fn init(allocator: std.mem.Allocator) !*MemTable {
-    const streamWriter = try StreamWriter.initMem(allocator, 1);
-    errdefer streamWriter.deinit(allocator);
+pub fn init(io: Io, allocator: std.mem.Allocator) !*MemTable {
+    const streamWriter = try StreamWriter.initMem(io, allocator, 1);
+    errdefer streamWriter.deinit(io, allocator);
 
     const p = try allocator.create(MemTable);
     //TODO should it be stack allocated instead?
@@ -42,12 +44,12 @@ pub fn init(allocator: std.mem.Allocator) !*MemTable {
 
     return p;
 }
-pub fn deinit(self: *MemTable, allocator: std.mem.Allocator) void {
-    self.streamWriter.deinit(allocator);
+pub fn deinit(self: *MemTable, io: Io, allocator: std.mem.Allocator) void {
+    self.streamWriter.deinit(io, allocator);
     allocator.destroy(self);
 }
 
-pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !void {
+pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []Line) !void {
     if (lines.len == 0) {
         return Error.EmptyLines;
     }
@@ -65,7 +67,7 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !v
         std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
 
         if (blockSize >= maxBlockSize or !line.sid.eql(&prevSID)) {
-            try blockWriter.writeLines(allocator, prevSID, lines[streamI..i], self.streamWriter);
+            try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..i], self.streamWriter);
             prevSID = line.sid;
             blockSize = 0;
             streamI = i;
@@ -73,9 +75,9 @@ pub fn addLines(self: *MemTable, allocator: std.mem.Allocator, lines: []Line) !v
         blockSize += line.fieldsSize();
     }
     if (streamI != lines.len) {
-        try blockWriter.writeLines(allocator, prevSID, lines[streamI..], self.streamWriter);
+        try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..], self.streamWriter);
     }
-    try blockWriter.finish(allocator, self.streamWriter, &self.tableHeader);
+    try blockWriter.finish(io, allocator, self.streamWriter, &self.tableHeader);
 }
 
 // TODO: this is not the best place for bloom path generation
@@ -94,15 +96,15 @@ pub fn getBloomTokensFilePath(alloc: std.mem.Allocator, tablePath: []const u8, s
     return path;
 }
 
-pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) !void {
+pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
-    if (std.fs.openDirAbsolute(path, .{})) |dir| {
+    if (Dir.openDirAbsolute(io, path, .{})) |dir| {
         var d = dir;
-        d.close();
+        d.close(io);
         return error.DirAlreadyExists;
     } else |err| switch (err) {
         error.FileNotFound => {
-            try std.fs.makeDirAbsolute(path);
+            try Dir.createDirAbsolute(io, path, .default_dir);
         },
         else => return err,
     }
@@ -150,19 +152,21 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         try std.fs.path.join(allocator, &.{ path, filenames.messageTokens });
     defer allocator.free(messageBloomFilterPath);
 
-    try fs.writeBufferValToFile(columnKeysPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(columnIdxsPath, self.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(metaindexPath, self.streamWriter.metaIndexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(indexPath, self.streamWriter.indexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(columnsHeaderIndexPath, self.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(columnsHeaderPath, self.streamWriter.columnsHeaderDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnKeysPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnIdxsPath, self.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, metaindexPath, self.streamWriter.metaIndexDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, indexPath, self.streamWriter.indexDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnsHeaderIndexPath, self.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnsHeaderPath, self.streamWriter.columnsHeaderDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
 
     try fs.writeBufferValToFile(
+        io,
         messageBloomFilterPath,
         self.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
     );
     try fs.writeBufferValToFile(
+        io,
         messageValuesPath,
         self.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
     );
@@ -173,7 +177,7 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         self.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer()
     else
         "";
-    try fs.writeBufferValToFile(bloomTokensPath, bloomTokensContent);
+    try fs.writeBufferValToFile(io, bloomTokensPath, bloomTokensContent);
 
     const bloomValuesPath = try getBloomValuesFilePath(allocator, path, 0);
     defer allocator.free(bloomValuesPath);
@@ -181,11 +185,11 @@ pub fn storeToDisk(self: *MemTable, alloc: std.mem.Allocator, path: []const u8) 
         self.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer()
     else
         "";
-    try fs.writeBufferValToFile(bloomValuesPath, bloomValuesContent);
+    try fs.writeBufferValToFile(io, bloomValuesPath, bloomValuesContent);
 
-    try self.tableHeader.writeFile(allocator, path);
+    try self.tableHeader.writeFile(io, allocator, path);
 
-    fs.syncPathAndParentDir(path);
+    fs.syncPathAndParentDir(io, path);
 }
 
 const BlockHeader = @import("block_header.zig").BlockHeader;
@@ -223,17 +227,19 @@ fn populateSampleLines(sample: *SampleLines) void {
     };
 }
 
-fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    var file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    return file.readToEndAlloc(allocator, std.math.maxInt(usize));
+fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    var file_reader = file.reader(io, &.{});
+    return file_reader.interface.allocRemaining(allocator, .limited(std.math.maxInt(usize)));
 }
 
 test "addLines" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{std.testing.io});
 }
 
-fn testAddLines(allocator: std.mem.Allocator) !void {
+fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -247,9 +253,9 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
         sample.lines[1],
     };
 
-    const memTable = try MemTable.init(allocator);
-    defer memTable.deinit(allocator);
-    try memTable.addLines(allocator, lines[0..]);
+    const memTable = try MemTable.init(io, allocator);
+    defer memTable.deinit(io, allocator);
+    try memTable.addLines(io, allocator, lines[0..]);
 
     const timestampsContent = memTable.streamWriter.timestampsDst.asSliceAssumeBuffer();
     const indexContent = memTable.streamWriter.indexDst.asSliceAssumeBuffer();
@@ -329,17 +335,17 @@ fn testAddLines(allocator: std.mem.Allocator) !void {
 
 test "addLinesErrorOnEmpty" {
     var lines = [_]Line{};
-    const memTable = try MemTable.init(std.testing.allocator);
-    defer memTable.deinit(std.testing.allocator);
-    const err = memTable.addLines(std.testing.allocator, lines[0..]);
+    const memTable = try MemTable.init(std.testing.io, std.testing.allocator);
+    defer memTable.deinit(std.testing.io, std.testing.allocator);
+    const err = memTable.addLines(std.testing.io, std.testing.allocator, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
 test "flushToDisk writes buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{std.testing.io});
 }
 
-fn testFlushToDisk(allocator: std.mem.Allocator) !void {
+fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,
         .fields2 = undefined,
@@ -354,16 +360,16 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const basePath = try tmp.dir.realpathAlloc(allocator, ".");
+    const basePath = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(basePath);
     const flushPath = try std.fs.path.join(allocator, &.{ basePath, "flush" });
     defer allocator.free(flushPath);
 
-    const memTable = try MemTable.init(allocator);
-    defer memTable.deinit(allocator);
+    const memTable = try MemTable.init(io, allocator);
+    defer memTable.deinit(io, allocator);
 
-    try memTable.addLines(allocator, lines[0..]);
-    try memTable.storeToDisk(allocator, flushPath);
+    try memTable.addLines(io, allocator, lines[0..]);
+    try memTable.storeToDisk(io, allocator, flushPath);
 
     const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnKeys });
     defer allocator.free(columnKeysPath);
@@ -390,53 +396,53 @@ fn testFlushToDisk(allocator: std.mem.Allocator) !void {
     const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.header });
     defer allocator.free(metadataPath);
 
-    const columnKeysContent = try readFileAll(allocator, columnKeysPath);
+    const columnKeysContent = try readFileAll(io, allocator, columnKeysPath);
     defer allocator.free(columnKeysContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer(), columnKeysContent);
 
-    const columnIdxsContent = try readFileAll(allocator, columnIdxsPath);
+    const columnIdxsContent = try readFileAll(io, allocator, columnIdxsPath);
     defer allocator.free(columnIdxsContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnIdxsBuf.asSliceAssumeBuffer(), columnIdxsContent);
 
-    const metaindexContent = try readFileAll(allocator, metaindexPath);
+    const metaindexContent = try readFileAll(io, allocator, metaindexPath);
     defer allocator.free(metaindexContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer(), metaindexContent);
 
-    const indexContent = try readFileAll(allocator, indexPath);
+    const indexContent = try readFileAll(io, allocator, indexPath);
     defer allocator.free(indexContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.indexDst.asSliceAssumeBuffer(), indexContent);
 
-    const columnsHeaderIndexContent = try readFileAll(allocator, columnsHeaderIndexPath);
+    const columnsHeaderIndexContent = try readFileAll(io, allocator, columnsHeaderIndexPath);
     defer allocator.free(columnsHeaderIndexContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(), columnsHeaderIndexContent);
 
-    const columnsHeaderContent = try readFileAll(allocator, columnsHeaderPath);
+    const columnsHeaderContent = try readFileAll(io, allocator, columnsHeaderPath);
     defer allocator.free(columnsHeaderContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(), columnsHeaderContent);
 
-    const timestampsContent = try readFileAll(allocator, timestampsPath);
+    const timestampsContent = try readFileAll(io, allocator, timestampsPath);
     defer allocator.free(timestampsContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.timestampsDst.asSliceAssumeBuffer(), timestampsContent);
 
-    const msgBloomTokensContent = try readFileAll(allocator, messageBloomTokensPath);
+    const msgBloomTokensContent = try readFileAll(io, allocator, messageBloomTokensPath);
     defer allocator.free(msgBloomTokensContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(), msgBloomTokensContent);
 
-    const msgBloomValuesContent = try readFileAll(allocator, messageBloomValuesPath);
+    const msgBloomValuesContent = try readFileAll(io, allocator, messageBloomValuesPath);
     defer allocator.free(msgBloomValuesContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(), msgBloomValuesContent);
 
-    const bloomTokensContent = try readFileAll(allocator, bloomTokensPath);
+    const bloomTokensContent = try readFileAll(io, allocator, bloomTokensPath);
     defer allocator.free(bloomTokensContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer(), bloomTokensContent);
 
-    const bloomValuesContent = try readFileAll(allocator, bloomValuesPath);
+    const bloomValuesContent = try readFileAll(io, allocator, bloomValuesPath);
     defer allocator.free(bloomValuesContent);
     try std.testing.expectEqualSlices(u8, memTable.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer(), bloomValuesContent);
 
-    const metadataContent = try readFileAll(allocator, metadataPath);
+    const metadataContent = try readFileAll(io, allocator, metadataPath);
     defer allocator.free(metadataContent);
     try std.testing.expect(metadataContent.len > 0);
 
-    try std.testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(allocator, flushPath));
+    try std.testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(io, allocator, flushPath));
 }

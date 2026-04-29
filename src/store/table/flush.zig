@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const Conf = @import("../../Conf.zig");
 
@@ -6,6 +7,7 @@ const TableContract = @import("contract.zig").TableContract;
 const FlushableTableContract = @import("contract.zig").FlushableTableContract;
 
 pub fn getFlushTablesToDiskDeadline(
+    io: Io,
     comptime T: type,
     comptime M: type,
     memTables: []T,
@@ -18,7 +20,7 @@ pub fn getFlushTablesToDiskDeadline(
     }
 
     const interval = Conf.getConf().app.flushIntervalUs;
-    var min: i64 = interval + std.time.microTimestamp();
+    var min: i64 = interval + Io.Timestamp.now(io, .real).toMicroseconds();
     for (memTables) |table| {
         if (table.mem) |memTable| {
             min = @min(memTable.flushAtUs, min);
@@ -29,6 +31,7 @@ pub fn getFlushTablesToDiskDeadline(
 }
 
 pub fn getFlushMemTableToDiskDeadline(
+    io: Io,
     comptime M: type,
     memTables: []M,
 ) i64 {
@@ -40,7 +43,7 @@ pub fn getFlushMemTableToDiskDeadline(
     }
 
     const interval = Conf.getConf().app.flushIntervalUs;
-    var min: i64 = interval + std.time.microTimestamp();
+    var min: i64 = interval + Io.Timestamp.now(io, .real).toMicroseconds();
     for (memTables) |table| {
         min = @min(table.flushAtUs, min);
     }

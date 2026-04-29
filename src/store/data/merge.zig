@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Heap = @import("../../stds/heap.zig").Heap;
 
@@ -21,6 +22,7 @@ const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
 
 // TODO: rename this crap
 pub fn mergeData(
+    io: Io,
     alloc: Allocator,
     writer: *StreamWriter,
     readers: *std.ArrayList(*BlockReader),
@@ -41,7 +43,7 @@ pub fn mergeData(
         }
 
         const reader = merger.heap.peek().?;
-        try merger.writeBlock(alloc, blockWriter, writer, &reader.blockData);
+        try merger.writeBlock(io, alloc, blockWriter, writer, &reader.blockData);
         if (try reader.nextBlock(alloc)) {
             merger.heap.fix(0);
         } else {
@@ -50,9 +52,9 @@ pub fn mergeData(
         }
     }
 
-    try merger.flushStream(alloc, blockWriter, writer);
+    try merger.flushStream(io, alloc, blockWriter, writer);
     var tableHeader = TableHeader{};
-    try blockWriter.finish(alloc, writer, &tableHeader);
+    try blockWriter.finish(io, alloc, writer, &tableHeader);
     return tableHeader;
 }
 
@@ -130,6 +132,7 @@ pub const StreamMerger = struct {
 
     pub fn writeBlock(
         self: *StreamMerger,
+        io: Io,
         alloc: Allocator,
         blockWriter: *BlockWriter,
         writer: *StreamWriter,
@@ -141,38 +144,38 @@ pub const StreamMerger = struct {
 
         if (!blockData.sid.eql(&self.sid)) {
             // it means next stream begins, we have to flush the data
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
             self.sid = blockData.sid;
 
             if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
-                try blockWriter.writeData(alloc, blockData, writer);
+                try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.decodeLines(alloc, blockData);
+                try self.decodeLines(io, alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
             // we have to flush the data before we can add more
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
             if (totalKeys > Block.maxColumns) {
-                try blockWriter.writeData(alloc, blockData, writer);
+                try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.decodeLines(alloc, blockData);
+                try self.decodeLines(io, alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.size >= MemTable.maxBlockSize) {
-            try self.flushStream(alloc, blockWriter, writer);
-            try blockWriter.writeData(alloc, blockData, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
+            try blockWriter.writeData(io, alloc, blockData, writer);
         } else {
-            try self.merge(alloc, blockData, blockWriter, writer);
+            try self.merge(io, alloc, blockData, blockWriter, writer);
             self.totalKeys += totalKeys;
         }
     }
 
     // TODO: this and many more demonstartes obvious dependece of block and stream writers,
     // they always go together, I have to inject one into another probably
-    fn flushStream(self: *StreamMerger, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
+    fn flushStream(self: *StreamMerger, io: Io, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
         if (self.lines.items.len > 0) {
-            try writer.writeLines(alloc, self.sid, self.lines.items, streamWriter);
+            try writer.writeLines(io, alloc, self.sid, self.lines.items, streamWriter);
         }
 
         self.reset(alloc);
@@ -180,13 +183,14 @@ pub const StreamMerger = struct {
 
     fn merge(
         self: *StreamMerger,
+        io: Io,
         alloc: Allocator,
         blockData: *BlockData,
         blockWriter: *BlockWriter,
         writer: *StreamWriter,
     ) !void {
         const len = self.lines.items.len;
-        try self.decodeLines(alloc, blockData);
+        try self.decodeLines(io, alloc, blockData);
         std.debug.assert(self.lines.items.len > len);
 
         try self.mergeBufferLines.ensureTotalCapacity(alloc, self.lines.items.len);
@@ -196,12 +200,12 @@ pub const StreamMerger = struct {
         std.mem.swap(std.ArrayList(Line), &self.mergeBufferLines, &self.lines);
 
         if (self.size >= MemTable.maxBlockSize) {
-            try self.flushStream(alloc, blockWriter, writer);
+            try self.flushStream(io, alloc, blockWriter, writer);
         }
     }
 
-    fn decodeLines(self: *StreamMerger, alloc: Allocator, blockData: *BlockData) !void {
-        const block = try Block.initFromData(alloc, blockData, self.unpacker, self.decoder);
+    fn decodeLines(self: *StreamMerger, io: Io, alloc: Allocator, blockData: *BlockData) !void {
+        const block = try Block.initFromData(io, alloc, blockData, self.unpacker, self.decoder);
         defer block.deinit(alloc);
 
         const offset = self.lines.items.len;
@@ -407,6 +411,7 @@ test "mergeLines" {
 
 test "mergeData keeps merged memtable buffers alive after source memtables deinit" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
     const sid = SID{ .tenantID = "tenant-a", .id = 42 };
 
     const expected = [_]struct {
@@ -422,10 +427,10 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     const fieldKey = "key";
 
     const mergedMemTable = blk: {
-        const leftMemTable = try MemTable.init(alloc);
-        defer leftMemTable.deinit(alloc);
-        const rightMemTable = try MemTable.init(alloc);
-        defer rightMemTable.deinit(alloc);
+        const leftMemTable = try MemTable.init(io, alloc);
+        defer leftMemTable.deinit(io, alloc);
+        const rightMemTable = try MemTable.init(io, alloc);
+        defer rightMemTable.deinit(io, alloc);
 
         var leftFields1 = [_]Field{.{ .key = fieldKey, .value = "left-1" }};
         var leftFields2 = [_]Field{.{ .key = fieldKey, .value = "left-2" }};
@@ -441,8 +446,8 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
             .{ .timestampNs = 4, .sid = sid, .fields = rightFields2[0..] },
         };
 
-        try leftMemTable.addLines(alloc, leftLines[0..]);
-        try rightMemTable.addLines(alloc, rightLines[0..]);
+        try leftMemTable.addLines(io, alloc, leftLines[0..]);
+        try rightMemTable.addLines(io, alloc, rightLines[0..]);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
@@ -450,10 +455,10 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
 
-        const dstMemTable = try MemTable.init(alloc);
-        errdefer dstMemTable.deinit(alloc);
+        const dstMemTable = try MemTable.init(io, alloc);
+        errdefer dstMemTable.deinit(io, alloc);
         const stopped: ?*std.atomic.Value(bool) = null;
-        dstMemTable.tableHeader = try mergeData(alloc, dstMemTable.streamWriter, &readers, stopped);
+        dstMemTable.tableHeader = try mergeData(io, alloc, dstMemTable.streamWriter, &readers, stopped);
 
         try std.testing.expect(dstMemTable.streamWriter.indexDst.len() > 0);
         try std.testing.expect(dstMemTable.streamWriter.metaIndexDst.len() > 0);
@@ -463,7 +468,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
         break :blk dstMemTable;
     };
-    defer mergedMemTable.deinit(alloc);
+    defer mergedMemTable.deinit(io, alloc);
 
     var mergedReader = try BlockReader.initFromMemTable(alloc, mergedMemTable);
     defer mergedReader.deinit(alloc);
@@ -475,7 +480,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
     var expectedI: usize = 0;
     while (try mergedReader.nextBlock(alloc)) {
-        const block = try Block.initFromData(alloc, &mergedReader.blockData, unpacker, decoder);
+        const block = try Block.initFromData(io, alloc, &mergedReader.blockData, unpacker, decoder);
         defer block.deinit(alloc);
 
         var lines = std.ArrayList(Line).empty;

@@ -1,4 +1,6 @@
 const std = @import("std");
+const Io = std.Io;
+
 const zeit = @import("zeit");
 
 const ColumnType = @import("block_header.zig").ColumnType;
@@ -32,6 +34,7 @@ pub fn deinit(self: *Self) void {
 
 pub fn decode(
     self: *Self,
+    io: Io,
     values: [][]const u8,
     vt: ColumnType,
     dictValues: []const []const u8,
@@ -142,7 +145,7 @@ pub fn decode(
                 }
                 const timestamp = decodeTimestampISO8601(v);
                 const start = self.buf.items.len;
-                try self.decodeTimestampISO8601String(timestamp);
+                try self.decodeTimestampISO8601String(io, timestamp);
                 values[i] = self.buf.items[start..];
             }
         },
@@ -214,8 +217,8 @@ fn decodeIPv4String(self: *Self, n: u32) void {
     self.decodeUint8String(@intCast(n & 0xFF));
 }
 
-fn decodeTimestampISO8601String(self: *Self, nsecs: i64) !void {
-    const instant = try zeit.instant(.{ .source = .{ .unix_nano = nsecs } });
+fn decodeTimestampISO8601String(self: *Self, io: Io, nsecs: i64) !void {
+    const instant = try zeit.instant(io, .{ .source = .{ .unix_nano = nsecs } });
     const time = instant.time();
 
     // Calculate milliseconds within the second from total nanoseconds

@@ -1,9 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
-pub fn gitHasNoMergeCommits(alloc: Allocator) !bool {
-    const result = try std.process.Child.run(.{
-        .allocator = alloc,
+pub fn gitHasNoMergeCommits(io: Io, alloc: Allocator) !bool {
+    const result = try std.process.run(alloc, io, .{
         .argv = &.{
             "git",
             "log",
@@ -16,23 +16,44 @@ pub fn gitHasNoMergeCommits(alloc: Allocator) !bool {
     defer alloc.free(result.stderr);
 
     return switch (result.term) {
-        .Exited => |code| code == 0 and std.mem.trim(u8, result.stdout, " \t\r\n").len == 0,
+        .exited => |code| code == 0 and std.mem.trim(u8, result.stdout, " \t\r\n").len == 0,
         else => false,
     };
 }
 
-pub fn projectIsFormatted(alloc: Allocator) !bool {
-    const result = try std.process.Child.run(.{
-        .allocator = alloc,
+pub fn projectIsFormatted(io: Io, alloc: Allocator) !bool {
+    const result = try std.process.run(alloc, io, .{
         .argv = &.{ "zig", "fmt", "--check", "." },
     });
     defer alloc.free(result.stdout);
     defer alloc.free(result.stderr);
 
     return switch (result.term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
+}
+
+test gitHasNoMergeCommits {
+    const alloc = std.testing.allocator;
+    // TODO no idea why testing.io doesn't work here
+    var threaded_io = std.Io.Threaded.init(alloc, .{});
+    defer threaded_io.deinit();
+    const io = threaded_io.io();
+
+    const noMergeCommits = try gitHasNoMergeCommits(io, alloc);
+    try std.testing.expect(noMergeCommits);
+}
+
+test projectIsFormatted {
+    const alloc = std.testing.allocator;
+    // TODO no idea why testing.io doesn't work here
+    var threaded_io = std.Io.Threaded.init(alloc, .{});
+    defer threaded_io.deinit();
+    const io = threaded_io.io();
+
+    const isFormatted = try projectIsFormatted(io, alloc);
+    try std.testing.expect(isFormatted);
 }
 
 // TODO: add linter
