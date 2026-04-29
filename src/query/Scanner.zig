@@ -25,14 +25,18 @@ pub const TokenKind = enum {
     RightCurlyBracket,
     LeftParenthesis,
     RightParenthesis,
+
     Comma,
+
     Equal,
     NotEqual,
-    Pipe,
+
     And,
     Or,
-    // literal might be a key, a value, a function argumenl
+
     Literal,
+
+    Pipe,
 };
 
 pub const Token = struct {
@@ -49,7 +53,6 @@ pub const Scanner = struct {
     tokens: std.ArrayList(Token) = .empty,
 
     // state
-    current: u16 = 0,
     line: u16 = 1,
     col: u16 = 1,
 
@@ -145,7 +148,13 @@ pub const Scanner = struct {
                         .tail = query[2..],
                     };
                 } else {
-                    reporter.reportSyntaxError(.{ .line = self.line, .col = self.col, .message = "unexpected token: !" });
+                    _ = reporter.reportSyntaxError(
+                        .{
+                            .line = self.line,
+                            .col = self.col,
+                            .message = "unexpected token: !",
+                        },
+                    );
                     return Error.SyntaxError;
                 }
             },
@@ -169,7 +178,7 @@ pub const Scanner = struct {
                         .tail = query[consumed..],
                     };
                 } else {
-                    reporter.reportSyntaxError(
+                    _ = reporter.reportSyntaxError(
                         .{ .line = self.line, .col = self.col, .message = "unexpected token: /" },
                     );
                     return Error.SyntaxError;
@@ -201,7 +210,7 @@ pub const Scanner = struct {
                 };
             },
             else => {
-                reporter.reportSyntaxError(.{ .line = self.line, .col = self.col, .message = "unexpected token" });
+                _ = reporter.reportSyntaxError(.{ .line = self.line, .col = self.col, .message = "unexpected token" });
                 return Error.SyntaxError;
             },
         };
@@ -214,7 +223,6 @@ pub const Scanner = struct {
     // TODO: benchmark if it's better to return the position shift
     // from the token, not to iterate over the consumed query again
     fn advancePosition(self: *Scanner, consumed: []const u8) void {
-        self.current += @intCast(consumed.len);
         for (consumed) |ch| {
             if (ch == '\n') {
                 self.line += 1;
@@ -282,8 +290,8 @@ test "Scanner.scan table-driven" {
         var scanner = Scanner{};
         defer scanner.deinit(alloc);
 
-        var reporter = try ErrorReporter.init(alloc);
-        defer reporter.deinit(alloc);
+        var errsBuf: [8]ErrorReporter.SyntaxError = undefined;
+        var reporter = ErrorReporter.init(&errsBuf);
 
         const scanResult = scanner.scan(alloc, case.query, &reporter);
         if (case.expectedErr) |expectedErr| {
