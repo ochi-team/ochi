@@ -139,12 +139,12 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
     // it doesn't run infinitely, but runs a few merge cycles to process left overs
     // from the previous launches
     for (0..concurrency) |_| {
-        try t.startDiskTablesMerge(io, alloc);
+        t.startDiskTablesMerge(io, alloc);
     }
 
-    try t.startMemTablesFlusher(io, alloc);
-    try t.startMemBlockFlusher(io, alloc);
-    try t.startCacheKeyInvalidator(io);
+    t.startMemTablesFlusher(io, alloc);
+    t.startMemBlockFlusher(io, alloc);
+    t.startCacheKeyInvalidator(io);
 
     return t;
 }
@@ -437,12 +437,12 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
 // 2. runX - runs a given task that MUST be able to complete without stopped signal,
 // it has a specific error handling and stopped signal
 
-pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     if (self.stopped.load(.acquire)) {
         return;
     }
 
-    self.g.async(io, runDiskTablesMerger, .{ self, io, alloc });
+    self.g.concurrent(io, runDiskTablesMerger, .{ self, io, alloc }) catch unreachable;
 }
 
 fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
@@ -454,10 +454,10 @@ fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     };
 }
 
-fn startMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+fn startMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     errdefer self.g.cancel(io);
 
-    self.g.async(io, runMemTablesFlusher, .{ self, io, alloc });
+    self.g.concurrent(io, runMemTablesFlusher, .{ self, io, alloc }) catch unreachable;
 }
 
 fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
@@ -477,10 +477,10 @@ fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     }
 }
 
-fn startMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+fn startMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     errdefer self.g.cancel(io);
 
-    self.g.async(io, runMemBlockFlusher, .{ self, io, alloc });
+    self.g.concurrent(io, runMemBlockFlusher, .{ self, io, alloc }) catch unreachable;
 }
 
 fn runMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
@@ -508,10 +508,10 @@ fn runMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     }
 }
 
-fn startCacheKeyInvalidator(self: *IndexRecorder, io: Io) !void {
+fn startCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
     errdefer self.g.cancel(io);
 
-    self.g.async(io, runCacheKeyInvalidator, .{ self, io });
+    self.g.concurrent(io, runCacheKeyInvalidator, .{ self, io }) catch unreachable;
 }
 
 fn runCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
@@ -544,7 +544,7 @@ pub fn startMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void
 
     errdefer self.g.cancel(io);
 
-    self.g.async(io, runMemTablesMerge, .{ self, io, alloc });
+    self.g.concurrent(io, runMemTablesMerge, .{ self, io, alloc }) catch unreachable;
 }
 
 fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {

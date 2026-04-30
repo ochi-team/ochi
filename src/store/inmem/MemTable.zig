@@ -36,6 +36,7 @@ pub fn init(io: Io, allocator: std.mem.Allocator) !*MemTable {
     errdefer streamWriter.deinit(io, allocator);
 
     const p = try allocator.create(MemTable);
+    errdefer allocator.destroy(p);
     //TODO should it be stack allocated instead?
     p.* = MemTable{
         .streamWriter = streamWriter,

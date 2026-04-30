@@ -35,11 +35,11 @@ pub fn Swapper(
             switch (tableKind) {
                 .disk => {
                     try self.diskTables.append(alloc, newTable);
-                    try self.startDiskTablesMerge(io, alloc);
+                    self.startDiskTablesMerge(io, alloc);
                 },
                 .mem => {
                     try self.memTables.append(alloc, newTable);
-                    try self.startDiskTablesMerge(io, alloc);
+                    self.startDiskTablesMerge(io, alloc);
                 },
             }
 

@@ -87,6 +87,7 @@ pub fn open(
     errdefer data.deinit(io, alloc);
 
     const partition = try alloc.create(Partition);
+    errdefer alloc.destroy(partition);
     partition.* = Partition{
         .alloc = alloc,
         .day = day,
