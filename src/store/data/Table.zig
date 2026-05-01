@@ -287,10 +287,9 @@ pub fn close(self: *Table, io: Io) void {
         // TODO: replace to an error log
         // TODO: review it to make removing more reliable,
         // e.g. deletion must be intrrupted in the middle leaving a half baked table
-        // TODO removed without replacement
-        // std.fs.deleteTreeAbsolute(self.path) catch |err| {
-        //     std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
-        // };
+        fs.deleteTreeAbsolute(io, self.path) catch |err| {
+            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
+        };
     }
 
     if (self.path.len > 0) {

@@ -98,8 +98,7 @@ pub fn removeUnusedTables(io: Io, alloc: Allocator, path: []const u8, tableNames
         const pathToDelete = try std.fs.path.join(fbaAlloc, &.{ path, entry.name });
         defer fbaAlloc.free(pathToDelete);
         std.debug.print("removing '{s}' file, sycning table dirs\n", .{pathToDelete});
-        // TODO removed with no replacement
-        // try std.fs.deleteTreeAbsolute(pathToDelete);
+        try fs.deleteTreeAbsolute(io, pathToDelete);
     }
 }
 

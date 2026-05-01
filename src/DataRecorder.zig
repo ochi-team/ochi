@@ -539,13 +539,12 @@ fn mergeTables(
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
-                    // TODO removed without replacement
-                    // std.fs.deleteTreeAbsolute(destinationTablePath) catch |deleteErr| {
-                    //     std.debug.print(
-                    //         "failed to delete half way merged data table after stopped: {s}\n",
-                    //         .{@errorName(deleteErr)},
-                    //     );
-                    // };
+                    fs.deleteTreeAbsolute(io, destinationTablePath) catch |deleteErr| {
+                        std.debug.print(
+                            "failed to delete half way merged data table after stopped: {s}\n",
+                            .{@errorName(deleteErr)},
+                        );
+                    };
                 }
                 return err;
             },

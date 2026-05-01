@@ -179,10 +179,9 @@ pub fn close(self: *Table, io: Io) void {
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
     if (shouldRemove) {
         // TODO: replace to an error log
-        // TODO removed without replacement
-        // std.fs.deleteTreeAbsolute(self.path) catch |err| {
-        //     std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
-        // };
+        fs.deleteTreeAbsolute(io, self.path) catch |err| {
+            std.debug.panic("failed to delete table '{s}': {s}", .{ self.path, @errorName(err) });
+        };
     }
 
     if (self.path.len > 0) {
