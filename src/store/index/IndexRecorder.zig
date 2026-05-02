@@ -679,7 +679,7 @@ pub fn mergeTables(
     var swapped = false;
     defer {
         if (!swapped) {
-            self.mxTables.lock(io) catch {};
+            self.mxTables.lockUncancelable(io);
             for (tables) |table| table.inMerge = false;
             self.mxTables.unlock(io);
         }
