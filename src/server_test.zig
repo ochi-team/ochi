@@ -33,13 +33,9 @@ fn request(
     contentType: ?[]const u8,
     contentEncoding: ?[]const u8,
 ) !HttpResponse {
-    var stream: std.Io.net.Stream = .{
-        .socket = .{
-            // TODO wtf is a handle
-            .handle = 0,
-            .address = try .parse("127.0.0.1", 9014),
-        },
-    };
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 9014);
+    const stream = try address.connect(io, .{ .mode = .stream, .protocol = .tcp });
+
     defer stream.close(io);
 
     var req: std.ArrayList(u8) = .empty;
@@ -56,10 +52,8 @@ fn request(
     if (contentEncoding) |ce| {
         try req.print(alloc, "Content-Encoding: {s}\r\n", .{ce});
     }
-    // TODO not sure
     try req.appendSlice(alloc, "\r\n");
     if (body.len > 0) {
-        // TODO not sure
         try req.appendSlice(alloc, body);
     }
 
@@ -67,6 +61,8 @@ fn request(
 
     var writer = stream.writer(io, &buf);
     try writer.interface.writeAll(req.items);
+
+    try writer.interface.flush();
 
     req.clearRetainingCapacity();
 
@@ -159,7 +155,7 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
-    var thread = Io.async(io, ServerThread.run, .{ alloc, conf });
+    var thread = try Io.concurrent(io, ServerThread.run, .{ alloc, conf });
     errdefer {
         thread.cancel(io);
         std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
