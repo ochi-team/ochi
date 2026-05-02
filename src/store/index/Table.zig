@@ -313,6 +313,8 @@ fn readTestTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: 
     return fs.readAll(io, alloc, filePath);
 }
 
+// TODO: bunch of tests/things is duplicated between data/index tables,
+// there must be a way to make them more generic
 test "release keeps table unless toRemove is set, then removes table dir" {
     const alloc = testing.allocator;
     const io = testing.io;

@@ -17,7 +17,6 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
 }
 
-// TODO not quite sure
 fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     if (global_server) |server| {
         server.stop();
@@ -66,7 +65,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 
     router.get("/insert/loki/ready", insert.insertLokiReady, .{});
     router.post("/insert/loki/api/v1/push", insert.insertLokiJsonHandler, .{});
-    router.post("/query", query.queryHandler, .{});
+
     router.post("/query", query.queryHandler, .{});
     router.post("/flush", flush.flushHandler, .{});
 
@@ -80,6 +79,34 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
             return err;
         },
     };
+}
+
+test "serverWithSIGTERM" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const conf = Conf.default(allocator);
+    // Start the server in a separate thread
+    const ServerThread = struct {
+        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
+            startServer(io, threadAllocator, threadConf) catch |err| {
+                std.debug.print("Server error: {}\n", .{err});
+            };
+        }
+    };
+
+    var future = try io.concurrent(ServerThread.run, .{ allocator, conf });
+
+    // Give the server time to start
+    try io.sleep(.fromMilliseconds(100), .real);
+
+    // Send SIGTERM to ourselves
+    const posix = std.posix;
+    const pid = std.c.getpid();
+    try posix.kill(pid, posix.SIG.TERM);
+
+    // Wait for the server thread to finish
+    future.await(io);
 }
 
 test {

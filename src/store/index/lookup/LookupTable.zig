@@ -219,7 +219,7 @@ fn nextBlock(self: *LookupTable, alloc: Allocator) !bool {
     }
 
     const blockHeader = self.blockHeaders[0];
-    const newMemBlock = try self.getMemBlock(blockHeader);
+    const newMemBlock = try self.getMemBlock(alloc, blockHeader);
 
     // Each block decode allocates a new MemBlock; free previous one first.
     if (self.memBlock) |memBlock| memBlock.deinit(alloc);
@@ -268,14 +268,12 @@ fn readBlockHeaders(self: *LookupTable, alloc: Allocator, metaIndex: MetaIndex) 
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
 }
 
-fn getMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
+fn getMemBlock(self: *LookupTable, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
     // TODO: potentially we can cache a block
-    return self.readMemBlock(blockHeader);
+    return self.readMemBlock(alloc, blockHeader);
 }
 
-fn readMemBlock(self: *LookupTable, blockHeader: BlockHeader) !*MemBlock {
-    const alloc = self.table.alloc;
-
+fn readMemBlock(self: *LookupTable, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
     self.entriesBlock.reset();
 
     // Copy exact encoded slices for this block and decode them into a fresh MemBlock.

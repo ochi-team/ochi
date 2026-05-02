@@ -282,8 +282,8 @@ pub fn queryLines(
 
     var results = std.ArrayList(Line).empty;
     for (parts.items) |part| {
-        var partResults = try part.queryLines(io, fbaAlloc, tenantID, query);
-        defer partResults.deinit(fbaAlloc);
+        var partResults = try part.queryLines(io, alloc, tenantID, query);
+        defer partResults.deinit(alloc);
 
         try results.appendSlice(alloc, partResults.items);
     }

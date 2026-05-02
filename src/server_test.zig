@@ -75,6 +75,7 @@ fn request(
     }
 
     const raw = try req.toOwnedSlice(alloc);
+    defer alloc.free(raw);
 
     const sep = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.InvalidResponse;
     const head = raw[0..sep];
@@ -88,28 +89,25 @@ fn request(
     const statusCode = try std.fmt.parseInt(u16, statusLine[9..12], 10);
 
     const responseBody = try alloc.dupe(u8, raw[bodyStart..]);
-    alloc.free(raw);
 
     return .{ .statusCode = statusCode, .body = responseBody };
 }
 
-fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
+fn waitUntilReady(io: Io, alloc: std.mem.Allocator, timeout: std.Io.Duration) !void {
     const start = Io.Timestamp.now(io, .real).nanoseconds;
-    const timeoutNs = 10 * std.time.ns_per_s;
 
-    while (Io.Timestamp.now(io, .real).nanoseconds - start < timeoutNs) {
-        const resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
+    while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
+        var resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch |err| {
+            std.debug.print("Server not ready yet, error: {}\n", .{err});
             try Io.sleep(io, .fromMilliseconds(50), .real);
             continue;
         };
-        defer {
-            var toFree = resp;
-            toFree.deinit(alloc);
-        }
+        defer resp.deinit(alloc);
 
         if (resp.statusCode == 200) {
             return;
         }
+        std.debug.print("Server not ready yet, status code: {d}\n", .{resp.statusCode});
         try Io.sleep(io, .fromMilliseconds(50), .real);
     }
 
@@ -155,13 +153,10 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
-    var thread = try Io.concurrent(io, ServerThread.run, .{ alloc, conf });
-    errdefer {
-        thread.cancel(io);
-        std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
-    }
+    var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
+    defer serverFuture.await(io);
 
-    try waitUntilReady(io, alloc);
+    try waitUntilReady(io, alloc, .fromSeconds(1));
 
     const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const insertJson = try std.fmt.allocPrint(
@@ -187,7 +182,13 @@ test "serverEndToEndViaHTTP" {
             "snappy",
         );
         defer resp.deinit(alloc);
-        try std.testing.expectEqual(@as(u16, 200), resp.statusCode);
+        try std.testing.expectEqual(200, resp.statusCode);
+    }
+
+    {
+        var resp = try request(io, alloc, "POST", "/flush", "", null, null);
+        defer resp.deinit(alloc);
+        try std.testing.expectEqual(200, resp.statusCode);
     }
 
     const queryJson = try std.fmt.allocPrint(
@@ -234,5 +235,4 @@ test "serverEndToEndViaHTTP" {
     }
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
-    thread.await(io);
 }
