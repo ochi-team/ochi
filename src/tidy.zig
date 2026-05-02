@@ -23,7 +23,7 @@ pub fn gitHasNoMergeCommits(io: Io, alloc: Allocator) !bool {
 
 pub fn projectIsFormatted(io: Io, alloc: Allocator) !bool {
     const result = try std.process.run(alloc, io, .{
-        .argv = &.{ "zig", "fmt", "--check", "src", "build.zig", "build.zig.zon" },
+        .argv = &.{ "zig", "fmt", "--check", ".", "--exclude", "zig-pkg" },
     });
     defer alloc.free(result.stdout);
     defer alloc.free(result.stderr);
