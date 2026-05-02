@@ -75,6 +75,7 @@ fn request(
     }
 
     const raw = try req.toOwnedSlice(alloc);
+    defer alloc.free(raw);
 
     const sep = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.InvalidResponse;
     const head = raw[0..sep];
@@ -88,7 +89,6 @@ fn request(
     const statusCode = try std.fmt.parseInt(u16, statusLine[9..12], 10);
 
     const responseBody = try alloc.dupe(u8, raw[bodyStart..]);
-    alloc.free(raw);
 
     return .{ .statusCode = statusCode, .body = responseBody };
 }
@@ -98,14 +98,11 @@ fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
     const timeoutNs = 10 * std.time.ns_per_s;
 
     while (Io.Timestamp.now(io, .real).nanoseconds - start < timeoutNs) {
-        const resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
+        var resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
             try Io.sleep(io, .fromMilliseconds(50), .real);
             continue;
         };
-        defer {
-            var toFree = resp;
-            toFree.deinit(alloc);
-        }
+        defer resp.deinit(alloc);
 
         if (resp.statusCode == 200) {
             return;
