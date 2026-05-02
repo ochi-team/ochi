@@ -93,12 +93,12 @@ fn request(
     return .{ .statusCode = statusCode, .body = responseBody };
 }
 
-fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
+fn waitUntilReady(io: Io, alloc: std.mem.Allocator, timeout: std.Io.Duration) !void {
     const start = Io.Timestamp.now(io, .real).nanoseconds;
-    const timeoutNs = 10 * std.time.ns_per_s;
 
-    while (Io.Timestamp.now(io, .real).nanoseconds - start < timeoutNs) {
-        var resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch {
+    while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
+        var resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch |err| {
+            std.debug.print("Server not ready yet, error: {}\n", .{err});
             try Io.sleep(io, .fromMilliseconds(50), .real);
             continue;
         };
@@ -107,6 +107,7 @@ fn waitUntilReady(io: Io, alloc: std.mem.Allocator) !void {
         if (resp.statusCode == 200) {
             return;
         }
+        std.debug.print("Server not ready yet, status code: {d}\n", .{resp.statusCode});
         try Io.sleep(io, .fromMilliseconds(50), .real);
     }
 
@@ -153,8 +154,9 @@ test "serverEndToEndViaHTTP" {
     };
 
     var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
+    defer serverFuture.await(io);
 
-    try waitUntilReady(io, alloc);
+    try waitUntilReady(io, alloc, .fromSeconds(1));
 
     const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const insertJson = try std.fmt.allocPrint(
@@ -233,5 +235,4 @@ test "serverEndToEndViaHTTP" {
     }
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
-    serverFuture.await(io);
 }
