@@ -152,11 +152,7 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
-    var thread = try Io.concurrent(io, ServerThread.run, .{ alloc, conf });
-    errdefer {
-        thread.cancel(io);
-        std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
-    }
+    var thread = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
 
     try waitUntilReady(io, alloc);
 
@@ -184,7 +180,13 @@ test "serverEndToEndViaHTTP" {
             "snappy",
         );
         defer resp.deinit(alloc);
-        try std.testing.expectEqual(@as(u16, 200), resp.statusCode);
+        try std.testing.expectEqual(200, resp.statusCode);
+    }
+
+    {
+        var resp = try request(io, alloc, "POST", "/flush", "", null, null);
+        defer resp.deinit(alloc);
+        try std.testing.expectEqual(200, resp.statusCode);
     }
 
     const queryJson = try std.fmt.allocPrint(
@@ -231,5 +233,6 @@ test "serverEndToEndViaHTTP" {
     }
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
+    server.stopServer();
     thread.await(io);
 }

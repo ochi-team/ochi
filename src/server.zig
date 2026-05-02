@@ -27,6 +27,12 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
 // TODO: make it configurable
 const storePath = ".ochi";
 
+pub fn stopServer() void {
+    if (global_server) |server| {
+        server.stop();
+    }
+}
+
 // TODO: implement a server cancelation and test it
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
