@@ -129,6 +129,7 @@ fn getCpuCount() usize {
         std.debug.print("[WARN] failed to get CPU count, defaulting to 4 threads: {s}", .{@errorName(err)});
         return 4;
     };
+    if (builtin.is_test) return @max(4, cpus);
     return cpus;
 }
 

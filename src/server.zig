@@ -100,9 +100,7 @@ test "serverWithSIGTERM" {
     try io.sleep(.fromMilliseconds(100), .real);
 
     // Send SIGTERM to ourselves
-    const posix = std.posix;
-    const pid = std.c.getpid();
-    try posix.kill(pid, posix.SIG.TERM);
+    try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
 
     // Wait for the server thread to finish
     future.await(io);

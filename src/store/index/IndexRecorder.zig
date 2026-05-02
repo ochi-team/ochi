@@ -1076,6 +1076,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+    runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
 
@@ -1094,13 +1095,13 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     try recorder.add(io, alloc, secondShardEntries);
     try recorder.add(io, alloc, thirdShardEntries);
 
-    try testing.expectEqual(@as(usize, 2 * Entries.maxBlocksPerShard), recorder.blocksToFlush.items.len);
+    try testing.expectEqual(2 * Entries.maxBlocksPerShard, recorder.blocksToFlush.items.len);
 
     var blocksInShards: usize = 0;
     for (recorder.entries.shards) |shard| {
         blocksInShards += shard.blocks.items.len;
     }
-    try testing.expectEqual(@as(usize, countAdditionalEntries), blocksInShards);
+    try testing.expectEqual(countAdditionalEntries, blocksInShards);
 
     try recorder.stop(io, alloc);
 }
@@ -1182,6 +1183,7 @@ test "IndexRecorder large entries write to 3 shards" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+    runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
