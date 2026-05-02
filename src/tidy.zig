@@ -36,10 +36,7 @@ pub fn projectIsFormatted(io: Io, alloc: Allocator) !bool {
 
 test gitHasNoMergeCommits {
     const alloc = std.testing.allocator;
-    // TODO no idea why testing.io doesn't work here
-    var threaded_io = std.Io.Threaded.init(alloc, .{});
-    defer threaded_io.deinit();
-    const io = threaded_io.io();
+    const io = std.testing.io;
 
     const noMergeCommits = try gitHasNoMergeCommits(io, alloc);
     try std.testing.expect(noMergeCommits);
