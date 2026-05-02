@@ -12,54 +12,22 @@ const query = @import("handlers/query.zig");
 const flush = @import("handlers/flush.zig");
 
 var global_server: ?*httpz.Server(*Dispatcher) = null;
-var stopRequested = std.atomic.Value(bool).init(false);
-var sigtermRequested = std.atomic.Value(bool).init(false);
-
-fn requestStop() void {
-    if (stopRequested.swap(true, .acq_rel)) {
-        return;
-    }
-
-    if (global_server) |server| {
-        server.stop();
-    }
-}
-
-fn waitForSigtermAndStop(io: Io) void {
-    // TODO: it must rely on io cancelation, not atomic flags
-    while (!stopRequested.load(.acquire)) {
-        if (sigtermRequested.load(.acquire)) {
-            requestStop();
-            return;
-        }
-
-        io.sleep(.fromSeconds(1), .real) catch |err| {
-            std.debug.panic("Error sleeping in SIGTERM watcher: {}\n", .{err});
-        };
-    }
-}
 
 fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
 }
 
-// TODO not quite sure
 fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
-    sigtermRequested.store(true, .release);
+    if (global_server) |server| {
+        server.stop();
+    }
 }
 
 // TODO: make it configurable
 const storePath = ".ochi";
 
-pub fn stopServer() void {
-    requestStop();
-}
-
 // TODO: implement a server cancelation and test it
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
-    stopRequested.store(false, .release);
-    sigtermRequested.store(false, .release);
-
     std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
@@ -81,10 +49,6 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 
     global_server = &server;
     defer global_server = null;
-
-    // TODO: doesn't feel correct, it must rely on io cancelation instead of sleeping and checking the flag
-    var listenSigtermFuture = try io.concurrent(waitForSigtermAndStop, .{io});
-    defer listenSigtermFuture.await(io);
 
     // Set up SIGTERM handler
     const posix = std.posix;

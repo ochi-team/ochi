@@ -152,7 +152,7 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
-    var thread = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
+    var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
 
     try waitUntilReady(io, alloc);
 
@@ -233,6 +233,5 @@ test "serverEndToEndViaHTTP" {
     }
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
-    server.stopServer();
-    thread.await(io);
+    serverFuture.await(io);
 }
