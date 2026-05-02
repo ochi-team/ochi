@@ -204,11 +204,11 @@ pub fn createDir(io: Io, path: []const u8) void {
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
+    defer self.deinit(io, alloc);
+
     try self.g.await(io);
 
     try self.flushForce(io, alloc);
-
-    self.deinit(io, alloc);
 }
 
 pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {

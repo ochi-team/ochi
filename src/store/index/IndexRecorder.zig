@@ -161,12 +161,11 @@ pub fn createDir(io: Io, path: []const u8) void {
 // TODO: make using this API instead of directly managing stopped state
 pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
+    defer self.deinit(io, alloc);
 
     try self.g.await(io);
 
     try self.flushForce(io, alloc);
-
-    self.deinit(io, alloc);
 }
 
 pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
@@ -908,9 +907,9 @@ test "mergeTables force single mem table creates disk table" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     try recorder.g.await(io);
-    defer recorder.deinit(io, alloc);
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
     try recorder.memTables.append(alloc, table);
@@ -1059,8 +1058,8 @@ test "IndexRecorder reads free disk space from runtime" {
     try testing.expectEqual(firstSpace, secondSpace);
 
     recorder.stopped.store(true, .release);
+    defer recorder.deinit(io, alloc);
     try recorder.g.await(io);
-    recorder.deinit(io, alloc);
 }
 
 test "IndexRecorder large entries write to 3 shards sequentially" {

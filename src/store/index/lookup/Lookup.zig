@@ -407,9 +407,9 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
     try recorder.g.await(io);
-    defer recorder.deinit(io, alloc);
 
     const tableAItems = [_][]const u8{
         "key:aa0000000000000002",
