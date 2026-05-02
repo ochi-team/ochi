@@ -131,8 +131,9 @@ test "serverEndToEndViaHTTP" {
 
     const oldCwd = try std.process.currentPathAlloc(io, alloc);
     defer {
-        // TODO Not sure
-        std.Io.Threaded.chdir(oldCwd) catch {};
+        std.Io.Threaded.chdir(oldCwd) catch |err| {
+            std.debug.print("Cannot chdir error: {}\n", .{err});
+        };
         alloc.free(oldCwd);
     }
 
@@ -141,7 +142,6 @@ test "serverEndToEndViaHTTP" {
 
     const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(tmpPath);
-    // TODO Not sure
     try std.Io.Threaded.chdir(tmpPath);
 
     const conf = Conf.default(alloc);
