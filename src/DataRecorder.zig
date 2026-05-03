@@ -180,12 +180,12 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
     };
 
     for (0..concurrency) |_| {
-        t.startDiskTablesMerge(io, alloc);
+        try t.startDiskTablesMerge(io, alloc);
     }
 
     // TODO: remove background tasks from init to make unit tests real units
-    t.startMemTablesFlusher(io, alloc);
-    t.startDataShardsFlusher(io, alloc);
+    try t.startMemTablesFlusher(io, alloc);
+    try t.startDataShardsFlusher(io, alloc);
 
     return t;
 }
@@ -239,16 +239,16 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-fn startMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
+fn startMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     errdefer self.g.cancel(io);
 
-    self.g.concurrent(io, runMemTablesFlusher, .{ self, io, alloc }) catch unreachable;
+    try self.g.concurrent(io, runMemTablesFlusher, .{ self, io, alloc });
 }
 
-fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
+fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     errdefer self.g.cancel(io);
 
-    self.g.concurrent(io, runDataShardsFlusher, .{ self, io, alloc }) catch unreachable;
+    try self.g.concurrent(io, runDataShardsFlusher, .{ self, io, alloc });
 }
 
 fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
@@ -378,24 +378,24 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
         shard.flushAtUs = null;
         shard.size = 0;
 
-        self.startMemTablesMerge(io, alloc);
+        try self.startMemTablesMerge(io, alloc);
     }
 }
 
-pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) void {
+pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     if (self.stopped.load(.acquire)) return;
 
     errdefer self.g.cancel(io);
 
-    self.g.concurrent(io, runDiskTablesMerger, .{ self, io, alloc }) catch unreachable;
+    try self.g.concurrent(io, runDiskTablesMerger, .{ self, io, alloc });
 }
 
-pub fn startMemTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) void {
+pub fn startMemTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     if (self.stopped.load(.acquire)) return;
 
     errdefer self.g.cancel(io);
 
-    self.g.concurrent(io, runMemTableMerger, .{ self, io, alloc }) catch unreachable;
+    try self.g.concurrent(io, runMemTableMerger, .{ self, io, alloc });
 }
 
 fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
