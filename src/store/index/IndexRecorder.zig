@@ -869,8 +869,9 @@ test "flushMemEntries non-force respects flush deadline" {
     defer runtime.deinit(alloc);
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
-    recorder.stopped.store(true, .release);
     defer recorder.deinit(io, alloc);
+    recorder.stopped.store(true, .release);
+    try recorder.g.await();
 
     var block = try MemBlock.init(alloc, 64);
     defer block.deinit(alloc);
@@ -1019,7 +1020,7 @@ test "IndexRecorder concurrent add preserves item count" {
             .workerID = i,
             .items = items_per_worker,
         };
-        g.async(io, addWorker, .{&ctxs[i]});
+        try g.concurrent(io, addWorker, .{&ctxs[i]});
     }
 
     try g.await(io);
