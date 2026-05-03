@@ -43,10 +43,12 @@ const EntriesShard = struct {
         self.mx.lockUncancelable(io);
         defer self.mx.unlock(io);
         if (self.blocks.items.len == 0) {
-            const b = try MemBlock.init(alloc, maxMemBlockSize);
-            errdefer b.deinit(alloc);
+            try self.blocks.ensureUnusedCapacity(alloc, 1);
 
-            try self.blocks.append(alloc, b);
+            const b = try MemBlock.init(alloc, maxMemBlockSize);
+
+            self.blocks.appendAssumeCapacity(b);
+
             self.flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         }
         var block = self.blocks.items[self.blocks.items.len - 1];
@@ -75,11 +77,12 @@ const EntriesShard = struct {
                 continue;
             }
 
+            try self.blocks.ensureUnusedCapacity(alloc, 1);
+
             // if it didn't skip the block means the previous one has not enough space
             block = try MemBlock.init(alloc, maxMemBlockSize);
-            errdefer block.deinit(alloc);
 
-            try self.blocks.append(alloc, block);
+            self.blocks.appendAssumeCapacity(block);
 
             gatheredEntriesCount += 1;
 
