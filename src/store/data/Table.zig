@@ -72,7 +72,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
-        error.PathAlreadyExists => {},
+        Dir.CreateDirError.PathAlreadyExists => {},
         else => std.debug.panic(
             "failed to create a table dir '{s}': {s}",
             .{ path, @errorName(err) },
