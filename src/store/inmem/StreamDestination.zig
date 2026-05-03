@@ -30,7 +30,6 @@ pub const StreamDestination = union(Tag) {
         const stat = try file.stat(io);
         const initialLen: usize = @intCast(stat.size);
 
-        // TODO AUDIT
         var buffer: [4096]u8 = undefined;
         var file_reader = file.reader(io, &buffer);
         try file_reader.seekTo(stat.size);
@@ -74,7 +73,6 @@ pub const StreamDestination = union(Tag) {
                 const dst = try allocator.alloc(u8, size);
                 errdefer allocator.free(dst);
 
-                // TODO AUDIT
                 var buffer: [4096]u8 = undefined;
                 var file_reader = f.file.reader(io, &buffer);
                 try file_reader.seekTo(0);
