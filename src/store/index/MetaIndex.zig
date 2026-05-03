@@ -16,6 +16,8 @@ pub const DecodedMetaIndex = struct {
     compressedSize: u64,
 };
 
+// TODO: make the json fields tiny bit shorter to consume less space on reading,
+// after that knowing the entry value limit we can know in advance how much buffer we need to decode it
 firstItem: []const u8 = "",
 blockHeadersCount: u32 = 0,
 indexBlockOffset: u64 = 0,
@@ -67,18 +69,19 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !D
     var fba = std.heap.stackFallback(256, alloc);
     const fbaAlloc = fba.get();
 
-    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
-    defer fbaAlloc.free(metaindexPath);
+    var metaindexPathBuf: [std.fs.max_name_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&metaindexPathBuf);
+    try std.fs.path.fmtJoin(&.{ path, filenames.metaindex }).format(&pathWriter);
+    const metaindexPath = pathWriter.buffer[0..pathWriter.end];
     var metaindexFile = try Dir.openFileAbsolute(io, metaindexPath, .{});
     defer metaindexFile.close(io);
     const metaindexStat = try metaindexFile.stat(io);
 
     var metaindexFileReader = metaindexFile.reader(io, &.{});
-
     const metaindexCompressed = try metaindexFileReader.interface.allocRemaining(fbaAlloc, .unlimited);
     defer fbaAlloc.free(metaindexCompressed);
     // TODO why does .limited(metaindexStat.size) not work above?
-    std.debug.assert(metaindexStat.size + 1 > metaindexCompressed.len);
+    std.debug.assert(metaindexStat.size == metaindexCompressed.len);
 
     const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);
     std.debug.assert(decodedMetaindex.compressedSize == metaindexStat.size);
