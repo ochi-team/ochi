@@ -5,50 +5,27 @@ const zeit = @import("zeit");
 const build = @import("build");
 const Conf = @import("Conf.zig");
 const server = @import("server.zig");
-const cli = @import("cli");
-
-var cli_config = struct {
-    config: []const u8 = "", // e.g. "ochi.yaml",
-}{};
 
 pub fn main() !void {
-    var runner = try cli.AppRunner.init(std.heap.page_allocator);
+    // TODO set allocator based on build options
+    var gpa_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa_allocator.deinit();
+    const gpa = gpa_allocator.allocator();
 
-    const app = cli.App{
-        .author = "Ochi",
-        .version = build.version,
-        .command = cli.Command{
-            .name = "run",
-            .description = cli.Description{
-                .one_line = "Start the Ochi server",
-            },
-            .options = try runner.allocOptions(&.{
-                .{
-                    .long_name = "config",
-                    .short_alias = 'c',
-                    .help = "file path to configuration file",
-                    .value_ref = runner.mkRef(&cli_config.config),
-                },
-            }),
-            .target = cli.CommandTarget{
-                .action = cli.CommandAction{ .exec = runServer },
-            },
-        },
-    };
+    // TODO set io based on build options
+    var io_impl: std.Io.Threaded = .init(gpa, .{});
+    defer io_impl.deinit();
+    const io = io_impl.io();
 
-    return runner.run(&app);
-}
-
-fn runServer() !void {
     std.debug.print("Ochi version {s}", .{build.version});
 
-    const config = Conf.default(std.heap.page_allocator);
-    const now = try zeit.instant(.{ .source = .now });
+    const config = Conf.default(gpa);
+    const now = try zeit.instant(io, .{ .source = .now });
     var nowBuf: [32]u8 = undefined;
     const nowStr = try now.time().bufPrint(&nowBuf, .rfc3339);
 
     // TODO: introduce structured logger
     std.debug.print("Ochi in mono mode starting at port={d}, time={s}\n", .{ config.server.port, nowStr });
 
-    try server.startServer(std.heap.page_allocator, config);
+    try server.startServer(io, gpa, config);
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
@@ -47,7 +48,7 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     return b;
 }
 
-pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
+pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
     std.debug.assert(data.len <= maxLines);
 
     const tsEncoder = try TimestampsEncoder.init(alloc);
@@ -66,7 +67,7 @@ pub fn initFromData(alloc: Allocator, data: *BlockData, unpacker: *Unpacker, dec
         var col = &columns[i];
         col.key = colData.key;
         col.values = try unpacker.unpackValues(alloc, colData.data, data.len);
-        try decoder.decode(col.values, colData.type, colData.dict.values.items);
+        try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
     }
 
     if (data.celledColumns) |cells| {
@@ -387,6 +388,8 @@ fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
 
 test "initFromLines and initFromData produce identical blocks" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
     const sid = SID{ .id = 1, .tenantID = "1111" };
 
     var f1 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
@@ -426,11 +429,11 @@ test "initFromLines and initFromData produce identical blocks" {
         const blockA = try Block.initFromLines(alloc, case.lines);
         defer blockA.deinit(alloc);
 
-        const writer = try StreamWriter.initMem(alloc, 128);
-        defer writer.deinit(alloc);
+        const writer = try StreamWriter.initMem(io, alloc, 128);
+        defer writer.deinit(io, alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
-        try writer.writeBlock(alloc, blockA, &bh);
+        try writer.writeBlock(io, alloc, blockA, &bh);
 
         var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomValuesList.items.len);
         defer bloomValuesList.deinit(alloc);
@@ -463,7 +466,7 @@ test "initFromLines and initFromData produce identical blocks" {
         const unpacker = try Unpacker.init(alloc);
         const decoder = try ValuesDecoder.init(alloc);
 
-        const blockB = try Block.initFromData(alloc, &bd, unpacker, decoder);
+        const blockB = try Block.initFromData(io, alloc, &bd, unpacker, decoder);
         defer blockB.deinit(alloc);
         defer unpacker.deinit(alloc);
         defer decoder.deinit();

@@ -1,5 +1,5 @@
 const std = @import("std");
-const snappy = @import("snappy");
+const snappy = @import("snappy").raw;
 
 // TODO: support gzip to cover loki fully
 // TODO: suport the other compressions types here like zstd, datadog, etc.

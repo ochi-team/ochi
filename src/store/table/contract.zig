@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const Contract = @import("../../stds/Contract.zig");
 
@@ -29,8 +30,8 @@ pub fn TableRefCountContract(comptime T: type) Contract {
             .{ .name = "toRemove", .type = std.atomic.Value(bool) },
         },
         .funcs = &.{
-            .{ .name = "release", .type = fn (*T) void },
-            .{ .name = "writeNames", .type = fn (std.mem.Allocator, []const u8, []*T) anyerror!void },
+            .{ .name = "release", .type = fn (*T, Io) void },
+            .{ .name = "writeNames", .type = fn (Io, std.mem.Allocator, []const u8, []*T) anyerror!void },
         },
     };
 }

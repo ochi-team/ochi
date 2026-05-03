@@ -250,6 +250,7 @@ fn populateSampleLines(sample: *SampleLines) void {
 
 test "BlockData readFrom populates columnsData and celledColumns" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     var sample: SampleLines = .{
         .fields1 = undefined,
@@ -265,9 +266,9 @@ test "BlockData readFrom populates columnsData and celledColumns" {
         sample.lines[2],
     };
 
-    const memTable = try MemTable.init(allocator);
-    defer memTable.deinit(allocator);
-    try memTable.addLines(allocator, lines[0..]);
+    const memTable = try MemTable.init(io, allocator);
+    defer memTable.deinit(io, allocator);
+    try memTable.addLines(io, allocator, lines[0..]);
 
     const blockReader = try BlockReader.initFromMemTable(allocator, memTable);
     defer blockReader.deinit(allocator);

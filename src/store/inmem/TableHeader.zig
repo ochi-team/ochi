@@ -1,4 +1,6 @@
 const std = @import("std");
+const Io = std.Io;
+const Dir = Io.Dir;
 
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
@@ -22,6 +24,7 @@ bloomValuesBuffersAmount: u32 = 0,
 /// header is saved as a json structure
 pub fn writeFile(
     self: *const TableHeader,
+    io: Io,
     allocator: std.mem.Allocator,
     path: []const u8,
 ) !void {
@@ -38,10 +41,11 @@ pub fn writeFile(
     );
     defer allocator.free(metadataPath);
 
-    try fs.writeBufferValToFile(metadataPath, json);
+    try fs.writeBufferValToFile(io, metadataPath, json);
 }
 
 pub fn readFile(
+    io: Io,
     allocator: std.mem.Allocator,
     path: []const u8,
 ) !TableHeader {
@@ -54,10 +58,11 @@ pub fn readFile(
     );
     defer fbaAlloc.free(metadataPath);
 
-    var file = try std.fs.openFileAbsolute(metadataPath, .{});
-    defer file.close();
+    var file = try Dir.openFileAbsolute(io, metadataPath, .{});
+    defer file.close(io);
 
-    const data = try file.readToEndAlloc(fbaAlloc, maxFileBytes);
+    var file_reader = file.reader(io, &.{});
+    const data = try file_reader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes));
     defer fbaAlloc.free(data);
 
     const parsed = try std.json.parseFromSlice(TableHeader, fbaAlloc, data, .{});
@@ -70,11 +75,13 @@ const testing = std.testing;
 
 test "roundtrip file read/write" {
     const alloc = testing.allocator;
+    const io = testing.io;
+
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("table");
-    const tablePath = try tmp.dir.realpathAlloc(alloc, "table");
+    try tmp.dir.createDirPath(io, "table");
+    const tablePath = try tmp.dir.realPathFileAlloc(io, "table", alloc);
     defer alloc.free(tablePath);
 
     const header = TableHeader{
@@ -87,8 +94,8 @@ test "roundtrip file read/write" {
         .bloomValuesBuffersAmount = 7,
     };
 
-    try header.writeFile(alloc, tablePath);
+    try header.writeFile(io, alloc, tablePath);
 
-    const readHeader = try TableHeader.readFile(alloc, tablePath);
+    const readHeader = try TableHeader.readFile(io, alloc, tablePath);
     try testing.expectEqualDeep(header, readHeader);
 }

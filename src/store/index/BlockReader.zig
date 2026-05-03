@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const builtin = @import("builtin");
 
 const encoding = @import("encoding");
@@ -117,11 +118,11 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
 //
 // TODO: we must use Reader interface here instead of plain reading in order to
 // save required RAM to hold the content til it's merged, it lets us opening files one by one
-pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
-    const tableHeader = try TableHeader.readFile(alloc, path);
+pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockReader {
+    const tableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer tableHeader.deinit(alloc);
 
-    const metaIndex = try MetaIndex.readFile(alloc, path, tableHeader.blocksCount);
+    const metaIndex = try MetaIndex.readFile(io, alloc, path, tableHeader.blocksCount);
     errdefer {
         for (metaIndex.records) |*index| {
             index.deinit(alloc);
@@ -140,11 +141,11 @@ pub fn initFromDiskTable(alloc: Allocator, path: []const u8) !*BlockReader {
     const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
     defer fbaAlloc.free(lensPath);
 
-    const indexBuf = try fs.readAll(alloc, indexPath);
+    const indexBuf = try fs.readAll(io, alloc, indexPath);
     errdefer alloc.free(indexBuf);
-    const entriesBuf = try fs.readAll(alloc, entriesPath);
+    const entriesBuf = try fs.readAll(io, alloc, entriesPath);
     errdefer alloc.free(entriesBuf);
-    const lensBuf = try fs.readAll(alloc, lensPath);
+    const lensBuf = try fs.readAll(io, alloc, lensPath);
     errdefer alloc.free(lensBuf);
 
     const r = try alloc.create(BlockReader);
@@ -374,6 +375,7 @@ test "BlockReader.current returns correct item at currentI" {
 
 test "BlockReader.initFromMemTable reads items" {
     const alloc = testing.allocator;
+    const io = testing.io;
 
     const Case = struct {
         name: []const u8,
@@ -489,10 +491,10 @@ test "BlockReader.initFromMemTable reads items" {
             if (case.useMultiBlock) {
                 block2 = try createTestMemBlockWithMax(alloc, block2_items, itemsTotalSize(block2_items) + 16);
                 var blocks = [_]*MemBlock{ block1, block2.? };
-                break :blk try MemTable.init(alloc, blocks[0..]);
+                break :blk try MemTable.init(io, alloc, blocks[0..]);
             } else {
                 var blocks = [_]*MemBlock{block1};
-                break :blk try MemTable.init(alloc, blocks[0..]);
+                break :blk try MemTable.init(io, alloc, blocks[0..]);
             }
         };
         defer memTable.deinit(alloc);

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const builtin = @import("builtin");
 
@@ -11,7 +12,7 @@ const EntriesShardAddResult = struct {
 };
 
 const EntriesShard = struct {
-    mx: std.Thread.Mutex = .{},
+    mx: Io.Mutex = .init,
     blocks: std.ArrayList(*MemBlock),
     // TODO: perhaps worth making it atomic instead of accessable under a mutex lock
     flushAtUs: i64 = std.math.maxInt(i64),
@@ -34,16 +35,21 @@ const EntriesShard = struct {
 
     pub fn add(
         self: *EntriesShard,
+        io: Io,
         alloc: Allocator,
         entries: []const []const u8,
         maxMemBlockSize: u32,
     ) !?EntriesShardAddResult {
-        self.mx.lock();
-        defer self.mx.unlock();
+        self.mx.lockUncancelable(io);
+        defer self.mx.unlock(io);
         if (self.blocks.items.len == 0) {
+            try self.blocks.ensureUnusedCapacity(alloc, 1);
+
             const b = try MemBlock.init(alloc, maxMemBlockSize);
-            try self.blocks.append(alloc, b);
-            self.flushAtUs = std.time.microTimestamp() + std.time.us_per_s;
+
+            self.blocks.appendAssumeCapacity(b);
+
+            self.flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         }
         var block = self.blocks.items[self.blocks.items.len - 1];
         var gatheredEntriesCount: usize = 0;
@@ -71,9 +77,12 @@ const EntriesShard = struct {
                 continue;
             }
 
+            try self.blocks.ensureUnusedCapacity(alloc, 1);
+
             // if it didn't skip the block means the previous one has not enough space
             block = try MemBlock.init(alloc, maxMemBlockSize);
-            try self.blocks.append(alloc, block);
+
+            self.blocks.appendAssumeCapacity(block);
 
             gatheredEntriesCount += 1;
 
@@ -99,13 +108,14 @@ const EntriesShard = struct {
 
     pub fn collectBlocks(
         self: *EntriesShard,
+        io: Io,
         alloc: Allocator,
         destination: *std.ArrayList(*MemBlock),
         nowUs: i64,
         force: bool,
     ) !void {
-        self.mx.lock();
-        defer self.mx.unlock();
+        self.mx.lockUncancelable(io);
+        defer self.mx.unlock(io);
 
         if (!force and nowUs < self.flushAtUs) {
             return;
@@ -181,6 +191,7 @@ test "Entries.shardIdxOverflow" {
 test "EntriesShard.add" {
     const maxIndexMemBlockSize = 1024;
     const alloc = testing.allocator;
+    const io = testing.io;
     const tooLarge = "x" ** (maxIndexMemBlockSize + 1);
     const theLargest = "x" ** (maxIndexMemBlockSize - 1);
 
@@ -258,7 +269,7 @@ test "EntriesShard.add" {
 
     for (cases) |case| {
         var shard = EntriesShard{
-            .mx = .{},
+            .mx = .init,
             .blocks = std.ArrayList(*MemBlock).empty,
             .flushAtUs = 0,
         };
@@ -283,7 +294,7 @@ test "EntriesShard.add" {
             }
         }
 
-        const result = try shard.add(alloc, case.test_entries, maxIndexMemBlockSize);
+        const result = try shard.add(io, alloc, case.test_entries, maxIndexMemBlockSize);
 
         // Check if flush happened as expected
         if (case.expected_flush) {

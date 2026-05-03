@@ -2,6 +2,7 @@
 /// it expects sorted chunks of data broken by streams (stream id + tenant)
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
@@ -77,6 +78,7 @@ pub fn deinit(self: *Self, allocator: Allocator) void {
 
 pub fn writeLines(
     self: *Self,
+    io: Io,
     allocator: Allocator,
     sid: SID,
     lines: []Line,
@@ -90,21 +92,23 @@ pub fn writeLines(
     }
 
     const c = Content{ .block = block };
-    try self.writeBlock(allocator, c, sid, streamWriter);
+    try self.writeBlock(io, allocator, c, sid, streamWriter);
 }
 
 pub fn writeData(
     self: *Self,
+    io: Io,
     allocator: Allocator,
     data: *BlockData,
     streamWriter: *StreamWriter,
 ) !void {
     const c = Content{ .data = data };
-    try self.writeBlock(allocator, c, data.sid, streamWriter);
+    try self.writeBlock(io, allocator, c, data.sid, streamWriter);
 }
 
 fn writeBlock(
     self: *Self,
+    io: Io,
     alloc: Allocator,
     // block: *Block,
     content: Content,
@@ -120,7 +124,7 @@ fn writeBlock(
         self.sid = sid;
     }
 
-    const blockHeader = try writeContent(alloc, content, sid, streamWriter);
+    const blockHeader = try writeContent(io, alloc, content, sid, streamWriter);
 
     if (self.len == 0 or blockHeader.timestampsHeader.min < self.globalMinTimestamp) {
         self.globalMinTimestamp = blockHeader.timestampsHeader.min;
@@ -144,26 +148,26 @@ fn writeBlock(
     const offset = blockHeader.encode(slice);
     self.indexBlockBuf.items.len += offset;
     if (self.indexBlockBuf.items.len > indexBlockFlushThreshold) {
-        try self.flushIndexBlock(alloc, streamWriter);
+        try self.flushIndexBlock(io, alloc, streamWriter);
     }
 }
 
-fn writeContent(alloc: Allocator, content: Content, sid: SID, streamWriter: *StreamWriter) !BlockHeader {
+fn writeContent(io: Io, alloc: Allocator, content: Content, sid: SID, streamWriter: *StreamWriter) !BlockHeader {
     switch (content) {
         .block => |block| {
             var blockHeader = BlockHeader.initFromBlock(block, sid);
-            try streamWriter.writeBlock(alloc, block, &blockHeader);
+            try streamWriter.writeBlock(io, alloc, block, &blockHeader);
             return blockHeader;
         },
         .data => |data| {
             var blockHeader = BlockHeader.initFromData(data, sid);
-            try streamWriter.writeData(alloc, &blockHeader, data);
+            try streamWriter.writeData(io, alloc, &blockHeader, data);
             return blockHeader;
         },
     }
 }
 
-pub fn finish(self: *Self, allocator: Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
+pub fn finish(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
@@ -171,20 +175,21 @@ pub fn finish(self: *Self, allocator: Allocator, streamWriter: *StreamWriter, th
     th.maxTimestamp = self.maxTimestamp;
     th.bloomValuesBuffersAmount = @intCast(streamWriter.bloomValuesList.items.len);
 
-    try self.flushIndexBlock(allocator, streamWriter);
+    try self.flushIndexBlock(io, allocator, streamWriter);
 
-    try streamWriter.writeColumnKeys(allocator);
-    try streamWriter.writeColumnIndexes(allocator);
+    try streamWriter.writeColumnKeys(io, allocator);
+    try streamWriter.writeColumnIndexes(io, allocator);
 
-    try self.writeIndexBlockHeaders(allocator, streamWriter);
+    try self.writeIndexBlockHeaders(io, allocator, streamWriter);
 
     th.compressedSize = streamWriter.size();
 }
 
-fn flushIndexBlock(self: *Self, allocator: Allocator, streamWriter: *StreamWriter) !void {
+fn flushIndexBlock(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
     defer self.indexBlockBuf.clearRetainingCapacity();
     if (self.indexBlockBuf.items.len > 0) {
         try self.indexBlockHeader.writeIndexBlock(
+            io,
             allocator,
             &self.indexBlockBuf,
             self.sid.?,
@@ -204,10 +209,10 @@ fn flushIndexBlock(self: *Self, allocator: Allocator, streamWriter: *StreamWrite
     self.maxTimestamp = 0;
 }
 
-fn writeIndexBlockHeaders(self: *Self, allocator: Allocator, streamWriter: *StreamWriter) !void {
+fn writeIndexBlockHeaders(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
     const slice = try streamWriter.metaIndexDst.allocSlice(allocator, bound);
     const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
 
-    try streamWriter.metaIndexDst.appendAllocated(slice, offset);
+    try streamWriter.metaIndexDst.appendAllocated(io, slice, offset);
 }

@@ -24,5 +24,5 @@ pub const Decoder = @import("Decoder.zig");
 pub const Encoder = @import("Encoder.zig");
 
 test {
-    @import("std").testing.refAllDeclsRecursive(@This());
+    @import("std").testing.refAllDecls(@This());
 }

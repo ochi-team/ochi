@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const merge = @import("merge.zig");
 
@@ -19,13 +20,14 @@ pub fn Swapper(
     return struct {
         pub fn swapTables(
             self: *Self,
+            io: Io,
             alloc: Allocator,
             tables: []*T,
             newTable: *T,
             tableKind: merge.TableKind,
         ) !void {
-            self.mxTables.lock();
-            errdefer self.mxTables.unlock();
+            self.mxTables.lockUncancelable(io);
+            errdefer self.mxTables.unlock(io);
 
             const removedMemTables = removeTables(&self.memTables, tables);
             const removedDiskTables = removeTables(&self.diskTables, tables);
@@ -33,21 +35,21 @@ pub fn Swapper(
             switch (tableKind) {
                 .disk => {
                     try self.diskTables.append(alloc, newTable);
-                    self.startDiskTablesMerge(alloc);
+                    try self.startDiskTablesMerge(io, alloc);
                 },
                 .mem => {
                     try self.memTables.append(alloc, newTable);
-                    self.startMemTablesMerge(alloc);
+                    try self.startDiskTablesMerge(io, alloc);
                 },
             }
 
             if (removedDiskTables > 0 or tableKind == .disk) {
-                try T.writeNames(alloc, self.path, self.diskTables.items);
+                try T.writeNames(io, alloc, self.path, self.diskTables.items);
             }
-            self.mxTables.unlock();
+            self.mxTables.unlock(io);
 
-            for (0..removedMemTables) |_| self.memTablesSem.post();
-            if (tableKind == .mem) self.memTablesSem.wait();
+            for (0..removedMemTables) |_| self.memTablesSem.post(io);
+            if (tableKind == .mem) self.memTablesSem.waitUncancelable(io);
 
             std.debug.assert(tables.len == removedDiskTables + removedMemTables);
 
@@ -56,7 +58,7 @@ pub fn Swapper(
                 // it could have been open by a client.
                 // order flag doesn't matter, we don't expect any other part to change it back to
                 table.toRemove.store(true, .unordered);
-                table.release();
+                table.release(io);
             }
         }
 
@@ -98,14 +100,16 @@ fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
 
 test "removeTables removes exact pointers" {
     const alloc = testing.allocator;
+    const io = testing.io;
+
     const one = try createSizedMemTable(alloc, 100);
-    defer one.close();
+    defer one.close(io);
 
     const two = try createSizedMemTable(alloc, 100);
-    defer two.close();
+    defer two.close(io);
 
     const three = try createSizedMemTable(alloc, 100);
-    defer three.close();
+    defer three.close(io);
 
     const swapper = Swapper(IndexRecorder, Table);
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const AllocError = std.mem.Allocator.Error;
 const C = @import("c").C;
 pub const CompressError = error{

@@ -761,7 +761,7 @@ test "ColumnsHeaderEncode" {
     // Create ColumnIDGen and populate it with test keys
     const columnIDGen = try ColumnIDGen.init(alloc);
     defer columnIDGen.deinit(alloc);
-    try columnIDGen.keyIDs.ensureUnusedCapacity(5);
+    try columnIDGen.keyIDs.ensureUnusedCapacity(alloc, 5);
     _ = columnIDGen.genIDAssumeCapacity("col_string");
     _ = columnIDGen.genIDAssumeCapacity("col_dict");
     _ = columnIDGen.genIDAssumeCapacity("col_uint32");

@@ -6,18 +6,15 @@ const encoding = @import("encoding");
 const ColumnIDGen = @This();
 
 // keyIDs must use StringArrayHashMap, it's important to store the keys ordered
-keyIDs: std.StringArrayHashMap(u16),
+keyIDs: std.array_hash_map.String(u16),
 keysBuf: ?[]u8,
 
 pub fn init(allocator: Allocator) !*ColumnIDGen {
-    var nameIDs = std.StringArrayHashMap(u16).init(allocator);
-    errdefer nameIDs.deinit();
-
     const s = try allocator.create(ColumnIDGen);
     errdefer s.deinit(allocator);
 
     s.* = ColumnIDGen{
-        .keyIDs = nameIDs,
+        .keyIDs = .empty,
         .keysBuf = null,
     };
     return s;
@@ -27,7 +24,7 @@ pub fn deinit(self: *ColumnIDGen, allocator: Allocator) void {
     if (self.keysBuf != null) {
         allocator.free(self.keysBuf.?);
     }
-    self.keyIDs.deinit();
+    self.keyIDs.deinit(allocator);
     allocator.destroy(self);
 }
 
@@ -86,7 +83,7 @@ pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
     const gen = try ColumnIDGen.init(alloc);
     errdefer gen.deinit(alloc);
 
-    try gen.keyIDs.ensureUnusedCapacity(@intCast(genSize.value));
+    try gen.keyIDs.ensureUnusedCapacity(alloc, @intCast(genSize.value));
     for (0..genSize.value) |_| {
         const key = dec.readString();
         _ = gen.genIDAssumeCapacity(key);
@@ -126,7 +123,7 @@ test "ColumnIDGen" {
     defer gener.deinit(alloc);
 
     const keys = &[_][]const u8{ "key1", "key2", "", "_--=" };
-    try gener.keyIDs.ensureUnusedCapacity(keys.len);
+    try gener.keyIDs.ensureUnusedCapacity(alloc, keys.len);
     for (0..keys.len) |i| {
         const id = gener.genIDAssumeCapacity(keys[i]);
         try std.testing.expectEqual(i, id);
