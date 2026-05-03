@@ -2,8 +2,17 @@
 /// translates a query to ochi query API
 const std = @import("std");
 
+const Field = @import("../store/lines.zig").Field;
+
 const Scanner = @import("Scanner.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
+
+pub const Query = struct {
+    startTimeNs: u64,
+    endTimeNs: u64,
+    tags: []const Field,
+    fields: []const Field,
+};
 
 const Loql = @This();
 
@@ -11,7 +20,7 @@ scanner: Scanner,
 reporter: ErrorReporter,
 
 // TODO: it must accept a reader, not a query string
-pub fn translate(self: *const Loql, fullQuery: []const u8) ![]u8 {
+pub fn translateQuery(self: *const Loql, fullQuery: []const u8) ![]u8 {
     var query = std.mem.trim(u8, fullQuery, " ");
     query = std.mem.trim(u8, query, "\n");
     query = std.mem.trim(u8, query, "\t");

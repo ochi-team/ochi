@@ -6,6 +6,10 @@ pub const SyntaxError = struct {
     message: []const u8,
 };
 
+pub fn log(e: SyntaxError) void {
+    std.debug.print("Syntax error at line {d}, column {d}: {s}\n", .{ e.line, e.col, e.message });
+}
+
 /// ErrorReporter is responsible for reporting errors during the translation process,
 /// it provides user readable error messages in order to debug the passed query.
 pub const ErrorReporter = @This();

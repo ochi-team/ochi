@@ -92,9 +92,16 @@ fn tags(self: *Parser, tokens: []const Token) ParseError!?Expression {
 }
 
 fn query(self: *Parser, tokens: []const Token) ParseError!?Expression {
-    _ = self;
-    _ = tokens;
-    return null;
+    if (self.current >= tokens.len) {
+        return null;
+    }
+
+    if (tokens[self.current].kind == .Pipe) {
+        return null;
+    }
+
+    const expr = try self.boolean(tokens, &.{ .Equal, .NotEqual });
+    return expr;
 }
 
 fn pipes(self: *Parser, tokens: []const Token) ParseError!std.ArrayList(Expression) {
@@ -237,7 +244,7 @@ test "Parser.expression" {
 
     const Case = struct {
         query: []const Token,
-        expectedTags: ?Expression = null,
+        expectedQuerySet: ?QuerySet = null,
         expectedErr: ?anyerror = null,
         expectedSyntaxErrors: []const ErrorReporter.SyntaxError,
     };
@@ -250,11 +257,22 @@ test "Parser.expression" {
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
                 .{ .kind = .Literal, .lexeme = "prod", .line = 1, .col = 6 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 10 },
+                .{ .kind = .Literal, .lexeme = "field", .line = 1, .col = 11 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 16 },
+                .{ .kind = .Literal, .lexeme = "value", .line = 1, .col = 17 },
             },
-            .expectedTags = .{ .equalOp = .{
-                &.{ .literal = "env" },
-                &.{ .literal = "prod" },
-            } },
+            .expectedQuerySet = .{
+                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .tags = .{ .equalOp = .{
+                    &.{ .literal = "env" },
+                    &.{ .literal = "prod" },
+                } },
+                .query = .{ .equalOp = .{
+                    &.{ .literal = "field" },
+                    &.{ .literal = "value" },
+                } },
+                .pipes = .empty,
+            },
             .expectedSyntaxErrors = &.{},
         },
         .{
@@ -268,17 +286,38 @@ test "Parser.expression" {
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 22 },
                 .{ .kind = .Literal, .lexeme = "api", .line = 1, .col = 23 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 26 },
+                .{ .kind = .Literal, .lexeme = "field", .line = 1, .col = 2 },
+                .{ .kind = .NotEqual, .lexeme = "!=", .line = 1, .col = 5 },
+                .{ .kind = .Literal, .lexeme = "value", .line = 1, .col = 6 },
+                .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 11 },
+                .{ .kind = .Literal, .lexeme = "call", .line = 1, .col = 15 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 22 },
+                .{ .kind = .Literal, .lexeme = "get", .line = 1, .col = 23 },
             },
-            .expectedTags = .{ .andOp = .{
-                &.{ .equalOp = .{
-                    &.{ .literal = "env" },
-                    &.{ .literal = "prod" },
+            .expectedQuerySet = .{
+                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .tags = .{ .andOp = .{
+                    &.{ .equalOp = .{
+                        &.{ .literal = "env" },
+                        &.{ .literal = "prod" },
+                    } },
+                    &.{ .equalOp = .{
+                        &.{ .literal = "service" },
+                        &.{ .literal = "api" },
+                    } },
                 } },
-                &.{ .equalOp = .{
-                    &.{ .literal = "service" },
-                    &.{ .literal = "api" },
+                .query = .{ .orOp = .{
+                    &.{ .notEqualOp = .{
+                        &.{ .literal = "field" },
+                        &.{ .literal = "value" },
+                    } },
+                    &.{ .equalOp = .{
+                        &.{ .literal = "call" },
+                        &.{ .literal = "get" },
+                    } },
                 } },
-            } },
+                .pipes = .empty,
+            },
             .expectedSyntaxErrors = &.{},
         },
         .{
@@ -297,22 +336,27 @@ test "Parser.expression" {
                 .{ .kind = .Literal, .lexeme = "web", .line = 1, .col = 35 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 38 },
             },
-            .expectedTags = .{ .andOp = .{
-                &.{ .orOp = .{
-                    &.{ .equalOp = .{
-                        &.{ .literal = "env" },
-                        &.{ .literal = "prod" },
+            .expectedQuerySet = .{
+                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .tags = .{ .andOp = .{
+                    &.{ .orOp = .{
+                        &.{ .equalOp = .{
+                            &.{ .literal = "env" },
+                            &.{ .literal = "prod" },
+                        } },
+                        &.{ .equalOp = .{
+                            &.{ .literal = "service" },
+                            &.{ .literal = "api" },
+                        } },
                     } },
                     &.{ .equalOp = .{
-                        &.{ .literal = "service" },
-                        &.{ .literal = "api" },
+                        &.{ .literal = "host" },
+                        &.{ .literal = "web" },
                     } },
                 } },
-                &.{ .equalOp = .{
-                    &.{ .literal = "host" },
-                    &.{ .literal = "web" },
-                } },
-            } },
+                .query = null,
+                .pipes = .empty,
+            },
             .expectedSyntaxErrors = &.{},
         },
         .{
@@ -338,9 +382,29 @@ test "Parser.expression" {
                 .{ .kind = .Literal, .lexeme = "api", .line = 1, .col = 50 },
                 .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 53 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 54 },
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 2 },
+                .{ .kind = .Literal, .lexeme = "call", .line = 1, .col = 3 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 6 },
+                .{ .kind = .Literal, .lexeme = "get", .line = 1, .col = 7 },
+                .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 12 },
+                .{ .kind = .Literal, .lexeme = "boost", .line = 1, .col = 15 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 22 },
+                .{ .kind = .Literal, .lexeme = "yes", .line = 1, .col = 23 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 26 },
+                .{ .kind = .And, .lexeme = "and", .line = 1, .col = 28 },
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 32 },
+                .{ .kind = .Literal, .lexeme = "url", .line = 1, .col = 33 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 37 },
+                .{ .kind = .Literal, .lexeme = "one", .line = 1, .col = 38 },
+                .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 42 },
+                .{ .kind = .Literal, .lexeme = "key", .line = 1, .col = 45 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 49 },
+                .{ .kind = .Literal, .lexeme = "first", .line = 1, .col = 50 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 53 },
             },
-            .expectedTags = .{
-                .andOp = .{
+            .expectedQuerySet = .{
+                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .tags = .{ .andOp = .{
                     &.{ .grouping = &.{ .orOp = .{
                         &.{ .equalOp = .{
                             &.{ .literal = "env" },
@@ -361,7 +425,30 @@ test "Parser.expression" {
                             &.{ .literal = "api" },
                         } },
                     } } },
-                },
+                } },
+                .query = .{ .andOp = .{
+                    &.{ .grouping = &.{ .orOp = .{
+                        &.{ .equalOp = .{
+                            &.{ .literal = "call" },
+                            &.{ .literal = "get" },
+                        } },
+                        &.{ .equalOp = .{
+                            &.{ .literal = "boost" },
+                            &.{ .literal = "yes" },
+                        } },
+                    } } },
+                    &.{ .grouping = &.{ .orOp = .{
+                        &.{ .equalOp = .{
+                            &.{ .literal = "url" },
+                            &.{ .literal = "one" },
+                        } },
+                        &.{ .equalOp = .{
+                            &.{ .literal = "key" },
+                            &.{ .literal = "first" },
+                        } },
+                    } } },
+                } },
+                .pipes = .empty,
             },
             .expectedSyntaxErrors = &.{},
         },
@@ -377,11 +464,14 @@ test "Parser.expression" {
                 .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 13 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 14 },
             },
-            .expectedTags = .{
-                .grouping = &.{ .grouping = &.{ .equalOp = .{
+            .expectedQuerySet = .{
+                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .tags = .{ .grouping = &.{ .grouping = &.{ .equalOp = .{
                     &.{ .literal = "env" },
                     &.{ .literal = "prod" },
-                } } },
+                } } } },
+                .query = null,
+                .pipes = .empty,
             },
             .expectedSyntaxErrors = &.{},
         },
@@ -489,14 +579,12 @@ test "Parser.expression" {
         if (case.expectedErr) |expectedErr| {
             try testing.expectError(expectedErr, result);
         } else {
-            const parsed = try result;
-            const timeRangeExpr: Expression = .{ .range = .{ "-5m", "now" } };
-            try testing.expectEqualDeep(timeRangeExpr, parsed.timeRange);
+            const parsed = result catch |err| {
+                for (reporter.syntaxErrors()) |e| ErrorReporter.log(e);
+                return err;
+            };
 
-            try testing.expectEqualDeep(case.expectedTags, parsed.tags);
-
-            try testing.expect(parsed.query == null);
-            try testing.expectEqual(@as(usize, 0), parsed.pipes.items.len);
+            try testing.expectEqualDeep(case.expectedQuerySet, parsed);
         }
 
         try testing.expectEqualDeep(case.expectedSyntaxErrors, reporter.syntaxErrors());
