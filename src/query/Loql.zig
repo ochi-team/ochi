@@ -10,8 +10,34 @@ const ErrorReporter = @import("ErrorReporter.zig");
 pub const Query = struct {
     startTimeNs: u64,
     endTimeNs: u64,
+
+    // legacy exact-match filters, preserved for backward compatibility
     tags: []const Field,
     fields: []const Field,
+
+    // v2 boolean filter trees used by the translator
+    tagsExpr: ?*const FilterExpression = null,
+    fieldsExpr: ?*const FilterExpression = null,
+};
+
+pub const MatchOp = enum {
+    equal,
+    not_equal,
+    match_regex,
+    not_match_regex,
+};
+
+pub const FilterPredicate = struct {
+    key: []const u8,
+    value: []const u8,
+    op: MatchOp,
+};
+
+pub const FilterExpression = union(enum) {
+    predicate: FilterPredicate,
+    andOp: [2]*const FilterExpression,
+    orOp: [2]*const FilterExpression,
+    grouping: *const FilterExpression,
 };
 
 const Loql = @This();
