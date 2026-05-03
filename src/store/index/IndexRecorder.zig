@@ -375,6 +375,8 @@ fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !
     memTables.appendSliceAssumeCapacity(mergedTables.items);
 }
 
+// TODO: replace to std Semaphore.waitTimout:
+// https://codeberg.org/ziglang/zig/commit/21980c82f48f239e50239d5af264706d15829268
 pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
     sem.mutex.lockUncancelable(io);
     defer sem.mutex.unlock(io);
@@ -661,6 +663,7 @@ fn tablesMerger(
         if (filteredTablesToMerge.len == 0) return;
 
         // TODO: make sure error.Stopped is handled on the upper level
+        // TODO: audit all waitUncancelable, on read path it must be only cancelable
         sem.waitUncancelable(io);
         errdefer sem.post(io);
         try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
@@ -752,6 +755,7 @@ pub fn mergeTables(
         stopped,
     ) catch |err| {
         switch (err) {
+            // TODO: replace Stopped to Io.Cancelable.Canceled
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
                     fs.deleteTreeAbsolute(io, destinationTablePath) catch |deleteErr| {
@@ -922,7 +926,6 @@ test "mergeTables force single mem table creates disk table" {
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
     try recorder.memTables.append(alloc, table);
-    recorder.memTablesSem.waitUncancelable(io);
     table.inMerge = true;
 
     var single = [_]*Table{table};

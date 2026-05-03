@@ -126,6 +126,7 @@ memTablesSem: Io.Semaphore = .{
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
 g: Io.Group = .init,
+// TODO: migrate to io cancelation
 stopped: std.atomic.Value(bool) = .init(false),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,

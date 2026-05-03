@@ -88,6 +88,8 @@ pub fn deinit(self: *Runtime, alloc: Allocator) void {
 }
 
 pub fn getFreeDiskSpace(self: *Runtime, io: Io) u64 {
+    // TODO: revisit all the lockUncancelable, perhaps we should use a regular one,
+    // read path must be cancelable 100%
     self.diskStatsMx.lockUncancelable(io);
     defer self.diskStatsMx.unlock(io);
 
@@ -129,6 +131,7 @@ fn getCpuCount() usize {
         std.debug.print("[WARN] failed to get CPU count, defaulting to 4 threads: {s}", .{@errorName(err)});
         return 4;
     };
+    // TODO: investigate how to spawn it on a machine with 1 cpu
     if (builtin.is_test) return @max(4, cpus);
     return cpus;
 }

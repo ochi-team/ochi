@@ -56,4 +56,5 @@ test "projectIsFormatted" {
 // TODO: restrict constCast usage
 // TODO: restrict Self = @This(), use proper type name
 // TODO: restrict std.debug.print
+// TODO: restrict short path to error.xxx, use only full path
 // TODO: restrict TODO / FIXME comments, must be the last rule to fix them all

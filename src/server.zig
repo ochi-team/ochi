@@ -17,6 +17,16 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
 }
 
+fn registerSigtermHandler() void {
+    const empty_set = std.mem.zeroes(std.posix.sigset_t);
+    const act = std.posix.Sigaction{
+        .handler = .{ .handler = handleSigterm },
+        .mask = empty_set,
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.TERM, &act, null);
+}
+
 fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     if (global_server) |server| {
         server.stop();
@@ -44,20 +54,11 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
         .store = &store,
     };
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .localhost(conf.server.port) }, &dispatcher);
+    registerSigtermHandler();
     defer server.deinit();
 
     global_server = &server;
     defer global_server = null;
-
-    // Set up SIGTERM handler
-    const posix = std.posix;
-    const empty_set = std.mem.zeroes(posix.sigset_t);
-    const act = posix.Sigaction{
-        .handler = .{ .handler = handleSigterm },
-        .mask = empty_set,
-        .flags = 0,
-    };
-    posix.sigaction(posix.SIG.TERM, &act, null);
 
     var router = try server.router(.{});
     router.get("/health", health, .{});
@@ -95,15 +96,13 @@ test "serverWithSIGTERM" {
     };
 
     var future = try io.concurrent(ServerThread.run, .{ allocator, conf });
+    defer future.await(io);
 
     // Give the server time to start
     try io.sleep(.fromMilliseconds(100), .real);
 
     // Send SIGTERM to ourselves
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
-
-    // Wait for the server thread to finish
-    future.await(io);
 }
 
 test {

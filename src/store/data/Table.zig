@@ -396,6 +396,8 @@ pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
+// TODO: question why we don't pass allocator on release,
+// perhaps we can do it and don't carry allocator in it
 pub fn release(self: *Table, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
