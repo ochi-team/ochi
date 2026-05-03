@@ -74,8 +74,8 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !D
     const metaindexStat = try metaindexFile.stat(io);
 
     var metaindexFileReader = metaindexFile.reader(io, &.{});
-    // TODO this func below is changed, review
-    const metaindexCompressed = try metaindexFileReader.interface.allocRemaining(fbaAlloc, .limited(metaindexStat.size + 1));
+
+    const metaindexCompressed = try metaindexFileReader.interface.readAlloc(alloc, metaindexStat.size);
     defer fbaAlloc.free(metaindexCompressed);
 
     const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);

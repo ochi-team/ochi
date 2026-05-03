@@ -871,7 +871,7 @@ test "flushMemEntries non-force respects flush deadline" {
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
     recorder.stopped.store(true, .release);
-    try recorder.g.await();
+    try recorder.g.await(io);
 
     var block = try MemBlock.init(alloc, 64);
     defer block.deinit(alloc);
