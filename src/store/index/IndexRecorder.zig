@@ -34,7 +34,12 @@ fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
     const step = 250;
     var remaining = ns;
     while (remaining > 0) {
-        // TODO Use signal here to avoid buisy spinning
+        // TODO
+        // this is an anti-pattern in concurrent programming.
+        // a thread shouldn't waste cycles spinning. instead
+        // it should sleep, and be signalled when to wake up
+        // and do work. Using std.Io.Condition, or even better
+        // redesigning the worker threads to use Queues as input/output.
         if (stopped.load(.acquire)) return;
         const s = @min(remaining, step);
         Io.sleep(io, .fromNanoseconds(s), .real) catch |err| {
