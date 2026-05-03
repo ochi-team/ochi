@@ -100,7 +100,7 @@ fn query(self: *Parser, tokens: []const Token) ParseError!?Expression {
         return null;
     }
 
-    const expr = try self.boolean(tokens, &.{ .Equal, .NotEqual });
+    const expr = try self.boolean(tokens, &.{ .Equal, .NotEqual, .MatchRegex, .NotMatchRegex });
     return expr;
 }
 
@@ -250,6 +250,7 @@ test "Parser.expression" {
     };
 
     const cases = [_]Case{
+        // simple query
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -275,6 +276,7 @@ test "Parser.expression" {
             },
             .expectedSyntaxErrors = &.{},
         },
+        // test no parentheses of the query
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -320,6 +322,7 @@ test "Parser.expression" {
             },
             .expectedSyntaxErrors = &.{},
         },
+        // test no query, only and/or of the tags
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -359,6 +362,7 @@ test "Parser.expression" {
             },
             .expectedSyntaxErrors = &.{},
         },
+        // test operator precedence and grouping
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -452,6 +456,7 @@ test "Parser.expression" {
             },
             .expectedSyntaxErrors = &.{},
         },
+        // test bunch of nested groups
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -463,6 +468,24 @@ test "Parser.expression" {
                 .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 12 },
                 .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 13 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 14 },
+
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 2 },
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 3 },
+                .{ .kind = .Literal, .lexeme = "field", .line = 1, .col = 4 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 7 },
+                .{ .kind = .Literal, .lexeme = "value", .line = 1, .col = 8 },
+                .{ .kind = .And, .lexeme = "and", .line = 1, .col = 3 },
+                .{ .kind = .Literal, .lexeme = "start", .line = 1, .col = 4 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 7 },
+                .{ .kind = .Literal, .lexeme = "alpha", .line = 1, .col = 8 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 12 },
+                .{ .kind = .Or, .lexeme = "or", .line = 1, .col = 3 },
+                .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 12 },
+                .{ .kind = .Literal, .lexeme = "another", .line = 1, .col = 4 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 7 },
+                .{ .kind = .Literal, .lexeme = "some", .line = 1, .col = 8 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 12 },
+                .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 12 },
             },
             .expectedQuerySet = .{
                 .timeRange = .{ .range = .{ "-5m", "now" } },
@@ -470,11 +493,27 @@ test "Parser.expression" {
                     &.{ .literal = "env" },
                     &.{ .literal = "prod" },
                 } } } },
-                .query = null,
+                .query = .{ .grouping = &.{ .orOp = .{
+                    &.{ .grouping = &.{ .andOp = .{
+                        &.{ .equalOp = .{
+                            &.{ .literal = "field" },
+                            &.{ .literal = "value" },
+                        } },
+                        &.{ .equalOp = .{
+                            &.{ .literal = "start" },
+                            &.{ .literal = "alpha" },
+                        } },
+                    } } },
+                    &.{ .grouping = &.{ .equalOp = .{
+                        &.{ .literal = "another" },
+                        &.{ .literal = "some" },
+                    } } },
+                } } },
                 .pipes = .empty,
             },
             .expectedSyntaxErrors = &.{},
         },
+        // {} must contain at least one expression
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -485,6 +524,7 @@ test "Parser.expression" {
                 .{ .line = 1, .col = 2, .message = expectExpression },
             },
         },
+        // = predicate must have a key (primary token)
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -497,6 +537,7 @@ test "Parser.expression" {
                 .{ .line = 1, .col = 2, .message = expectExpression },
             },
         },
+        // = predicate msut have a value (primary token)
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -509,6 +550,7 @@ test "Parser.expression" {
                 .{ .line = 1, .col = 6, .message = expectExpression },
             },
         },
+        // tags must have a closing curly bracket
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -521,6 +563,7 @@ test "Parser.expression" {
                 .{ .line = 1, .col = 6, .message = expectCloseCurlyBracket },
             },
         },
+        // missing closing parentheses
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -535,6 +578,7 @@ test "Parser.expression" {
                 .{ .line = 1, .col = 11, .message = expectCloseParenthesis },
             },
         },
+        // and has no right hand
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
@@ -549,6 +593,7 @@ test "Parser.expression" {
                 .{ .line = 1, .col = 14, .message = expectExpression },
             },
         },
+        // , is an invalid token
         .{
             .query = &.{
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },

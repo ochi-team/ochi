@@ -31,6 +31,9 @@ pub const TokenKind = enum {
     Equal,
     NotEqual,
 
+    MatchRegex,
+    NotMatchRegex,
+
     And,
     Or,
 
