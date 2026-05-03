@@ -44,6 +44,8 @@ const EntriesShard = struct {
         defer self.mx.unlock(io);
         if (self.blocks.items.len == 0) {
             const b = try MemBlock.init(alloc, maxMemBlockSize);
+            errdefer b.deinit(alloc);
+
             try self.blocks.append(alloc, b);
             self.flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         }
@@ -75,6 +77,8 @@ const EntriesShard = struct {
 
             // if it didn't skip the block means the previous one has not enough space
             block = try MemBlock.init(alloc, maxMemBlockSize);
+            errdefer block.deinit(alloc);
+
             try self.blocks.append(alloc, block);
 
             gatheredEntriesCount += 1;
