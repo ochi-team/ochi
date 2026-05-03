@@ -238,3 +238,5 @@ test "serverEndToEndViaHTTP" {
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
 }
+
+// TODO: test querying fields with "." in a key/value
