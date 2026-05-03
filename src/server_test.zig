@@ -153,6 +153,8 @@ test "serverEndToEndViaHTTP" {
         }
     };
 
+    // TODO should use testing.allocator
+    // Produces a lot of memory leaks, that's why it's not used
     var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
     defer serverFuture.await(io);
 

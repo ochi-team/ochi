@@ -233,7 +233,7 @@ fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     defer file.close(io);
 
     var file_reader = file.reader(io, &.{});
-    return file_reader.interface.allocRemaining(allocator, .limited(std.math.maxInt(usize)));
+    return file_reader.interface.allocRemaining(allocator, .unlimited);
 }
 
 test "addLines" {

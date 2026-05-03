@@ -44,7 +44,6 @@ fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
     }
 }
 
-// TODO rewrite using new Io
 const IndexRecorder = @This();
 
 entries: *Entries,
@@ -136,6 +135,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
     // the allocator is different from http life cycle,
     // but shared between all the background jobs
     // TODO: find a better allocator, perhaps an arena with regular reset
+
+    errdefer t.stopped.store(true, .release);
 
     // disk tables merge task is different,
     // it doesn't run infinitely, but runs a few merge cycles to process left overs

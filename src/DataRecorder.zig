@@ -179,6 +179,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         .runtime = runtime,
     };
 
+    errdefer t.stopped.store(true, .release);
+
     for (0..concurrency) |_| {
         try t.startDiskTablesMerge(io, alloc);
     }
