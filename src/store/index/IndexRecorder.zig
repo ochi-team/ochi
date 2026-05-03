@@ -37,7 +37,9 @@ fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
         // TODO Use signal here to avoid buisy spinning
         if (stopped.load(.acquire)) return;
         const s = @min(remaining, step);
-        Io.sleep(io, .fromNanoseconds(s), .real) catch {};
+        Io.sleep(io, .fromNanoseconds(s), .real) catch |err| {
+            std.debug.print("Sleep or stop error: {}", .{err});
+        };
         remaining -= s;
     }
 }
