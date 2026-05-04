@@ -66,6 +66,8 @@ pub fn build(b: *std.Build) void {
             // TODO: keep it only for debug mode
             // .sanitize_c = .full,
             // .sanitize_thread = true,
+            // TODO: try using .strip option to reduce the size of the binary,
+            // concern is only to collect debug information (logging, crash events)
         }),
     });
     b.installArtifact(exe);

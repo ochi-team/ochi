@@ -61,6 +61,8 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
     var streamI: usize = 0;
     var blockSize: u32 = 0;
 
+    // TODO: audit al sort/sortUnstable and use a single one,
+    // currently we use mem.sort AND sort.sort, therefore increase bundle size with no reason
     std.mem.sortUnstable(Line, lines, {}, lineLessThan);
     var prevSID: SID = lines[0].sid;
 
@@ -102,6 +104,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     if (Dir.openDirAbsolute(io, path, .{})) |dir| {
         var d = dir;
         d.close(io);
+        // TODO: audit all error.xxx and use a full error path
         return error.DirAlreadyExists;
     } else |err| switch (err) {
         error.FileNotFound => {

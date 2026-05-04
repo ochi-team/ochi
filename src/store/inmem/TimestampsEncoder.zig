@@ -15,6 +15,7 @@ pub const EncodedTimestamps = struct {
 };
 
 const Self = @This();
+// TODO: we should inline zint package, it must reduce the build size
 const zType = zint.Zint(u64);
 
 ctx: zint.Ctx,

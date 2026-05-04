@@ -1,6 +1,5 @@
 {
   "rules": {
-    "allocator-first-param": "warn",
     "avoid-as": "warn",
     "case-convention": "warn",
     "homeless-try": "error",
