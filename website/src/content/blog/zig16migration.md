@@ -39,7 +39,9 @@ pub fn createDir(io: Io, path: []const u8) void {
 ```
 The biggest improvements this brings are code reusability, better platform support, and incredible asynchronous and concurrent programming features.
 
-Back to the migration, this meant that we should just pass an Io instance to a lot of methods, and this incredibly boring task has consumed lots of time. In the end, we have added ~1500 instances of Io in 58 different files. In literal terms this has been done using regex. Note that this may not have been the most efficient approach, since we also could have used AST grepping in some sense.
+Back to the migration, this meant that we should just pass an Io instance to a lot of methods, and this incredibly boring task has consumed lots of time. In the end, we have added ~1500 instances of Io in 58 different files. In literal terms this has been done using regex.
+
+Note that this may not have been the most efficient approach, since we could have used a super cool solution - [AST grep](https://ast-grep.github.io/).
 
 Other notable tasks have been just replacing concurrent parts of our code with the new interface. Other than that, most changes have been 1:1, needing little to no effort in implementing.
 
