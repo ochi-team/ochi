@@ -1,64 +1,111 @@
 /// Logql is a Logs Ochi Query Language,
 /// translates a query to ochi query API
 const std = @import("std");
-
-const Field = @import("../store/lines.zig").Field;
+const Allocator = std.mem.Allocator;
 
 const Scanner = @import("Scanner.zig");
+const Parser = @import("Parser.zig");
+const Translator = @import("Translator.zig");
 const ErrorReporter = @import("ErrorReporter.zig");
 
-pub const Query = struct {
-    startTimeNs: u64,
-    endTimeNs: u64,
+const Query = @import("Query.zig");
 
-    // legacy exact-match filters, preserved for backward compatibility
-    tags: []const Field,
-    fields: []const Field,
+const testing = std.testing;
 
-    // v2 boolean filter trees used by the translator
-    tagsExpr: ?*const FilterExpression = null,
-    fieldsExpr: ?*const FilterExpression = null,
-};
+test "validateQuery" {
+    const Case = struct {
+        query: Query,
+        expectedErr: ?anyerror = null,
+    };
 
-pub const MatchOp = enum {
-    equal,
-    not_equal,
-    match_regex,
-    not_match_regex,
-};
+    const orExpr: Query.FilterExpression = .{
+        .orOp = .{
+            &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+            &.{ .predicate = .{ .key = "service", .value = "worker", .op = .notEq } },
+        },
+    };
+    const regex: Query.FilterExpression = .{ .predicate = .{ .key = "env", .value = "prod.*", .op = .matchRegex } };
 
-pub const FilterPredicate = struct {
-    key: []const u8,
-    value: []const u8,
-    op: MatchOp,
-};
+    const cases = [_]Case{
+        .{
+            // valid time range and no tags
+            .query = .{
+                .startTimeNs = 10,
+                .endTimeNs = 20,
+                .tagsExpr = null,
+                .fieldsExpr = null,
+            },
+        },
+        .{
+            // valid time range and supported tag operators
+            .query = .{
+                .startTimeNs = 10,
+                .endTimeNs = 20,
+                .tagsExpr = &orExpr,
+                .fieldsExpr = null,
+            },
+        },
+        .{
+            // invalid time range when equal
+            .query = .{
+                .startTimeNs = 20,
+                .endTimeNs = 20,
+                .tagsExpr = null,
+                .fieldsExpr = null,
+            },
+            .expectedErr = error.InvalidTimeRange,
+        },
+        .{
+            // invalid time range when start is after end
+            .query = .{
+                .startTimeNs = 21,
+                .endTimeNs = 20,
+                .tagsExpr = null,
+                .fieldsExpr = null,
+            },
+            .expectedErr = error.InvalidTimeRange,
+        },
+        .{
+            // unsupported tag operator
+            .query = .{
+                .startTimeNs = 10,
+                .endTimeNs = 20,
+                .tagsExpr = &regex,
+                .fieldsExpr = null,
+            },
+            .expectedErr = error.UnsupportedTagOperator,
+        },
+    };
 
-pub const FilterExpression = union(enum) {
-    predicate: FilterPredicate,
-    andOp: [2]*const FilterExpression,
-    orOp: [2]*const FilterExpression,
-    grouping: *const FilterExpression,
-};
+    for (cases) |case| {
+        if (case.expectedErr) |expectedErr| {
+            try testing.expectError(expectedErr, case.query.validateQuery());
+        } else {
+            try case.query.validateQuery();
+        }
+    }
+}
 
 const Loql = @This();
 
-scanner: Scanner,
-reporter: ErrorReporter,
+scanner: Scanner = .{},
+parser: Parser = .{},
+translator: Translator = .{},
 
 // TODO: it must accept a reader, not a query string
-pub fn translateQuery(self: *const Loql, fullQuery: []const u8) ![]u8 {
-    var query = std.mem.trim(u8, fullQuery, " ");
-    query = std.mem.trim(u8, query, "\n");
-    query = std.mem.trim(u8, query, "\t");
-    for (query, 0..) |c, i| {
-        query[i] = std.ascii.toLower(c);
-    }
+pub fn translateQuery(
+    self: *Loql,
+    allocator: Allocator,
+    reporter: *ErrorReporter.ErrorReporter,
+    fullQueryStr: []const u8,
+) !Query {
+    const trimmedQueryStr = std.mem.trim(u8, fullQueryStr, " \n\t");
 
     // TODO: validate whether it's a syntax error and return report content
     // or unknown error
     // TODO: most likely scanner has a state, we must reset it
-    const tokens = try self.scanner.scan(query, &self.reporter);
-    for (tokens) |token| {
-        std.debug.print("Token: {s}\n", .{token});
-    }
+    try self.scanner.scan(allocator, trimmedQueryStr, reporter);
+    const expr = try self.parser.querySet(allocator, self.scanner.tokens.items, reporter);
+    const query = try self.translator.query(allocator, expr);
+    try query.validate();
 }

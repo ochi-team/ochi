@@ -10,18 +10,17 @@ pub fn log(e: SyntaxError) void {
     std.debug.print("Syntax error at line {d}, column {d}: {s}\n", .{ e.line, e.col, e.message });
 }
 
+var maxErrors: usize = 16;
+
 /// ErrorReporter is responsible for reporting errors during the translation process,
 /// it provides user readable error messages in order to debug the passed query.
 pub const ErrorReporter = @This();
 
-errs: std.ArrayList(SyntaxError) = .empty,
+errs: [maxErrors]SyntaxError = .empty,
+len: usize = 0,
 
-pub fn init(buf: []SyntaxError) ErrorReporter {
-    const errs = std.ArrayList(SyntaxError).initBuffer(buf);
-
-    return .{
-        .errs = errs,
-    };
+pub fn init() ErrorReporter {
+    return .{};
 }
 
 pub fn reset(self: *ErrorReporter) void {
@@ -29,10 +28,13 @@ pub fn reset(self: *ErrorReporter) void {
 }
 
 pub fn reportSyntaxError(self: *ErrorReporter, err: SyntaxError) bool {
-    self.errs.appendBounded(err) catch {
-        // do nothing, gather only 16 errors is enough
+    if (self.len >= maxErrors) {
+        // too many errors, stop reporting
         return false;
-    };
+    }
+
+    self.errs[self.len - 1] = err;
+    self.len += 1;
 
     return true;
 }

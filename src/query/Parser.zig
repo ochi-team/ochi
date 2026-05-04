@@ -1,6 +1,5 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const testing = std.testing;
 
 const Token = @import("Scanner.zig").Token;
 const TokenKind = @import("Scanner.zig").TokenKind;
@@ -27,10 +26,10 @@ pub const Expression = union(enum) {
 };
 
 pub const QuerySet = struct {
-    timeRange: ?Expression,
-    tags: ?Expression,
+    timeRange: Expression,
+    tags: Expression,
     query: ?Expression,
-    pipes: std.ArrayList(Expression),
+    pipes: std.ArrayList(Expression) = .empty,
 };
 
 pub const Parser = @This();
@@ -39,33 +38,29 @@ pub const ParseError = Error || error{OutOfMemory};
 
 // state
 current: usize = 0,
-reporter: *ErrorReporter,
 
 // TODO: we might want to use a pool here to create a bunch of expressions,
 // better to emter how many we create them per query
-allocator: Allocator,
 // we expect to call query only in read API using an arena allocator, perhaps we get can rid of it
 garbage: std.ArrayList(*Expression) = .empty,
 
-pub fn init(allocator: Allocator, reporter: *ErrorReporter) Parser {
-    return Parser{
-        .allocator = allocator,
-        .reporter = reporter,
-    };
-}
-
-pub fn deinit(self: *Parser) void {
+pub fn deinit(self: *Parser, allocator: Allocator) void {
     for (self.garbage.items) |node| {
-        self.allocator.destroy(node);
+        allocator.destroy(node);
     }
-    self.garbage.deinit(self.allocator);
+    self.garbage.deinit(allocator);
 }
 
-pub fn querySet(self: *Parser, tokens: []const Token) ParseError!QuerySet {
-    const range = try self.timeRange(tokens);
-    const ts = try self.tags(tokens);
-    const q = try self.query(tokens);
-    const ps = try self.pipes(tokens);
+pub fn querySet(
+    self: *Parser,
+    allocator: Allocator,
+    tokens: []const Token,
+    reporter: *ErrorReporter,
+) ParseError!QuerySet {
+    const range = try self.timeRange(allocator, tokens);
+    const ts = try self.tags(allocator, tokens, reporter);
+    const q = try self.query(allocator, tokens, reporter);
+    const ps = try self.pipes(allocator, tokens);
 
     return .{
         .timeRange = range,
@@ -75,23 +70,24 @@ pub fn querySet(self: *Parser, tokens: []const Token) ParseError!QuerySet {
     };
 }
 
-fn timeRange(self: *Parser, tokens: []const Token) ParseError!?Expression {
+fn timeRange(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!?Expression {
     _ = self;
     _ = tokens;
+    _ = allocator;
     return .{
         .range = .{ "-5m", "now" },
     };
 }
 
-fn tags(self: *Parser, tokens: []const Token) ParseError!?Expression {
-    try self.consume(tokens, .LeftCurlyBracket, expectOpenCurlyBracket);
-    const expr = try self.boolean(tokens, &.{ .Equal, .NotEqual });
-    try self.consume(tokens, .RightCurlyBracket, expectCloseCurlyBracket);
+fn tags(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!?Expression {
+    try self.consume(tokens, .LeftCurlyBracket, expectOpenCurlyBracket, reporter);
+    const expr = try self.boolean(allocator, tokens, &.{ .Equal, .NotEqual }, reporter);
+    try self.consume(tokens, .RightCurlyBracket, expectCloseCurlyBracket, reporter);
 
     return expr;
 }
 
-fn query(self: *Parser, tokens: []const Token) ParseError!?Expression {
+fn query(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!?Expression {
     if (self.current >= tokens.len) {
         return null;
     }
@@ -100,7 +96,7 @@ fn query(self: *Parser, tokens: []const Token) ParseError!?Expression {
         return null;
     }
 
-    const expr = try self.boolean(tokens, &.{ .Equal, .NotEqual, .MatchRegex, .NotMatchRegex });
+    const expr = try self.boolean(allocator, tokens, &.{ .Equal, .NotEqual, .MatchRegex, .NotMatchRegex }, reporter);
     return expr;
 }
 
@@ -110,22 +106,28 @@ fn pipes(self: *Parser, tokens: []const Token) ParseError!std.ArrayList(Expressi
     return .empty;
 }
 
-fn boolean(self: *Parser, tokens: []const Token, allowsOps: []const TokenKind) ParseError!Expression {
-    var expr = try self.equality(tokens, allowsOps);
+fn boolean(
+    self: *Parser,
+    allocator: Allocator,
+    tokens: []const Token,
+    allowsOps: []const TokenKind,
+    reporter: *ErrorReporter,
+) ParseError!Expression {
+    var expr = try self.equality(allocator, tokens, allowsOps, reporter);
 
     while (self.match(tokens, &.{ .And, .Or })) {
         const op = tokens[self.current - 1].kind;
-        const right = try self.equality(tokens, allowsOps);
+        const right = try self.equality(allocator, tokens, allowsOps, reporter);
 
-        const leftNode = try self.allocExpression(expr);
-        const rightNode = try self.allocExpression(right);
+        const leftNode = try self.allocExpression(allocator, expr);
+        const rightNode = try self.allocExpression(allocator, right);
 
         expr = switch (op) {
             .And => .{ .andOp = .{ leftNode, rightNode } },
             .Or => .{ .orOp = .{ leftNode, rightNode } },
             else => {
                 const line, const col = self.currentPosition(tokens);
-                _ = self.reporter.reportSyntaxError(.{
+                _ = reporter.reportSyntaxError(.{
                     .line = line,
                     .col = col,
                     .message = "Unexpected operator.",
@@ -138,22 +140,28 @@ fn boolean(self: *Parser, tokens: []const Token, allowsOps: []const TokenKind) P
     return expr;
 }
 
-fn equality(self: *Parser, tokens: []const Token, allowsOps: []const TokenKind) ParseError!Expression {
-    var expr = try self.primary(tokens, allowsOps);
+fn equality(
+    self: *Parser,
+    allocator: Allocator,
+    tokens: []const Token,
+    allowsOps: []const TokenKind,
+    reporter: *ErrorReporter,
+) ParseError!Expression {
+    var expr = try self.primary(allocator, tokens, allowsOps, reporter);
 
     while (self.match(tokens, allowsOps)) {
         const op = tokens[self.current - 1].kind;
-        const right = try self.primary(tokens, allowsOps);
+        const right = try self.primary(allocator, tokens, allowsOps, reporter);
 
-        const leftNode = try self.allocExpression(expr);
-        const rightNode = try self.allocExpression(right);
+        const leftNode = try self.allocExpression(allocator, expr);
+        const rightNode = try self.allocExpression(allocator, right);
 
         expr = switch (op) {
             .Equal => .{ .equalOp = .{ leftNode, rightNode } },
             .NotEqual => .{ .notEqualOp = .{ leftNode, rightNode } },
             else => {
                 const line, const col = self.currentPosition(tokens);
-                _ = self.reporter.reportSyntaxError(.{
+                _ = reporter.reportSyntaxError(.{
                     .line = line,
                     .col = col,
                     .message = "Unexpected operator.",
@@ -166,21 +174,27 @@ fn equality(self: *Parser, tokens: []const Token, allowsOps: []const TokenKind) 
     return expr;
 }
 
-fn primary(self: *Parser, tokens: []const Token, allowsOps: []const TokenKind) ParseError!Expression {
+fn primary(
+    self: *Parser,
+    allocator: Allocator,
+    tokens: []const Token,
+    allowsOps: []const TokenKind,
+    reporter: *ErrorReporter,
+) ParseError!Expression {
     if (self.match(tokens, &.{.Literal})) {
         return .{ .literal = tokens[self.current - 1].lexeme };
     }
 
     if (self.match(tokens, &.{.LeftParenthesis})) {
-        const expr = try self.boolean(tokens, allowsOps);
-        try self.consume(tokens, .RightParenthesis, expectCloseParenthesis);
+        const expr = try self.boolean(allocator, tokens, allowsOps, reporter);
+        try self.consume(tokens, .RightParenthesis, expectCloseParenthesis, reporter);
 
-        const node = try self.allocExpression(expr);
+        const node = try self.allocExpression(allocator, expr);
         return .{ .grouping = node };
     }
 
     const line, const col = self.currentPosition(tokens);
-    _ = self.reporter.reportSyntaxError(.{
+    _ = reporter.reportSyntaxError(.{
         .line = line,
         .col = col,
         .message = expectExpression,
@@ -199,7 +213,7 @@ fn match(self: *Parser, tokens: []const Token, types: []const TokenKind) bool {
     return false;
 }
 
-fn consume(self: *Parser, tokens: []const Token, kind: TokenKind, message: []const u8) Error!void {
+fn consume(self: *Parser, tokens: []const Token, kind: TokenKind, message: []const u8, reporter: *ErrorReporter) Error!void {
     if (self.current < tokens.len and tokens[self.current].kind == kind) {
         self.current += 1;
         return;
@@ -207,7 +221,7 @@ fn consume(self: *Parser, tokens: []const Token, kind: TokenKind, message: []con
 
     const line, const col = self.currentPosition(tokens);
 
-    _ = self.reporter.reportSyntaxError(.{
+    _ = reporter.reportSyntaxError(.{
         .line = line,
         .col = col,
         .message = message,
@@ -228,19 +242,21 @@ fn currentPosition(self: *const Parser, tokens: []const Token) struct { u16, u16
     return .{ last.line, last.col };
 }
 
-fn allocExpression(self: *Parser, expr: Expression) !*Expression {
-    try self.garbage.ensureUnusedCapacity(self.allocator, 1);
+fn allocExpression(self: *Parser, allocator: Allocator, expr: Expression) !*Expression {
+    try self.garbage.ensureUnusedCapacity(allocator, 1);
 
-    const node = try self.allocator.create(Expression);
-    errdefer self.allocator.destroy(node);
+    const node = try allocator.create(Expression);
+    errdefer allocator.destroy(node);
 
     self.garbage.appendAssumeCapacity(node);
     node.* = expr;
     return node;
 }
 
+const testing = std.testing;
+
 test "Parser.expression" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     const Case = struct {
         query: []const Token,
@@ -617,10 +633,10 @@ test "Parser.expression" {
         var errsBuf: [8]ErrorReporter.SyntaxError = undefined;
         var reporter = ErrorReporter.init(&errsBuf);
 
-        var parser: Parser = .init(allocator, &reporter);
-        defer parser.deinit();
+        var parser: Parser = .{};
+        defer parser.deinit(allocator);
 
-        const result = parser.querySet(case.query);
+        const result = parser.querySet(allocator, case.query, &reporter);
         if (case.expectedErr) |expectedErr| {
             try testing.expectError(expectedErr, result);
         } else {

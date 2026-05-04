@@ -12,8 +12,17 @@ const ScannedToken = struct {
 };
 
 fn isKeyword(word: []const u8) ?TokenKind {
-    if (std.mem.eql(u8, word, "or")) return .Or;
-    if (std.mem.eql(u8, word, "and")) return .And;
+    // we don't expect supporting larger keywords
+    if (word.len > 8) {
+        return null;
+    }
+
+    var lowerCaseBuf: [8]u8 = undefined;
+    for (0..word.len) |i| lowerCaseBuf[i] = std.ascii.toLower(word[i]);
+    const lowerCaseWord = lowerCaseBuf[0..word.len];
+
+    if (std.mem.eql(u8, lowerCaseWord, "or")) return .Or;
+    if (std.mem.eql(u8, lowerCaseWord, "and")) return .And;
 
     return null;
 }
@@ -50,192 +59,191 @@ pub const Token = struct {
     col: u16,
 };
 
-pub const Scanner = struct {
-    /// tokens holds the current parsed tokens state,
-    /// we keep it asa member to reuse the allocated memory
-    tokens: std.ArrayList(Token) = .empty,
+pub const Scanner = @This();
+/// tokens holds the current parsed tokens state,
+/// we keep it asa member to reuse the allocated memory
+tokens: std.ArrayList(Token) = .empty,
 
-    // state
-    line: u16 = 1,
-    col: u16 = 1,
+// state
+line: u16 = 1,
+col: u16 = 1,
 
-    pub fn deinit(self: *Scanner, allocator: Allocator) void {
-        self.tokens.deinit(allocator);
-    }
+pub fn deinit(self: *Scanner, allocator: Allocator) void {
+    self.tokens.deinit(allocator);
+}
 
-    /// scan is responsible for scanning the query and returning a list of tokens,
-    /// it also reports any syntax errors to the ErrorReporter.
-    pub fn scan(
-        self: *Scanner,
-        allocator: Allocator,
-        query: []const u8,
-        reporter: *ErrorReporter,
-    ) !void {
-        var tail = query[0..];
+/// scan is responsible for scanning the query and returning a list of tokens,
+/// it also reports any syntax errors to the ErrorReporter.
+pub fn scan(
+    self: *Scanner,
+    allocator: Allocator,
+    query: []const u8,
+    reporter: *ErrorReporter,
+) !void {
+    var tail = query[0..];
 
-        while (tail.len > 0) {
-            const next = self.scanToken(tail, reporter) catch |err| {
-                switch (err) {
-                    Error.SyntaxError => return err,
-                }
-            };
-            tail = next.tail;
-            if (next.token) |token| {
-                try self.tokens.append(allocator, token);
+    while (tail.len > 0) {
+        const next = self.scanToken(tail, reporter) catch |err| {
+            switch (err) {
+                Error.SyntaxError => return err,
             }
+        };
+        tail = next.tail;
+        if (next.token) |token| {
+            try self.tokens.append(allocator, token);
         }
     }
+}
 
-    fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!ScannedToken {
-        const token: ScannedToken = switch (query[0]) {
-            // time range
-            '[' => .{
-                .token = .{
-                    .kind = .LeftSquareBracket,
-                    .lexeme = query[0..1],
-                    .line = self.line,
-                    .col = self.col,
-                },
-                .tail = query[1..],
+fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!ScannedToken {
+    const token: ScannedToken = switch (query[0]) {
+        // time range
+        '[' => .{
+            .token = .{
+                .kind = .LeftSquareBracket,
+                .lexeme = query[0..1],
+                .line = self.line,
+                .col = self.col,
             },
-            ']' => .{
-                .token = .{
-                    .kind = .RightSquareBracket,
-                    .lexeme = query[0..1],
-                    .line = self.line,
-                    .col = self.col,
-                },
-                .tail = query[1..],
+            .tail = query[1..],
+        },
+        ']' => .{
+            .token = .{
+                .kind = .RightSquareBracket,
+                .lexeme = query[0..1],
+                .line = self.line,
+                .col = self.col,
             },
-            ',' => .{
-                .token = .{
-                    .kind = .Comma,
-                    .lexeme = query[0..1],
-                    .line = self.line,
-                    .col = self.col,
-                },
-                .tail = query[1..],
+            .tail = query[1..],
+        },
+        ',' => .{
+            .token = .{
+                .kind = .Comma,
+                .lexeme = query[0..1],
+                .line = self.line,
+                .col = self.col,
             },
-            // tags
-            '{' => .{
-                .token = .{ .kind = .LeftCurlyBracket, .lexeme = query[0..1], .line = self.line, .col = self.col },
-                .tail = query[1..],
-            },
-            '}' => .{
-                .token = .{ .kind = .RightCurlyBracket, .lexeme = query[0..1], .line = self.line, .col = self.col },
-                .tail = query[1..],
-            },
-            '(' => .{
-                .token = .{ .kind = .LeftParenthesis, .lexeme = query[0..1], .line = self.line, .col = self.col },
-                .tail = query[1..],
-            },
-            ')' => .{
-                .token = .{ .kind = .RightParenthesis, .lexeme = query[0..1], .line = self.line, .col = self.col },
-                .tail = query[1..],
-            },
-            // equal
-            '=' => .{
-                .token = .{ .kind = .Equal, .lexeme = query[0..1], .line = self.line, .col = self.col },
-                .tail = query[1..],
-            },
-            // not equal
-            '!' => blk: {
-                if (query.len > 1 and query[1] == '=') {
-                    break :blk .{
-                        .token = .{
-                            .kind = .NotEqual,
-                            .lexeme = query[0..2],
-                            .line = self.line,
-                            .col = self.col,
-                        },
-                        .tail = query[2..],
-                    };
-                } else {
-                    _ = reporter.reportSyntaxError(
-                        .{
-                            .line = self.line,
-                            .col = self.col,
-                            .message = "unexpected token: !",
-                        },
-                    );
-                    return Error.SyntaxError;
-                }
-            },
-            // pipe
-            '|' => .{
-                .token = .{
-                    .kind = .Pipe,
-                    .lexeme = query[0..1],
-                    .line = self.line,
-                    .col = self.col,
-                },
-                .tail = query[1..],
-            },
-            // comments
-            '/' => blk: {
-                if (query.len > 1 and query[1] == '/') {
-                    const nextLineIdx = std.mem.indexOfScalar(u8, query, '\n') orelse query.len;
-                    const consumed = if (nextLineIdx < query.len) nextLineIdx + 1 else nextLineIdx;
-                    break :blk .{
-                        .token = null,
-                        .tail = query[consumed..],
-                    };
-                } else {
-                    _ = reporter.reportSyntaxError(
-                        .{ .line = self.line, .col = self.col, .message = "unexpected token: /" },
-                    );
-                    return Error.SyntaxError;
-                }
-            },
-            'a'...'z', 'A'...'Z', '0'...'9', '_' => blk: {
-                var idx: usize = 0;
-                while (idx < query.len and (std.ascii.isAlphanumeric(query[idx]) or query[idx] == '_')) : (idx += 1) {}
-
-                const word = query[0..idx];
-                const kind = if (isKeyword(word)) |keyword| keyword else TokenKind.Literal;
-
+            .tail = query[1..],
+        },
+        // tags
+        '{' => .{
+            .token = .{ .kind = .LeftCurlyBracket, .lexeme = query[0..1], .line = self.line, .col = self.col },
+            .tail = query[1..],
+        },
+        '}' => .{
+            .token = .{ .kind = .RightCurlyBracket, .lexeme = query[0..1], .line = self.line, .col = self.col },
+            .tail = query[1..],
+        },
+        '(' => .{
+            .token = .{ .kind = .LeftParenthesis, .lexeme = query[0..1], .line = self.line, .col = self.col },
+            .tail = query[1..],
+        },
+        ')' => .{
+            .token = .{ .kind = .RightParenthesis, .lexeme = query[0..1], .line = self.line, .col = self.col },
+            .tail = query[1..],
+        },
+        // equal
+        '=' => .{
+            .token = .{ .kind = .Equal, .lexeme = query[0..1], .line = self.line, .col = self.col },
+            .tail = query[1..],
+        },
+        // not equal
+        '!' => blk: {
+            if (query.len > 1 and query[1] == '=') {
                 break :blk .{
                     .token = .{
-                        .kind = kind,
-                        .lexeme = word,
+                        .kind = .NotEqual,
+                        .lexeme = query[0..2],
                         .line = self.line,
                         .col = self.col,
                     },
-                    .tail = query[idx..],
+                    .tail = query[2..],
                 };
+            } else {
+                _ = reporter.reportSyntaxError(
+                    .{
+                        .line = self.line,
+                        .col = self.col,
+                        .message = "unexpected token: !",
+                    },
+                );
+                return Error.SyntaxError;
+            }
+        },
+        // pipe
+        '|' => .{
+            .token = .{
+                .kind = .Pipe,
+                .lexeme = query[0..1],
+                .line = self.line,
+                .col = self.col,
             },
-            // whitespace
-            '\n' => .{ .token = null, .tail = query[1..] },
-            ' ', '\t' => blk: {
+            .tail = query[1..],
+        },
+        // comments
+        '/' => blk: {
+            if (query.len > 1 and query[1] == '/') {
+                const nextLineIdx = std.mem.indexOfScalar(u8, query, '\n') orelse query.len;
+                const consumed = if (nextLineIdx < query.len) nextLineIdx + 1 else nextLineIdx;
                 break :blk .{
                     .token = null,
-                    .tail = query[1..],
+                    .tail = query[consumed..],
                 };
-            },
-            else => {
-                _ = reporter.reportSyntaxError(.{ .line = self.line, .col = self.col, .message = "unexpected token" });
-                return Error.SyntaxError;
-            },
-        };
-
-        const consumed = query.len - token.tail.len;
-        self.advancePosition(query[0..consumed]);
-        return token;
-    }
-
-    // TODO: benchmark if it's better to return the position shift
-    // from the token, not to iterate over the consumed query again
-    fn advancePosition(self: *Scanner, consumed: []const u8) void {
-        for (consumed) |ch| {
-            if (ch == '\n') {
-                self.line += 1;
-                self.col = 1;
             } else {
-                self.col += 1;
+                _ = reporter.reportSyntaxError(
+                    .{ .line = self.line, .col = self.col, .message = "unexpected token: /" },
+                );
+                return Error.SyntaxError;
             }
+        },
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-' => blk: {
+            var idx: usize = 0;
+            while (idx < query.len and (std.ascii.isAlphanumeric(query[idx]) or query[idx] == '_')) : (idx += 1) {}
+
+            const word = query[0..idx];
+            const kind = if (isKeyword(word)) |keyword| keyword else TokenKind.Literal;
+
+            break :blk .{
+                .token = .{
+                    .kind = kind,
+                    .lexeme = word,
+                    .line = self.line,
+                    .col = self.col,
+                },
+                .tail = query[idx..],
+            };
+        },
+        // whitespace
+        '\n' => .{ .token = null, .tail = query[1..] },
+        ' ', '\t' => blk: {
+            break :blk .{
+                .token = null,
+                .tail = query[1..],
+            };
+        },
+        else => {
+            _ = reporter.reportSyntaxError(.{ .line = self.line, .col = self.col, .message = "unexpected token" });
+            return Error.SyntaxError;
+        },
+    };
+
+    const consumed = query.len - token.tail.len;
+    self.advancePosition(query[0..consumed]);
+    return token;
+}
+
+// TODO: benchmark if it's better to return the position shift
+// from the token, not to iterate over the consumed query again
+fn advancePosition(self: *Scanner, consumed: []const u8) void {
+    for (consumed) |ch| {
+        if (ch == '\n') {
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.col += 1;
         }
     }
-};
+}
 
 test "Scanner.scan table-driven" {
     const alloc = testing.allocator;
@@ -305,5 +313,23 @@ test "Scanner.scan table-driven" {
 
         try testing.expectEqualDeep(case.expectedTokens, scanner.tokens.items);
         try testing.expectEqualDeep(case.expectedSyntaxErrors, reporter.syntaxErrors());
+    }
+}
+
+test "isKeyword" {
+    const cases = &[_]struct {
+        word: []const u8,
+        expected: ?TokenKind,
+    }{
+        .{ .word = "or", .expected = .Or },
+        .{ .word = "OR", .expected = .Or },
+        .{ .word = "and", .expected = .And },
+        .{ .word = "AND", .expected = .And },
+        .{ .word = "orban", .expected = null },
+        .{ .word = "andrew", .expected = null },
+    };
+
+    for (cases) |case| {
+        try testing.expectEqual(case.expected, isKeyword(case.word));
     }
 }
