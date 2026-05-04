@@ -101,7 +101,7 @@ pub fn build(b: *std.Build) void {
         // TODO: either update our runner or let everyone use a custom one,
         // ideally support both, an updated one plus personal per dev "test_runner_custom/personal/override/etc.zig",
         // but ideal case can wait a person who wants its own runner
-        // .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
+        .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
 
     // encoding module tests
@@ -115,7 +115,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
-        // .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
+        .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
 
     // build test
