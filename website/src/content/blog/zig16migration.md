@@ -1,6 +1,6 @@
 ---
 title: Migrating Ochi to Zig version 0.16.0
-date: "2026-05-4"
+date: "2026-05-04"
 description: Bringing in improvements from outside
 author: "Marko"
 ---
