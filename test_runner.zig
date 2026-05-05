@@ -300,7 +300,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             printColorLog("|{s}|", .{name}, .green);
 
             if (iter.next()) |file_name| {
-                printColorLog("|{s}| ", .{file_name}, .yellow);
+                printColorLog("|{s}|", .{file_name}, .yellow);
             }
 
             printColorLog("{s}\n", .{iter.rest()}, .blue);
