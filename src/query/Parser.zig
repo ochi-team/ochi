@@ -9,6 +9,9 @@ const ErrorReporter = @import("ErrorReporter.zig");
 const expectCloseParenthesis = "Expect ')' after expression.";
 const expectOpenCurlyBracket = "Expect '{' before tags.";
 const expectCloseCurlyBracket = "Expect '}' after tags.";
+const expectOpenSquareBracket = "Expect '[' before time range.";
+const expectCloseSquareBracket = "Expect ']' after time range.";
+const expectComaBetweenTimeValues = "Expect ',' between time range values.";
 const expectExpression = "Expect expression.";
 
 // TODO: benchmark if *[2]Expression gives better locality,
@@ -68,7 +71,7 @@ pub fn querySet(
     tokens: []const Token,
     reporter: *ErrorReporter,
 ) ParseError!QuerySet {
-    const range = try self.timeRange(allocator, tokens);
+    const range = try self.timeRange(tokens, reporter);
     const ts = try self.tags(allocator, tokens, reporter);
     const q = try self.query(allocator, tokens, reporter);
     const ps = try self.pipes(allocator, tokens);
@@ -81,11 +84,55 @@ pub fn querySet(
     };
 }
 
-fn timeRange(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!TimeRangeExpression {
-    _ = self;
-    _ = tokens;
-    _ = allocator;
-    return .{ .{ .duration = "-5m" }, .{ .now = {} } };
+fn timeRange(self: *Parser, tokens: []const Token, reporter: *ErrorReporter) ParseError!TimeRangeExpression {
+    try self.consume(tokens, .LeftSquareBracket, expectOpenSquareBracket, reporter);
+    const leftHand = try self.time(tokens, reporter);
+    try self.consume(tokens, .Comma, expectComaBetweenTimeValues, reporter);
+    const rightHand = try self.time(tokens, reporter);
+    try self.consume(tokens, .RightSquareBracket, expectCloseSquareBracket, reporter);
+
+    if (leftHand == null and rightHand == null) {
+        const line, const col = self.currentPosition(tokens);
+        _ = reporter.reportSyntaxError(.{
+            .line = line,
+            .col = col,
+            .message = "At least one of the time range values must be specified.",
+        });
+        return Error.SyntaxError;
+    }
+
+    const left: TimeValue = leftHand orelse .{ .now = {} };
+    const right: TimeValue = rightHand orelse .{ .now = {} };
+
+    return .{ left, right };
+}
+
+fn time(self: *Parser, tokens: []const Token, reporter: *ErrorReporter) ParseError!?TimeValue {
+    switch (tokens[self.current].kind) {
+        .RightSquareBracket, .Comma => {
+            return null;
+        },
+        else => {},
+    }
+
+    if (self.match(tokens, &.{.Literal})) {
+        const token = tokens[self.current - 1];
+        if (std.mem.eql(u8, token.lexeme, "now")) {
+            return .{ .now = {} };
+        }
+        // if it ends at duration symbols than parser as a duration literal
+        switch (token.lexeme[token.lexeme.len - 1]) {
+            's', 'm', 'h', 'd' => return .{ .duration = token.lexeme },
+            else => return .{ .timestamp = token.lexeme },
+        }
+    }
+
+    _ = reporter.reportSyntaxError(.{
+        .line = tokens[self.current].line,
+        .col = tokens[self.current].col,
+        .message = "Expect time value.",
+    });
+    return Error.SyntaxError;
 }
 
 fn tags(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!Expression {
@@ -111,7 +158,8 @@ fn query(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *
 
 fn pipes(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!std.ArrayList(PipeEpxpression) {
     if (tokens[self.current..].len > 0) {
-        return error.NotImplemented;
+        // TODO: implement me
+        unreachable;
     }
 
     _ = allocator;

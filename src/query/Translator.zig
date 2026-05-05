@@ -343,12 +343,11 @@ test "Translator.query" {
         var translator: Translator = .{};
         defer translator.deinit(allocator);
 
+        const got = translator.query(allocator, case.qset, case.nowNs);
         if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, translator.query(allocator, case.qset, case.nowNs));
-            continue;
+            try testing.expectError(expectedErr, got);
+        } else {
+            try testing.expectEqualDeep(case.expectedQuery.?, try got);
         }
-
-        const got = try translator.query(allocator, case.qset, case.nowNs);
-        try testing.expectEqualDeep(case.expectedQuery.?, got);
     }
 }
