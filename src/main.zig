@@ -29,3 +29,8 @@ pub fn main() !void {
 
     try server.startServer(io, gpa, config);
 }
+
+test {
+    _ = @import("server_test.zig");
+    _ = @import("tidy.zig");
+}

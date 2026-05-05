@@ -90,20 +90,14 @@ pub fn build(b: *std.Build) void {
     const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            // unit test is server module, not main,
-            // because main uses "build" info which is unavailable in unit tests for
-            // std.testing.refAllDecls(@This())
-            .root_source_file = b.path("src/server.zig"),
+            .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &imports,
         }),
         // example to run: zig build test -Dtest-filter="SIGTERM"
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
-        // TODO: either update our runner or let everyone use a custom one,
-        // ideally support both, an updated one plus personal per dev "test_runner_custom/personal/override/etc.zig",
-        // but ideal case can wait a person who wants its own runner
-        // .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
+        .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
 
     // encoding module tests
@@ -117,7 +111,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
-        // .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
+        .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
 
     // build test

@@ -104,9 +104,3 @@ test "serverWithSIGTERM" {
     // Send SIGTERM to ourselves
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
 }
-
-test {
-    std.testing.refAllDecls(@This());
-    _ = @import("server_test.zig");
-    _ = @import("tidy.zig");
-}
