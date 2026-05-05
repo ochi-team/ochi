@@ -282,7 +282,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             testing.io_instance.deinit();
             if (testing.allocator_instance.deinit() == .leak) {
                 leaks += 1;
-                printColorLog(" LEAKED", .{}, .red);
+                printColorLog("\nLEAKED\n", .{}, .red);
             }
         }
         testing.log_level = .warn;
@@ -311,7 +311,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             error.SkipZigTest => {
                 skip_count += 1;
                 if (have_tty) {
-                    printColorLog(" SKIP\n", .{}, .bright_yellow);
+                    printColorLog("SKIP\n", .{}, .bright_yellow);
                     std.debug.print("{d}/{d} {s}...SKIP\n", .{ i + 1, test_fn_list.len, test_fn.name });
                 } else {
                     std.debug.print("SKIP\n", .{});
@@ -321,7 +321,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             else => {
                 fail_count += 1;
                 if (have_tty) {
-                    printColorLog(" ✘\n", .{}, .bright_red);
+                    printColorLog("✘\n", .{}, .bright_red);
                 } else {
                     std.debug.print("FAIL ({t})\n", .{err});
                 }
