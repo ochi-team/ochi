@@ -31,12 +31,14 @@ pub fn deinit(self: *Translator, allocator: Allocator) void {
 
 pub fn query(self: *Translator, allocator: Allocator, qset: QuerySet, nowNs: u64) TranslateError!Query {
     const range = try translateRange(qset.timeRange, nowNs);
-    const tagsExpr = try self.translateTags(allocator, qset.tags);
+
+    const tagsExpr = try self.translateExpression(allocator, unwrapGroup(&qset.tags));
+    const fieldsExpr = if (qset.query) |q| try self.translateExpression(allocator, unwrapGroup(&q)) else null;
     const q: Query = .{
         .startTimeNs = range.startTimeNs,
         .endTimeNs = range.endTimeNs,
         .tagsExpr = tagsExpr,
-        .fieldsExpr = null,
+        .fieldsExpr = fieldsExpr,
     };
 
     if (q.startTimeNs >= q.endTimeNs) {
@@ -44,6 +46,15 @@ pub fn query(self: *Translator, allocator: Allocator, qset: QuerySet, nowNs: u64
     }
 
     return q;
+}
+
+// Recursively unwraps grouping expressions to get to the underlying predicate or operator expression
+fn unwrapGroup(expr: *const Expression) Expression {
+    if (expr.* == .grouping) {
+        return unwrapGroup(expr.grouping);
+    }
+
+    return expr.*;
 }
 
 fn translateRange(range: TimeRangeExpression, nowNs: u64) TranslateError!struct { startTimeNs: u64, endTimeNs: u64 } {
@@ -100,24 +111,24 @@ fn translateTimeDuration(raw: []const u8) TranslateError!u64 {
     return std.math.mul(u64, value, multiplier) catch TranslateError.InvalidDuration;
 }
 
-fn translateTags(self: *Translator, alloc: Allocator, tags: Expression) TranslateError!*FilterExpression {
+fn translateExpression(self: *Translator, alloc: Allocator, tags: Expression) TranslateError!*FilterExpression {
     return switch (tags) {
         .equalOp => |pred| try self.translatePredicate(alloc, pred[0].*, pred[1].*, .equal),
         .notEqualOp => |pred| try self.translatePredicate(alloc, pred[0].*, pred[1].*, .notEqual),
         .matchRegexOp => |pred| try self.translatePredicate(alloc, pred[0].*, pred[1].*, .matchRegex),
         .notMatchRegexOp => |pred| try self.translatePredicate(alloc, pred[0].*, pred[1].*, .notMatchRegex),
         .andOp => |pair| blk: {
-            const left = try self.translateTags(alloc, pair[0].*);
-            const right = try self.translateTags(alloc, pair[1].*);
+            const left = try self.translateExpression(alloc, pair[0].*);
+            const right = try self.translateExpression(alloc, pair[1].*);
             break :blk try self.allocFilterExpression(alloc, .{ .andOp = .{ left, right } });
         },
         .orOp => |pair| blk: {
-            const left = try self.translateTags(alloc, pair[0].*);
-            const right = try self.translateTags(alloc, pair[1].*);
+            const left = try self.translateExpression(alloc, pair[0].*);
+            const right = try self.translateExpression(alloc, pair[1].*);
             break :blk try self.allocFilterExpression(alloc, .{ .orOp = .{ left, right } });
         },
         .grouping => |inner| blk: {
-            const nested = try self.translateTags(alloc, inner.*);
+            const nested = try self.translateExpression(alloc, inner.*);
             break :blk try self.allocFilterExpression(alloc, .{ .grouping = nested });
         },
         else => error.UnexpectedTagExpression,
@@ -227,6 +238,40 @@ test "Translator.query" {
             },
         },
         .{
+            // translates complex tags and query filter expressions
+            .qset = .{
+                .timeRange = .{ .{ .duration = "-1m" }, .{ .now = {} } },
+                .tags = .{ .grouping = &.{ .andOp = .{
+                    &.{ .equalOp = .{ &.{ .literal = "env" }, &.{ .literal = "prod" } } },
+                    &.{ .notEqualOp = .{ &.{ .literal = "service" }, &.{ .literal = "api" } } },
+                } } },
+                .query = .{ .orOp = .{
+                    &.{ .matchRegexOp = .{ &.{ .literal = "message" }, &.{ .literal = "err.*" } } },
+                    &.{ .andOp = .{
+                        &.{ .notMatchRegexOp = .{ &.{ .literal = "path" }, &.{ .literal = "/health" } } },
+                        &.{ .equalOp = .{ &.{ .literal = "status" }, &.{ .literal = "500" } } },
+                    } },
+                } },
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedQuery = .{
+                .startTimeNs = now - std.time.ns_per_min,
+                .endTimeNs = now,
+                .tagsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .predicate = .{ .key = "service", .value = "api", .op = .notEqual } },
+                } },
+                .fieldsExpr = &.{ .orOp = .{
+                    &.{ .predicate = .{ .key = "message", .value = "err.*", .op = .matchRegex } },
+                    &.{ .andOp = .{
+                        &.{ .predicate = .{ .key = "path", .value = "/health", .op = .notMatchRegex } },
+                        &.{ .predicate = .{ .key = "status", .value = "500", .op = .equal } },
+                    } },
+                } },
+            },
+        },
+        .{
             // returns invalid duration for unknown unit
             .qset = .{
                 .timeRange = .{ .{ .duration = "-5x" }, .{ .now = {} } },
@@ -258,6 +303,39 @@ test "Translator.query" {
             },
             .nowNs = now,
             .expectedErr = TranslateError.InvalidRange,
+        },
+        .{
+            // returns expected literal when predicate left side is not literal
+            .qset = .{
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
+                .tags = .{ .equalOp = .{ &.{ .grouping = &.{ .literal = "env" } }, &.{ .literal = "prod" } } },
+                .query = null,
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedErr = TranslateError.ExpectedLiteral,
+        },
+        .{
+            // returns expected literal when predicate right side is not literal
+            .qset = .{
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
+                .tags = .{ .equalOp = .{ &.{ .literal = "env" }, &.{ .literal = "prod" } } },
+                .query = .{ .equalOp = .{ &.{ .literal = "service" }, &.{ .grouping = &.{ .literal = "api" } } } },
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedErr = TranslateError.ExpectedLiteral,
+        },
+        .{
+            // returns unexpected tag expression when tags root is not a filter expression
+            .qset = .{
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
+                .tags = .{ .literal = "env" },
+                .query = null,
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedErr = TranslateError.UnexpectedTagExpression,
         },
     };
 
