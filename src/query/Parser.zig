@@ -11,7 +11,8 @@ const expectOpenCurlyBracket = "Expect '{' before tags.";
 const expectCloseCurlyBracket = "Expect '}' after tags.";
 const expectExpression = "Expect expression.";
 
-// TODO: benchmark if *[2]Expression gives better locality
+// TODO: benchmark if *[2]Expression gives better locality,
+// do the same for FilterExpression
 pub const Expression = union(enum) {
     equalOp: [2]*const Expression,
     notEqualOp: [2]*const Expression,
@@ -21,8 +22,8 @@ pub const Expression = union(enum) {
     literal: []const u8,
 
     // regex are applied only to query and never to tags
-    regexMatchOp: [2]*const Expression,
-    regexNotMatchOp: [2]*const Expression,
+    matchRegexOp: [2]*const Expression,
+    notMatchRegexOp: [2]*const Expression,
 };
 
 pub const PipeEpxpression = struct {};
@@ -50,7 +51,8 @@ current: usize = 0,
 
 // TODO: we might want to use a pool here to create a bunch of expressions,
 // better to emter how many we create them per query
-// we expect to call query only in read API using an arena allocator, perhaps we get can rid of it
+// we expect to call query only in read API using an arena allocator, perhaps we get can rid of it,
+// apply the same to Translator
 garbage: std.ArrayList(*Expression) = .empty,
 
 pub fn deinit(self: *Parser, allocator: Allocator) void {

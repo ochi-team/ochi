@@ -183,6 +183,7 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
                 return Error.SyntaxError;
             }
         },
+        // TODO: implement lessThan and others
         // pipe
         '|' => .{
             .token = .{

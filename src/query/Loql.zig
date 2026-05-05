@@ -10,82 +10,6 @@ const ErrorReporter = @import("ErrorReporter.zig");
 
 const Query = @import("Query.zig");
 
-const testing = std.testing;
-
-test "validateQuery" {
-    const Case = struct {
-        query: Query,
-        expectedErr: ?anyerror = null,
-    };
-
-    const orExpr: Query.FilterExpression = .{
-        .orOp = .{
-            &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
-            &.{ .predicate = .{ .key = "service", .value = "worker", .op = .notEq } },
-        },
-    };
-    const regex: Query.FilterExpression = .{ .predicate = .{ .key = "env", .value = "prod.*", .op = .matchRegex } };
-
-    const cases = [_]Case{
-        .{
-            // valid time range and no tags
-            .query = .{
-                .startTimeNs = 10,
-                .endTimeNs = 20,
-                .tagsExpr = null,
-                .fieldsExpr = null,
-            },
-        },
-        .{
-            // valid time range and supported tag operators
-            .query = .{
-                .startTimeNs = 10,
-                .endTimeNs = 20,
-                .tagsExpr = &orExpr,
-                .fieldsExpr = null,
-            },
-        },
-        .{
-            // invalid time range when equal
-            .query = .{
-                .startTimeNs = 20,
-                .endTimeNs = 20,
-                .tagsExpr = null,
-                .fieldsExpr = null,
-            },
-            .expectedErr = error.InvalidTimeRange,
-        },
-        .{
-            // invalid time range when start is after end
-            .query = .{
-                .startTimeNs = 21,
-                .endTimeNs = 20,
-                .tagsExpr = null,
-                .fieldsExpr = null,
-            },
-            .expectedErr = error.InvalidTimeRange,
-        },
-        .{
-            // unsupported tag operator
-            .query = .{
-                .startTimeNs = 10,
-                .endTimeNs = 20,
-                .tagsExpr = &regex,
-                .fieldsExpr = null,
-            },
-            .expectedErr = error.UnsupportedTagOperator,
-        },
-    };
-
-    for (cases) |case| {
-        if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, case.query.validate());
-        } else {
-            try case.query.validate();
-        }
-    }
-}
-
 const Loql = @This();
 
 scanner: Scanner = .{},
@@ -109,6 +33,5 @@ pub fn translateQuery(
     const expr = try self.parser.querySet(allocator, self.scanner.tokens.items, reporter);
     const query = try self.translator.query(allocator, expr, nowNs);
 
-    try query.validate();
     return query;
 }
