@@ -4,7 +4,10 @@ const testing = std.testing;
 
 const ErrorReporter = @import("ErrorReporter.zig");
 
-pub const Error = error{SyntaxError};
+pub const Error = error{
+    SyntaxError,
+    NotImplemented,
+};
 
 const ScannedToken = struct {
     token: ?Token,
@@ -83,11 +86,7 @@ pub fn scan(
     var tail = query[0..];
 
     while (tail.len > 0) {
-        const next = self.scanToken(tail, reporter) catch |err| {
-            switch (err) {
-                Error.SyntaxError => return err,
-            }
-        };
+        const next = try self.scanToken(tail, reporter);
         tail = next.tail;
         if (next.token) |token| {
             try self.tokens.append(allocator, token);
@@ -301,8 +300,7 @@ test "Scanner.scan table-driven" {
         var scanner = Scanner{};
         defer scanner.deinit(alloc);
 
-        var errsBuf: [8]ErrorReporter.SyntaxError = undefined;
-        var reporter = ErrorReporter.init(&errsBuf);
+        var reporter: ErrorReporter = .{};
 
         const scanResult = scanner.scan(alloc, case.query, &reporter);
         if (case.expectedErr) |expectedErr| {

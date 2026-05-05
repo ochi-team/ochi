@@ -7,12 +7,12 @@ endTimeNs: u64,
 tagsExpr: ?*const FilterExpression = null,
 fieldsExpr: ?*const FilterExpression = null,
 
-pub fn validateQuery(q: *const Query) !void {
+pub fn validate(q: *const Query) !void {
     if (q.startTimeNs >= q.endTimeNs) {
         return error.InvalidTimeRange;
     }
 
-    if (q.tagsExpr) |tags| try tags.validateTagsFilter();
+    if (q.tagsExpr) |tags| try tags.validate();
 }
 
 pub const InvalidQueryError = error{
@@ -39,20 +39,20 @@ pub const FilterExpression = union(enum) {
     orOp: [2]*const FilterExpression,
     grouping: *const FilterExpression,
 
-    pub fn validateTagsFilter(filter: *const FilterExpression) InvalidQueryError!void {
+    pub fn validate(filter: *const FilterExpression) InvalidQueryError!void {
         switch (filter.*) {
             .predicate => |p| if (p.op != .equal and p.op != .notEq) {
                 return error.UnsupportedTagOperator;
             },
             .andOp => |ops| {
-                try validateTagsFilter(ops[0]);
-                try validateTagsFilter(ops[1]);
+                try ops[0].validate();
+                try ops[1].validate();
             },
             .orOp => |ops| {
-                try validateTagsFilter(ops[0]);
-                try validateTagsFilter(ops[1]);
+                try ops[0].validate();
+                try ops[1].validate();
             },
-            .grouping => |inner| try validateTagsFilter(inner),
+            .grouping => |inner| try inner.validate(),
         }
     }
 };

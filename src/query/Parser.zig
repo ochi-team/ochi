@@ -13,23 +13,32 @@ const expectExpression = "Expect expression.";
 
 // TODO: benchmark if *[2]Expression gives better locality
 pub const Expression = union(enum) {
-    range: [2][]const u8,
     equalOp: [2]*const Expression,
     notEqualOp: [2]*const Expression,
     andOp: [2]*const Expression,
     orOp: [2]*const Expression,
     grouping: *const Expression,
     literal: []const u8,
+
+    // regex are applied only to query and never to tags
+    regexMatchOp: [2]*const Expression,
+    regexNotMatchOp: [2]*const Expression,
+};
+
+pub const PipeEpxpression = struct {};
+
+pub const TimeRangeExpression = [2]TimeValue;
+pub const TimeValue = union(enum) {
     timestamp: []const u8,
     duration: []const u8,
     now: void,
 };
 
 pub const QuerySet = struct {
-    timeRange: Expression,
+    timeRange: TimeRangeExpression,
     tags: Expression,
     query: ?Expression,
-    pipes: std.ArrayList(Expression) = .empty,
+    pipes: std.ArrayList(PipeEpxpression) = .empty,
 };
 
 pub const Parser = @This();
@@ -70,16 +79,14 @@ pub fn querySet(
     };
 }
 
-fn timeRange(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!?Expression {
+fn timeRange(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!TimeRangeExpression {
     _ = self;
     _ = tokens;
     _ = allocator;
-    return .{
-        .range = .{ "-5m", "now" },
-    };
+    return .{ .{ .duration = "-5m" }, .{ .now = {} } };
 }
 
-fn tags(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!?Expression {
+fn tags(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!Expression {
     try self.consume(tokens, .LeftCurlyBracket, expectOpenCurlyBracket, reporter);
     const expr = try self.boolean(allocator, tokens, &.{ .Equal, .NotEqual }, reporter);
     try self.consume(tokens, .RightCurlyBracket, expectCloseCurlyBracket, reporter);
@@ -100,9 +107,12 @@ fn query(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *
     return expr;
 }
 
-fn pipes(self: *Parser, tokens: []const Token) ParseError!std.ArrayList(Expression) {
-    _ = self;
-    _ = tokens;
+fn pipes(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!std.ArrayList(PipeEpxpression) {
+    if (tokens[self.current..].len > 0) {
+        return error.NotImplemented;
+    }
+
+    _ = allocator;
     return .empty;
 }
 
@@ -213,7 +223,13 @@ fn match(self: *Parser, tokens: []const Token, types: []const TokenKind) bool {
     return false;
 }
 
-fn consume(self: *Parser, tokens: []const Token, kind: TokenKind, message: []const u8, reporter: *ErrorReporter) Error!void {
+fn consume(
+    self: *Parser,
+    tokens: []const Token,
+    kind: TokenKind,
+    message: []const u8,
+    reporter: *ErrorReporter,
+) Error!void {
     if (self.current < tokens.len and tokens[self.current].kind == kind) {
         self.current += 1;
         return;
@@ -279,7 +295,7 @@ test "Parser.expression" {
                 .{ .kind = .Literal, .lexeme = "value", .line = 1, .col = 17 },
             },
             .expectedQuerySet = .{
-                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
                 .tags = .{ .equalOp = .{
                     &.{ .literal = "env" },
                     &.{ .literal = "prod" },
@@ -313,7 +329,7 @@ test "Parser.expression" {
                 .{ .kind = .Literal, .lexeme = "get", .line = 1, .col = 23 },
             },
             .expectedQuerySet = .{
-                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
                 .tags = .{ .andOp = .{
                     &.{ .equalOp = .{
                         &.{ .literal = "env" },
@@ -356,7 +372,7 @@ test "Parser.expression" {
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 38 },
             },
             .expectedQuerySet = .{
-                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
                 .tags = .{ .andOp = .{
                     &.{ .orOp = .{
                         &.{ .equalOp = .{
@@ -423,7 +439,7 @@ test "Parser.expression" {
                 .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 53 },
             },
             .expectedQuerySet = .{
-                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
                 .tags = .{ .andOp = .{
                     &.{ .grouping = &.{ .orOp = .{
                         &.{ .equalOp = .{
@@ -504,7 +520,7 @@ test "Parser.expression" {
                 .{ .kind = .RightParenthesis, .lexeme = ")", .line = 1, .col = 12 },
             },
             .expectedQuerySet = .{
-                .timeRange = .{ .range = .{ "-5m", "now" } },
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
                 .tags = .{ .grouping = &.{ .grouping = &.{ .equalOp = .{
                     &.{ .literal = "env" },
                     &.{ .literal = "prod" },
@@ -630,8 +646,7 @@ test "Parser.expression" {
     };
 
     for (cases) |case| {
-        var errsBuf: [8]ErrorReporter.SyntaxError = undefined;
-        var reporter = ErrorReporter.init(&errsBuf);
+        var reporter: ErrorReporter = .{};
 
         var parser: Parser = .{};
         defer parser.deinit(allocator);

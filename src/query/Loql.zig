@@ -79,9 +79,9 @@ test "validateQuery" {
 
     for (cases) |case| {
         if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, case.query.validateQuery());
+            try testing.expectError(expectedErr, case.query.validate());
         } else {
-            try case.query.validateQuery();
+            try case.query.validate();
         }
     }
 }
@@ -98,6 +98,7 @@ pub fn translateQuery(
     allocator: Allocator,
     reporter: *ErrorReporter.ErrorReporter,
     fullQueryStr: []const u8,
+    nowNs: u64,
 ) !Query {
     const trimmedQueryStr = std.mem.trim(u8, fullQueryStr, " \n\t");
 
@@ -106,6 +107,8 @@ pub fn translateQuery(
     // TODO: most likely scanner has a state, we must reset it
     try self.scanner.scan(allocator, trimmedQueryStr, reporter);
     const expr = try self.parser.querySet(allocator, self.scanner.tokens.items, reporter);
-    const query = try self.translator.query(allocator, expr);
+    const query = try self.translator.query(allocator, expr, nowNs);
+
     try query.validate();
+    return query;
 }
