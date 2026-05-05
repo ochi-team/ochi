@@ -24,8 +24,6 @@ var stdin_reader: Io.File.Reader = undefined;
 var stdout_writer: Io.File.Writer = undefined;
 const runner_threaded_io: Io = Io.Threaded.global_single_threaded.io();
 
-var pretty = true;
-
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
 /// the test runner will communicate with the build runner via `std.zig.Server`.
 const need_simple = switch (builtin.zig_backend) {
@@ -61,8 +59,6 @@ pub fn main(init: std.process.Init.Minimal) void {
                 @panic("unable to parse --seed command line argument");
         } else if (std.mem.startsWith(u8, arg, "--cache-dir")) {
             opt_cache_dir = arg["--cache-dir=".len..];
-        } else if (std.mem.eql(u8, arg, "--no-pretty")) {
-            pretty = false;
         } else {
             panic("unrecognized command line argument: {s}", .{arg});
         }
@@ -293,10 +289,11 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
         testing.environ = init.environ;
 
         const test_node = root_node.start(test_fn.name, 0);
-        if (pretty) {
-            var iter = std.mem.splitScalar(u8, test_fn.name, '.');
 
+        if (have_tty) {
+            var iter = std.mem.splitScalar(u8, test_fn.name, '.');
             const name = iter.first();
+
             printColorLog("|{s}|", .{name}, .green);
 
             if (iter.next()) |file_name| {
@@ -304,20 +301,17 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             }
 
             printColorLog("{s}\n", .{iter.rest()}, .blue);
-        } else if (!have_tty) {
-            std.debug.print("{d}/{d} {s}...", .{ i + 1, test_fn_list.len, test_fn.name });
         }
+
         is_fuzz_test = false;
         if (test_fn.func()) |_| {
             ok_count += 1;
             test_node.end();
-            if (pretty) {} else if (!have_tty) std.debug.print("OK\n", .{});
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
-                if (pretty) {
+                if (have_tty) {
                     printColorLog(" SKIP\n", .{}, .bright_yellow);
-                } else if (have_tty) {
                     std.debug.print("{d}/{d} {s}...SKIP\n", .{ i + 1, test_fn_list.len, test_fn.name });
                 } else {
                     std.debug.print("SKIP\n", .{});
@@ -326,12 +320,8 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             },
             else => {
                 fail_count += 1;
-                if (pretty) {
+                if (have_tty) {
                     printColorLog(" ✘\n", .{}, .bright_red);
-                } else if (have_tty) {
-                    std.debug.print("{d}/{d} {s}...FAIL ({t})\n", .{
-                        i + 1, test_fn_list.len, test_fn.name, err,
-                    });
                 } else {
                     std.debug.print("FAIL ({t})\n", .{err});
                 }
@@ -345,36 +335,14 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
     }
     root_node.end();
 
-    if (pretty) {
-        printColorLog("      |tests ran| {}\n", .{test_fn_list.len}, .dim);
-        printColorLog("      |passed   | {}\n", .{ok_count}, .green);
-        printColorLog("      |failed   | {}\n", .{fail_count}, .bright_red);
-        printColorLog("      |skipped  | {}\n", .{skip_count}, .blue);
-        printColorLog("      |leaked   | {}\n", .{leaks}, .red);
+    printColorLog("      |tests ran| {}\n", .{test_fn_list.len}, .dim);
+    printColorLog("      |passed   | {}\n", .{ok_count}, .green);
+    printColorLog("      |failed   | {}\n", .{fail_count}, .bright_red);
+    printColorLog("      |skipped  | {}\n", .{skip_count}, .blue);
+    printColorLog("      |leaked   | {}\n", .{leaks}, .red);
 
-        if (leaks != 0 or log_err_count != 0 or fail_count != 0) {
-            printColorLog("One or more test leaks or failures occured\n", .{}, .red);
-        }
-
-        return;
-    }
-
-    if (ok_count == test_fn_list.len) {
-        std.debug.print("All {d} tests passed.\n", .{ok_count});
-    } else {
-        std.debug.print("{d} passed; {d} skipped; {d} failed.\n", .{ ok_count, skip_count, fail_count });
-    }
-    if (log_err_count != 0) {
-        std.debug.print("{d} errors were logged.\n", .{log_err_count});
-    }
-    if (leaks != 0) {
-        std.debug.print("{d} tests leaked memory.\n", .{leaks});
-    }
-    if (fuzz_count != 0) {
-        std.debug.print("{d} fuzz tests found.\n", .{fuzz_count});
-    }
     if (leaks != 0 or log_err_count != 0 or fail_count != 0) {
-        std.process.exit(1);
+        printColorLog("One or more test leaks or failures occured\n", .{}, .red);
     }
 }
 
