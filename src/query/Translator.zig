@@ -7,6 +7,7 @@ const Query = @import("Query.zig");
 const TimeRangeExpression = @import("Parser.zig").TimeRangeExpression;
 const TimeValue = @import("Parser.zig").TimeValue;
 const QuerySet = @import("Parser.zig").QuerySet;
+const Expression = @import("Parser.zig").Expression;
 
 pub const TranslateError = error{
     InvalidDuration,
@@ -92,107 +93,98 @@ fn translateTimeDuration(raw: []const u8) TranslateError!u64 {
 
 const testing = std.testing;
 
-test "Translator.query translates query range values" {
+test "Translator.query" {
     const allocator = testing.allocator;
-    const nowNs: u64 = 10 * std.time.ns_per_min;
-
-    var translator: Translator = .{};
-
-    const tagExpr: @import("Parser.zig").Expression = .{ .literal = "env" };
-
-    const querySet: QuerySet = .{
-        .timeRange = .{ .{ .duration = "-5m" }, .{ .duration = "+30s" } },
-        .tags = tagExpr,
-        .query = null,
-        .pipes = .empty,
-    };
-
-    const got = try translator.query(allocator, querySet, nowNs);
-    const want: Query = .{
-        .startTimeNs = nowNs - (5 * std.time.ns_per_min),
-        .endTimeNs = nowNs + (30 * std.time.ns_per_s),
-        .tagsExpr = null,
-        .fieldsExpr = null,
-    };
-
-    try testing.expectEqualDeep(want, got);
-}
-
-test "Translator.query translates ISO8601 timestamp bounds" {
-    const allocator = testing.allocator;
-
-    var translator: Translator = .{};
+    const now: u64 = 100;
 
     const startTs = "2024-01-10T00:00:00Z";
     const endTs = "2024-01-10T01:00:00Z";
-
-    const tagExpr: @import("Parser.zig").Expression = .{ .literal = "service" };
-    const querySet: QuerySet = .{
-        .timeRange = .{ .{ .timestamp = startTs }, .{ .timestamp = endTs } },
-        .tags = tagExpr,
-        .query = null,
-        .pipes = .empty,
-    };
-
     const expectedStart: u64 = @intCast((try zeit.Time.fromISO8601(startTs)).instant().timestamp);
     const expectedEnd: u64 = @intCast((try zeit.Time.fromISO8601(endTs)).instant().timestamp);
-
-    const got = try translator.query(allocator, querySet, 0);
-    const want: Query = .{
-        .startTimeNs = expectedStart,
-        .endTimeNs = expectedEnd,
-        .tagsExpr = null,
-        .fieldsExpr = null,
-    };
-
-    try testing.expectEqualDeep(want, got);
-}
-
-test "Translator.query returns translate errors for invalid inputs" {
-    const allocator = testing.allocator;
 
     const Case = struct {
         qset: QuerySet,
         nowNs: u64,
-        expectedErr: TranslateError,
+        expectedQuery: ?Query = null,
+        expectedErr: ?TranslateError = null,
     };
 
-    const tagExpr: @import("Parser.zig").Expression = .{ .literal = "env" };
     const cases = [_]Case{
         .{
+            // translates relative duration range
             .qset = .{
-                .timeRange = .{ .{ .duration = "-5x" }, .{ .now = {} } },
-                .tags = tagExpr,
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .duration = "30s" } },
+                .tags = .{ .literal = "env" },
                 .query = null,
                 .pipes = .empty,
             },
-            .nowNs = 100,
+            .nowNs = now,
+            .expectedQuery = .{
+                .startTimeNs = now - (5 * std.time.ns_per_min),
+                .endTimeNs = now + (30 * std.time.ns_per_s),
+                .tagsExpr = null,
+                .fieldsExpr = null,
+            },
+        },
+        .{
+            // translates ISO8601 timestamp bounds
+            .qset = .{
+                .timeRange = .{ .{ .timestamp = startTs }, .{ .timestamp = endTs } },
+                .tags = .{ .literal = "env" },
+                .query = null,
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedQuery = .{
+                .startTimeNs = expectedStart,
+                .endTimeNs = expectedEnd,
+                .tagsExpr = null,
+                .fieldsExpr = null,
+            },
+        },
+        .{
+            // returns invalid duration for unknown unit
+            .qset = .{
+                .timeRange = .{ .{ .duration = "-5x" }, .{ .now = {} } },
+                .tags = .{ .literal = "env" },
+                .query = null,
+                .pipes = .empty,
+            },
+            .nowNs = now,
             .expectedErr = TranslateError.InvalidDuration,
         },
         .{
+            // returns invalid timestamp for malformed input
             .qset = .{
                 .timeRange = .{ .{ .timestamp = "not-a-ts" }, .{ .now = {} } },
-                .tags = tagExpr,
+                .tags = .{ .literal = "env" },
                 .query = null,
                 .pipes = .empty,
             },
-            .nowNs = 100,
+            .nowNs = now,
             .expectedErr = TranslateError.InvalidTimestamp,
         },
         .{
+            // returns invalid range when start is not before end
             .qset = .{
                 .timeRange = .{ .{ .now = {} }, .{ .duration = "-1m" } },
-                .tags = tagExpr,
+                .tags = .{ .literal = "env" },
                 .query = null,
                 .pipes = .empty,
             },
-            .nowNs = 10 * std.time.ns_per_min,
+            .nowNs = now,
             .expectedErr = TranslateError.InvalidRange,
         },
     };
 
     var translator: Translator = .{};
     for (cases) |case| {
-        try testing.expectError(case.expectedErr, translator.query(allocator, case.qset, case.nowNs));
+        if (case.expectedErr) |expectedErr| {
+            try testing.expectError(expectedErr, translator.query(allocator, case.qset, case.nowNs));
+            continue;
+        }
+
+        const got = try translator.query(allocator, case.qset, case.nowNs);
+        try testing.expectEqualDeep(case.expectedQuery.?, got);
     }
 }
