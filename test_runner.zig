@@ -271,6 +271,8 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
     });
     const have_tty = Io.File.stderr().isTty(runner_threaded_io) catch unreachable;
 
+    var now = std.Io.Timestamp.now(runner_threaded_io, .cpu_process);
+
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
         testing.allocator_instance = .{};
@@ -294,7 +296,8 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             var iter = std.mem.splitScalar(u8, test_fn.name, '.');
             const name = iter.first();
 
-            printColorLog("|{s}|", .{name}, .green);
+            printColorLog("[{d}/{d}]", .{ i + 1, test_fn_list.len }, .cyan);
+            printColorLog("{s}|", .{name}, .green);
 
             if (iter.next()) |file_name| {
                 printColorLog("|{s}|", .{file_name}, .yellow);
@@ -307,6 +310,14 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
         if (test_fn.func()) |_| {
             ok_count += 1;
             test_node.end();
+
+            const after = std.Io.Timestamp.now(runner_threaded_io, .cpu_process);
+            const diff: i64 = @intCast(after.nanoseconds - now.nanoseconds);
+            if (diff >= std.time.ns_per_s) {
+                const durationMs = @divFloor(diff, @as(i64, std.time.ns_per_ms));
+                printColorLog("[WARN] duration={d}ms\n", .{durationMs}, .dim);
+            }
+            now = after;
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
