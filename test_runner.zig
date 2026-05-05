@@ -24,6 +24,8 @@ var stdin_reader: Io.File.Reader = undefined;
 var stdout_writer: Io.File.Writer = undefined;
 const runner_threaded_io: Io = Io.Threaded.global_single_threaded.io();
 
+var pretty = true;
+
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
 /// the test runner will communicate with the build runner via `std.zig.Server`.
 const need_simple = switch (builtin.zig_backend) {
@@ -59,6 +61,8 @@ pub fn main(init: std.process.Init.Minimal) void {
                 @panic("unable to parse --seed command line argument");
         } else if (std.mem.startsWith(u8, arg, "--cache-dir")) {
             opt_cache_dir = arg["--cache-dir=".len..];
+        } else if (std.mem.eql(u8, arg, "--no-pretty")) {
+            pretty = false;
         } else {
             panic("unrecognized command line argument: {s}", .{arg});
         }
@@ -280,24 +284,40 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
         });
         defer {
             testing.io_instance.deinit();
-            if (testing.allocator_instance.deinit() == .leak) leaks += 1;
+            if (testing.allocator_instance.deinit() == .leak) {
+                leaks += 1;
+                printColorLog(" LEAKED", .{}, .red);
+            }
         }
         testing.log_level = .warn;
         testing.environ = init.environ;
 
         const test_node = root_node.start(test_fn.name, 0);
-        if (!have_tty) {
+        if (pretty) {
+            var iter = std.mem.splitScalar(u8, test_fn.name, '.');
+
+            const name = iter.first();
+            printColorLog("|{s}|", .{name}, .green);
+
+            if (iter.next()) |file_name| {
+                printColorLog("|{s}| ", .{file_name}, .yellow);
+            }
+
+            printColorLog("{s}\n", .{iter.rest()}, .blue);
+        } else if (!have_tty) {
             std.debug.print("{d}/{d} {s}...", .{ i + 1, test_fn_list.len, test_fn.name });
         }
         is_fuzz_test = false;
         if (test_fn.func()) |_| {
             ok_count += 1;
             test_node.end();
-            if (!have_tty) std.debug.print("OK\n", .{});
+            if (pretty) {} else if (!have_tty) std.debug.print("OK\n", .{});
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
-                if (have_tty) {
+                if (pretty) {
+                    printColorLog(" SKIP\n", .{}, .bright_yellow);
+                } else if (have_tty) {
                     std.debug.print("{d}/{d} {s}...SKIP\n", .{ i + 1, test_fn_list.len, test_fn.name });
                 } else {
                     std.debug.print("SKIP\n", .{});
@@ -306,7 +326,9 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             },
             else => {
                 fail_count += 1;
-                if (have_tty) {
+                if (pretty) {
+                    printColorLog(" ✘\n", .{}, .bright_red);
+                } else if (have_tty) {
                     std.debug.print("{d}/{d} {s}...FAIL ({t})\n", .{
                         i + 1, test_fn_list.len, test_fn.name, err,
                     });
@@ -322,6 +344,21 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
         fuzz_count += @intFromBool(is_fuzz_test);
     }
     root_node.end();
+
+    if (pretty) {
+        printColorLog("      |tests ran| {}\n", .{test_fn_list.len}, .dim);
+        printColorLog("      |passed   | {}\n", .{ok_count}, .green);
+        printColorLog("      |failed   | {}\n", .{fail_count}, .bright_red);
+        printColorLog("      |skipped  | {}\n", .{skip_count}, .blue);
+        printColorLog("      |leaked   | {}\n", .{leaks}, .red);
+
+        if (leaks != 0 or log_err_count != 0 or fail_count != 0) {
+            printColorLog("One or more test leaks or failures occured\n", .{}, .red);
+        }
+
+        return;
+    }
+
     if (ok_count == test_fn_list.len) {
         std.debug.print("All {d} tests passed.\n", .{ok_count});
     } else {
@@ -608,3 +645,103 @@ pub fn fuzz(
     try testOne(context, &smith);
 }
 
+/// Minimal set of ansi color codes.
+const AnsiColorCodes = enum {
+    black,
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white,
+    bright_black,
+    bright_red,
+    bright_green,
+    bright_yellow,
+    bright_blue,
+    bright_magenta,
+    bright_cyan,
+    bright_white,
+    reset,
+    bold,
+    dim,
+    italic,
+    underline,
+    strikethrough,
+
+    /// Grabs the ansi escaped codes from the currently active one.
+    pub fn toSlice(color: AnsiColorCodes) []const u8 {
+        const color_string = switch (color) {
+            .black => "\x1b[30m",
+            .red => "\x1b[31m",
+            .green => "\x1b[32m",
+            .yellow => "\x1b[33m",
+            .blue => "\x1b[34m",
+            .magenta => "\x1b[35m",
+            .cyan => "\x1b[36m",
+            .white => "\x1b[37m",
+            .bright_black => "\x1b[90m",
+            .bright_red => "\x1b[91m",
+            .bright_green => "\x1b[92m",
+            .bright_yellow => "\x1b[93m",
+            .bright_blue => "\x1b[94m",
+            .bright_magenta => "\x1b[95m",
+            .bright_cyan => "\x1b[96m",
+            .bright_white => "\x1b[97m",
+            .reset => "\x1b[0m",
+            .bold => "\x1b[1m",
+            .dim => "\x1b[2m",
+            .italic => "\x1b[3m",
+            .underline => "\x1b[4m",
+            .strikethrough => "\x1b[9m",
+        };
+
+        return color_string;
+    }
+};
+
+pub fn printColorLog(
+    comptime fmt: []const u8,
+    args: anytype,
+    color: AnsiColorCodes,
+) void {
+    const ArgsType = @TypeOf(args);
+    const args_type_info = @typeInfo(ArgsType);
+    if (args_type_info != .@"struct") {
+        @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
+    }
+
+    const fields_info = args_type_info.@"struct".fields;
+
+    const color_field_types: [2 + fields_info.len]type = comptime blk: {
+        var arr: [2 + fields_info.len]type = undefined;
+        arr[0] = []const u8;
+
+        for (0..fields_info.len) |i| {
+            arr[i + 1] = fields_info[i].type;
+        }
+
+        arr[fields_info.len + 1] = []const u8;
+
+        break :blk arr;
+    };
+
+    const ColorArgs = @Tuple(&color_field_types);
+
+    const colorArgs = blk: {
+        var ca: ColorArgs = undefined;
+
+        ca[0] = color.toSlice();
+
+        inline for (0..fields_info.len) |i| {
+            ca[i + 1] = args[i];
+        }
+
+        ca[fields_info.len + 1] = AnsiColorCodes.reset.toSlice();
+
+        break :blk ca;
+    };
+
+    std.debug.print("{s}" ++ fmt ++ "{s}", colorArgs);
+}
