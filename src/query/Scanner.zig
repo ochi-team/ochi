@@ -146,12 +146,26 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
             .token = .{ .kind = .Equal, .lexeme = query[0..1], .line = self.line, .col = self.col },
             .tail = query[1..],
         },
+        '~' => .{
+            .token = .{ .kind = .MatchRegex, .lexeme = query[0..1], .line = self.line, .col = self.col },
+            .tail = query[1..],
+        },
         // not equal
         '!' => blk: {
             if (query.len > 1 and query[1] == '=') {
                 break :blk .{
                     .token = .{
                         .kind = .NotEqual,
+                        .lexeme = query[0..2],
+                        .line = self.line,
+                        .col = self.col,
+                    },
+                    .tail = query[2..],
+                };
+            } else if (query.len > 1 and query[1] == '~') {
+                break :blk .{
+                    .token = .{
+                        .kind = .NotMatchRegex,
                         .lexeme = query[0..2],
                         .line = self.line,
                         .col = self.col,
