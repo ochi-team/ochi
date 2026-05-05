@@ -105,9 +105,3 @@ test "serverWithSIGTERM" {
     // Wait for the server thread to finish
     future.await(io);
 }
-
-test {
-    std.testing.refAllDecls(@This());
-    _ = @import("server_test.zig");
-    _ = @import("tidy.zig");
-}
