@@ -336,6 +336,10 @@ test "Parser.expression" {
         // simple query
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
@@ -362,6 +366,10 @@ test "Parser.expression" {
         // test no parentheses of the query
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
@@ -408,6 +416,10 @@ test "Parser.expression" {
         // test no query, only and/or of the tags
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
@@ -448,6 +460,10 @@ test "Parser.expression" {
         // test operator precedence and grouping
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 2 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 3 },
@@ -542,6 +558,10 @@ test "Parser.expression" {
         // test bunch of nested groups
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 2 },
                 .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 3 },
@@ -599,6 +619,10 @@ test "Parser.expression" {
         // {} must contain at least one expression
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .RightCurlyBracket, .lexeme = "}", .line = 1, .col = 2 },
             },
@@ -610,6 +634,10 @@ test "Parser.expression" {
         // = predicate must have a key (primary token)
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 2 },
                 .{ .kind = .Literal, .lexeme = "prod", .line = 1, .col = 3 },
@@ -623,6 +651,10 @@ test "Parser.expression" {
         // = predicate msut have a value (primary token)
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
@@ -636,6 +668,10 @@ test "Parser.expression" {
         // tags must have a closing curly bracket
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
@@ -649,6 +685,10 @@ test "Parser.expression" {
         // missing closing parentheses
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .LeftParenthesis, .lexeme = "(", .line = 1, .col = 2 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 3 },
@@ -664,6 +704,10 @@ test "Parser.expression" {
         // and has no right hand
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },
@@ -679,6 +723,10 @@ test "Parser.expression" {
         // , is an invalid token
         .{
             .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
                 .{ .kind = .LeftCurlyBracket, .lexeme = "{", .line = 1, .col = 1 },
                 .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 2 },
                 .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 5 },

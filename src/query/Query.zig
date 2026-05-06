@@ -44,7 +44,6 @@ pub const FilterExpression = union(enum) {
     predicate: FilterPredicate,
     andOp: [2]*const FilterExpression,
     orOp: [2]*const FilterExpression,
-    grouping: *const FilterExpression,
 
     pub fn validateTags(filter: *const FilterExpression) InvalidQueryError!void {
         switch (filter.*) {
@@ -59,7 +58,6 @@ pub const FilterExpression = union(enum) {
                 try ops[0].validateTags();
                 try ops[1].validateTags();
             },
-            .grouping => |inner| try inner.validateTags(),
         }
     }
 };

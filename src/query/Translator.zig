@@ -127,10 +127,7 @@ fn translateExpression(self: *Translator, alloc: Allocator, tags: Expression) Tr
             const right = try self.translateExpression(alloc, pair[1].*);
             break :blk try self.allocFilterExpression(alloc, .{ .orOp = .{ left, right } });
         },
-        .grouping => |inner| blk: {
-            const nested = try self.translateExpression(alloc, inner.*);
-            break :blk try self.allocFilterExpression(alloc, .{ .grouping = nested });
-        },
+        .grouping => |inner| try self.translateExpression(alloc, inner.*),
         else => error.UnexpectedTagExpression,
     };
 }

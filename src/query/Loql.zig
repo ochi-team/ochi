@@ -79,19 +79,11 @@ test "translateQuery" {
                     .andOp = .{
                         &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                         &.{
-                            .grouping = &.{
-                                .orOp = .{
-                                    &.{ .predicate = .{ .key = "service", .value = "one", .op = .equal } },
-                                    &.{ .predicate = .{ .key = "service", .value = "two", .op = .equal } },
-                                },
+                            .orOp = .{
+                                &.{ .predicate = .{ .key = "service", .value = "one", .op = .equal } },
+                                &.{ .predicate = .{ .key = "service", .value = "two", .op = .equal } },
                             },
                         },
-                        // &.{
-                        //     .orOp = .{
-                        //         &.{ .predicate = .{ .key = "service", .value = "one", .op = .equal } },
-                        //         &.{ .predicate = .{ .key = "service", .value = "two", .op = .equal } },
-                        //     },
-                        // },
                     },
                 },
                 .fieldsExpr = null,
