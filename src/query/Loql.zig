@@ -51,6 +51,8 @@ test "translateQuery" {
 
     const now: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const fiveMinutesAgo = now - 5 * std.time.ns_per_min;
+    const fixedTs = "2024-01-10T00:00:00Z";
+    const fixedTsNs: u64 = @intCast((try Translator.zeit.Time.fromISO8601(fixedTs)).instant().timestamp);
 
     const Case = struct {
         query: []const u8,
@@ -89,6 +91,147 @@ test "translateQuery" {
                 .fieldsExpr = null,
             },
             .expectedReports = &.{},
+        },
+        .{
+            .query = "\n\t[-10m,now] {env=prod and service!=api}\t\n",
+            .expected = .{
+                .startTimeNs = now - 10 * std.time.ns_per_min,
+                .endTimeNs = now,
+                .tagsExpr = &.{
+                    .andOp = .{
+                        &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                        &.{ .predicate = .{ .key = "service", .value = "api", .op = .notEqual } },
+                    },
+                },
+                .fieldsExpr = null,
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-15m,now] {ENV=prod OR (service=api and host=web)} message=timeout",
+            .expected = .{
+                .startTimeNs = now - 15 * std.time.ns_per_min,
+                .endTimeNs = now,
+                .tagsExpr = &.{
+                    .orOp = .{
+                        &.{ .predicate = .{ .key = "ENV", .value = "prod", .op = .equal } },
+                        &.{ .andOp = .{
+                            &.{ .predicate = .{ .key = "service", .value = "api", .op = .equal } },
+                            &.{ .predicate = .{ .key = "host", .value = "web", .op = .equal } },
+                        } },
+                    },
+                },
+                .fieldsExpr = &.{ .predicate = .{ .key = "message", .value = "timeout", .op = .equal } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[2024-01-10T00:00:00Z,now] {env=prod}",
+            .expected = .{
+                .startTimeNs = fixedTsNs,
+                .endTimeNs = now,
+                .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                .fieldsExpr = null,
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-5m,now] {env=prod} message~err",
+            .expected = .{
+                .startTimeNs = fiveMinutesAgo,
+                .endTimeNs = now,
+                .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                .fieldsExpr = &.{ .predicate = .{ .key = "message", .value = "err", .op = .matchRegex } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-2d,30m] {env=prod and service!=api} (message~timeout and path!~health)",
+            .expected = .{
+                .startTimeNs = now - 2 * std.time.ns_per_day,
+                .endTimeNs = now + 30 * std.time.ns_per_min,
+                .tagsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .predicate = .{ .key = "service", .value = "api", .op = .notEqual } },
+                } },
+                .fieldsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "message", .value = "timeout", .op = .matchRegex } },
+                    &.{ .predicate = .{ .key = "path", .value = "health", .op = .notMatchRegex } },
+                } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-30s,now] {env=prod and (service=api or host=edge)} (status=500 or message~panic and endpoint!~health)",
+            .expected = .{
+                .startTimeNs = now - 30 * std.time.ns_per_s,
+                .endTimeNs = now,
+                .tagsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .orOp = .{
+                        &.{ .predicate = .{ .key = "service", .value = "api", .op = .equal } },
+                        &.{ .predicate = .{ .key = "host", .value = "edge", .op = .equal } },
+                    } },
+                } },
+                .fieldsExpr = &.{ .andOp = .{
+                    &.{ .orOp = .{
+                        &.{ .predicate = .{ .key = "status", .value = "500", .op = .equal } },
+                        &.{ .predicate = .{ .key = "message", .value = "panic", .op = .matchRegex } },
+                    } },
+                    &.{ .predicate = .{ .key = "endpoint", .value = "health", .op = .notMatchRegex } },
+                } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[now,now] {env=prod}",
+            .expected = null,
+            .expectedErr = error.InvalidRange,
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[,] {env=prod}",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 5, .message = "At least one of the time range values must be specified." },
+            },
+        },
+        .{
+            .query = "[not-a-tz,now] {env=prod}",
+            .expected = null,
+            .expectedErr = error.InvalidTimestamp,
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-xm,now] {env=prod}",
+            .expected = null,
+            .expectedErr = error.InvalidDuration,
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-5m,now] {env~prod}",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 15, .message = "Expect '}' after tags." },
+            },
+        },
+        .{
+            .query = "[-5m,now] {env=prod} message=",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 29, .message = "Expect expression." },
+            },
+        },
+        .{
+            .query = "[-5m,now] {env=prod} (message=timeout",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 31, .message = "Expect ')' after expression." },
+            },
         },
     };
 

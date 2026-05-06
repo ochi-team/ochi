@@ -220,6 +220,8 @@ fn equality(
         expr = switch (op) {
             .Equal => .{ .equalOp = .{ leftNode, rightNode } },
             .NotEqual => .{ .notEqualOp = .{ leftNode, rightNode } },
+            .MatchRegex => .{ .matchRegexOp = .{ leftNode, rightNode } },
+            .NotMatchRegex => .{ .notMatchRegexOp = .{ leftNode, rightNode } },
             else => {
                 const line, const col = self.currentPosition(tokens);
                 _ = reporter.reportSyntaxError(.{
