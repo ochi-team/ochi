@@ -275,9 +275,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
-        if (std.mem.endsWith(u8, test_fn.name, ".test_0") or
-            std.ascii.endsWithIgnoreCase(test_fn.name, "Root"))
-        {
+        if (std.mem.endsWith(u8, test_fn.name, ".test_0")) {
             ok_count += 1;
             continue;
         }
