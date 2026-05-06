@@ -221,7 +221,10 @@ pub fn add(self: *IndexRecorder, io: Io, alloc: Allocator, entries: []const []co
         const shard = self.entries.next();
         const blocksListResult = try shard.add(io, alloc, entries[entryIndex..], self.maxMemBlockSize);
 
-        var blocksList = blocksListResult orelse return;
+        var blocksList = blocksListResult orelse {
+            std.debug.print("this happens\n", .{});
+            return;
+        };
         defer blocksList.blocksToFlush.deinit(alloc);
 
         try self.flushBlocks(io, alloc, blocksList.blocksToFlush.items);
