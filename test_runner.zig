@@ -275,11 +275,6 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
-        if (std.mem.endsWith(u8, test_fn.name, ".test_0")) {
-            ok_count += 1;
-            continue;
-        }
-
         testing.allocator_instance = .{};
         testing.io_instance = .init(testing.allocator, .{
             .argv0 = .init(init.args),
