@@ -33,4 +33,5 @@ pub fn main() !void {
 test {
     _ = @import("server_test.zig");
     _ = @import("tidy.zig");
+    _ = @import("query/Loql.zig");
 }

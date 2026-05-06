@@ -24,6 +24,7 @@ path: []const u8,
 /// in order to prevent data corruption
 lockFile: Io.File,
 
+// TODO: review all the Mutex usage and replace to RwMutex if possible
 partitionsMx: Io.Mutex = .init,
 partitions: std.ArrayList(*Partition) = .empty,
 lruPartition: ?*Partition = null,
