@@ -70,6 +70,34 @@ test "translateQuery" {
             },
             .expectedReports = &.{},
         },
+        .{
+            .query = "[-2h,] {env=prod AND (service=one or service=two)}",
+            .expected = .{
+                .startTimeNs = now - 2 * std.time.ns_per_hour,
+                .endTimeNs = now,
+                .tagsExpr = &.{
+                    .andOp = .{
+                        &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                        &.{
+                            .grouping = &.{
+                                .orOp = .{
+                                    &.{ .predicate = .{ .key = "service", .value = "one", .op = .equal } },
+                                    &.{ .predicate = .{ .key = "service", .value = "two", .op = .equal } },
+                                },
+                            },
+                        },
+                        // &.{
+                        //     .orOp = .{
+                        //         &.{ .predicate = .{ .key = "service", .value = "one", .op = .equal } },
+                        //         &.{ .predicate = .{ .key = "service", .value = "two", .op = .equal } },
+                        //     },
+                        // },
+                    },
+                },
+                .fieldsExpr = null,
+            },
+            .expectedReports = &.{},
+        },
     };
 
     for (cases) |case| {

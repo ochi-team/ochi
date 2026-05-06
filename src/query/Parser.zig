@@ -109,6 +109,7 @@ fn timeRange(self: *Parser, tokens: []const Token, reporter: *ErrorReporter) Par
 
 fn time(self: *Parser, tokens: []const Token, reporter: *ErrorReporter) ParseError!?TimeValue {
     switch (tokens[self.current].kind) {
+        // one of the values is omited, e.g. [-5m,]
         .RightSquareBracket, .Comma => {
             return null;
         },
