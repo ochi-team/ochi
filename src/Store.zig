@@ -68,7 +68,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
     var partitions = try std.ArrayList(*Partition).initCapacity(alloc, 30);
     errdefer {
         for (partitions.items) |partition| {
-            partition.close(io);
+            partition.close(io, alloc);
         }
         partitions.deinit(alloc);
     }
@@ -108,7 +108,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
 
 pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     for (self.partitions.items) |partition| {
-        partition.release(io);
+        partition.release(io, allocator);
     }
     self.partitions.deinit(allocator);
 
@@ -192,7 +192,7 @@ pub fn addLines(
 
             break :blk try self.getPartitionOrLru(io, allocator, firstDay);
         };
-        defer partition.release(io);
+        defer partition.release(io, allocator);
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
@@ -242,7 +242,7 @@ pub fn addLines(
 
             break :blk try self.getPartitionOrLru(io, allocator, day);
         };
-        defer partition.release(io);
+        defer partition.release(io, allocator);
 
         try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags);
     }
@@ -272,7 +272,7 @@ pub fn queryLines(
         return err;
     };
     defer {
-        for (parts.items) |part| part.release(io);
+        for (parts.items) |part| part.release(io, alloc);
         parts.deinit(fbaAlloc);
     }
     for (slice) |part| {
@@ -295,7 +295,7 @@ pub fn queryLines(
 pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
     var parts = try std.ArrayList(*Partition).initCapacity(alloc, self.partitions.items.len);
     defer {
-        for (parts.items) |part| part.release(io);
+        for (parts.items) |part| part.release(io, alloc);
         parts.deinit(alloc);
     }
 
@@ -782,19 +782,19 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try testing.expectEqual(0, store.partitions.items.len);
 
     const first = try store.getPartition(io, alloc, dayOne);
-    defer first.release(io);
+    defer first.release(io, alloc);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
     const firstAgain = try store.getPartition(io, alloc, dayOne);
-    defer firstAgain.release(io);
+    defer firstAgain.release(io, alloc);
     try testing.expectEqual(first, firstAgain);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
     const second = try store.getPartition(io, alloc, dayTwo);
-    defer second.release(io);
+    defer second.release(io, alloc);
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);

@@ -180,22 +180,24 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         .runtime = runtime,
     };
 
-    errdefer t.stopped.store(true, .release);
-
-    for (0..concurrency) |_| {
-        try t.startDiskTablesMerge(io, alloc);
-    }
-
-    // TODO: remove background tasks from init to make unit tests real units
-    try t.startMemTablesFlusher(io, alloc);
-    try t.startDataShardsFlusher(io, alloc);
-
     return t;
 }
 
 pub fn createDir(io: Io, path: []const u8) void {
     fs.createDirAssert(io, path);
     fs.syncPathAndParentDir(io, path);
+}
+
+pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    errdefer self.stopped.store(true, .release);
+
+    for (0..self.concurrency) |_| {
+        try self.startDiskTablesMerge(io, alloc);
+    }
+
+    // TODO: remove background tasks from init to make unit tests real units
+    try self.startMemTablesFlusher(io, alloc);
+    try self.startDataShardsFlusher(io, alloc);
 }
 
 // TODO: find an approach to make it never fail,
@@ -207,7 +209,6 @@ pub fn createDir(io: Io, path: []const u8) void {
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
-    defer self.deinit(io, alloc);
 
     try self.g.await(io);
 
@@ -717,11 +718,11 @@ fn selectTablesInRange(
     alloc: Allocator,
     dst: *std.ArrayList(*Table),
     tables: []const *Table,
-    start: u64,
+    start_: u64,
     end: u64,
 ) !void {
     for (tables) |table| {
-        if (table.tableHeader.maxTimestamp < start or table.tableHeader.minTimestamp > end) {
+        if (table.tableHeader.maxTimestamp < start_ or table.tableHeader.minTimestamp > end) {
             continue;
         }
         table.retain();
@@ -938,8 +939,9 @@ test "flushDataShards non-force respects flush deadline" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
+    try recorder.start(io, alloc);
+
+    try recorder.stop(io, alloc);
 
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
@@ -972,8 +974,9 @@ test "mergeTables force single mem table creates disk table" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
+    try recorder.start(io, alloc);
+
+    try recorder.stop(io, alloc);
 
     var lines = [_]Line{
         stableLine(1, 1, 0),
@@ -1009,14 +1012,14 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer recorder.deinit(io, alloc);
+        try recorder.start(io, alloc);
 
         for (0..inserted) |i| {
             var batch = [_]Line{stableLine(@intCast(i + 1), 1, i)};
             try recorder.addLines(io, alloc, batch[0..]);
         }
 
-        recorder.stopped.store(true, .release);
-        try recorder.g.await(io);
+        try recorder.stop(io, alloc);
         try recorder.flushForce(io, alloc);
 
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
@@ -1031,8 +1034,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
-        reopened.stopped.store(true, .release);
-        try reopened.g.await(io);
+
+        try reopened.start(io, alloc);
+
+        try reopened.stop(io, alloc);
 
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));
