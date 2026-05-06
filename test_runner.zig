@@ -271,6 +271,8 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
     });
     const have_tty = Io.File.stderr().isTty(runner_threaded_io) catch unreachable;
 
+    var now = std.Io.Timestamp.now(runner_threaded_io, .cpu_process);
+
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
         testing.allocator_instance = .{};
@@ -294,19 +296,25 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             var iter = std.mem.splitScalar(u8, test_fn.name, '.');
             const name = iter.first();
 
-            printColorLog("|{s}|", .{name}, .green);
+            printColorLog("[{d}/{d}]", .{ i + 1, test_fn_list.len }, .cyan);
+            printColorLog("{s}|", .{name}, .green);
 
             if (iter.next()) |file_name| {
                 printColorLog("|{s}|", .{file_name}, .yellow);
             }
 
-            printColorLog("{s}\n", .{iter.rest()}, .blue);
+            printColorLog("{s} ", .{iter.rest()}, .blue);
         }
 
         is_fuzz_test = false;
         if (test_fn.func()) |_| {
             ok_count += 1;
             test_node.end();
+
+            const after = std.Io.Timestamp.now(runner_threaded_io, .cpu_process);
+            const elapsed: u64 = @intCast(after.nanoseconds - now.nanoseconds);
+            printColorElapsedLog(elapsed);
+            now = after;
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
@@ -712,4 +720,37 @@ pub fn printColorLog(
     };
 
     std.debug.print("{s}" ++ fmt ++ "{s}", colorArgs);
+}
+
+fn printColorElapsedLog(elapsed_ns: u64) void {
+    const elapsed: f64 = @floatFromInt(elapsed_ns);
+    var num: f64 = undefined;
+    var unit: []const u8 = undefined;
+    var color: AnsiColorCodes = undefined;
+
+    if (elapsed >= 1_000_000_000) {
+        num = elapsed / 1_000_000_000;
+        unit = "s";
+        color = .bright_red;
+    } else if (elapsed >= 1_000_000) {
+        num = elapsed / 1_000_000;
+        unit = "ms";
+        color = .bright_magenta;
+    } else if (elapsed >= 1_000) {
+        num = elapsed / 1_000;
+        unit = "us";
+        color = .bright_cyan;
+    } else {
+        num = elapsed;
+        unit = "ns";
+        color = .bright_blue;
+    }
+
+    if (num >= 100 or @round(num) == num) {
+        printColorLog("({d:.0}{s})\n", .{ num, unit }, color);
+    } else if (num >= 10) {
+        printColorLog("({d:.1}{s})\n", .{ num, unit }, color);
+    } else {
+        printColorLog("({d:.2}{s})\n", .{ num, unit }, color);
+    }
 }
