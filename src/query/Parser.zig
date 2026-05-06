@@ -174,28 +174,36 @@ fn boolean(
     allowsOps: []const TokenKind,
     reporter: *ErrorReporter,
 ) ParseError!Expression {
+    var expr = try self.conjunction(allocator, tokens, allowsOps, reporter);
+
+    while (self.match(tokens, &.{.Or})) {
+        const right = try self.conjunction(allocator, tokens, allowsOps, reporter);
+
+        const leftNode = try self.allocExpression(allocator, expr);
+        const rightNode = try self.allocExpression(allocator, right);
+
+        expr = .{ .orOp = .{ leftNode, rightNode } };
+    }
+
+    return expr;
+}
+
+fn conjunction(
+    self: *Parser,
+    allocator: Allocator,
+    tokens: []const Token,
+    allowsOps: []const TokenKind,
+    reporter: *ErrorReporter,
+) ParseError!Expression {
     var expr = try self.equality(allocator, tokens, allowsOps, reporter);
 
-    while (self.match(tokens, &.{ .And, .Or })) {
-        const op = tokens[self.current - 1].kind;
+    while (self.match(tokens, &.{.And})) {
         const right = try self.equality(allocator, tokens, allowsOps, reporter);
 
         const leftNode = try self.allocExpression(allocator, expr);
         const rightNode = try self.allocExpression(allocator, right);
 
-        expr = switch (op) {
-            .And => .{ .andOp = .{ leftNode, rightNode } },
-            .Or => .{ .orOp = .{ leftNode, rightNode } },
-            else => {
-                const line, const col = self.currentPosition(tokens);
-                _ = reporter.reportSyntaxError(.{
-                    .line = line,
-                    .col = col,
-                    .message = "Unexpected operator.",
-                });
-                return Error.SyntaxError;
-            },
-        };
+        expr = .{ .andOp = .{ leftNode, rightNode } };
     }
 
     return expr;
@@ -438,20 +446,20 @@ test "Parser.expression" {
             },
             .expectedQuerySet = .{
                 .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
-                .tags = .{ .andOp = .{
-                    &.{ .orOp = .{
-                        &.{ .equalOp = .{
-                            &.{ .literal = "env" },
-                            &.{ .literal = "prod" },
-                        } },
+                .tags = .{ .orOp = .{
+                    &.{ .equalOp = .{
+                        &.{ .literal = "env" },
+                        &.{ .literal = "prod" },
+                    } },
+                    &.{ .andOp = .{
                         &.{ .equalOp = .{
                             &.{ .literal = "service" },
                             &.{ .literal = "api" },
                         } },
-                    } },
-                    &.{ .equalOp = .{
-                        &.{ .literal = "host" },
-                        &.{ .literal = "web" },
+                        &.{ .equalOp = .{
+                            &.{ .literal = "host" },
+                            &.{ .literal = "web" },
+                        } },
                     } },
                 } },
                 .query = null,

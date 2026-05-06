@@ -173,12 +173,56 @@ test "translateQuery" {
                         &.{ .predicate = .{ .key = "host", .value = "edge", .op = .equal } },
                     } },
                 } },
+                .fieldsExpr = &.{ .orOp = .{
+                    &.{ .predicate = .{ .key = "status", .value = "500", .op = .equal } },
+                    &.{ .andOp = .{
+                        &.{ .predicate = .{ .key = "message", .value = "panic", .op = .matchRegex } },
+                        &.{ .predicate = .{ .key = "endpoint", .value = "health", .op = .notMatchRegex } },
+                    } },
+                } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-30s,now] {env=prod and (service=api or host=edge)} (status=500 or message~panic) and endpoint!~health",
+            .expected = .{
+                .startTimeNs = now - 30 * std.time.ns_per_s,
+                .endTimeNs = now,
+                .tagsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .orOp = .{
+                        &.{ .predicate = .{ .key = "service", .value = "api", .op = .equal } },
+                        &.{ .predicate = .{ .key = "host", .value = "edge", .op = .equal } },
+                    } },
+                } },
                 .fieldsExpr = &.{ .andOp = .{
                     &.{ .orOp = .{
                         &.{ .predicate = .{ .key = "status", .value = "500", .op = .equal } },
                         &.{ .predicate = .{ .key = "message", .value = "panic", .op = .matchRegex } },
                     } },
                     &.{ .predicate = .{ .key = "endpoint", .value = "health", .op = .notMatchRegex } },
+                } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[-30s,now] {env=prod and (service=api or host=edge)} status=500 or (message~panic and endpoint!~health)",
+            .expected = .{
+                .startTimeNs = now - 30 * std.time.ns_per_s,
+                .endTimeNs = now,
+                .tagsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .orOp = .{
+                        &.{ .predicate = .{ .key = "service", .value = "api", .op = .equal } },
+                        &.{ .predicate = .{ .key = "host", .value = "edge", .op = .equal } },
+                    } },
+                } },
+                .fieldsExpr = &.{ .orOp = .{
+                    &.{ .predicate = .{ .key = "status", .value = "500", .op = .equal } },
+                    &.{ .andOp = .{
+                        &.{ .predicate = .{ .key = "message", .value = "panic", .op = .matchRegex } },
+                        &.{ .predicate = .{ .key = "endpoint", .value = "health", .op = .notMatchRegex } },
+                    } },
                 } },
             },
             .expectedReports = &.{},
