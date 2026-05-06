@@ -733,7 +733,7 @@ fn printColorElapsedLog(elapsed_ns: u64) void {
     const elapsed: f64 = @floatFromInt(elapsed_ns);
     var num: f64 = undefined;
     var unit: []const u8 = undefined;
-    var color: AnsiColorCodes = .bright_magenta;
+    var color: AnsiColorCodes = undefined;
 
     if (elapsed >= 1_000_000_000) {
         num = elapsed / 1_000_000_000;
@@ -742,12 +742,15 @@ fn printColorElapsedLog(elapsed_ns: u64) void {
     } else if (elapsed >= 1_000_000) {
         num = elapsed / 1_000_000;
         unit = "ms";
+        color = .bright_magenta;
     } else if (elapsed >= 1_000) {
         num = elapsed / 1_000;
         unit = "us";
+        color = .bright_cyan;
     } else {
         num = elapsed;
         unit = "ns";
+        color = .bright_blue;
     }
 
     if (num >= 100 or @round(num) == num) {
