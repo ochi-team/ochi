@@ -174,8 +174,6 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         .memMergeSem = .{
             .permits = @max(4, concurrency),
         },
-
-        .stopped = std.atomic.Value(bool).init(false),
         .path = path,
         .runtime = runtime,
     };
