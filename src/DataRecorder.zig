@@ -180,6 +180,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         .runtime = runtime,
     };
 
+    try t.start(io, alloc);
+
     return t;
 }
 
@@ -941,7 +943,6 @@ test "flushDataShards non-force respects flush deadline" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    try recorder.start(io, alloc);
 
     try recorder.stop(io, alloc);
 
@@ -976,7 +977,6 @@ test "mergeTables force single mem table creates disk table" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    try recorder.start(io, alloc);
 
     try recorder.stop(io, alloc);
 
@@ -1014,7 +1014,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer recorder.deinit(io, alloc);
-        try recorder.start(io, alloc);
 
         for (0..inserted) |i| {
             var batch = [_]Line{stableLine(@intCast(i + 1), 1, i)};
@@ -1036,8 +1035,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
-
-        try reopened.start(io, alloc);
 
         try reopened.stop(io, alloc);
 

@@ -85,7 +85,6 @@ pub fn open(
 
     const data = try DataRecorder.init(io, alloc, dataPath, runtime);
     errdefer data.deinit(io, alloc);
-    try data.start(io, alloc);
 
     const partition = try alloc.create(Partition);
     errdefer alloc.destroy(partition);
