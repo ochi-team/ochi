@@ -34,3 +34,10 @@ test {
     _ = @import("server_test.zig");
     _ = @import("tidy.zig");
 }
+
+// TODO: good to move the packages to its places:
+// - extract structs from store/inmem/block_header.zig
+// - move data.zig to data/Data.zig
+// - extract components from BlockData
+// - separate data and data/MemTable packages
+// - separate index and index/Memtable packages
