@@ -106,13 +106,13 @@ pub fn retain(self: *Partition) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-pub fn release(self: *Partition, io: Io, alloc: Allocator) void {
+pub fn release(self: *Partition, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
     if (prev != 1) return;
 
-    self.close(io, alloc);
+    self.close(io);
 
     // TODO: deletion of the partition due to retention or eviction policy
     // read table release implementation as a sample
@@ -121,14 +121,13 @@ pub fn release(self: *Partition, io: Io, alloc: Allocator) void {
 pub fn close(
     self: *Partition,
     io: Io,
-    alloc: Allocator,
 ) void {
-    self.index.deinit(io, alloc);
+    self.index.deinit(io, self.alloc);
 
-    self.data.stop(io, alloc) catch |err| {
+    self.data.stop(io, self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
-    self.data.deinit(io, alloc);
+    self.data.deinit(io, self.alloc);
 
     self.alloc.destroy(self);
 }
