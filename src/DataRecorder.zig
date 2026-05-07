@@ -127,7 +127,7 @@ memTablesSem: Io.Semaphore = .{
 // the idea is to test every break on stop.load() similar to check all allocations failure
 g: Io.Group = .init,
 // TODO: migrate to io cancelation
-stopped: std.atomic.Value(bool) = .init(false),
+stopped: std.atomic.Value(bool) = .init(true),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
@@ -174,21 +174,9 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         .memMergeSem = .{
             .permits = @max(4, concurrency),
         },
-
-        .stopped = std.atomic.Value(bool).init(false),
         .path = path,
         .runtime = runtime,
     };
-
-    errdefer t.stopped.store(true, .release);
-
-    for (0..concurrency) |_| {
-        try t.startDiskTablesMerge(io, alloc);
-    }
-
-    // TODO: remove background tasks from init to make unit tests real units
-    try t.startMemTablesFlusher(io, alloc);
-    try t.startDataShardsFlusher(io, alloc);
 
     return t;
 }
@@ -196,6 +184,19 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
 pub fn createDir(io: Io, path: []const u8) void {
     fs.createDirAssert(io, path);
     fs.syncPathAndParentDir(io, path);
+}
+
+pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    self.stopped.store(false, .release);
+
+    errdefer self.stopped.store(true, .release);
+
+    for (0..self.concurrency) |_| {
+        try self.startDiskTablesMerge(io, alloc);
+    }
+
+    try self.startMemTablesFlusher(io, alloc);
+    try self.startDataShardsFlusher(io, alloc);
 }
 
 // TODO: find an approach to make it never fail,
@@ -209,7 +210,12 @@ pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
     defer self.deinit(io, alloc);
 
-    try self.g.await(io);
+    // we ignore canceled erorr, we stop anyway
+    self.g.await(io) catch |err| {
+        switch (err) {
+            error.Canceled => {},
+        }
+    };
 
     try self.flushForce(io, alloc);
 }
@@ -717,11 +723,11 @@ fn selectTablesInRange(
     alloc: Allocator,
     dst: *std.ArrayList(*Table),
     tables: []const *Table,
-    start: u64,
+    start_: u64,
     end: u64,
 ) !void {
     for (tables) |table| {
-        if (table.tableHeader.maxTimestamp < start or table.tableHeader.minTimestamp > end) {
+        if (table.tableHeader.maxTimestamp < start_ or table.tableHeader.minTimestamp > end) {
             continue;
         }
         table.retain();
@@ -938,8 +944,6 @@ test "flushDataShards non-force respects flush deadline" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
 
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
@@ -972,8 +976,6 @@ test "mergeTables force single mem table creates disk table" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
 
     var lines = [_]Line{
         stableLine(1, 1, 0),
@@ -1015,8 +1017,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
             try recorder.addLines(io, alloc, batch[0..]);
         }
 
-        recorder.stopped.store(true, .release);
-        try recorder.g.await(io);
         try recorder.flushForce(io, alloc);
 
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
@@ -1031,8 +1031,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
-        reopened.stopped.store(true, .release);
-        try reopened.g.await(io);
 
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));

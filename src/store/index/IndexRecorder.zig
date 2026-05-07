@@ -137,29 +137,32 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
         },
     };
 
-    // the allocator is different from http life cycle,
-    // but shared between all the background jobs
-    // TODO: find a better allocator, perhaps an arena with regular reset
-
-    errdefer t.stopped.store(true, .release);
-
-    // disk tables merge task is different,
-    // it doesn't run infinitely, but runs a few merge cycles to process left overs
-    // from the previous launches
-    for (0..concurrency) |_| {
-        try t.startDiskTablesMerge(io, alloc);
-    }
-
-    try t.startMemTablesFlusher(io, alloc);
-    try t.startMemBlockFlusher(io, alloc);
-    try t.startCacheKeyInvalidator(io);
-
     return t;
 }
 
 pub fn createDir(io: Io, path: []const u8) void {
     fs.createDirAssert(io, path);
     fs.syncPathAndParentDir(io, path);
+}
+
+pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+    // the allocator is different from http life cycle,
+    // but shared between all the background jobs
+    // TODO: find a better allocator, perhaps an arena with regular reset
+
+    self.stopped.store(false, .release);
+    errdefer self.stopped.store(true, .release);
+
+    // disk tables merge task is different,
+    // it doesn't run infinitely, but runs a few merge cycles to process left overs
+    // from the previous launches
+    for (0..self.concurrency) |_| {
+        try self.startDiskTablesMerge(io, alloc);
+    }
+
+    try self.startMemTablesFlusher(io, alloc);
+    try self.startMemBlockFlusher(io, alloc);
+    try self.startCacheKeyInvalidator(io);
 }
 
 // TODO: find an approach to make it never fail,
@@ -171,7 +174,12 @@ pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
     defer self.deinit(io, alloc);
 
-    try self.g.await(io);
+    // we ignore canceled erorr, we stop anyway
+    self.g.await(io) catch |err| {
+        switch (err) {
+            error.Canceled => {},
+        }
+    };
 
     try self.flushForce(io, alloc);
 }
@@ -882,8 +890,6 @@ test "flushMemEntries non-force respects flush deadline" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
 
     var block = try MemBlock.init(alloc, 64);
     defer block.deinit(alloc);
@@ -921,8 +927,6 @@ test "mergeTables force single mem table creates disk table" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
     try recorder.memTables.append(alloc, table);
@@ -958,8 +962,6 @@ test "IndexRecorder add and reopen preserves item count" {
             try recorder.add(io, alloc, &batch);
         }
 
-        recorder.stopped.store(true, .release);
-        try recorder.g.await(io);
         try recorder.flushForce(io, alloc);
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
         try testing.expect(recorder.diskTables.items.len > 0);
@@ -973,8 +975,6 @@ test "IndexRecorder add and reopen preserves item count" {
 
         const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
-        reopened.stopped.store(true, .release);
-        try reopened.g.await(io);
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(reopened));
@@ -1036,8 +1036,6 @@ test "IndexRecorder concurrent add preserves item count" {
 
     try g.await(io);
 
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
     try recorder.flushForce(io, alloc);
 
     try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
@@ -1203,9 +1201,6 @@ test "IndexRecorder large entries write to 3 shards" {
     try recorder.add(io, alloc, testEntries);
 
     try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
-
-    recorder.stopped.store(true, .release);
-    try recorder.g.await(io);
 
     try recorder.flushForce(io, alloc);
 
