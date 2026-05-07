@@ -37,6 +37,8 @@ pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
 
     const params = Params{ .tenantID = ctx.tenantID };
 
+    // TODO: it's too early to pass page allocator,
+    // we might be able to use arena a bit more
     process(ctx.io, res.arena, ctx.allocator, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
 

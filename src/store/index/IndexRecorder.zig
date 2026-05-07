@@ -680,6 +680,7 @@ fn tablesMerger(
     }
 }
 
+// TODO: make it used in the partition cache
 fn invalidateStreamFilterCache(self: *IndexRecorder) void {
     _ = self.indexCacheKeyVersion.fetchAdd(1, .acquire);
 }
