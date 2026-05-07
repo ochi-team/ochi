@@ -127,7 +127,7 @@ memTablesSem: Io.Semaphore = .{
 // the idea is to test every break on stop.load() similar to check all allocations failure
 g: Io.Group = .init,
 // TODO: migrate to io cancelation
-stopped: std.atomic.Value(bool) = .init(false),
+stopped: std.atomic.Value(bool) = .init(true),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
@@ -189,6 +189,8 @@ pub fn createDir(io: Io, path: []const u8) void {
 }
 
 pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    self.stopped.store(false, .release);
+
     errdefer self.stopped.store(true, .release);
 
     for (0..self.concurrency) |_| {
