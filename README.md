@@ -17,21 +17,18 @@
 
 ## Introduction
 
-In a world where computing is getting more and more expensive, everyone is on the lookout for cheaper-to-run solutions.
-
 We are creating a more efficient alternative for storing logs.
 
 ## Roadmap
 
-* 0.2
 - [x] store persists the data, working simple API queries
 - [x] Grafana datasource available
 - [ ] home made query language
 - [ ] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
 - [ ] support Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
-- [ ] install script
-- [ ] compose file with configured datasource to grafana
-- [ ] yaml configuration support
+- [ ] installation scripts
+- [ ] docker-compose with configured datasource to grafana
+- [ ] configuration support
 
 ## Goals
 - support majority ingestion protocols (loki, fluentd, syslog, etc)
