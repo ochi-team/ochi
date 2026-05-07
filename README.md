@@ -15,9 +15,11 @@
   <sub><i>Ochi (pronounced oh-chee) translates to "Eyes" in various Slavic languages.</i></sub>
 </p>
 
-## The reasoning
+## Introduction
 
-The market is in desperate need of a more compute-efficient alternative to storing logs. In a world where computing is getting more and more expensive, everyone is on the lookout for cheaper-to-run solutions.
+In a world where computing is getting more and more expensive, everyone is on the lookout for cheaper-to-run solutions.
+
+We are creating a more efficient alternative for storing logs.
 
 ## Roadmap
 
