@@ -1080,7 +1080,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const maxIndexMemBlockSize = 32 * 1024;
+    const maxIndexMemBlockSize = 256;
     const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
     const theLargest = "x" ** (maxIndexMemBlockSize);
 
@@ -1089,6 +1089,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
     defer alloc.free(firstShardEntries);
@@ -1178,7 +1179,7 @@ test "IndexRecorder large entries write to 3 shards" {
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const maxIndexMemBlockSize = 32 * 1024;
+    const maxIndexMemBlockSize = 256;
     //countAdditionalEntries < Entries.maxBlocksPerShard
     const countAdditionalEntries = Entries.maxBlocksPerShard - 1;
     //2 shards full-filled and third shard is not completely filled
@@ -1196,6 +1197,7 @@ test "IndexRecorder large entries write to 3 shards" {
     runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    recorder.maxMemBlockSize = maxIndexMemBlockSize;
     defer recorder.deinit(io, alloc);
 
     try recorder.add(io, alloc, testEntries);
