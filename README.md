@@ -1,26 +1,36 @@
+
 <p align=center>
-  <img src="logo.png" />
+  <img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/ochi-team/ochi">
+  <img alt="GitHub License" src="https://img.shields.io/github/license/ochi-team/ochi">
+  <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/ochi-team/ochi">
 </p>
 
-Ochi is a cost-effective, Loki compatible database for logs.
+<h3 align="center">Ochi is a cost-effective, Loki compatible, database for logs.</h3>
 
-#### Why?
+<p align="center">
+  <img src="logo.png" alt="Ochi Logo" />
+</p>
 
-The market needs an alternatives that is more efficient in compute to store logs
+<p align="center">
+  <sub><i>Ochi (pronounced oh-chee) translates to "Eyes" in various Slavic languages.</i></sub>
+</p>
 
-### Roadmap
+## Introduction
 
-* 0.1
-- [x] store is able to persist the data, simple query API is functionaning
-- [x] grafana datasource available
+We are creating a more efficient alternative for storing logs.
+
+## Roadmap
+
+- [x] store persists the data, working simple API queries
+- [x] Grafana datasource available
 - [ ] home made query language
-- [ ] Logging for Logging, Ochi starts emitting logs to itself in order to let the team dog food Ochi
+- [ ] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
 - [ ] support Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
-- [ ] installation script
-- [ ] compose file with configured datasource to grafana
-- [ ] yaml configuration is supported
+- [ ] installation scripts
+- [ ] docker-compose with configured datasource to grafana
+- [ ] configuration support
 
-#### Goals
+## Goals
 - support majority ingestion protocols (loki, fluentd, syslog, etc)
 - home made UI
 - cost analysis built in
@@ -28,38 +38,42 @@ The market needs an alternatives that is more efficient in compute to store logs
 - support ARM64 and x86_64 as Tier 1
 - support POSIX systems, but Linux remains Tier 1
 - better core over features
-- documentation must be able to answer 99% questions, if it doesn't - write a doc and share as an answer
+- documentation to answer 99% of questions
 
-#### Non goals
+## Non goals
 - support every OS
-- being "feature complete"
+- "feature completeness"
 
-## Contributors
+## Contributing
 
-Ochi is being developed by a small team and we don't open the public road besides the one above, because too many things are uncertain.
+Ochi is being actively developed by a small team of engineers.
 
-Therefore it's important to open an issue in advance to request a feature.
+Features are requested by opening an issue, though currently there is a very small chance they will be taken into consideration, due to the ongoing development of the project.
 
-Bugs can be fixed without an issue, but you are welcome file one.
+Bugs can be fixed without opening an issue, but you are welcome file one.
 
-Optimization improvements are welcome, but must be accompanied by a benchmark that shows the improvement.
+Optimization improvements are welcome, but must be accompanied by a benchmark.
 
-### AI Policy
+Before submitting a PR, make sure the tests pass:
+```bash
+zig build test
+```
 
-TLDR No intelligence involved is better than LLM.
+For all questions, major changes, suggestions, notes, feel free to reach out to the team on [Discord](https://discord.gg/AsCKpCNp5c).
 
-If you feel github is too long to communicate you can address us in [Discord](https://discord.gg/AsCKpCNp5c).
+## AI Policy
 
-1. We don't shame lack of knowledge, better to accept not knowing something than do disinformation due to hallucination.
-2. Using LLMs you put your trust profile as a bet, we don't encourage, but you may.
-3. Complete slop will be rejected with a very short comment of explanation and ban.
-4. We can invest our time to help you with understanding. You can rely on LLM to learn, but don't rely on it to implement a solution, better to confirm it.
+1. We don't shame the lack of knowledge, it's better to accept not knowing, than spreading disinformation.
+2. Using LLMs you put your trust profile on a line, we don't encourage it, but you may.
+3. Complete slop will be rejected with a very short comment and a permanent ban.
+4. We can invest our time helping you learn. Don't fully rely on LLMs to implement a solution.
 
-### Code style
+## Code style
 - a good inner function comment describes why, not what
 - a good outer function comment (doc string) describes what
 - explicit is better than implicit
-- therefore default options are not the best, fulfill them all is better
+- therefore default options are not the best
 - tests must either cover data or effects, not both
-- to produce effect it must take a data to produce a pre determined effect, pure functions are welcome
-
+- to produce effect it must take a data to produce a pre determined effect
+- pure functions are welcome
+limitations under the License.
