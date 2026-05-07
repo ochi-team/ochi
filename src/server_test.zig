@@ -24,95 +24,75 @@ const HttpResponse = struct {
     }
 };
 
-fn request(
-    io: Io,
-    alloc: std.mem.Allocator,
-    method: []const u8,
-    path: []const u8,
-    body: []const u8,
-    contentType: ?[]const u8,
-    contentEncoding: ?[]const u8,
-) !HttpResponse {
-    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 9014);
-    const stream = try address.connect(io, .{ .mode = .stream, .protocol = .tcp });
+pub const OchiClient = struct {
+    host: []const u8,
+    client: std.http.Client,
 
-    defer stream.close(io);
+    fn request(
+        client: *OchiClient,
+        alloc: std.mem.Allocator,
+        method: std.http.Method,
+        path: []const u8,
+        body: []const u8,
+        contentType: ?[]const u8,
+        contentEncoding: ?[]const u8,
+    ) !HttpResponse {
+        const url = try std.fmt.allocPrint(alloc, "{s}{s}", .{ client.host, path });
+        defer alloc.free(url);
 
-    var req: std.ArrayList(u8) = .empty;
-    defer req.deinit(alloc);
+        var responseWriter = try std.Io.Writer.Allocating.initCapacity(alloc, 1024);
+        defer responseWriter.deinit();
 
-    try req.print(
-        alloc,
-        "{s} {s} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {d}\r\n",
-        .{ method, path, body.len },
-    );
-    if (contentType) |ct| {
-        try req.print(alloc, "Content-Type: {s}\r\n", .{ct});
-    }
-    if (contentEncoding) |ce| {
-        try req.print(alloc, "Content-Encoding: {s}\r\n", .{ce});
-    }
-    try req.appendSlice(alloc, "\r\n");
-    if (body.len > 0) {
-        try req.appendSlice(alloc, body);
-    }
-
-    var buf: [4096]u8 = undefined;
-
-    var writer = stream.writer(io, &buf);
-    try writer.interface.writeAll(req.items);
-
-    try writer.interface.flush();
-
-    req.clearRetainingCapacity();
-
-    while (true) {
-        var reader = stream.reader(io, &buf);
-        const n = try reader.interface.readSliceShort(&buf);
-
-        if (n == 0) break;
-        try req.appendSlice(alloc, buf[0..n]);
-    }
-
-    const raw = try req.toOwnedSlice(alloc);
-    defer alloc.free(raw);
-
-    const sep = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.InvalidResponse;
-    const head = raw[0..sep];
-    const bodyStart = sep + 4;
-
-    const statusLineEnd = std.mem.indexOf(u8, head, "\r\n") orelse head.len;
-    const statusLine = head[0..statusLineEnd];
-    if (!std.mem.startsWith(u8, statusLine, "HTTP/1.1 ") or statusLine.len < 12) {
-        return error.InvalidResponse;
-    }
-    const statusCode = try std.fmt.parseInt(u16, statusLine[9..12], 10);
-
-    const responseBody = try alloc.dupe(u8, raw[bodyStart..]);
-
-    return .{ .statusCode = statusCode, .body = responseBody };
-}
-
-fn waitUntilReady(io: Io, alloc: std.mem.Allocator, timeout: std.Io.Duration) !void {
-    const start = Io.Timestamp.now(io, .real).nanoseconds;
-
-    while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
-        var resp = request(io, alloc, "GET", "/insert/loki/ready", "", null, null) catch |err| {
-            std.debug.print("Server not ready yet, error: {}\n", .{err});
-            try Io.sleep(io, .fromMilliseconds(50), .real);
-            continue;
-        };
-        defer resp.deinit(alloc);
-
-        if (resp.statusCode == 200) {
-            return;
+        var headersBuf: [2]std.http.Header = undefined;
+        var headersLen: usize = 0;
+        if (contentType) |ct| {
+            headersBuf[headersLen] = .{ .name = "content-type", .value = ct };
+            headersLen += 1;
         }
-        std.debug.print("Server not ready yet, status code: {d}\n", .{resp.statusCode});
-        try Io.sleep(io, .fromMilliseconds(50), .real);
+        if (contentEncoding) |ce| {
+            headersBuf[headersLen] = .{ .name = "content-encoding", .value = ce };
+            headersLen += 1;
+        }
+
+        const payload: ?[]const u8 = if (method.requestHasBody()) body else null;
+
+        const fetchResult = try client.client.fetch(.{
+            .location = .{ .url = url },
+            .method = method,
+            .payload = payload,
+            .extra_headers = headersBuf[0..headersLen],
+            .response_writer = &responseWriter.writer,
+        });
+
+        const responseBody = try responseWriter.toOwnedSlice();
+
+        return .{
+            .statusCode = @intCast(@intFromEnum(fetchResult.status)),
+            .body = responseBody,
+        };
     }
 
-    return error.Timeout;
-}
+    fn waitUntilReady(client: *OchiClient, io: Io, alloc: std.mem.Allocator, timeout: std.Io.Duration) !void {
+        const start = Io.Timestamp.now(io, .real).nanoseconds;
+
+        while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
+            var resp = client.request(alloc, .GET, "/insert/loki/ready", "", null, null) catch |err| {
+                std.debug.print("Server not ready yet, error: {}\n", .{err});
+                try Io.sleep(io, .fromMilliseconds(50), .real);
+                continue;
+            };
+            defer resp.deinit(alloc);
+
+            if (resp.statusCode == 200) {
+                return;
+            }
+            std.debug.print("Server not ready yet, status code: {d}\n", .{resp.statusCode});
+            try Io.sleep(io, .fromMilliseconds(50), .real);
+        }
+
+        return error.Timeout;
+    }
+};
 
 fn expectField(line: QueryLine, expectedKey: []const u8, expectedValue: []const u8) !void {
     for (line.fields) |field| {
@@ -158,7 +138,16 @@ test "serverEndToEndViaHTTP" {
     var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
     defer serverFuture.await(io);
 
-    try waitUntilReady(io, alloc, .fromSeconds(1));
+    var ochiClient: OchiClient = .{
+        .host = "http://localhost:9014",
+        .client = .{
+            .allocator = alloc,
+            .io = io,
+        },
+    };
+    defer ochiClient.client.deinit();
+
+    try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
 
     const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const insertJson = try std.fmt.allocPrint(
@@ -174,10 +163,9 @@ test "serverEndToEndViaHTTP" {
     const compressedLen = try snappy.compress(insertJson, compressed);
 
     {
-        var resp = try request(
-            io,
+        var resp = try ochiClient.request(
             alloc,
-            "POST",
+            .POST,
             "/insert/loki/api/v1/push",
             compressed[0..compressedLen],
             "application/json",
@@ -188,7 +176,7 @@ test "serverEndToEndViaHTTP" {
     }
 
     {
-        var resp = try request(io, alloc, "POST", "/flush", "", null, null);
+        var resp = try ochiClient.request(alloc, .POST, "/flush", "", null, null);
         defer resp.deinit(alloc);
         try std.testing.expectEqual(200, resp.statusCode);
     }
@@ -205,7 +193,7 @@ test "serverEndToEndViaHTTP" {
         const queryTimeoutNs = 5 * std.time.ns_per_s;
 
         while (true) {
-            var resp = try request(io, alloc, "POST", "/query", queryJson, "application/json", null);
+            var resp = try ochiClient.request(alloc, .POST, "/query", queryJson, "application/json", null);
             defer resp.deinit(alloc);
             try std.testing.expectEqual(@as(u16, 200), resp.statusCode);
 
