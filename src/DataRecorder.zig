@@ -180,8 +180,6 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         .runtime = runtime,
     };
 
-    try t.start(io, alloc);
-
     return t;
 }
 
@@ -199,7 +197,6 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    // TODO: remove background tasks from init to make unit tests real units
     try self.startMemTablesFlusher(io, alloc);
     try self.startDataShardsFlusher(io, alloc);
 }
@@ -213,8 +210,14 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
+    defer self.deinit(io, alloc);
 
-    try self.g.await(io);
+    // we ignore canceled erorr, we stop anyway
+    self.g.await(io) catch |err| {
+        switch (err) {
+            error.Canceled => {},
+        }
+    };
 
     try self.flushForce(io, alloc);
 }
@@ -944,8 +947,6 @@ test "flushDataShards non-force respects flush deadline" {
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
 
-    try recorder.stop(io, alloc);
-
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
     recorder.shards[0].size = line.fieldsSize();
@@ -977,8 +978,6 @@ test "mergeTables force single mem table creates disk table" {
 
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
-
-    try recorder.stop(io, alloc);
 
     var lines = [_]Line{
         stableLine(1, 1, 0),
@@ -1020,7 +1019,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
             try recorder.addLines(io, alloc, batch[0..]);
         }
 
-        try recorder.stop(io, alloc);
         try recorder.flushForce(io, alloc);
 
         try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
@@ -1035,8 +1033,6 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
         defer reopened.deinit(io, alloc);
-
-        try reopened.stop(io, alloc);
 
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));
