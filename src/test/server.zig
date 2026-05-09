@@ -2,8 +2,8 @@ const std = @import("std");
 const Io = std.Io;
 const snappy = @import("snappy").raw;
 
-const Conf = @import("Conf.zig");
-const server = @import("server.zig");
+const Conf = @import("../Conf.zig");
+const server = @import("../server.zig");
 
 const QueryField = struct {
     key: []const u8,

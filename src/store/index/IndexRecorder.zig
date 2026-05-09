@@ -73,7 +73,7 @@ diskMergeSem: Io.Semaphore,
 memMergeSem: Io.Semaphore,
 
 g: Io.Group = .init,
-stopped: std.atomic.Value(bool) = .init(false),
+stopped: std.atomic.Value(bool) = .init(true),
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
 // TODO: find an optimal way to handle ingestion rate higher than merge rate

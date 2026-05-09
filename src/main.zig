@@ -31,8 +31,8 @@ pub fn main() !void {
 }
 
 test {
-    _ = @import("server_test.zig");
     _ = @import("tidy.zig");
+    _ = @import("test/server.zig");
 }
 
 // TODO: good to move the packages to its places:
