@@ -34,7 +34,7 @@ Time range values support the following formats:
 - `2024-01-01T00:00:00Z` - absolute time in ISO 8601 format.
 - `2024-01-01T00:00:00+02:00` - absolute time with timezone offset in RFC 3339 format. `T` is a separator between date and time can be replaced with space for simplicity.
 
-Left hand of the expression MUST be less than the right, so the minimum interval is `[-1m,]`, which matches log entries from 1 minute ago up to the current time, and the maximum interval is `[]`, which matches all log entries up to the infinite future.
+Left hand of the expression MUST be less than the right, so the minimum interval is `[-1m,]`, which matches log entries from 1 minute ago up to the current time, and the maximum interval is `[,]`, which matches all log entries up to the infinite future.
 
 The bounds are inclusive, so `[-5m, now]` matches log entries from 5 minutes ago up to and including the current time.
 
@@ -42,12 +42,9 @@ The bounds are inclusive, so `[-5m, now]` matches log entries from 5 minutes ago
 
 Stream filter is used to select log streams based on their tags.
 It is specified in curly braces `{}` and consists of one or more tag matchers separated by conditional clause statements.
-AND is implicit between tag matchers, so `{tag1=alpha tag2=beta}` is the same as `{tag1=alpha AND tag2=beta}`.
 
 Tags filter may be omitted, in which case all streams are selected.
 However, it's highly discouraged to do so, as it may lead to performance issues leading to a selection of a huge amount of data.
-
-TODO: attach a link to a doc to explain what is a stream.
 
 #### Conditional clauses
 - `AND` - matches if all conditions are satisfied. For example, `{tag1="alpha" AND tag2="beta"}` matches if both tag1 is "alpha" and tag2 is "beta".
@@ -80,16 +77,15 @@ IMPORTANT: regex and wildcards are not supported for tags, tags must be determin
 
 The matching rules are equal to the tags matching rules, but applied to the fields of the log entries.
 
-Surrounding brackets `()` are used to group expressions and define the order of evaluation. For simple expressions it may be omitted, for example `field=value` is the same as `(field=value)`.
-
 #### Line filter
 
 A key field can be omitted, in which case the filter is applied to the `message`, the exact log line main key as it's defined in the collector.
-TODO: attach a doc link to explain what is a message.
+TODO: document a message concept
 
 For example, `=*error*` matches if the message contains "error", and `!~"^debug.*"` matches if the message does not start with "debug".
 
-To apply the filter rule to every field of the log entry, the `*` key can be used, for example `*="*error*"` matches if any field contains "error", and `*!~"^debug.*"` matches if any field does not start with "debug" (which might be rarely useful, but still supported and discouraged for use). TODO: display UI warning for usage `*!` syntax.
+To apply the filter rule to every field of the log entry, the `*` key can be used, for example `*="*error*"` matches if any field contains "error".
+TODO: restrict `*!` syntax
 
 ### Field functions
 
@@ -112,11 +108,11 @@ They can:
 Example of a complex query:
 ```
 [-5m:] {service=checkout} (
-  concat(app.name, order.service.name) @service_name AND
   status=>500 AND
   ~"*timeout*"
 )
 | count(hits) @count
 | order(hits, desc)
 | limit(100)
+| concat(app.name, order.service.name) @service_name
 ```
