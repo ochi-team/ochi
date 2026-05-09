@@ -51,6 +51,7 @@ pub fn init(
     errdefer buf.deinit(alloc);
 
     const b = try alloc.create(MemBlock);
+    std.debug.print("MemBlock init: {*}\n", .{b});
     b.* = .{
         .memEntries = data,
         .buf = buf,
@@ -59,6 +60,7 @@ pub fn init(
 }
 
 pub fn deinit(self: *MemBlock, alloc: Allocator) void {
+    std.debug.print("MemBlock deinit: {*}\n", .{self});
     self.memEntries.deinit(alloc);
     self.buf.deinit(alloc);
     alloc.destroy(self);

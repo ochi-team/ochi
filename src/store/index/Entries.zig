@@ -46,6 +46,7 @@ const EntriesShard = struct {
             try self.blocks.ensureUnusedCapacity(alloc, 1);
 
             const b = try MemBlock.init(alloc, maxMemBlockSize);
+            std.debug.print("init here\n", .{});
 
             self.blocks.appendAssumeCapacity(b);
 
