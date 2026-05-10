@@ -71,8 +71,8 @@ fn process(
     if (streams != .array) return error.StreamsNotArray;
 
     // pre allocate labels list
-    var labels: std.ArrayList(Field) = .empty;
-    defer labels.deinit(parseAlloc);
+    var tags: std.ArrayList(Field) = .empty;
+    defer tags.deinit(parseAlloc);
 
     if (streams.array.items.len > 0 and streams.array.items[0] == .object) {
         const stream = streams.array.items[0].object;
@@ -88,7 +88,7 @@ fn process(
                 labelSize += @intCast(valuesObj.array.items[2].object.count());
             }
         }
-        labels = try std.ArrayList(Field).initCapacity(parseAlloc, labelSize);
+        tags = try std.ArrayList(Field).initCapacity(parseAlloc, labelSize);
     }
 
     var processor = Processor.empty(ctx.store);
@@ -107,12 +107,12 @@ fn process(
                     .string => |s| s,
                     else => return error.LabelValueNotString,
                 };
-                try labels.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = valueStr });
+                try tags.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = valueStr });
             }
         }
 
-        const tagsLen = labels.items.len;
-        const streamTags = labels.items[0..tagsLen];
+        const tagsLen = tags.items.len;
+        const streamTags = tags.items[0..tagsLen];
 
         try processor.reinit(ingestAlloc, streamTags, params.tenantID);
 
@@ -145,7 +145,7 @@ fn process(
                         .string => |s| s,
                         else => return error.MetadataValueNotString,
                     };
-                    try labels.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = value_str });
+                    try tags.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = value_str });
                 }
             }
 
@@ -158,17 +158,17 @@ fn process(
             // it requires 2 more options: parseJsonMsg and msgField,
             // first defines whether the parins is required,
             // second is optional and defines what field in the given json is read as a _msg field
-            try labels.append(parseAlloc, .{ .key = "", .value = msg });
+            try tags.append(parseAlloc, .{ .key = "", .value = msg });
 
-            try processor.pushLine(io, ingestAlloc, tsNs, labels.items);
+            try processor.pushLine(io, ingestAlloc, tsNs, tags.items);
 
             // clean value labels, but retain stream labels
-            labels.items.len = tagsLen;
+            tags.items.len = tagsLen;
         }
 
         try processor.flush(io, ingestAlloc);
 
         // clean len of the labels len, but retain allocated memory
-        labels.clearRetainingCapacity();
+        tags.clearRetainingCapacity();
     }
 }
