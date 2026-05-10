@@ -4,6 +4,8 @@ const Allocator = std.mem.Allocator;
 const Dir = Io.Dir;
 const snappy = @import("snappy").raw;
 
+const MemOrder = @import("../stds/sort.zig").MemOrder;
+
 const Conf = @import("../Conf.zig");
 const server = @import("../server.zig");
 
@@ -48,8 +50,10 @@ pub const OchiClient = struct {
 
         var headersBuf: [3]std.http.Header = undefined;
         var headersLen: usize = 0;
-        headersBuf[headersLen] = .{ .name = "content-type", .value = contentType };
-        headersLen += 1;
+        if (contentType.len != 0) {
+            headersBuf[headersLen] = .{ .name = "content-type", .value = contentType };
+            headersLen += 1;
+        }
         headersBuf[headersLen] = .{ .name = "X-Scope-OrgID", .value = tenant };
         headersLen += 1;
         if (contentEncoding) |ce| {
@@ -79,7 +83,7 @@ pub const OchiClient = struct {
         const start = Io.Timestamp.now(io, .real).nanoseconds;
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
-            var resp = client.request(alloc, .GET, "/insert/loki/ready", "", null, null) catch |err| {
+            var resp = client.request(alloc, .GET, "/insert/loki/ready", "", "test", "application/json", null) catch |err| {
                 std.debug.print("Server not ready yet, error: {}\n", .{err});
                 try Io.sleep(io, .fromMilliseconds(50), .real);
                 continue;
@@ -132,6 +136,10 @@ pub const QueryTestCorpus = struct {
     queries: []QueryCorpus,
 };
 
+pub fn queryTestLessThan(_: void, first: QueryTestCorpus, second: QueryTestCorpus) bool {
+    return std.mem.lessThan(u8, first.name, second.name);
+}
+
 const CorporaReader = struct {
     dirPath: []const u8,
 
@@ -182,6 +190,7 @@ const CorporaReader = struct {
             try self.queriesJson.append(alloc, parsedQueries);
         }
 
+        std.sort.pdq(QueryTestCorpus, tests.items, {}, queryTestLessThan);
         return tests;
     }
 
@@ -252,6 +261,7 @@ test "serverEndToEndViaHTTP" {
     // Produces a lot of memory leaks, that's why it's not used
     var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.heap.page_allocator, conf });
     defer serverFuture.await(io);
+    defer std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
 
     var ochiClient: OchiClient = .{
         .host = "http://localhost:9014",
@@ -264,98 +274,19 @@ test "serverEndToEndViaHTTP" {
 
     try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
 
-    const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
-
     var corpusArena = std.heap.ArenaAllocator.init(alloc);
     defer corpusArena.deinit();
-    const arenaloc = &corpusArena.allocator();
+    const arenAlloc = corpusArena.allocator();
     for (corpora.items) |corpus| {
-        if (std.mem.eql(u8, corpus.name, "simple")) {
-            const nowNs = Io.Timestamp.now(io, .real).nanoseconds;
-            try runCorpus(io, arenaloc, &ochiClient, corpus, @intCast(nowNs));
-            _ = corpusArena.reset(.retain_capacity);
-        }
+        const nowNs = Io.Timestamp.now(io, .real).nanoseconds;
+        try runCorpus(arenAlloc, &ochiClient, corpus, @intCast(nowNs));
+        _ = corpusArena.reset(.retain_capacity);
     }
-    const insertJson = try std.fmt.allocPrint(
-        alloc,
-        "{{\"streams\":[{{\"stream\":{{\"tag1\":\"alpha\",\"tag2\":\"beta\"}},\"values\":[[\"{d}\",\"same message\",{{\"field1\":\"x\",\"field2\":\"x\"}}]]}}]}}",
-        .{tsNs},
-    );
-    defer alloc.free(insertJson);
-
-    const maxCompressedLen = snappy.maxCompressedLength(insertJson.len);
-    const compressed = try alloc.alloc(u8, maxCompressedLen);
-    defer alloc.free(compressed);
-    const compressedLen = try snappy.compress(insertJson, compressed);
-
-    {
-        var resp = try ochiClient.request(
-            alloc,
-            .POST,
-            "/insert/loki/api/v1/push",
-            compressed[0..compressedLen],
-            "application/json",
-            "snappy",
-        );
-        defer resp.deinit(alloc);
-        try std.testing.expectEqual(200, resp.statusCode);
-    }
-
-    {
-        var resp = try ochiClient.request(alloc, .POST, "/flush", "", null, null);
-        defer resp.deinit(alloc);
-        try std.testing.expectEqual(200, resp.statusCode);
-    }
-
-    const queryJson = try std.fmt.allocPrint(
-        alloc,
-        "{{\"start\":{d},\"end\":{d},\"tags\":[{{\"key\":\"tag1\",\"value\":\"alpha\"}},{{\"key\":\"tag2\",\"value\":\"beta\"}}],\"fields\":[{{\"key\":\"field1\",\"value\":\"x\"}},{{\"key\":\"field2\",\"value\":\"x\"}}]}}",
-        .{ tsNs - 1, tsNs + 1 },
-    );
-    defer alloc.free(queryJson);
-
-    {
-        const queryStart = Io.Timestamp.now(io, .real).nanoseconds;
-        const queryTimeoutNs = 5 * std.time.ns_per_s;
-
-        while (true) {
-            var resp = try ochiClient.request(alloc, .POST, "/query", queryJson, "application/json", null);
-            defer resp.deinit(alloc);
-            try std.testing.expectEqual(@as(u16, 200), resp.statusCode);
-
-            const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
-                .ignore_unknown_fields = true,
-            });
-            defer parsed.deinit();
-
-            if (parsed.value.len == 1) {
-                const line = parsed.value[0];
-                try std.testing.expectEqual(tsNs, line.timestampNs);
-
-                try expectField(line, "tag1", "alpha");
-                try expectField(line, "tag2", "beta");
-                try expectField(line, "field1", "x");
-                try expectField(line, "field2", "x");
-                try expectField(line, "", "same message");
-
-                try std.testing.expectEqual(@as(usize, 5), line.fields.len);
-                break;
-            }
-
-            if (Io.Timestamp.now(io, .real).nanoseconds - queryStart > queryTimeoutNs) {
-                return error.Timeout;
-            }
-
-            try Io.sleep(io, .fromMilliseconds(50), .real);
-        }
-    }
-
-    try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
 }
 
-fn runCorpus(io: Io, alloc: Allocator, client: *const OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
+fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
     {
-        const ingestBody = buildIngestBody(alloc, corpus.ingest);
+        const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);
         defer alloc.free(ingestBody);
         const maxCompressedLen = snappy.maxCompressedLength(ingestBody.len);
         const compressed = try alloc.alloc(u8, maxCompressedLen);
@@ -376,16 +307,13 @@ fn runCorpus(io: Io, alloc: Allocator, client: *const OchiClient, corpus: QueryT
     }
 
     {
-        var resp = try client.request(alloc, .POST, "/flush", "", null, null);
+        var resp = try client.request(alloc, .POST, "/flush", "", corpus.ingest.tenant, "", null);
         defer resp.deinit(alloc);
         try std.testing.expectEqual(200, resp.statusCode);
     }
 
     for (corpus.queries) |query| {
-        const queryBody = buildQueryBody(alloc, query);
-        defer alloc.free(queryBody);
-
-        var resp = try client.request(alloc, .POST, "/query", queryBody, query.tenant, "application/loql", null);
+        var resp = try client.request(alloc, .POST, "/query", query.query, query.tenant, "application/loql", null);
         defer resp.deinit(alloc);
         try std.testing.expectEqual(200, resp.statusCode);
 
@@ -394,12 +322,12 @@ fn runCorpus(io: Io, alloc: Allocator, client: *const OchiClient, corpus: QueryT
         });
         defer parsed.deinit();
 
-        const fetchedIDs = std.ArrayList([]const u8).empty;
+        var fetchedIDs = std.ArrayList([]const u8).empty;
         defer fetchedIDs.deinit(alloc);
         for (parsed.value) |line| {
             for (line.fields) |field| {
                 if (std.mem.eql(u8, field.key, "id")) {
-                    try fetchedIDs.append(alloc, line.value);
+                    try fetchedIDs.append(alloc, field.value);
                     break;
                 }
             }
@@ -412,12 +340,42 @@ fn runCorpus(io: Io, alloc: Allocator, client: *const OchiClient, corpus: QueryT
     }
 }
 
-fn buildIngestBody(alloc: Allocator, ingest: IngestCorpus) ![]const u8 {
-    return &.{};
-}
+fn buildIngestBody(alloc: Allocator, ingest: IngestCorpus, nowNs: u64) ![]const u8 {
+    const streamJson = try std.json.Stringify.valueAlloc(alloc, ingest.stream, .{});
+    defer alloc.free(streamJson);
 
-fn buildQueryBody(alloc: Allocator, query: QueryCorpus) ![]const u8 {
-    return &.{};
+    var buf = std.ArrayList(u8).empty;
+    errdefer buf.deinit(alloc);
+
+    try buf.appendSlice(alloc, "{\"streams\":[{\"stream\":");
+    try buf.appendSlice(alloc, streamJson);
+    try buf.appendSlice(alloc, ",\"values\":[");
+    for (ingest.logs, 0..) |log, i| {
+        if (i != 0) {
+            try buf.append(alloc, ',');
+        }
+
+        const tsNsSigned: u64 = @intCast(@as(i128, nowNs) + log.offsetMin * std.time.ns_per_min);
+        if (tsNsSigned < 0) {
+            return error.InvalidTimestamp;
+        }
+
+        const fieldsJson = try std.json.Stringify.valueAlloc(alloc, log.fields, .{});
+        defer alloc.free(fieldsJson);
+
+        try buf.appendSlice(alloc, "[\"");
+        const tsString = try std.fmt.allocPrint(alloc, "{d}", .{tsNsSigned});
+        defer alloc.free(tsString);
+        try buf.appendSlice(alloc, tsString);
+        try buf.appendSlice(alloc, "\",\"");
+        try buf.appendSlice(alloc, log.message);
+        try buf.appendSlice(alloc, "\",");
+        try buf.appendSlice(alloc, fieldsJson);
+        try buf.appendSlice(alloc, "]");
+    }
+    try buf.appendSlice(alloc, "]}]}");
+
+    return buf.toOwnedSlice(alloc);
 }
 
 // TODO: test querying fields with "." in a key/value

@@ -42,6 +42,7 @@ const LineResponse = struct {
     fields: []const Field,
 };
 
+// TODO: this is broken, it writes SID with array list fields
 fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
     var responseLines = try std.ArrayList(LineResponse).initCapacity(res.arena, lines.len);
     for (lines) |line| {
