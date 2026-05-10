@@ -1,0 +1,26 @@
+{
+  "tenant": "team-a",
+  "stream": { "env": "prod", "service": "web" },
+  "logs": [
+    {
+      "offsetMin": -30,
+      "message": "GET /api/health 200 3ms",
+      "fields": {
+        "id": "web-001",
+        "status": "200",
+        "path": "/api/health",
+        "latency_ms": "3"
+      }
+    },
+    {
+      "offsetMin": -20,
+      "message": "POST /api/orders 500 timeout",
+      "fields": {
+        "id": "web-002",
+        "status": "500",
+        "path": "/api/orders",
+        "latency_ms": "4820"
+      }
+    }
+  ]
+}

@@ -13,7 +13,7 @@
 Two artifacts drive every test:
 
 1. **Corpus** — a fixed set of log entries with stable IDs, ingested once before all queries run.
-2. **Query fixtures** — one file per query, declaring which corpus IDs must appear in the result.
+2. **Query fixtures** — query file, declaring which corpus IDs must appear in the results.
 
 The test runner materializes the corpus into a fresh server, runs every query fixture, and diffs the returned IDs against the declared sets. A mismatch is a failure.
 
@@ -23,27 +23,27 @@ When you add a new log to the corpus, only the query fixtures whose predicates h
 
 ## Corpus Format
 
-File name is lexicographically sorted in order to let the test runner ingest entries in a deterministic order of multiple batches.
+File names are lexicographically sorted in order to let the test runner ingest entries in a deterministic order of multiple batches.
 
-Location: `testdata/corpora/ingest_<ingest_order>.json`
+Location: `corpora/<corpus_name>/ingest.json`, example of corpus_name `0001_and_eq`
 
 ```json
-[
-  {
-    "tenant": "team-a",
-    "offsetMin": -30,
-    "stream": { "env": "prod", "service": "web" },
-    "message": "GET /api/health 200 3ms",
-    "fields": { "id": "web-001", "status": "200", "path": "/api/health", "latency_ms": "3" }
-  },
-  {
-    "tenant": "team-a",
-    "offsetMin": -20,
-    "stream": { "env": "prod", "service": "web" },
-    "message": "POST /api/orders 500 timeout",
-    "fields": { "id": "web-002" , "status": "500", "path": "/api/orders", "latency_ms": "4820" }
-  }
-]
+{
+  "tenant": "team-a",
+  "stream": { "env": "prod", "service": "web" },
+  "logs": [
+    {
+        "offsetMin": -30,
+        "message": "GET /api/health 200 3ms",
+        "fields": { "id": "web-001", "status": "200", "path": "/api/health", "latency_ms": "3" }
+    },
+    {
+        "offsetMin": -20,
+        "message": "POST /api/orders 500 timeout",
+        "fields": { "id": "web-002" , "status": "500", "path": "/api/orders", "latency_ms": "4820" }
+    }
+  ]
+}
 ```
 
 ### Field semantics
@@ -63,17 +63,17 @@ Location: `testdata/corpora/ingest_<ingest_order>.json`
 
 ## Query Fixture Format
 
-Location: `testdata/query_<ingest_order>_<query_name>.toml`
+Location: `<corpus_name>/queries.json`
 
-```toml
-# Human-readable description
-description = "500 errors on the web service in prod"
-
-tenant = "team-a"
-
-query = "[-60m,now] {env=prod AND service=web} status=500"
-
-# Corpus IDs that MUST appear in the result.
-match = ["web-002"]
+```json
+[
+    {
+        "description": "Find all 500 errors in the last hour",
+        "tenant": "team-a",
+        "query": "[-60m,now] {env=prod AND service=web} status=500",
+        "match": ["web-002"]
+    },
+    ...
+]
 ```
 

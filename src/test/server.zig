@@ -1,5 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const Dir = Io.Dir;
 const snappy = @import("snappy").raw;
 
 const Conf = @import("../Conf.zig");
@@ -105,6 +107,92 @@ fn expectField(line: QueryLine, expectedKey: []const u8, expectedValue: []const 
     return error.FieldNotFound;
 }
 
+const IngestionLog = struct {
+    offset: u64,
+    message: []const u8,
+    fields: std.json.ObjectMap,
+};
+const IngestCorpus = struct {
+    tenant: u64,
+    stream: std.json.ObjectMap,
+    lines: []IngestionLog,
+};
+
+const QueryCorpus = struct {
+    description: []const u8,
+    tenant: u64,
+    query: []const u8,
+    match: std.ArrayList([]const u8),
+};
+
+pub const QueryTestCorpus = struct {
+    name: []const u8,
+    ingest: IngestCorpus,
+    queries: []QueryCorpus,
+};
+
+fn getCorpura(io: Io, alloc: Allocator, dirPath: []const u8) !std.ArrayList(QueryTestCorpus) {
+    const corporaDirName = "src/test/corpura";
+    const ingestFileName = "ingest.json";
+    const queriesFileName = "queries.json";
+
+    var fullPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var w = Io.Writer.fixed(&fullPathBuf);
+    try std.fs.path.fmtJoin(&.{ dirPath, corporaDirName }).format(&w);
+
+    const openDir = try Dir.openDirAbsolute(io, w.buffer[0..w.end], .{
+        .iterate = true,
+    });
+    defer openDir.close(io);
+
+    var testCases: std.ArrayList(QueryTestCorpus) = .empty;
+    var iter = Dir.iterate(openDir);
+    while (true) {
+        try testCases.ensureUnusedCapacity(alloc, 1);
+
+        const entry = try iter.next(io) orelse break;
+        if (entry.kind != .directory) {
+            continue;
+        }
+
+        w.end = 0;
+        try std.fs.path.fmtJoin(&.{ dirPath, corporaDirName, entry.name, ingestFileName }).format(&w);
+        const parsedIngest = try parseTestFile(IngestCorpus, io, alloc, w.buffer[0..w.end]);
+        defer parsedIngest.deinit();
+
+        w.end = 0;
+        try std.fs.path.fmtJoin(&.{ dirPath, corporaDirName, entry.name, queriesFileName }).format(&w);
+        const parsedQueries = try parseTestFile([]QueryCorpus, io, alloc, w.buffer[0..w.end]);
+        defer parsedQueries.deinit();
+
+        testCases.appendAssumeCapacity(.{
+            .name = entry.name,
+            .ingest = parsedIngest.value,
+            .queries = parsedQueries.value,
+        });
+    }
+
+    return testCases;
+}
+
+fn parseTestFile(comptime T: type, io: Io, alloc: Allocator, filePath: []const u8) !std.json.Parsed(T) {
+    const file = try std.Io.Dir.openFileAbsolute(io, filePath, .{});
+    defer file.close(io);
+
+    var readBuf: [4096]u8 = undefined;
+    var fileBuf: [4096]u8 = undefined;
+    var reader = file.reader(io, &readBuf);
+    const n = try reader.interface.readSliceShort(&fileBuf);
+    if (n == 0) {
+        return error.NotEnoughBufferSize;
+    }
+
+    return std.json.parseFromSlice(T, alloc, fileBuf[0..n], .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+}
+
 test "serverEndToEndViaHTTP" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
@@ -116,6 +204,8 @@ test "serverEndToEndViaHTTP" {
         };
         alloc.free(oldCwd);
     }
+
+    const corpura = try getCorpura(io, alloc, oldCwd);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -148,6 +238,13 @@ test "serverEndToEndViaHTTP" {
     defer ochiClient.client.deinit();
 
     try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
+
+    for (corpura.items) |corpus| {
+        std.debug.print("Running test case: {s}\n", .{corpus.name});
+        for (corpus.queries) |query| {
+            std.debug.print("Running query: {s}\n", .{query.description});
+        }
+    }
 
     const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const insertJson = try std.fmt.allocPrint(

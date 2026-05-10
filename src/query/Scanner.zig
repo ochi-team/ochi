@@ -209,13 +209,14 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
                 return Error.SyntaxError;
             }
         },
-        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '+' => blk: {
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '+', '/' => blk: {
             var idx: usize = 0;
             while (idx < query.len and
                 (std.ascii.isAlphanumeric(query[idx]) or
                     query[idx] == '_' or
                     query[idx] == '-' or
                     query[idx] == ':' or
+                    query[idx] == '/' or
                     query[idx] == '+')) : (idx += 1)
             {}
 
