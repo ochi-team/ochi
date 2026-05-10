@@ -36,7 +36,8 @@ pub const OchiClient = struct {
         method: std.http.Method,
         path: []const u8,
         body: []const u8,
-        contentType: ?[]const u8,
+        tenant: []const u8,
+        contentType: []const u8,
         contentEncoding: ?[]const u8,
     ) !HttpResponse {
         const url = try std.fmt.allocPrint(alloc, "{s}{s}", .{ client.host, path });
@@ -45,12 +46,12 @@ pub const OchiClient = struct {
         var responseWriter = try std.Io.Writer.Allocating.initCapacity(alloc, 1024);
         defer responseWriter.deinit();
 
-        var headersBuf: [2]std.http.Header = undefined;
+        var headersBuf: [3]std.http.Header = undefined;
         var headersLen: usize = 0;
-        if (contentType) |ct| {
-            headersBuf[headersLen] = .{ .name = "content-type", .value = ct };
-            headersLen += 1;
-        }
+        headersBuf[headersLen] = .{ .name = "content-type", .value = contentType };
+        headersLen += 1;
+        headersBuf[headersLen] = .{ .name = "X-Scope-OrgID", .value = tenant };
+        headersLen += 1;
         if (contentEncoding) |ce| {
             headersBuf[headersLen] = .{ .name = "content-encoding", .value = ce };
             headersLen += 1;
@@ -265,14 +266,16 @@ test "serverEndToEndViaHTTP" {
 
     const tsNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
 
+    var corpusArena = std.heap.ArenaAllocator.init(alloc);
+    defer corpusArena.deinit();
+    const arenaloc = &corpusArena.allocator();
     for (corpora.items) |corpus| {
         if (std.mem.eql(u8, corpus.name, "simple")) {
-            runCorpus(io, alloc, &ochiClient, corpus) catch |err| {
-                std.debug.print("Corpus {s} failed with error: {s}\n", .{ corpus.name, err });
-            };
+            const nowNs = Io.Timestamp.now(io, .real).nanoseconds;
+            try runCorpus(io, arenaloc, &ochiClient, corpus, @intCast(nowNs));
+            _ = corpusArena.reset(.retain_capacity);
         }
     }
-
     const insertJson = try std.fmt.allocPrint(
         alloc,
         "{{\"streams\":[{{\"stream\":{{\"tag1\":\"alpha\",\"tag2\":\"beta\"}},\"values\":[[\"{d}\",\"same message\",{{\"field1\":\"x\",\"field2\":\"x\"}}]]}}]}}",
@@ -348,6 +351,73 @@ test "serverEndToEndViaHTTP" {
     }
 
     try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
+}
+
+fn runCorpus(io: Io, alloc: Allocator, client: *const OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
+    {
+        const ingestBody = buildIngestBody(alloc, corpus.ingest);
+        defer alloc.free(ingestBody);
+        const maxCompressedLen = snappy.maxCompressedLength(ingestBody.len);
+        const compressed = try alloc.alloc(u8, maxCompressedLen);
+        defer alloc.free(compressed);
+        const compressedLen = try snappy.compress(ingestBody, compressed);
+
+        var resp = try client.request(
+            alloc,
+            .POST,
+            "/insert/loki/api/v1/push",
+            compressed[0..compressedLen],
+            corpus.ingest.tenant,
+            "application/json",
+            "snappy",
+        );
+        defer resp.deinit(alloc);
+        try std.testing.expectEqual(200, resp.statusCode);
+    }
+
+    {
+        var resp = try client.request(alloc, .POST, "/flush", "", null, null);
+        defer resp.deinit(alloc);
+        try std.testing.expectEqual(200, resp.statusCode);
+    }
+
+    for (corpus.queries) |query| {
+        const queryBody = buildQueryBody(alloc, query);
+        defer alloc.free(queryBody);
+
+        var resp = try client.request(alloc, .POST, "/query", queryBody, query.tenant, "application/loql", null);
+        defer resp.deinit(alloc);
+        try std.testing.expectEqual(200, resp.statusCode);
+
+        const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+
+        const fetchedIDs = std.ArrayList([]const u8).empty;
+        defer fetchedIDs.deinit(alloc);
+        for (parsed.value) |line| {
+            for (line.fields) |field| {
+                if (std.mem.eql(u8, field.key, "id")) {
+                    try fetchedIDs.append(alloc, line.value);
+                    break;
+                }
+            }
+        }
+
+        try std.testing.expectEqual(fetchedIDs.items.len, query.match.len);
+        for (query.match, 0..query.match.len) |expectedID, i| {
+            try std.testing.expectEqualStrings(expectedID, fetchedIDs.items[i]);
+        }
+    }
+}
+
+fn buildIngestBody(alloc: Allocator, ingest: IngestCorpus) ![]const u8 {
+    return &.{};
+}
+
+fn buildQueryBody(alloc: Allocator, query: QueryCorpus) ![]const u8 {
+    return &.{};
 }
 
 // TODO: test querying fields with "." in a key/value
