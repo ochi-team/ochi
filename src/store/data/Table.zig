@@ -954,3 +954,43 @@ test "queryLines" {
 // TODO: test flushed mem table is the same as an opened one,
 // kinda round trippness property,
 // and do the same with index tables (probably already done)
+
+test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
+    const alloc = std.testing.allocator;
+    const io: Io = std.testing.io;
+
+    const sid = SID{ .id = 1, .tenantID = "1234" };
+
+    var fields1 = [_]Field{
+        .{ .key = "", .value = "message-1" },
+        .{ .key = "level", .value = "info" },
+    };
+    var fields2 = [_]Field{
+        .{ .key = "", .value = "message-2" },
+        .{ .key = "level", .value = "warn" },
+    };
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = fields1[0..] },
+        .{ .timestampNs = 2, .sid = sid, .fields = fields2[0..] },
+    };
+
+    const memTable = try MemTable.init(io, alloc);
+    try memTable.addLines(io, alloc, lines[0..]);
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.release(io);
+
+    var queried = std.ArrayList(Line).empty;
+    defer {
+        for (queried.items) |line| {
+            alloc.free(line.sid.tenantID);
+            alloc.free(line.fields);
+        }
+        queried.deinit(alloc);
+    }
+
+    const query = Query{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} };
+    var requested = [_]SID{sid};
+
+    try table.queryLines(io, alloc, &queried, requested[0..], query);
+}
