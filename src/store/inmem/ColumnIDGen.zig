@@ -59,6 +59,7 @@ pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
     const keys = self.keyIDs.keys();
     var uncompressedSize: usize = encoding.Encoder.varIntBound(keys.len);
     for (keys) |key| {
+        uncompressedSize += encoding.Encoder.varIntBound(key.len);
         uncompressedSize += key.len;
     }
     var stackFba = std.heap.stackFallback(512, alloc);

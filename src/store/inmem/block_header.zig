@@ -318,7 +318,7 @@ pub const ColumnsHeader = struct {
         var offset = enc.offset;
 
         for (self.headers) |*header| {
-            const colID = columnIDGen.keyIDs.get(header.key).?;
+            const colID = columnIDGen.genIDAssumeCapacity(header.key);
             header.encode(&enc);
             cshIdx.columns.appendAssumeCapacity(.{
                 .columndID = colID,
