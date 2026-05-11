@@ -155,29 +155,25 @@ pub const ColumnData = struct {
     // it's important to note writeColumnData uses *ColumnDict in order to move ownership,
     // therefore it may require passing  a ColumndData as a pointer
     dict: *ColumnDict,
-    data: []const u8,
+    bloomValues: []const u8,
 
     // TODO: try making it non optional, default as an empty string
-    bloomFilterData: ?[]const u8,
+    bloomTokens: ?[]const u8,
 
     pub fn readFrom(
         ch: *ColumnHeader,
-        sr: *const StreamReader,
+        streamReader: *const StreamReader,
     ) !ColumnData {
-        const colID = sr.columnIDGen.keyIDs.get(ch.key).?;
-        const bloomBufI = sr.colIdx.get(colID).?;
-
         const valuesSize = ch.size;
         std.debug.assert(valuesSize <= maxValuesBlockSize);
 
-        const bloomValuesBuf = sr.bloomValuesList.items[bloomBufI];
-        const valuesData = bloomValuesBuf[ch.offset..][0..valuesSize];
+        const bloom = streamReader.getBloomBuffer(ch.key);
+
+        const valuesData = bloom.values[ch.offset..][0..valuesSize];
 
         var bloomFilterData: ?[]const u8 = null;
-
         if (ch.type != .dict) {
-            const bloomTokensBuf = sr.bloomTokensList.items[bloomBufI];
-            bloomFilterData = bloomTokensBuf[ch.bloomFilterOffset..][0..ch.bloomFilterSize];
+            bloomFilterData = bloom.tokens[ch.bloomFilterOffset..][0..ch.bloomFilterSize];
         }
 
         return .{
@@ -188,9 +184,9 @@ pub const ColumnData = struct {
             .max = ch.max,
 
             .dict = &ch.dict,
-            .data = valuesData,
+            .bloomValues = valuesData,
 
-            .bloomFilterData = bloomFilterData,
+            .bloomTokens = bloomFilterData,
         };
     }
 };
@@ -287,7 +283,7 @@ test "BlockData readFrom populates columnsData and celledColumns" {
     for (ch.headers, bd.columnsData.items) |*header, col| {
         try std.testing.expectEqualStrings(header.key, col.key);
         try std.testing.expectEqual(header.type, col.type);
-        try std.testing.expectEqual(header.size, col.data.len);
+        try std.testing.expectEqual(header.size, col.bloomValues.len);
         try std.testing.expectEqual(&header.dict, col.dict);
     }
 

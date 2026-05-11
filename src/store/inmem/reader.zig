@@ -29,10 +29,10 @@ pub const StreamReader = struct {
 
     messageBloomValuesBuf: []const u8,
     messageBloomTokensBuf: []const u8,
-    // TODO: consider making it as a value, not a pointer
     bloomValuesList: std.ArrayList([]const u8),
     bloomTokensList: std.ArrayList([]const u8),
 
+    // TODO: consider making it as a value, not a pointer
     // TODO: decode manually when it comes to file reader
     columnIDGen: *ColumnIDGen,
     colIdx: *std.AutoHashMap(u16, u16),
@@ -246,6 +246,25 @@ pub const StreamReader = struct {
         total += self.columnsKeysBuf.len;
         total += self.columnIdxsBuf.len;
         return total;
+    }
+
+    pub fn getBloomBuffer(
+        streamReader: *const StreamReader,
+        key: []const u8,
+    ) struct { values: []const u8, tokens: []const u8 } {
+        if (key.len == 0) {
+            return .{
+                .values = streamReader.messageBloomValuesBuf,
+                .tokens = streamReader.messageBloomTokensBuf,
+            };
+        }
+
+        const colID = streamReader.columnIDGen.keyIDs.get(key).?;
+        const bloomBufI = streamReader.colIdx.get(colID).?;
+        return .{
+            .values = streamReader.bloomValuesList.items[bloomBufI],
+            .tokens = streamReader.bloomTokensList.items[bloomBufI],
+        };
     }
 };
 

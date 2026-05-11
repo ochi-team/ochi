@@ -58,6 +58,7 @@ pub const Processor = struct {
 
     size: u32 = 0,
     lines: std.ArrayList(Line) = .empty,
+    arenaState: std.heap.ArenaAllocator.State = .{},
     tags: []Field,
     encodedTags: []const u8,
     sid: SID,
@@ -67,10 +68,19 @@ pub const Processor = struct {
             .store = store,
             .size = 0,
             .lines = std.ArrayList(Line).empty,
+            .arenaState = .{},
             .tags = &[_]Field{},
             .encodedTags = "",
             .sid = SID{ .tenantID = "", .id = 0 },
         };
+    }
+
+    fn resetBuffered(self: *Processor, alloc: Allocator) void {
+        var arena = self.arenaState.promote(alloc);
+        self.lines.clearRetainingCapacity();
+        _ = arena.reset(.retain_capacity);
+        self.arenaState = arena.state;
+        self.size = 0;
     }
 
     pub fn reinit(
@@ -93,8 +103,7 @@ pub const Processor = struct {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        self.lines.clearRetainingCapacity();
-        self.size = 0;
+        self.resetBuffered(alloc);
 
         self.tags = tags;
         self.encodedTags = encodedTags;
@@ -106,10 +115,11 @@ pub const Processor = struct {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        self.lines.clearRetainingCapacity();
+        self.resetBuffered(alloc);
         self.sid.deinit(alloc);
         self.lines.deinit(alloc);
-        self.size = 0;
+        var arena = self.arenaState.promote(alloc);
+        arena.deinit();
         self.* = undefined;
     }
 
@@ -120,10 +130,22 @@ pub const Processor = struct {
         timestampNs: u64,
         fields: []Field,
     ) !void {
+        var arena = self.arenaState.promote(alloc);
+        defer self.arenaState = arena.state;
+        const arenaAlloc = arena.allocator();
+
+        const fieldsCopy = try arenaAlloc.alloc(Field, fields.len);
+        for (fields, 0..) |field, i| {
+            fieldsCopy[i] = .{
+                .key = try arenaAlloc.dupe(u8, field.key),
+                .value = try arenaAlloc.dupe(u8, field.value),
+            };
+        }
+
         const line = Line{
             .timestampNs = timestampNs,
             .sid = self.sid,
-            .fields = fields,
+            .fields = fieldsCopy,
         };
 
         const size = line.rawSizeValidate() catch |err| {
@@ -162,7 +184,6 @@ pub const Processor = struct {
 
     pub fn flush(self: *Processor, io: Io, alloc: std.mem.Allocator) !void {
         try self.store.addLines(io, alloc, self.lines.items, self.tags, self.encodedTags);
-        self.lines.clearRetainingCapacity();
-        self.size = 0;
+        self.resetBuffered(alloc);
     }
 };

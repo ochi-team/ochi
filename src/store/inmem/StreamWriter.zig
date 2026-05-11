@@ -497,7 +497,7 @@ fn writeColumn(self: *Self, io: Io, allocator: Allocator, col: Column, ch: *Colu
 }
 
 fn writeColumnData(self: *Self, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
-    const dataLen = col.data.len;
+    const dataLen = col.bloomValues.len;
     std.debug.assert(dataLen <= maxValuesBlockSize);
 
     ch.key = col.key;
@@ -521,13 +521,13 @@ fn writeColumnData(self: *Self, io: Io, alloc: Allocator, col: ColumnData, ch: *
     };
 
     ch.offset = bloomValuesBuf.len();
-    try bloomValuesBuf.appendSlice(io, alloc, col.data);
+    try bloomValuesBuf.appendSlice(io, alloc, col.bloomValues);
 
     const bloomFilterSize = bloomTokensBuf.len();
     std.debug.assert(bloomFilterSize <= maxBloomTokensBlockSize);
-    ch.bloomFilterSize = if (col.bloomFilterData) |d| d.len else 0;
+    ch.bloomFilterSize = if (col.bloomTokens) |d| d.len else 0;
     ch.bloomFilterOffset = bloomTokensBuf.len();
-    if (col.bloomFilterData) |d| try bloomTokensBuf.appendSlice(io, alloc, d);
+    if (col.bloomTokens) |d| try bloomTokensBuf.appendSlice(io, alloc, d);
 }
 
 fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !u16 {

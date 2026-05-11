@@ -9,6 +9,9 @@ const ColumnIDGen = @This();
 keyIDs: std.array_hash_map.String(u16),
 keysBuf: ?[]u8,
 
+// TODO: we have a known limit of fields per block,
+// 1. make sure the keys mapper is used per block
+// 2. make it use a limit
 pub fn init(allocator: Allocator) !*ColumnIDGen {
     const s = try allocator.create(ColumnIDGen);
     errdefer s.deinit(allocator);
@@ -40,8 +43,10 @@ pub fn genIDAssumeCapacity(self: *ColumnIDGen, key: []const u8) u16 {
 }
 
 pub fn bound(self: *ColumnIDGen) !usize {
-    var res: usize = 10;
-    for (self.keyIDs.keys()) |key| {
+    const keys = self.keyIDs.keys();
+    var res: usize = encoding.Encoder.varIntBound(keys.len);
+    for (keys) |key| {
+        res += encoding.Encoder.varIntBound(key.len);
         res += key.len;
     }
     return encoding.compressBound(res);
@@ -51,8 +56,10 @@ pub fn bound(self: *ColumnIDGen) !usize {
 pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
     // TODO: consider interning strings to a list instead of collecting them from the map keys
 
-    var uncompressedSize: usize = 10;
-    for (self.keyIDs.keys()) |key| {
+    const keys = self.keyIDs.keys();
+    var uncompressedSize: usize = encoding.Encoder.varIntBound(keys.len);
+    for (keys) |key| {
+        uncompressedSize += encoding.Encoder.varIntBound(key.len);
         uncompressedSize += key.len;
     }
     var stackFba = std.heap.stackFallback(512, alloc);
@@ -61,8 +68,8 @@ pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
     defer fba.free(tmpBuf);
 
     var enc = encoding.Encoder.init(tmpBuf);
-    enc.writeVarInt(@intCast(self.keyIDs.count()));
-    for (self.keyIDs.keys()) |key| {
+    enc.writeVarInt(@intCast(keys.len));
+    for (keys) |key| {
         enc.writeString(key);
     }
 

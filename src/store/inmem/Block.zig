@@ -66,7 +66,7 @@ pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpac
         const colData = &data.columnsData.items[i];
         var col = &columns[i];
         col.key = colData.key;
-        col.values = try unpacker.unpackValues(alloc, colData.data, data.len);
+        col.values = try unpacker.unpackValues(alloc, colData.bloomValues, data.len);
         try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
     }
 
