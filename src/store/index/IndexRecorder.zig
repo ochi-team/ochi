@@ -19,6 +19,7 @@ const merge = @import("../table/merge.zig");
 const swap = @import("../table/swap.zig");
 
 const Conf = @import("../../Conf.zig");
+const sleepOrStop = @import("../../stds/async.zig").sleepOrStop;
 const Runtime = @import("../../Runtime.zig");
 
 // TODO: worth tuning on practice
@@ -27,27 +28,6 @@ const maxMemTables = 24;
 
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 const swapper = swap.Swapper(IndexRecorder, Table);
-
-fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
-    // TODO: make this interval configurable,
-    // it must be shorter for tests and longer for production
-    const step = 250;
-    var remaining = ns;
-    while (remaining > 0) {
-        // TODO
-        // this is an anti-pattern in concurrent programming.
-        // a thread shouldn't waste cycles spinning. instead
-        // it should sleep, and be signalled when to wake up
-        // and do work. Using std.Io.Condition, or even better
-        // redesigning the worker threads to use Queues as input/output.
-        if (stopped.load(.acquire)) return;
-        const s = @min(remaining, step);
-        Io.sleep(io, .fromNanoseconds(s), .real) catch |err| {
-            std.debug.print("Sleep or stop error: {}", .{err});
-        };
-        remaining -= s;
-    }
-}
 
 const IndexRecorder = @This();
 

@@ -21,6 +21,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const metrics = b.dependency("metrics", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // C dependencies
     const zstd_dependency = b.dependency("zstd", .{
@@ -52,6 +56,7 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "httpz", .module = httpz.module("httpz") },
         std.Build.Module.Import{ .name = "snappy", .module = snappy.module("snappy") },
         std.Build.Module.Import{ .name = "zint", .module = zint.module("zint") },
+        std.Build.Module.Import{ .name = "metrics", .module = metrics.module("metrics") },
         std.Build.Module.Import{ .name = "c", .module = cModule },
         std.Build.Module.Import{ .name = "encoding", .module = encodeModule },
     };

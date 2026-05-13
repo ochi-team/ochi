@@ -33,26 +33,20 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     }
 }
 
-// TODO: make it configurable
-const storePath = ".ochi";
-
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
-    std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try std.Io.Dir.cwd().realPathFile(io, storePath, &storePathBuf);
+    const n = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &storePathBuf);
 
     var store = try Store.init(io, allocator, storePathBuf[0..n]);
     defer store.deinit(io, allocator);
+    try store.start(io, allocator);
 
-    var dispatcher: Dispatcher = .{
-        .io = io,
-        .allocator = allocator,
-        .conf = conf.app,
-        .store = &store,
-    };
+    var dispatcher = try Dispatcher.init(io, allocator, conf.app, &store);
+    defer dispatcher.deinit();
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .localhost(conf.server.port) }, &dispatcher);
     registerSigtermHandler();
     defer server.deinit();
