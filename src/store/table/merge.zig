@@ -149,6 +149,9 @@ pub fn Merger(
             return freePerTable;
         }
 
+        // TODO: currently it uses tiered compaction, looks for tables withing a similar size range,
+        // test implementation with greedier merge, if there are many small times are merging into one
+        // we should evaluate whether the resulted bigger one could be merged with another larger table
         fn filterLeveledTables(
             toMerge: *std.ArrayList(T),
             maxDiskTableSize: u64,
