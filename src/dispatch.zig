@@ -53,7 +53,8 @@ pub const Dispatcher = struct {
         req: *httpz.Request,
         res: *httpz.Response,
     ) void {
-        defer self.observeRequest(req, res);
+        const startedAt = Io.Timestamp.now(self.io, .awake);
+        defer self.observeRequest(req, res, startedAt);
 
         const tenantID: tenant.TenantID = req.headers.get("X-Scope-OrgID") orelse "default";
 
@@ -110,14 +111,20 @@ pub const Dispatcher = struct {
         };
     }
 
-    fn observeRequest(self: *Dispatcher, req: *httpz.Request, res: *httpz.Response) void {
+    fn observeRequest(self: *Dispatcher, req: *httpz.Request, res: *httpz.Response, startedAt: Io.Timestamp) void {
         const status: u16 = if (res.status == 0) 200 else res.status;
         const size: u64 = if (req.body()) |body| body.len else 0;
+        const elapsedMs = startedAt.untilNow(self.io, .awake).toMilliseconds();
+        const latencyMs: u64 = if (elapsedMs < 0) 0 else @intCast(elapsedMs);
+        const labels: DispatchMeter.Labels = .{ .status = status, .path = req.url.path };
 
-        self.meter.requests.incr(.{ .status = status, .path = req.url.path }) catch |err| {
+        self.meter.requests.incr(labels) catch |err| {
             std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
         };
-        self.meter.throughput.incrBy(.{ .status = status, .path = req.url.path }, size) catch |err| {
+        self.meter.throughput.incrBy(labels, size) catch |err| {
+            std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
+        };
+        self.meter.latency.observe(labels, latencyMs) catch |err| {
             std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
         };
     }
