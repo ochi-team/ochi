@@ -77,8 +77,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
         partitions.deinit(alloc);
     }
 
-    var meter = try StoreMeter.init(alloc, io);
-    errdefer meter.deinit();
+    const meter = StoreMeter.init();
 
     var store: Store = .{
         .path = path,
@@ -141,7 +140,6 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
-    self.meter.deinit();
     // deinit runtime the last, because partitions (recorders) need it
     // in order to flush the last mem tables
     self.runtime.deinit(allocator);
@@ -172,11 +170,15 @@ fn runDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) void {
 fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
     const usage = self.readStoreUsage(io, alloc) catch |err| switch (err) {
         error.FileNotFound => 0,
-        else => return,
+        else => {
+            std.debug.print(
+                "[ERROR] failed to read store disk usage, error: {s}\n",
+                .{@errorName(err)},
+            );
+            return;
+        },
     };
-    self.meter.diskUsage.set(.{}, usage) catch |err| {
-        std.debug.print("[ERROR] failed to set disk usage metric for store {s}, error: {}\n", .{ self.path, err });
-    };
+    self.meter.diskUsage.set(usage);
 }
 
 // TODO: the implementation watches the files stats, it's not efficient,

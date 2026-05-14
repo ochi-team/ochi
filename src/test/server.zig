@@ -241,12 +241,12 @@ fn parseTestFile(comptime T: type, io: Io, alloc: Allocator, filePath: []const u
 //     var corpora = try corporaReader.read(io, alloc);
 //     defer corpora.deinit(alloc);
 //
-//     // var tmp = std.testing.tmpDir(.{});
-//     // defer tmp.cleanup();
+//     var tmp = std.testing.tmpDir(.{});
+//     defer tmp.cleanup();
 //
-//     // const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-//     // defer alloc.free(tmpPath);
-//     // try std.Io.Threaded.chdir(tmpPath);
+//     const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+//     defer alloc.free(tmpPath);
+//     try std.Io.Threaded.chdir(tmpPath);
 //
 //     const conf = Conf.default(alloc);
 //     const ServerThread = struct {
