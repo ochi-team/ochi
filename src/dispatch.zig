@@ -4,6 +4,7 @@ const Io = std.Io;
 
 const httpz = @import("httpz");
 const DispatchMeter = @import("observe/DispatchMeter.zig");
+const StoreMeter = @import("observe/StoreMeter.zig");
 const AppConfig = @import("Conf.zig").AppConfig;
 const tenant = @import("store/tenant.zig");
 
@@ -17,6 +18,9 @@ pub const AppContext = struct {
     conf: AppConfig,
     tenantID: tenant.TenantID,
     store: *Store,
+
+    dispatchMeter: *DispatchMeter,
+    storeMeter: *StoreMeter,
 };
 
 pub const Dispatcher = struct {
@@ -59,6 +63,8 @@ pub const Dispatcher = struct {
             .conf = self.conf,
             .tenantID = tenantID,
             .store = self.store,
+            .dispatchMeter = &self.meter,
+            .storeMeter = &self.store.meter,
         };
 
         if (!tenant.isValidID(ctx.tenantID)) {

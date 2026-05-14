@@ -20,3 +20,7 @@ pub fn init(alloc: Allocator, io: Io) !DispatchMeter {
 pub fn deinit(self: *DispatchMeter) void {
     self.diskUsage.deinit();
 }
+
+pub fn write(self: *DispatchMeter, writer: *std.Io.Writer) !void {
+    try m.write(self, writer);
+}

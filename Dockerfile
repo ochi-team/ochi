@@ -1,17 +1,33 @@
 FROM ubuntu:24.04 AS build
 
-ARG ZIG_VERSION=0.15.1
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates git && rm -rf /var/lib/apt/lists/*
+ARG ZIG_VERSION=0.16.0
+# x86_64 or aarch64
+ARG TARGETARCH=aarch64
 RUN --mount=type=cache,target=/tmp/zig-cache \
-    if [ ! -f /tmp/zig-cache/zig.tar.xz ]; then \
-      curl -L -o /tmp/zig-cache/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-aarch64-linux-${ZIG_VERSION}.tar.xz"; \
-    fi && tar -xJf /tmp/zig-cache/zig.tar.xz -C /usr/local
-RUN ln -s /usr/local/zig-aarch64-linux-${ZIG_VERSION}/zig /usr/local/bin/zig
+    zig_dir="/usr/local/zig-${TARGETARCH}-linux-${ZIG_VERSION}" && \
+    zig_tar="/tmp/zig-cache/zig-${TARGETARCH}.tar.xz" && \
+    if [ ! -f "${zig_tar}" ]; then \
+      curl -fsSL -o "${zig_tar}" "https://ziglang.org/download/${ZIG_VERSION}/zig-${TARGETARCH}-linux-${ZIG_VERSION}.tar.xz"; \
+    fi && \
+    tar -xJf "${zig_tar}" -C /usr/local && \
+    ln -sf "${zig_dir}/zig" /usr/local/bin/zig
 
 WORKDIR /app
 
 COPY build.zig build.zig.zon test_runner.zig ./
 COPY src/ src/
 
-RUN --mount=type=cache,target=/app/.zig-cache zig build test
+RUN --mount=type=cache,target=/app/.zig-cache /usr/local/bin/zig build -Doptimize=ReleaseSafe
+
+# TODO: use lighter image (e.g. scratch, distroless, etc.)
+FROM ubuntu:24.04 AS runtime
+
+WORKDIR /app
+
+COPY --from=build /app/zig-out/bin/Ochi /usr/local/bin/ochi
+
+EXPOSE 9014
+
+CMD ["/usr/local/bin/ochi"]

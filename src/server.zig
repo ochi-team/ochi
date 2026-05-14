@@ -17,6 +17,15 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
 }
 
+fn metrics(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("content-type", "text/plain; version=0.0.4; charset=utf-8");
+
+    const w = res.writer();
+    try ctx.dispatchMeter.write(w);
+    try ctx.storeMeter.write(w);
+}
+
 fn registerSigtermHandler() void {
     const empty_set = std.mem.zeroes(std.posix.sigset_t);
     const act = std.posix.Sigaction{
@@ -56,6 +65,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 
     var router = try server.router(.{});
     router.get("/health", health, .{});
+    router.get("/metrics", metrics, .{});
 
     router.get("/insert/loki/ready", insert.insertLokiReady, .{});
     router.post("/insert/loki/api/v1/push", insert.insertLokiJsonHandler, .{});

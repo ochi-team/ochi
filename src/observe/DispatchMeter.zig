@@ -27,4 +27,6 @@ pub fn deinit(self: *DispatchMeter) void {
     self.requests.deinit();
 }
 
-
+pub fn write(self: *DispatchMeter, writer: *std.Io.Writer) !void {
+    try m.write(self, writer);
+}

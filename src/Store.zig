@@ -175,7 +175,7 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
         else => return,
     };
     self.meter.diskUsage.set(.{}, usage) catch |err| {
-        std.debug.print("[ERROR] failed to set disk usage metric for store {s}, error: {s}\n", .{ self.path, err });
+        std.debug.print("[ERROR] failed to set disk usage metric for store {s}, error: {}\n", .{ self.path, err });
     };
 }
 
