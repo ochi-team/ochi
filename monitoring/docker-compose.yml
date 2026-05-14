@@ -1,0 +1,52 @@
+services:
+  ochi:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["/usr/local/bin/ochi"]
+    ports:
+      - "9014:9014"
+
+  prometheus:
+    image: prom/prometheus:v3.4.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # enables reload API
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - ochi
+      - cadvisor
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # cAdvisor needs host-level visibility to report metrics for all containers
+    privileged: true
+    ports:
+      - "8080:8080"
+    volumes:
+      # host root filesystem context for filesystem/path resolution
+      - /:/rootfs:ro
+      # runtime sockets for container runtime discovery and metadata
+      - /var/run:/var/run:rw
+      # host kernel and cgroup stats source: cpu, memory, blkio (block device io), network
+      - /sys:/sys:ro
+      # docker storage metadata for layer/filesystem usage insights
+      - /var/lib/docker/:/var/lib/docker:ro

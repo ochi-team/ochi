@@ -6,7 +6,9 @@ const Dir = Io.Dir;
 const zeit = @import("zeit");
 
 const fs = @import("fs.zig");
+const sleepOrStop = @import("stds/async.zig").sleepOrStop;
 
+const StoreMeter = @import("observe/StoreMeter.zig");
 const Cache = @import("stds/Cache.zig");
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
@@ -33,15 +35,17 @@ lruPartition: ?*Partition = null,
 /// shared across all partitions, injected from a store to them
 streamCache: *Cache.StreamCache,
 
+meter: StoreMeter,
+
+g: Io.Group = .init,
+stopped: std.atomic.Value(bool) = .init(true),
+
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
 pathsBuf: std.ArrayList([]const u8) = .empty,
 
 // runtime stats
 runtime: *Runtime,
 
-// TODO: store must observe current disk space for 2 reasons:
-// 1. expose it as a metric in order to alert to OPS to expand disk or remove the stale data
-// 2. handle eviction policy based on the config (e.g. free GB or free % of the disk)
 // TODO: start partitions retention watcher
 pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
     std.debug.assert(std.fs.path.isAbsolute(path));
@@ -73,11 +77,14 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
         partitions.deinit(alloc);
     }
 
+    const meter = StoreMeter.init();
+
     var store: Store = .{
         .path = path,
         .lockFile = file,
         .partitions = partitions,
         .streamCache = streamCache,
+        .meter = meter,
         .runtime = runtime,
     };
 
@@ -103,10 +110,23 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
         store.partitions.items[store.partitions.items.len - 1]
     else
         null;
+
     return store;
 }
 
+pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
+    self.stopped.store(false, .release);
+    errdefer self.stopped.store(true, .release);
+
+    try self.startDiskUsageSampler(io, alloc);
+}
+
 pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
+    self.stopped.store(true, .release);
+    self.g.await(io) catch |err| switch (err) {
+        error.Canceled => {},
+    };
+
     for (self.partitions.items) |partition| {
         partition.release(io);
     }
@@ -123,6 +143,78 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     // deinit runtime the last, because partitions (recorders) need it
     // in order to flush the last mem tables
     self.runtime.deinit(allocator);
+}
+
+// Store tracks disk usage so:
+// - operators can alert before running out of space
+// - eviction policy can rely on the current usage instead of static thresholds
+// TODO: handle partitions eviction due to max usage config
+// TODO: find a way to move the meter to an infra level,
+// and make this meter watching max usage to guard the store to run out of space
+fn startDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) !void {
+    if (self.stopped.load(.acquire)) return;
+
+    errdefer self.g.cancel(io);
+    try self.g.concurrent(io, runDiskUsageSampler, .{ self, io, alloc });
+}
+
+fn runDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) void {
+    const sampleIntervalNs = 20 * std.time.ns_per_s;
+
+    while (!self.stopped.load(.acquire)) {
+        self.observeDiskUsage(io, alloc);
+        sleepOrStop(io, &self.stopped, sampleIntervalNs);
+    }
+}
+
+fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
+    const usage = self.readStoreUsage(io, alloc) catch |err| switch (err) {
+        error.FileNotFound => 0,
+        else => {
+            std.debug.print(
+                "[ERROR] failed to read store disk usage, error: {s}\n",
+                .{@errorName(err)},
+            );
+            return;
+        },
+    };
+    self.meter.diskUsage.set(usage);
+}
+
+// TODO: the implementation watches the files stats, it's not efficient,
+// because the existing partitions size never change and either the tables size,
+// instead we must collect size stats from the partitions directly on opening the tables
+fn readStoreUsage(self: *Store, io: Io, alloc: Allocator) !u64 {
+    return readDirUsage(io, alloc, self.path);
+}
+
+fn readDirUsage(io: Io, alloc: Allocator, path: []const u8) !u64 {
+    var dir = if (std.fs.path.isAbsolute(path))
+        try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true })
+    else
+        try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
+
+    var total: u64 = 0;
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        switch (entry.kind) {
+            .directory => {
+                const childPath = try std.fs.path.join(alloc, &.{ path, entry.name });
+                defer alloc.free(childPath);
+
+                total += try readDirUsage(io, alloc, childPath);
+            },
+            .file => {
+                var file = try dir.openFile(io, entry.name, .{});
+                defer file.close(io);
+                total += (try file.stat(io)).size;
+            },
+            else => {},
+        }
+    }
+
+    return total;
 }
 
 pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []const u8) !Dir {
@@ -313,7 +405,7 @@ pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
 
 fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32, maxDay: u32) []const *Partition {
     // Find first partition with day >= minDay
-    const start = std.sort.lowerBound(
+    const startIdx = std.sort.lowerBound(
         *Partition,
         partitions,
         minDay,
@@ -321,7 +413,7 @@ fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32, max
     );
 
     // Find first partition with day > maxDay
-    const slice = partitions[start..];
+    const slice = partitions[startIdx..];
     const end = std.sort.upperBound(
         *Partition,
         slice,

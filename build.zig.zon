@@ -24,6 +24,10 @@
             .url = "git+https://github.com/allyourcodebase/zstd.git?ref=master#64ae50e400740a054e6fe890808c515760474473",
             .hash = "zstd-1.5.7-1-KEItkAMwAAD6OKY3m0OOmXG7aL-aLUfrDqbP5J5oYapU",
         },
+        .metrics = .{
+            .url = "git+https://github.com/karlseguin/metrics.zig#1621f82e7ecf2b3dddf5730bf52761af354a7080",
+            .hash = "metrics-0.0.0-W7G4eJOgAQDBacPAeqGCaY8gV7zuddUQyikGNq7nDPds",
+        },
     },
     .paths = .{
         "build.zig",

@@ -3,7 +3,8 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const httpz = @import("httpz");
-
+const DispatchMeter = @import("observe/DispatchMeter.zig");
+const StoreMeter = @import("observe/StoreMeter.zig");
 const AppConfig = @import("Conf.zig").AppConfig;
 const tenant = @import("store/tenant.zig");
 
@@ -17,6 +18,9 @@ pub const AppContext = struct {
     conf: AppConfig,
     tenantID: tenant.TenantID,
     store: *Store,
+
+    dispatchMeter: *DispatchMeter,
+    storeMeter: *StoreMeter,
 };
 
 pub const Dispatcher = struct {
@@ -24,6 +28,24 @@ pub const Dispatcher = struct {
     allocator: Allocator,
     conf: AppConfig,
     store: *Store,
+    meter: DispatchMeter,
+
+    pub fn init(io: Io, allocator: Allocator, conf: AppConfig, store: *Store) !Dispatcher {
+        var meter = try DispatchMeter.init(allocator, io);
+        errdefer meter.deinit();
+
+        return .{
+            .io = io,
+            .allocator = allocator,
+            .conf = conf,
+            .store = store,
+            .meter = meter,
+        };
+    }
+
+    pub fn deinit(self: *Dispatcher) void {
+        self.meter.deinit();
+    }
 
     pub fn dispatch(
         self: *Dispatcher,
@@ -31,6 +53,8 @@ pub const Dispatcher = struct {
         req: *httpz.Request,
         res: *httpz.Response,
     ) void {
+        defer self.observeRequest(req, res);
+
         const tenantID: tenant.TenantID = req.headers.get("X-Scope-OrgID") orelse "default";
 
         var ctx = AppContext{
@@ -39,6 +63,8 @@ pub const Dispatcher = struct {
             .conf = self.conf,
             .tenantID = tenantID,
             .store = self.store,
+            .dispatchMeter = &self.meter,
+            .storeMeter = &self.store.meter,
         };
 
         if (!tenant.isValidID(ctx.tenantID)) {
@@ -81,6 +107,18 @@ pub const Dispatcher = struct {
                 res.status = 500;
                 res.body = "internal server error";
             },
+        };
+    }
+
+    fn observeRequest(self: *Dispatcher, req: *httpz.Request, res: *httpz.Response) void {
+        const status: u16 = if (res.status == 0) 200 else res.status;
+        const size: u64 = if (req.body()) |body| body.len else 0;
+
+        self.meter.requests.incr(.{ .status = status, .path = req.url.path }) catch |err| {
+            std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
+        };
+        self.meter.throughput.incrBy(.{ .status = status, .path = req.url.path }, size) catch |err| {
+            std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
         };
     }
 };

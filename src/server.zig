@@ -17,6 +17,15 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
 }
 
+fn metrics(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("content-type", "text/plain; version=0.0.4; charset=utf-8");
+
+    const w = res.writer();
+    try ctx.dispatchMeter.write(w);
+    try ctx.storeMeter.write(w);
+}
+
 fn registerSigtermHandler() void {
     const empty_set = std.mem.zeroes(std.posix.sigset_t);
     const act = std.posix.Sigaction{
@@ -33,27 +42,21 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     }
 }
 
-// TODO: make it configurable
-const storePath = ".ochi";
-
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
-    std.Io.Dir.cwd().createDir(io, storePath, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try std.Io.Dir.cwd().realPathFile(io, storePath, &storePathBuf);
+    const n = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &storePathBuf);
 
     var store = try Store.init(io, allocator, storePathBuf[0..n]);
     defer store.deinit(io, allocator);
+    try store.start(io, allocator);
 
-    var dispatcher: Dispatcher = .{
-        .io = io,
-        .allocator = allocator,
-        .conf = conf.app,
-        .store = &store,
-    };
-    var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .localhost(conf.server.port) }, &dispatcher);
+    var dispatcher = try Dispatcher.init(io, allocator, conf.app, &store);
+    defer dispatcher.deinit();
+    var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .all(conf.server.port) }, &dispatcher);
     registerSigtermHandler();
     defer server.deinit();
 
@@ -62,6 +65,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 
     var router = try server.router(.{});
     router.get("/health", health, .{});
+    router.get("/metrics", metrics, .{});
 
     router.get("/insert/loki/ready", insert.insertLokiReady, .{});
     router.post("/insert/loki/api/v1/push", insert.insertLokiJsonHandler, .{});

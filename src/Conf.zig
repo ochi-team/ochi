@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Ymlz = @import("ymlz").Ymlz;
-
 pub const AppConfig = struct {
     maxRequestSize: u32 = 4 * 1024 * 1024,
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,
@@ -12,6 +10,9 @@ pub const AppConfig = struct {
     flushIntervalUs: i64 = 5 * std.time.us_per_s,
     // max portion of RAM to use for caching, between 0 and 1
     maxCachePortion: f64 = 0.5,
+
+    // TODO: make it supporting absolute path
+    storePath: []const u8 = ".ochi",
 };
 
 pub const ServerConfig = struct {

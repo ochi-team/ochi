@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Ochi Dashboards
+    orgId: 1
+    folder: Ochi
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

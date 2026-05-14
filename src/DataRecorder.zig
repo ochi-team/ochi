@@ -19,6 +19,8 @@ const BlockReader = @import("store/inmem/reader.zig").BlockReader;
 const mergeData = @import("store/data/merge.zig").mergeData;
 const Runtime = @import("Runtime.zig");
 
+const sleepOrStop = @import("stds/async.zig").sleepOrStop;
+
 const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
 const cap = @import("store/table/cap.zig");
@@ -28,20 +30,6 @@ const maxMemTables = 24;
 // TODO: it looks inconsistent, some take ponters, some don't
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
-
-fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
-    // TODO: make this interval configurable,
-    // it must be shorter for tests and longer for production
-    const step = 250;
-    var remaining = ns;
-    while (remaining > 0) {
-        // TODO Use signal here to avoid buisy spinning
-        if (stopped.load(.acquire)) return;
-        const s = @min(remaining, step);
-        Io.sleep(io, .fromNanoseconds(s), .real) catch {};
-        remaining -= s;
-    }
-}
 
 // TODO: move flush interval to config
 fn setFlushTime(io: Io) i64 {
