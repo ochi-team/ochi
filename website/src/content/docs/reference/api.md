@@ -1,11 +1,11 @@
 ---
-title: "0.1"
-slug: docs/reference/0.1
+title: "API reference"
+slug: docs/reference/api
 sidebar:
   order: 1
 ---
 
-This page documents the HTTP API available in Ochi `0.1`.
+This page documents the HTTP API available in Ochi `0.2`.
 
 ### Base URL
 
@@ -42,7 +42,7 @@ Read [Loki ingestion API](https://grafana.com/docs/loki/latest/reference/loki-ht
 #### Request headers
 
 - `Content-Type: application/json` (required when header is set), only json encoding is supported for payloads
-- `Content-Encoding: snappy`, only `snappy` is currently supported for decompressing payloads.
+- `Content-Encoding: snappy`, only `snappy` is currently supported for compressed payloads.
 
 #### Request body
 
@@ -81,39 +81,22 @@ The JSON object must be a valid JSON object with string keys and string values. 
 - `200 OK` on successful ingestion
 - Empty body
 
-#### Error cases
-
 ### `POST /query`
 
 Query logs by time range plus exact-match tags and fields.
 
-#### Request headers
+#### Query Language API
 
-- `Content-Type: application/json` (required when header is set)
+Requires a specified header:
+- `Content-Type: application/loql`
 
 #### Request body
 
-```json
-{
-  "start": 1715173664999999999,
-  "end": 1715173665000000001,
-  "tags": [
-    { "key": "tag1", "value": "alpha" },
-    { "key": "tag2", "value": "beta" }
-  ],
-  "fields": [
-    { "key": "field1", "value": "x" },
-    { "key": "field2", "value": "x" }
-  ]
-}
+```loql
+[-15m, now] {tag1=alpha AND tag2=beta} field1=x OR field2=x
 ```
 
-Schema:
-
-- `start`: inclusive lower bound, Unix timestamp in nanoseconds
-- `end`: inclusive upper bound, Unix timestamp in nanoseconds
-- `tags`: array of exact-match tag filters
-- `fields`: array of exact-match field filters
+Full language reference: [LOQL](./loql.md)
 
 #### Response
 

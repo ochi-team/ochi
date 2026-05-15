@@ -26,6 +26,10 @@ We are creating a more efficient alternative for storing logs.
 - install [zig](https://ziglang.org/learn/getting-started/#managers) 0.16.0
 - do `zig build -Doptimize=ReleaseSafe`
 
+## Documentation
+
+https://ochi.dev/docs/guides/installation/
+
 ## Roadmap
 
 - [x] store persists the data, working simple API queries
@@ -74,6 +78,9 @@ For all questions, major changes, suggestions, notes, feel free to reach out to 
 2. Using LLMs you put your trust profile on a line, we don't encourage it, but you may.
 3. Complete slop will be rejected with a very short comment and a permanent ban.
 4. We can invest our time helping you learn. Don't fully rely on LLMs to implement a solution.
+
+We encourage to use AI in order to:
+1. generate a test that is able to crash the system
 
 ## Code style
 - a good inner function comment describes why, not what
