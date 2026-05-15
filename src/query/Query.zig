@@ -2,14 +2,16 @@ const std = @import("std");
 
 pub const Query = @This();
 
-startTimeNs: u64,
-endTimeNs: u64,
+// start time range inclusive in ns
+start: u64,
+// end time range inclusive in ns
+end: u64,
 
 tagsExpr: *const FilterExpression,
 fieldsExpr: ?*const FilterExpression,
 
 pub fn validate(q: *const Query) !void {
-    if (q.startTimeNs >= q.endTimeNs) {
+    if (q.start >= q.end) {
         return error.InvalidTimeRange;
     }
 
@@ -82,8 +84,8 @@ test "validateQuery" {
         .{
             // valid time range and no tags
             .query = .{
-                .startTimeNs = 10,
-                .endTimeNs = 20,
+                .start = 10,
+                .end = 20,
                 .tagsExpr = &orExpr,
                 .fieldsExpr = null,
             },
@@ -91,8 +93,8 @@ test "validateQuery" {
         .{
             // valid time range and supported tag operators
             .query = .{
-                .startTimeNs = 10,
-                .endTimeNs = 20,
+                .start = 10,
+                .end = 20,
                 .tagsExpr = &orExpr,
                 .fieldsExpr = null,
             },
@@ -100,8 +102,8 @@ test "validateQuery" {
         .{
             // invalid time range when equal
             .query = .{
-                .startTimeNs = 20,
-                .endTimeNs = 20,
+                .start = 20,
+                .end = 20,
                 .tagsExpr = &orExpr,
                 .fieldsExpr = null,
             },
@@ -110,8 +112,8 @@ test "validateQuery" {
         .{
             // invalid time range when start is after end
             .query = .{
-                .startTimeNs = 21,
-                .endTimeNs = 20,
+                .start = 21,
+                .end = 20,
                 .tagsExpr = &orExpr,
                 .fieldsExpr = null,
             },
@@ -120,8 +122,8 @@ test "validateQuery" {
         .{
             // unsupported tag operator
             .query = .{
-                .startTimeNs = 10,
-                .endTimeNs = 20,
+                .start = 10,
+                .end = 20,
                 .tagsExpr = &regex,
                 .fieldsExpr = null,
             },

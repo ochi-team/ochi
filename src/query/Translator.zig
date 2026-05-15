@@ -35,13 +35,13 @@ pub fn query(self: *Translator, allocator: Allocator, qset: QuerySet, nowNs: u64
     const tagsExpr = try self.translateExpression(allocator, unwrapGroup(&qset.tags));
     const fieldsExpr = if (qset.query) |q| try self.translateExpression(allocator, unwrapGroup(&q)) else null;
     const q: Query = .{
-        .startTimeNs = range.startTimeNs,
-        .endTimeNs = range.endTimeNs,
+        .start = range.startTimeNs,
+        .end = range.endTimeNs,
         .tagsExpr = tagsExpr,
         .fieldsExpr = fieldsExpr,
     };
 
-    if (q.startTimeNs >= q.endTimeNs) {
+    if (q.start >= q.end) {
         return TranslateError.InvalidRange;
     }
 
@@ -200,8 +200,8 @@ test "Translator.query" {
             },
             .nowNs = now,
             .expectedQuery = .{
-                .startTimeNs = now - (5 * std.time.ns_per_min),
-                .endTimeNs = now + (30 * std.time.ns_per_s),
+                .start = now - (5 * std.time.ns_per_min),
+                .end = now + (30 * std.time.ns_per_s),
                 .tagsExpr = &.{
                     .predicate = .{
                         .key = "env",
@@ -222,8 +222,8 @@ test "Translator.query" {
             },
             .nowNs = now,
             .expectedQuery = .{
-                .startTimeNs = expectedStart,
-                .endTimeNs = expectedEnd,
+                .start = expectedStart,
+                .end = expectedEnd,
                 .tagsExpr = &.{
                     .predicate = .{
                         .key = "env",
@@ -253,8 +253,8 @@ test "Translator.query" {
             },
             .nowNs = now,
             .expectedQuery = .{
-                .startTimeNs = now - std.time.ns_per_min,
-                .endTimeNs = now,
+                .start = now - std.time.ns_per_min,
+                .end = now,
                 .tagsExpr = &.{ .andOp = .{
                     &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                     &.{ .predicate = .{ .key = "service", .value = "api", .op = .notEqual } },

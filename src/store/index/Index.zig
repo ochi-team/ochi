@@ -5,7 +5,7 @@ const Io = std.Io;
 const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
-const Query = @import("../query.zig").Query;
+const FilterExpression = @import("../../query/Query.zig").FilterExpression;
 const TagRecordsParser = @import("TagRecordsParser.zig");
 
 const Lookup = @import("lookup/Lookup.zig");
@@ -116,12 +116,18 @@ pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Fiel
 }
 
 const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
-pub fn querySIDs(self: *Self, io: Io, alloc: Allocator, tenantID: []const u8, tags: []const Field) !QuerySIDsResult {
+pub fn querySIDs(
+    self: *Self,
+    io: Io,
+    alloc: Allocator,
+    tenantID: []const u8,
+    tags: *const FilterExpression,
+) !QuerySIDsResult {
     // TODO: cache query => stream
     var lookup = try Lookup.init(io, alloc, self.recorder);
     defer lookup.deinit(io, alloc);
 
-    var prefixes: std.ArrayList([]const u8) = try .initCapacity(alloc, tags.len);
+    var prefixes: std.ArrayList([]const u8) = try .initCapacity(alloc, 8);
     defer {
         for (prefixes.items) |p| {
             alloc.free(p);

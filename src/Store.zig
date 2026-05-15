@@ -12,7 +12,7 @@ const StoreMeter = @import("observe/StoreMeter.zig");
 const Cache = @import("stds/Cache.zig");
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
-const Query = @import("store/query.zig").Query;
+const Query = @import("query/Query.zig");
 
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");

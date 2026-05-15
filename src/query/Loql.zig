@@ -72,8 +72,8 @@ test "translateQuery" {
         .{
             .query = "[-5m,now] {env=prod}",
             .expected = .{
-                .startTimeNs = fiveMinutesAgo,
-                .endTimeNs = now,
+                .start = fiveMinutesAgo,
+                .end = now,
                 .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                 .fieldsExpr = null,
             },
@@ -82,8 +82,8 @@ test "translateQuery" {
         .{
             .query = "[-2h,] {env=prod AND (service=one or service=two)}",
             .expected = .{
-                .startTimeNs = now - 2 * std.time.ns_per_hour,
-                .endTimeNs = now,
+                .start = now - 2 * std.time.ns_per_hour,
+                .end = now,
                 .tagsExpr = &.{
                     .andOp = .{
                         &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
@@ -102,8 +102,8 @@ test "translateQuery" {
         .{
             .query = "\n\t[-10m,now] {env=prod and service!=api}\t\n",
             .expected = .{
-                .startTimeNs = now - 10 * std.time.ns_per_min,
-                .endTimeNs = now,
+                .start = now - 10 * std.time.ns_per_min,
+                .end = now,
                 .tagsExpr = &.{
                     .andOp = .{
                         &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
@@ -117,8 +117,8 @@ test "translateQuery" {
         .{
             .query = "[-15m,now] {ENV=prod OR (service=api and host=web)} message=timeout",
             .expected = .{
-                .startTimeNs = now - 15 * std.time.ns_per_min,
-                .endTimeNs = now,
+                .start = now - 15 * std.time.ns_per_min,
+                .end = now,
                 .tagsExpr = &.{
                     .orOp = .{
                         &.{ .predicate = .{ .key = "ENV", .value = "prod", .op = .equal } },
@@ -135,8 +135,8 @@ test "translateQuery" {
         .{
             .query = "[2024-01-10T00:00:00Z,now] {env=prod}",
             .expected = .{
-                .startTimeNs = fixedTsNs,
-                .endTimeNs = now,
+                .start = fixedTsNs,
+                .end = now,
                 .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                 .fieldsExpr = null,
             },
@@ -145,8 +145,8 @@ test "translateQuery" {
         .{
             .query = "[-5m,now] {env=prod} message~err",
             .expected = .{
-                .startTimeNs = fiveMinutesAgo,
-                .endTimeNs = now,
+                .start = fiveMinutesAgo,
+                .end = now,
                 .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                 .fieldsExpr = &.{ .predicate = .{ .key = "message", .value = "err", .op = .matchRegex } },
             },
@@ -155,8 +155,8 @@ test "translateQuery" {
         .{
             .query = "[-2d,30m] {env=prod and service!=api} (message~timeout and path!~health)",
             .expected = .{
-                .startTimeNs = now - 2 * std.time.ns_per_day,
-                .endTimeNs = now + 30 * std.time.ns_per_min,
+                .start = now - 2 * std.time.ns_per_day,
+                .end = now + 30 * std.time.ns_per_min,
                 .tagsExpr = &.{ .andOp = .{
                     &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                     &.{ .predicate = .{ .key = "service", .value = "api", .op = .notEqual } },
@@ -171,8 +171,8 @@ test "translateQuery" {
         .{
             .query = "[-30s,now] {env=prod and (service=api or host=edge)} (status=500 or message~panic and endpoint!~health)",
             .expected = .{
-                .startTimeNs = now - 30 * std.time.ns_per_s,
-                .endTimeNs = now,
+                .start = now - 30 * std.time.ns_per_s,
+                .end = now,
                 .tagsExpr = &.{ .andOp = .{
                     &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                     &.{ .orOp = .{
@@ -193,8 +193,8 @@ test "translateQuery" {
         .{
             .query = "[-30s,now] {env=prod and (service=api or host=edge)} (status=500 or message~panic) and endpoint!~health",
             .expected = .{
-                .startTimeNs = now - 30 * std.time.ns_per_s,
-                .endTimeNs = now,
+                .start = now - 30 * std.time.ns_per_s,
+                .end = now,
                 .tagsExpr = &.{ .andOp = .{
                     &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                     &.{ .orOp = .{
@@ -215,8 +215,8 @@ test "translateQuery" {
         .{
             .query = "[-30s,now] {env=prod and (service=api or host=edge)} status=500 or (message~panic and endpoint!~health)",
             .expected = .{
-                .startTimeNs = now - 30 * std.time.ns_per_s,
-                .endTimeNs = now,
+                .start = now - 30 * std.time.ns_per_s,
+                .end = now,
                 .tagsExpr = &.{ .andOp = .{
                     &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                     &.{ .orOp = .{

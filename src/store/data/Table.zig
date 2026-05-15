@@ -19,7 +19,7 @@ const StreamReader = @import("../inmem/reader.zig").StreamReader;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
-const Query = @import("../query.zig").Query;
+const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
@@ -409,82 +409,88 @@ pub fn release(self: *Table, io: Io) void {
 }
 
 pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
-    // TODO: assert it's sorted in the tests
-    var indexBlockHeaders = self.indexBlockHeaders;
-    var sidsToFind = sids;
-
-    while (indexBlockHeaders.len > 0 and sidsToFind.len > 0) {
-        var sid = sidsToFind[0];
-        var indexBlockHeader = indexBlockHeaders[0];
-
-        if (sid.lessThan(&indexBlockHeader.sid)) {
-            const n = std.sort.lowerBound(SID, sidsToFind, indexBlockHeader.sid, SID.order);
-            if (n == sidsToFind.len) {
-                sidsToFind = sidsToFind[0..0];
-                break;
-            }
-
-            sid = sidsToFind[n];
-            sidsToFind = sidsToFind[n..];
-        }
-
-        var n: usize = 0;
-        if (indexBlockHeaders[0].sid.lessThan(&sid)) {
-            n = std.sort.lowerBound(IndexBlockHeader, indexBlockHeaders, sid, indexBlockHeaderSidLowerBoundOrder);
-            // n can be indexBlockHeaders.len,
-            // so we make a step back to check the last value
-            if (n > 0) n -= 1;
-        }
-
-        indexBlockHeader = indexBlockHeaders[n];
-        indexBlockHeaders = indexBlockHeaders[n + 1 ..];
-
-        if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
-            // block doesn't contain the requested range
-            continue;
-        }
-
-        var blockHeaders = std.ArrayList(BlockHeader).empty;
-        defer {
-            for (blockHeaders.items) |bh| {
-                alloc.free(bh.sid.tenantID);
-            }
-            blockHeaders.deinit(alloc);
-        }
-        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, self.indexBuf, indexBlockHeader);
-
-        var blockHeadersToRead = blockHeaders.items;
-        while (blockHeadersToRead.len > 0) {
-            n = std.sort.lowerBound(BlockHeader, blockHeadersToRead, sid, blockHeaderSidLowerBoundOrder);
-            blockHeadersToRead = blockHeadersToRead[n..];
-
-            while (blockHeadersToRead.len > 0 and blockHeadersToRead[0].sid.eql(&sid)) {
-                const blockHeader = blockHeadersToRead[0];
-                blockHeadersToRead = blockHeadersToRead[1..];
-
-                if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
-                    // block doesn't contain the requested range
-                    continue;
-                }
-
-                try self.queryBlock(io, alloc, dst, blockHeader, query);
-            }
-
-            if (blockHeadersToRead.len == 0) {
-                break;
-            }
-
-            sid = blockHeadersToRead[0].sid;
-            n = std.sort.lowerBound(SID, sidsToFind, sid, SID.order);
-            if (n == sidsToFind.len) {
-                sidsToFind = sidsToFind[0..0];
-                break;
-            }
-
-            sid = sidsToFind[n];
-            sidsToFind = sidsToFind[n..];
-        }
-    }
+    _ = self;
+    _ = io;
+    _ = alloc;
+    _ = dst;
+    _ = sids;
+    _ = query;
+    // // TODO: assert it's sorted in the tests
+    // var indexBlockHeaders = self.indexBlockHeaders;
+    // var sidsToFind = sids;
+    //
+    // while (indexBlockHeaders.len > 0 and sidsToFind.len > 0) {
+    //     var sid = sidsToFind[0];
+    //     var indexBlockHeader = indexBlockHeaders[0];
+    //
+    //     if (sid.lessThan(&indexBlockHeader.sid)) {
+    //         const n = std.sort.lowerBound(SID, sidsToFind, indexBlockHeader.sid, SID.order);
+    //         if (n == sidsToFind.len) {
+    //             sidsToFind = sidsToFind[0..0];
+    //             break;
+    //         }
+    //
+    //         sid = sidsToFind[n];
+    //         sidsToFind = sidsToFind[n..];
+    //     }
+    //
+    //     var n: usize = 0;
+    //     if (indexBlockHeaders[0].sid.lessThan(&sid)) {
+    //         n = std.sort.lowerBound(IndexBlockHeader, indexBlockHeaders, sid, indexBlockHeaderSidLowerBoundOrder);
+    //         // n can be indexBlockHeaders.len,
+    //         // so we make a step back to check the last value
+    //         if (n > 0) n -= 1;
+    //     }
+    //
+    //     indexBlockHeader = indexBlockHeaders[n];
+    //     indexBlockHeaders = indexBlockHeaders[n + 1 ..];
+    //
+    //     if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
+    //         // block doesn't contain the requested range
+    //         continue;
+    //     }
+    //
+    //     var blockHeaders = std.ArrayList(BlockHeader).empty;
+    //     defer {
+    //         for (blockHeaders.items) |bh| {
+    //             alloc.free(bh.sid.tenantID);
+    //         }
+    //         blockHeaders.deinit(alloc);
+    //     }
+    //     try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, self.indexBuf, indexBlockHeader);
+    //
+    //     var blockHeadersToRead = blockHeaders.items;
+    //     while (blockHeadersToRead.len > 0) {
+    //         n = std.sort.lowerBound(BlockHeader, blockHeadersToRead, sid, blockHeaderSidLowerBoundOrder);
+    //         blockHeadersToRead = blockHeadersToRead[n..];
+    //
+    //         while (blockHeadersToRead.len > 0 and blockHeadersToRead[0].sid.eql(&sid)) {
+    //             const blockHeader = blockHeadersToRead[0];
+    //             blockHeadersToRead = blockHeadersToRead[1..];
+    //
+    //             if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
+    //                 // block doesn't contain the requested range
+    //                 continue;
+    //             }
+    //
+    //             try self.queryBlock(io, alloc, dst, blockHeader, query);
+    //         }
+    //
+    //         if (blockHeadersToRead.len == 0) {
+    //             break;
+    //         }
+    //
+    //         sid = blockHeadersToRead[0].sid;
+    //         n = std.sort.lowerBound(SID, sidsToFind, sid, SID.order);
+    //         if (n == sidsToFind.len) {
+    //             sidsToFind = sidsToFind[0..0];
+    //             break;
+    //         }
+    //
+    //         sid = sidsToFind[n];
+    //         sidsToFind = sidsToFind[n..];
+    //     }
+    // }
 }
 
 fn queryBlock(
