@@ -96,7 +96,7 @@ Requires a specified header:
 [-15m, now] {tag1=alpha AND tag2=beta} field1=x OR field2=x
 ```
 
-Full language reference: [LOQL](./loql.md)
+Full language reference: [LOQL](../loql)
 
 #### Response
 

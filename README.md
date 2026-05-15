@@ -21,6 +21,10 @@ We are creating a more efficient alternative for storing logs.
 
 ## Install
 
+#### Download pre-built binary
+
+Visit [release page](https://github.com/ochi-team/ochi/releases)
+
 #### Build from source
 
 - install [zig](https://ziglang.org/learn/getting-started/#managers) 0.16.0

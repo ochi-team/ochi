@@ -45,7 +45,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Server ${{ github.ref_name }}
+          name: Ochi ${{ github.ref_name }}
           generate_release_notes: true
           files: |
             dist/Ochi-${{ github.ref_name }}-linux-x86_64.tar.gz
