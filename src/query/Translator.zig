@@ -86,6 +86,9 @@ fn translateTimeValue(value: TimeValue, nowNs: u64) TranslateError!u64 {
             if (ns <= 0) {
                 return TranslateError.InvalidTimestamp;
             }
+            if (ns > std.math.maxInt(u64)) {
+                return TranslateError.InvalidTimestamp;
+            }
             return @intCast(ns);
         },
     }
@@ -333,6 +336,17 @@ test "Translator.query" {
             },
             .nowNs = now,
             .expectedErr = TranslateError.UnexpectedTagExpression,
+        },
+        .{
+            // timestamp overflow
+            .qset = .{
+                .timeRange = .{ .{ .timestamp = "560" }, .{ .now = {} } },
+                .tags = .{ .equalOp = .{ &.{ .literal = "env" }, &.{ .literal = "prod" } } },
+                .query = null,
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedErr = TranslateError.InvalidTimestamp,
         },
     };
 

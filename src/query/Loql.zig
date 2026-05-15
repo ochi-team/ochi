@@ -284,6 +284,14 @@ test "translateQuery" {
                 .{ .line = 1, .col = 31, .message = "Expect ')' after expression." },
             },
         },
+        .{
+            .query = "[560,now] {env=prod} (message=timeout",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 31, .message = "Expect ')' after expression." },
+            },
+        },
     };
 
     for (cases) |case| {
