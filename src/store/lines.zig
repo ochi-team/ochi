@@ -272,6 +272,7 @@ pub const LinesSizeError = error{
 };
 
 // Line is an internal representation of a log line,
+// TODO: make Array(Line) use MultiArray(Line) to see if it improves the data layout
 pub const Line = struct {
     timestampNs: u64,
     // TODO: having sid in the line seems wrong, it must go away

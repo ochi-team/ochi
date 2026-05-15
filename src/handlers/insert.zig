@@ -160,6 +160,10 @@ fn process(
             // second is optional and defines what field in the given json is read as a _msg field
             try tags.append(parseAlloc, .{ .key = "", .value = msg });
 
+            // TODO: we push every line with all the labels including the tags,
+            // as a result we duplicated a lot of data,
+            // we have to think how to hold the tags separately in the block
+            // or even store them only in a stream index
             try processor.pushLine(io, ingestAlloc, tsNs, tags.items);
 
             // clean value labels, but retain stream labels

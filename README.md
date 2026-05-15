@@ -19,6 +19,13 @@
 
 We are creating a more efficient alternative for storing logs.
 
+## Install
+
+#### Build from source
+
+- install [zig](https://ziglang.org/learn/getting-started/#managers) 0.16.0
+- do `zig build -Doptimize=ReleaseSafe`
+
 ## Roadmap
 
 - [x] store persists the data, working simple API queries

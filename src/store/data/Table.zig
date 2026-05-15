@@ -68,6 +68,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // then readers can retain it
 refCounter: std.atomic.Value(u32),
 
+// TODO: investigate how we could make a checksum and validate it on opening a table
 pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error

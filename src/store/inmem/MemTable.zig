@@ -69,6 +69,9 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
     for (lines, 0..) |line, i| {
         std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
 
+        // TODO: the tables splits blocks by stream ids,
+        // we might want to split them by log level as well,
+        // or design another approach to split logs by severity
         if (blockSize >= maxBlockSize or !line.sid.eql(&prevSID)) {
             try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..i], self.streamWriter);
             prevSID = line.sid;

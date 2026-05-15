@@ -1025,3 +1025,7 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         try testing.expectEqual(inserted, countDiskLinesInRecorder(reopened));
     }
 }
+
+// TODO: benchmark different filesystems
+// TODO: try tagging fadvise with different access patterns
+// TODO: experiment with mmap files, start with a small case e.g. only merge or read index

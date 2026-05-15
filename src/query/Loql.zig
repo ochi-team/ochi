@@ -45,6 +45,13 @@ pub fn translateQuery(
 
 const testing = std.testing;
 
+// TODO: setup benchmarks, it requires:
+// 1. add to a test runner prefix :benchmark to run them on flag
+// 2. setup a first bench using zbench
+// 3. report benchmarks as json
+// 4. translate into BMF: https://bencher.dev/docs/reference/bencher-metric-format/
+// 5. git them and compare during bench runs
+// follow zig-otel for potential implementation: https://github.com/zig-o11y/opentelemetry-sdk/issues/76
 test "translateQuery" {
     const allocator = testing.allocator;
     const io = testing.io;
