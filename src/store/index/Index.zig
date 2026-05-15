@@ -6,9 +6,11 @@ const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const IndexRecorder = @import("IndexRecorder.zig");
 const FilterExpression = @import("../../query/Query.zig").FilterExpression;
+const FilterPredicate = @import("../../query/Query.zig").FilterPredicate;
 const TagRecordsParser = @import("TagRecordsParser.zig");
 
 const Lookup = @import("lookup/Lookup.zig");
+const StreamIDsByPrefixesResult = Lookup.StreamIDsByPrefixesResult;
 
 const Encoder = @import("encoding").Encoder;
 
@@ -127,35 +129,94 @@ pub fn querySIDs(
     var lookup = try Lookup.init(io, alloc, self.recorder);
     defer lookup.deinit(io, alloc);
 
-    var prefixes: std.ArrayList([]const u8) = try .initCapacity(alloc, 8);
-    defer {
-        for (prefixes.items) |p| {
-            alloc.free(p);
-        }
-        prefixes.deinit(alloc);
-    }
-
-    for (tags) |tag| {
-        const prefix = try alloc.alloc(u8, TagRecordsParser.encodePrefixBound(tag));
-
-        TagRecordsParser.encodePrefix(prefix, tenantID, tag);
-
-        prefixes.appendAssumeCapacity(prefix);
-    }
-
-    var result = try lookup.findAllStreamIDsByPrefixes(alloc, prefixes.items);
+    var result = try querySIDsFromExpr(alloc, &lookup, tenantID, tags);
     defer result.streamIDs.deinit(alloc);
 
     if (result.streamIDs.keys().len == 0)
         return .{ .sids = .empty, .cutOff = false };
 
     var sids: std.ArrayList(SID) = try .initCapacity(alloc, result.streamIDs.keys().len);
-
     for (result.streamIDs.keys()) |s| {
         // TODO: ideally we look only for streams, the tenant is known in advance,
         // we must design the API to return only Array(streams)
         sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
+    // import to sort it since the data query expected sorted set of streams
+    std.sort.pdq(SID, sids.items, {}, SidLessThan);
+
     return .{ .sids = sids, .cutOff = result.cutOff };
+}
+
+// TODO: pass destination AutoArrayHashMapUnmanaged to collect the keys
+fn querySIDsFromExpr(
+    alloc: Allocator,
+    lookup: *Lookup,
+    tenantID: []const u8,
+    expr: *const FilterExpression,
+) !StreamIDsByPrefixesResult {
+    switch (expr.*) {
+        .predicate => |p| return querySIDsFromPredicate(alloc, lookup, tenantID, p),
+        .andOp => |ops| {
+            var left = try querySIDsFromExpr(alloc, lookup, tenantID, ops[0]);
+            defer left.streamIDs.deinit(alloc);
+
+            if (left.streamIDs.keys().len == 0)
+                return .{ .streamIDs = .empty, .cutOff = left.cutOff };
+
+            var right = try querySIDsFromExpr(alloc, lookup, tenantID, ops[1]);
+            defer right.streamIDs.deinit(alloc);
+
+            var intersection: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
+            errdefer intersection.deinit(alloc);
+            for (left.streamIDs.keys()) |sid| {
+                if (right.streamIDs.contains(sid)) {
+                    try intersection.put(alloc, sid, {});
+                }
+            }
+            return .{ .streamIDs = intersection, .cutOff = left.cutOff or right.cutOff };
+        },
+        .orOp => |ops| {
+            var left = try querySIDsFromExpr(alloc, lookup, tenantID, ops[0]);
+            errdefer left.streamIDs.deinit(alloc);
+
+            var right = try querySIDsFromExpr(alloc, lookup, tenantID, ops[1]);
+            defer right.streamIDs.deinit(alloc);
+
+            for (right.streamIDs.keys()) |sid| {
+                try left.streamIDs.put(alloc, sid, {});
+            }
+            return .{ .streamIDs = left.streamIDs, .cutOff = left.cutOff or right.cutOff };
+        },
+    }
+}
+
+fn querySIDsFromPredicate(
+    alloc: Allocator,
+    lookup: *Lookup,
+    tenantID: []const u8,
+    p: FilterPredicate,
+) !StreamIDsByPrefixesResult {
+    const tag = Field{ .key = p.key, .value = p.value };
+    switch (p.op) {
+        .equal => {
+            const prefix = try alloc.alloc(u8, TagRecordsParser.encodePrefixBound(tag));
+            defer alloc.free(prefix);
+            TagRecordsParser.encodePrefix(prefix, tenantID, tag);
+            return lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{prefix});
+        },
+        else => return error.QueryMatchOperationNotImplemented,
+    }
+}
+
+// TODO: when we collect only streams we con sort them without tenant,
+// and we can remove this function
+pub fn SidLessThan(_: void, self: SID, another: SID) bool {
+    // tenant is less
+    const lhs = self.tenantID;
+    const rhs = another.tenantID;
+    return std.mem.lessThan(u8, lhs, rhs) or
+        // or if tenant is eq than id is less
+        (std.mem.eql(u8, lhs, rhs) and
+            self.id < another.id);
 }

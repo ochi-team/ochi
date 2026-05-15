@@ -193,8 +193,9 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
             },
             .tail = query[1..],
         },
-        // comments
-        '/' => blk: {
+        // comment OR alphanumeric or literal value starting with '_'
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '@', '+', '/' => blk: {
+            // / could be not only a comment, but a url path e.g. /health
             if (query.len > 1 and query[1] == '/') {
                 const nextLineIdx = std.mem.indexOfScalar(u8, query, '\n') orelse query.len;
                 const consumed = if (nextLineIdx < query.len) nextLineIdx + 1 else nextLineIdx;
@@ -202,14 +203,8 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
                     .token = null,
                     .tail = query[consumed..],
                 };
-            } else {
-                _ = reporter.reportSyntaxError(
-                    .{ .line = self.line, .col = self.col, .message = "unexpected token: /" },
-                );
-                return Error.SyntaxError;
             }
-        },
-        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '+', '/' => blk: {
+
             var idx: usize = 0;
             while (idx < query.len and
                 (std.ascii.isAlphanumeric(query[idx]) or
@@ -217,6 +212,7 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
                     query[idx] == '-' or
                     query[idx] == ':' or
                     query[idx] == '/' or
+                    query[idx] == '@' or
                     query[idx] == '+')) : (idx += 1)
             {}
 

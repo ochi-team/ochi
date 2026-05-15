@@ -33,6 +33,7 @@ pub fn main() !void {
 test {
     _ = @import("tidy.zig");
     _ = @import("test/server.zig");
+    std.testing.refAllDecls(server);
 }
 
 // TODO: good to move the packages to its places:

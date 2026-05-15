@@ -29,10 +29,10 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
             var loql: Loql = .{};
             defer loql.deinit(res.arena);
 
-            const now = Io.Timestamp.now(ctx.io, .awake);
+            const now = Io.Timestamp.now(ctx.io, .real);
             var errs: ErrorReporter = .{};
 
-            const translatedQuery = try loql.translateQuery(res.arena, &errs, body, @intCast(now.nanoseconds));
+            const translatedQuery = loql.translateQuery(res.arena, &errs, body, @intCast(now.nanoseconds)) catch return ApiError.FailedToParse;
             break :q translatedQuery;
         } else if (std.mem.eql(u8, "application/json", contentType.?)) {
             const value = parseQuery(res.arena, body) catch return ApiError.FailedToParse;
@@ -41,10 +41,6 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
             return ApiError.ContentTypeNotSupported;
         }
     };
-
-    if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
-        return ApiError.ContentTypeNotSupported;
-    }
 
     var lines = ctx.store.queryLines(ctx.io, res.arena, ctx.tenantID, query) catch {
         return ApiError.FailedToProccess;

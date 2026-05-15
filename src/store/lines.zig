@@ -325,12 +325,6 @@ pub const Line = struct {
 // it allows us to allocate slice of fields all at once instead of per Line,
 // if this type gets wider usage worth naming it Lines instead
 
-// TODO: remove it and use Line instead, it requires getting rid of sid in the Line
-pub const Line2 = struct {
-    timestampNs: u64,
-    fields: []Field,
-};
-
 pub fn lineLessThan(_: void, one: Line, another: Line) bool {
     // sid is less
     return one.sid.lessThan(&another.sid) or

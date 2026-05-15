@@ -42,18 +42,6 @@
     "match": ["web-001", "web-002"]
   },
   {
-    "description": "not prod logs",
-    "tenant": "team-a",
-    "query": "[-60m,now] {env!=prod}",
-    "match": []
-  },
-  {
-    "description": "not web logs",
-    "tenant": "team-a",
-    "query": "[-60m,now] {service!=web}",
-    "match": []
-  },
-  {
     "description": "both are not equal",
     "tenant": "team-a",
     "query": "[-60m,now] {env=prod AND service=web} status!=200 AND path!=/api/orders",

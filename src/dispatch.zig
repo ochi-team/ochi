@@ -56,7 +56,7 @@ pub const Dispatcher = struct {
         const startedAt = Io.Timestamp.now(self.io, .awake);
         defer self.observeRequest(req, res, startedAt);
 
-        const tenantID: tenant.TenantID = req.headers.get("X-Scope-OrgID") orelse "default";
+        const tenantID: tenant.TenantID = req.headers.get("x-scope-orgid") orelse "default";
 
         var ctx = AppContext{
             .io = self.io,
