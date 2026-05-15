@@ -32,7 +32,7 @@ We are creating a more efficient alternative for storing logs.
 - [x] Grafana datasource available
 - [ ] home made query language
 - [ ] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
-- [ ] support Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
+- [ ] full support of Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
 - [ ] installation scripts
 - [ ] docker-compose with configured datasource to grafana
 - [ ] configuration support

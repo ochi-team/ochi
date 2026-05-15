@@ -12,7 +12,7 @@ const Cache = @import("stds/Cache.zig");
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
-const Query = @import("store/query.zig").Query;
+const Query = @import("query/Query.zig");
 
 const Runtime = @import("Runtime.zig");
 const fs = @import("fs.zig");
@@ -206,11 +206,18 @@ pub fn addLines(
 pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    var result = try self.index.querySIDs(io, alloc, tenantID, query.tags);
+    var result = try self.index.querySIDs(io, alloc, tenantID, query.tagsExpr);
     defer result.sids.deinit(alloc);
 
-    // TODO handle cutOff
-    _ = result.cutOff;
+    if (result.cutOff) {
+        // TODO: add a message to a response
+        // so a user could narrow a query
+        // TODO: make query expression converted to strings
+        std.debug.print(
+            "[WARN] query is cut off by index, tenantID: {s}, partition: {s}, query: {}\n",
+            .{ tenantID, self.key, query.tagsExpr },
+        );
+    }
 
     return self.data.queryLines(io, alloc, result.sids.items, query);
 }

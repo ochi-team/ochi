@@ -93,7 +93,7 @@ pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?
 /// TODO: make it configurable and reduce for tests to 10
 /// TODO: take a meter to understand how often it hits the limit
 const resultLimit = 1000;
-const FindAllStreamIDsByPrefixesResult = struct {
+pub const StreamIDsByPrefixesResult = struct {
     streamIDs: std.AutoArrayHashMapUnmanaged(u128, void),
     cutOff: bool,
 };
@@ -101,7 +101,7 @@ pub fn findAllStreamIDsByPrefixes(
     self: *Lookup,
     alloc: Allocator,
     prefixes: []const []const u8,
-) !FindAllStreamIDsByPrefixesResult {
+) !StreamIDsByPrefixesResult {
     std.debug.assert(prefixes.len > 0);
     for (prefixes) |prefix|
         std.debug.assert(prefix.len > 0);

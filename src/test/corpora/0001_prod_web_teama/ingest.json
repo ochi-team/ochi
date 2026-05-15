@@ -1,5 +1,5 @@
 {
-  "tenant": "teama",
+  "tenant": "team-a",
   "stream": { "env": "prod", "service": "web" },
   "logs": [
     {

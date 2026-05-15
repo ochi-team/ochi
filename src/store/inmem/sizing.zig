@@ -11,7 +11,6 @@ const msgKey = "_msg";
 
 const Block = @import("Block.zig");
 const Line = @import("../lines.zig").Line;
-const Line2 = @import("../lines.zig").Line2;
 
 // gives size in resulted json object
 // TODO: test against real resulted log record

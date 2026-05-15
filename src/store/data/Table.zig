@@ -19,7 +19,7 @@ const StreamReader = @import("../inmem/reader.zig").StreamReader;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
-const Query = @import("../query.zig").Query;
+const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
@@ -409,7 +409,7 @@ pub fn release(self: *Table, io: Io) void {
 }
 
 pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
-    // TODO: assert it's sorted in the tests
+    // TODO: assert sids are sorted
     var indexBlockHeaders = self.indexBlockHeaders;
     var sidsToFind = sids;
 
@@ -550,10 +550,12 @@ fn queryBlock(
             alloc.free(removed.fields);
             continue;
         }
-        if (!queryFieldsMatch(line.fields, query.fields)) {
-            const removed = dst.swapRemove(i);
-            alloc.free(removed.fields);
-            continue;
+        if (query.fieldsExpr) |expr| {
+            if (!try matchesFilterExpression(line.fields, expr)) {
+                const removed = dst.swapRemove(i);
+                alloc.free(removed.fields);
+                continue;
+            }
         }
 
         const tenantID = try alloc.dupe(u8, blockHeader.sid.tenantID);
@@ -566,20 +568,32 @@ fn queryBlock(
     }
 }
 
-fn queryFieldsMatch(fields: []const Field, queryFields: []const Field) bool {
-    for (queryFields) |needle| {
-        var matched = false;
-        for (fields) |field| {
-            if (std.mem.eql(u8, needle.key, field.key) and std.mem.eql(u8, needle.value, field.value)) {
-                matched = true;
-                break;
+fn matchesFilterExpression(fields: []const Field, expr: *const Query.FilterExpression) !bool {
+    return switch (expr.*) {
+        .predicate => |p| matchesPredicate(fields, p),
+        .andOp => |ops| (try matchesFilterExpression(fields, ops[0])) and (try matchesFilterExpression(fields, ops[1])),
+        .orOp => |ops| (try matchesFilterExpression(fields, ops[0])) or (try matchesFilterExpression(fields, ops[1])),
+    };
+}
+
+fn matchesPredicate(fields: []const Field, p: Query.FilterPredicate) !bool {
+    switch (p.op) {
+        .equal => {
+            for (fields) |f| {
+                if (std.mem.eql(u8, f.key, p.key) and std.mem.eql(u8, f.value, p.value))
+                    return true;
             }
-        }
-        if (!matched) {
             return false;
-        }
+        },
+        .notEqual => {
+            for (fields) |f| {
+                if (std.mem.eql(u8, f.key, p.key) and !std.mem.eql(u8, f.value, p.value))
+                    return true;
+            }
+            return false;
+        },
+        else => return error.QueryMatchOperationNotImplemented,
     }
-    return true;
 }
 
 fn indexBlockHeaderSidLowerBoundOrder(ctx: SID, self: IndexBlockHeader) std.math.Order {
@@ -866,10 +880,15 @@ test "queryLines" {
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
 
+    const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
+    const warnExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "warn", .op = .equal } };
+    const fatalExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "fatal", .op = .equal } };
+    const errorExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "error", .op = .equal } };
+
     const cases = [_]Case{
         .{
             .requestedSIDs = &.{sidBlock},
-            .query = .{ .start = 1, .end = 3, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 1, .end = 3, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{
                 .{ .timestampNs = 1, .sid = sidBlock },
                 .{ .timestampNs = 2, .sid = sidBlock },
@@ -878,27 +897,27 @@ test "queryLines" {
         },
         .{
             .requestedSIDs = &.{sidBlock},
-            .query = .{ .start = 1, .end = 3, .tags = &.{}, .fields = &.{.{ .key = "level", .value = "warn" }} },
+            .query = .{ .start = 1, .end = 3, .tagsExpr = &noTagsExpr, .fieldsExpr = &warnExpr },
             .expected = &.{.{ .timestampNs = 2, .sid = sidBlock }},
         },
         .{
             .requestedSIDs = &.{sidBlock},
-            .query = .{ .start = 1, .end = 3, .tags = &.{}, .fields = &.{.{ .key = "level", .value = "fatal" }} },
+            .query = .{ .start = 1, .end = 3, .tagsExpr = &noTagsExpr, .fieldsExpr = &fatalExpr },
             .expected = &.{},
         },
         .{
             .requestedSIDs = &.{sidBlock},
-            .query = .{ .start = 10, .end = 20, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 10, .end = 20, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{},
         },
         .{
             .requestedSIDs = &.{ sidMissing, sid5 },
-            .query = .{ .start = 0, .end = 20, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 0, .end = 20, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{.{ .timestampNs = 10, .sid = sid5 }},
         },
         .{
             .requestedSIDs = &.{ sid1, sid2 },
-            .query = .{ .start = 2, .end = 5, .tags = &.{}, .fields = &.{.{ .key = "level", .value = "error" }} },
+            .query = .{ .start = 2, .end = 5, .tagsExpr = &noTagsExpr, .fieldsExpr = &errorExpr },
             .expected = &.{
                 .{ .timestampNs = 2, .sid = sid1 },
                 .{ .timestampNs = 3, .sid = sid2 },
@@ -906,7 +925,7 @@ test "queryLines" {
         },
         .{
             .requestedSIDs = &.{ sid1, sid1 },
-            .query = .{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{
                 .{ .timestampNs = 1, .sid = sid1 },
                 .{ .timestampNs = 2, .sid = sid1 },
@@ -914,17 +933,17 @@ test "queryLines" {
         },
         .{
             .requestedSIDs = &.{sidTenantB},
-            .query = .{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{.{ .timestampNs = 2, .sid = sidTenantB }},
         },
         .{
             .requestedSIDs = &.{ sidMissing, sid5 },
-            .query = .{ .start = 0, .end = 9, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 0, .end = 9, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{},
         },
         .{
             .requestedSIDs = &.{},
-            .query = .{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} },
+            .query = .{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{},
         },
     };
@@ -990,7 +1009,8 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
         queried.deinit(alloc);
     }
 
-    const query = Query{ .start = 0, .end = 10, .tags = &.{}, .fields = &.{} };
+    const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
+    const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
     var requested = [_]SID{sid};
 
     try table.queryLines(io, alloc, &queried, requested[0..], query);

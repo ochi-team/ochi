@@ -7,7 +7,7 @@ const Io = std.Io;
 const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
-const Query = @import("store/query.zig").Query;
+const Query = @import("query/Query.zig");
 const SID = @import("store/lines.zig").SID;
 
 const MemTable = @import("store/inmem/MemTable.zig");
@@ -199,6 +199,14 @@ pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     defer self.deinit(io, alloc);
 
     // we ignore canceled erorr, we stop anyway
+    // TODO: make sure it's not possible to run a job after we await,
+    // so we block the following scenario:
+    // - enter stop
+    // - a merge process calls startX
+    // - we do await
+    // - a job passing a stopped flag runs a task
+    // - we do flush and miss the executed job
+    // therefore a dirty shutdown happens and we loose the data
     self.g.await(io) catch |err| {
         switch (err) {
             error.Canceled => {},
