@@ -531,3 +531,31 @@ test "BlockReader.initFromMemTable reads items" {
         }
     }
 }
+
+test "BlockReader.next panics on empty index buffer with non-empty metaindex" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const items = [_][]const u8{
+        "item-0",
+        "item-1",
+        "item-2",
+    };
+
+    const block = try createTestMemBlock(alloc, &items);
+    defer block.deinit(alloc);
+
+    var blocks = [_]*MemBlock{block};
+    const memTable = try MemTable.init(io, alloc, &blocks);
+    defer memTable.deinit(alloc);
+
+    var reader = try BlockReader.initFromMemTable(alloc, memTable);
+    defer reader.deinit(alloc);
+
+    try testing.expect(reader.metaIndexRecords.len > 0);
+    try testing.expect(reader.metaIndexRecords[0].indexBlockSize > 0);
+
+    reader.indexBuf.clearRetainingCapacity();
+
+    _ = try reader.next(alloc);
+}
