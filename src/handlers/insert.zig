@@ -4,6 +4,7 @@ const Io = std.Io;
 
 const httpz = @import("httpz");
 const AppContext = @import("../dispatch.zig").AppContext;
+const Store = @import("../Store.zig").Store;
 const Processor = @import("../process.zig").Processor;
 const Field = @import("../store/lines.zig").Field;
 const Params = @import("../process.zig").Params;
@@ -84,8 +85,11 @@ fn process(
             }
         }
         if (stream.get("values")) |valuesObj| {
-            if (valuesObj == .array and valuesObj.array.items.len == 3) {
-                labelSize += @intCast(valuesObj.array.items[2].object.count());
+            if (valuesObj == .array and valuesObj.array.items.len > 0) {
+                const firstLine = valuesObj.array.items[0];
+                if (firstLine == .array and firstLine.array.items.len == 3 and firstLine.array.items[2] == .object) {
+                    labelSize += @intCast(firstLine.array.items[2].object.count());
+                }
             }
         }
         tags = try std.ArrayList(Field).initCapacity(parseAlloc, labelSize);
@@ -175,4 +179,31 @@ fn process(
         // clean len of the labels len, but retain allocated memory
         tags.clearRetainingCapacity();
     }
+}
+
+const testing = std.testing;
+
+// TODO: move this test to corpora
+test "process does not panic when values has three lines" {
+    var store: Store = undefined;
+    var ctx = AppContext{
+        .io = testing.io,
+        .allocator = testing.allocator,
+        .conf = undefined,
+        .tenantID = "default",
+        .store = &store,
+        .dispatchMeter = undefined,
+        .storeMeter = undefined,
+    };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const body =
+        \\{"streams":[{"stream":{"app":"api"},"values":[
+        \\["bad-ts","line-1"],
+        \\["1778922991218871001","line-2"],
+        \\["1778922991218871002","line-3"]]}]}
+    ;
+
+    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), testing.allocator, &ctx, body, .{ .tenantID = "default" }));
 }

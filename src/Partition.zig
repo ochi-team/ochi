@@ -164,7 +164,7 @@ pub fn addLines(
     // detect not cached stream ids
     for (0..lines.items.len) |i| {
         const line = lines.items[i];
-        if (self.isCached(line.sid)) {
+        if (self.isCached(io, line.sid)) {
             continue;
         }
 
@@ -192,12 +192,12 @@ pub fn addLines(
 
         if (pos > 0 and lines.items[streamsToCache.items[pos - 1]].sid.eql(&sid)) continue;
 
-        if (self.isCached(lines.items[i].sid)) continue;
+        if (self.isCached(io, lines.items[i].sid)) continue;
 
         if (!try self.index.hasStream(io, allocator, sid)) {
             try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
-        try self.cache(sid);
+        try self.cache(io, sid);
     }
 
     try self.data.addLines(io, allocator, lines.items);
@@ -227,22 +227,22 @@ pub fn flushForce(self: *Partition, io: Io, alloc: Allocator) !void {
     try self.data.flushForce(io, alloc);
 }
 
-fn isCached(self: *Partition, sid: SID) bool {
+fn isCached(self: *Partition, io: Io, sid: SID) bool {
     var cacheKey: [SID.encodeBound + partitionKeySize]u8 = undefined;
     var enc = Encoder.init(&cacheKey);
     sid.encode(&enc);
     @memcpy(cacheKey[SID.encodeBound..], self.key);
 
-    return self.streamCache.contains(cacheKey[0..]);
+    return self.streamCache.contains(io, cacheKey[0..]);
 }
 
-fn cache(self: *Partition, sid: SID) !void {
+fn cache(self: *Partition, io: Io, sid: SID) !void {
     var cacheKey: [SID.encodeBound + partitionKeySize]u8 = undefined;
     var enc = Encoder.init(&cacheKey);
     sid.encode(&enc);
     @memcpy(cacheKey[SID.encodeBound..], self.key);
 
-    try self.streamCache.set(&cacheKey, {});
+    try self.streamCache.set(io, &cacheKey, {});
 }
 
 pub fn lessThan(_: void, one: *Partition, another: *Partition) bool {
