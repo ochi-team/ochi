@@ -262,6 +262,7 @@ fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlo
 
 fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
     std.debug.assert(blocks.len > 0);
+    defer for (blocks) |block| block.deinit(alloc);
 
     // enough for 256 tables, which a way beyond the expected amount
     var fba = std.heap.stackFallback(2048, alloc);

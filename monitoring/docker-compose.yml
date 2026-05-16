@@ -3,6 +3,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        OPTIMIZE: Debug
     command: ["/usr/local/bin/ochi"]
     ports:
       - "9014:9014"

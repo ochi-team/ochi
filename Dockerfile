@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils c
 ARG ZIG_VERSION=0.16.0
 # x86_64 or aarch64
 ARG TARGETARCH=aarch64
+ARG OPTIMIZE=ReleaseSafe
 RUN --mount=type=cache,target=/tmp/zig-cache \
     zig_dir="/usr/local/zig-${TARGETARCH}-linux-${ZIG_VERSION}" && \
     zig_tar="/tmp/zig-cache/zig-${TARGETARCH}.tar.xz" && \
@@ -25,7 +26,7 @@ COPY src/ src/
 
 RUN --mount=type=cache,target=/root/.cache/zig \
     --mount=type=cache,target=/app/.zig-cache \
-    /usr/local/bin/zig build -Doptimize=ReleaseSafe
+    /usr/local/bin/zig build -Doptimize=${OPTIMIZE}
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
