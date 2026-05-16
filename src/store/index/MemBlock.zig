@@ -537,16 +537,17 @@ test "MemBlock.decodePlain handles min and max lens values" {
         .{ .secondLen = 16384 },
     };
 
-    for (cases) |case| {
+    inline for (cases) |case| {
         var entriesBlock = EntriesBlock{};
         defer entriesBlock.deinit(alloc);
 
         // Only append item bytes when the second item is non-empty. This ensures
         // decodePlain doesn't assume a positive length or read past the buffer.
         if (case.secondLen > 0) {
-            const second = try allocFilled(alloc, 'b', case.secondLen);
-            defer alloc.free(second);
-            try entriesBlock.entriesBuf.appendSlice(alloc, second);
+            // const second = try allocFilled(alloc, 'b', case.secondLen);
+            // defer alloc.free(second);
+            var second: [case.secondLen]u8 = undefined;
+            try entriesBlock.entriesBuf.appendSlice(alloc, &second);
         }
 
         // Encode a single varint length for the second item. The first item's length
@@ -572,4 +573,28 @@ test "MemBlock.decodePlain handles min and max lens values" {
         // Ensure the decoded second item length matches the varint value, including zero.
         try testing.expectEqual(@as(usize, case.secondLen), block.memEntries.items[1].len);
     }
+}
+
+test "MemBlock.encodePlain breaks on 3-byte varint len" {
+    const alloc = testing.allocator;
+
+    var second: [16384]u8 = undefined;
+    @memset(&second, 'b');
+
+    var block = try MemBlock.init(alloc, @intCast(1 + second.len + 16));
+    defer block.deinit(alloc);
+    try testing.expect(block.add("a"));
+    try testing.expect(block.add(second[0..]));
+
+    block.prefix = "";
+
+    var entriesBlock = EntriesBlock{
+        .entriesBuf = try std.ArrayList(u8).initCapacity(alloc, second.len + 1),
+        .lensBuf = try std.ArrayList(u8).initCapacity(alloc, 2),
+    };
+    defer entriesBlock.deinit(alloc);
+
+    // encodePlain reserves 2 bytes per len, but 16384 needs a 3-byte varint.
+    // Keeping lensBuf capacity fixed at 2 makes this assumption fail reliably.
+    try block.encodePlain(alloc, &entriesBlock);
 }
