@@ -413,6 +413,9 @@ pub const BlockReader = struct {
     }
 
     pub fn deinit(self: *BlockReader, allocator: Allocator) void {
+        for (self.blockHeaders.items) |header| {
+            allocator.free(header.sid.tenantID);
+        }
         self.blockHeaders.deinit(allocator);
         self.streamReader.deinit(allocator);
         self.blockData.deinit(allocator);
@@ -488,6 +491,9 @@ pub const BlockReader = struct {
         const indexBlockData = try readIndexBlock(allocator, ih, self.streamReader);
         defer allocator.free(indexBlockData);
 
+        for (self.blockHeaders.items) |*header| {
+            allocator.free(header.sid.tenantID);
+        }
         self.blockHeaders.clearRetainingCapacity();
         try BlockHeader.decodeFew(allocator, &self.blockHeaders, indexBlockData);
 
