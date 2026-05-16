@@ -122,11 +122,21 @@ pub const BlockHeader = struct {
         src: []const u8,
     ) !void {
         const dst_len = dst.items.len;
+        var copied: usize = 0;
+        errdefer {
+            for (dst.items[dst_len .. dst_len + copied]) |header| {
+                allocator.free(header.sid.tenantID);
+            }
+            dst.shrinkRetainingCapacity(dst_len);
+        }
         var buf = src;
 
         while (buf.len > 0) {
-            const res = BlockHeader.decode(buf);
+            var res = BlockHeader.decode(buf);
+            const tenantID = try allocator.dupe(u8, res.header.sid.tenantID);
+            res.header.sid.tenantID = tenantID;
             try dst.append(allocator, res.header);
+            copied += 1;
             buf = buf[res.offset..];
         }
 
@@ -140,7 +150,6 @@ pub const BlockHeader = struct {
         index: IndexBlockHeader,
     ) !void {
         std.debug.assert(index.size <= IndexBlockHeader.maxIndexBlockSize);
-        const dstStart = dst.items.len;
 
         // src is a compressed index buffer, uncompress only the requested window
         const end = index.offset + index.size;
@@ -158,23 +167,6 @@ pub const BlockHeader = struct {
         );
         const decompressed = decompressedBuf[0..n];
         try BlockHeader.decodeFew(alloc, dst, decompressed);
-
-        // BlockHeader.decode() borrows SID tenant bytes from decompressed.
-        // decodeIndexWindow frees that buffer, so copy tenantID into owned memory.
-        // TODO: perhaps we must copy tenant on every decode, not just window,
-        // right on SID.decode level,
-        // OR if we make tenant id integer eventually it's fixed
-        var copied: usize = 0;
-        errdefer {
-            for (dst.items[dstStart .. dstStart + copied]) |header| {
-                alloc.free(header.sid.tenantID);
-            }
-        }
-        for (dst.items[dstStart..]) |*header| {
-            const tenantID = try alloc.dupe(u8, header.sid.tenantID);
-            header.sid.tenantID = tenantID;
-            copied += 1;
-        }
     }
 
     // TODO: consider to move it under builtin.is_test condition or have it in the testing.assert,
