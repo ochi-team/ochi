@@ -390,7 +390,7 @@ test "initFromLines and initFromData produce identical blocks" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
 
-    const sid = SID{ .id = 1, .tenantID = "1111" };
+    const sid = SID{ .id = 1, .tenantID = 1111 };
 
     var f1 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
     var f2 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };

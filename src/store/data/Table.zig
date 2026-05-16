@@ -175,10 +175,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     if (metaindexContent.len > 0) {
         indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaindexContent);
     }
-    errdefer {
-        for (indexBlockHeaders) |*hdr| hdr.deinitRead(alloc);
-        if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
-    }
+    errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
     const indexBuf = try fs.readAll(io, alloc, indexPath);
     errdefer alloc.free(indexBuf);
@@ -275,7 +272,6 @@ pub fn close(self: *Table, io: Io) void {
         mem.deinit(io, self.alloc);
     }
 
-    for (self.indexBlockHeaders) |*hdr| hdr.deinitRead(self.alloc);
     if (self.indexBlockHeaders.len > 0) self.alloc.free(self.indexBlockHeaders);
 
     self.columnIDGen.deinit(self.alloc);
@@ -310,18 +306,16 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     if (metaIndexBuf.len > 0) {
         indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaIndexBuf);
     }
-    errdefer {
-        for (indexBlockHeaders) |*hdr| hdr.deinitRead(alloc);
-        if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
-    }
+    errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
     // TODO: avoid decoding column ids, we can simply assign what we have from the stream writer
-    var columnIDGen: *ColumnIDGen = undefined;
-    if (memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer().len > 0) {
-        columnIDGen = try ColumnIDGen.decode(alloc, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
-    } else {
-        columnIDGen = try ColumnIDGen.init(alloc);
-    }
+    const columnIDGen = blk: {
+        if (memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer().len > 0) {
+            break :blk try ColumnIDGen.decode(alloc, memTable.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
+        } else {
+            break :blk try ColumnIDGen.init(alloc);
+        }
+    };
     errdefer columnIDGen.deinit(alloc);
 
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
@@ -445,12 +439,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
         }
 
         var blockHeaders = std.ArrayList(BlockHeader).empty;
-        defer {
-            for (blockHeaders.items) |bh| {
-                alloc.free(bh.sid.tenantID);
-            }
-            blockHeaders.deinit(alloc);
-        }
+        defer blockHeaders.deinit(alloc);
         try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, self.indexBuf, indexBlockHeader);
 
         var blockHeadersToRead = blockHeaders.items;
@@ -558,11 +547,9 @@ fn queryBlock(
             }
         }
 
-        const tenantID = try alloc.dupe(u8, blockHeader.sid.tenantID);
         dst.items[i].sid = .{
-            .tenantID = tenantID,
+            .tenantID = blockHeader.sid.tenantID,
             .id = blockHeader.sid.id,
-            .buf = tenantID,
         };
         i += 1;
     }
@@ -635,12 +622,12 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -695,7 +682,6 @@ const Field = @import("../lines.zig").Field;
 
 fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
     for (lines.items) |*line| {
-        alloc.free(line.sid.tenantID);
         alloc.free(line.fields);
     }
     lines.deinit(alloc);
@@ -716,12 +702,12 @@ test "fromMem creates proper table from mem table with populated data" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -775,12 +761,12 @@ test "open reads table from disk" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -818,10 +804,7 @@ test "open reads table from disk" {
         alloc,
         memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
     );
-    defer {
-        for (expectedHeaders) |*hdr| hdr.deinitRead(alloc);
-        if (expectedHeaders.len > 0) alloc.free(expectedHeaders);
-    }
+    defer if (expectedHeaders.len > 0) alloc.free(expectedHeaders);
     try testing.expectEqual(expectedHeaders.len, table.indexBlockHeaders.len);
     for (expectedHeaders, table.indexBlockHeaders) |expected, actual| {
         try testing.expectEqualDeep(expected, actual);
@@ -841,14 +824,14 @@ test "queryLines" {
         expected: []const ExpectedLine,
     };
 
-    const sidBlock = SID{ .id = 10, .tenantID = "1234" };
-    const sid1 = SID{ .id = 1, .tenantID = "1234" };
-    const sid2 = SID{ .id = 2, .tenantID = "1234" };
-    const sid3 = SID{ .id = 3, .tenantID = "1234" };
-    const sid5 = SID{ .id = 5, .tenantID = "1234" };
-    const sidMissing = SID{ .id = 4, .tenantID = "1234" };
-    const sidTenantA = SID{ .id = 1, .tenantID = "1111" };
-    const sidTenantB = SID{ .id = 1, .tenantID = "2222" };
+    const sidBlock = SID{ .id = 10, .tenantID = 1234 };
+    const sid1 = SID{ .id = 1, .tenantID = 1234 };
+    const sid2 = SID{ .id = 2, .tenantID = 1234 };
+    const sid3 = SID{ .id = 3, .tenantID = 1234 };
+    const sid5 = SID{ .id = 5, .tenantID = 1234 };
+    const sidMissing = SID{ .id = 4, .tenantID = 1234 };
+    const sidTenantA = SID{ .id = 1, .tenantID = 1111 };
+    const sidTenantB = SID{ .id = 1, .tenantID = 2222 };
 
     var seqInfo = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
     var seqWarn = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
@@ -953,7 +936,6 @@ test "queryLines" {
 
     for (cases) |case| {
         for (queried.items) |line| {
-            alloc.free(line.sid.tenantID);
             alloc.free(line.fields);
         }
         queried.clearRetainingCapacity();
@@ -979,7 +961,7 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     const alloc = std.testing.allocator;
     const io: Io = std.testing.io;
 
-    const sid = SID{ .id = 1, .tenantID = "1234" };
+    const sid = SID{ .id = 1, .tenantID = 1234 };
 
     var fields1 = [_]Field{
         .{ .key = "", .value = "message-1" },
@@ -1003,7 +985,6 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     var queried = std.ArrayList(Line).empty;
     defer {
         for (queried.items) |line| {
-            alloc.free(line.sid.tenantID);
             alloc.free(line.fields);
         }
         queried.deinit(alloc);

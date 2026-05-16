@@ -9,7 +9,7 @@ const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 
 pub const Params = struct {
-    tenantID: []const u8,
+    tenantID: u64,
 };
 
 fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
@@ -34,7 +34,7 @@ fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
 }
 
 const magicStr = "xxhash";
-fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
+fn makeStreamID(tenantID: u64, encodedStream: []const u8) SID {
     var hasher = std.hash.XxHash64.init(0);
     hasher.update(encodedStream);
     const first = hasher.final();
@@ -45,7 +45,6 @@ fn makeStreamID(tenantID: []const u8, encodedStream: []const u8) SID {
     return SID{
         .tenantID = tenantID,
         .id = id,
-        .buf = tenantID,
     };
 }
 
@@ -71,7 +70,7 @@ pub const Processor = struct {
             .arenaState = .{},
             .tags = &[_]Field{},
             .encodedTags = "",
-            .sid = SID{ .tenantID = "", .id = 0 },
+            .sid = SID{ .tenantID = 0, .id = 0 },
         };
     }
 
@@ -87,7 +86,7 @@ pub const Processor = struct {
         self: *Processor,
         alloc: std.mem.Allocator,
         tags: []Field,
-        tenantID: []const u8,
+        tenantID: u64,
     ) !void {
         // use unstable sort because we don't expect duplicated keys
         std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
@@ -95,10 +94,7 @@ pub const Processor = struct {
         const encodedTags = try encodeTags(alloc, tags);
         errdefer alloc.free(encodedTags);
 
-        const tenantIDOwned = try alloc.dupe(u8, tenantID);
-        errdefer alloc.free(tenantIDOwned);
-
-        const streamID = makeStreamID(tenantIDOwned, encodedTags);
+        const streamID = makeStreamID(tenantID, encodedTags);
 
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
@@ -107,7 +103,6 @@ pub const Processor = struct {
 
         self.tags = tags;
         self.encodedTags = encodedTags;
-        self.sid.deinit(alloc);
         self.sid = streamID;
     }
 
@@ -116,7 +111,6 @@ pub const Processor = struct {
             alloc.free(self.encodedTags);
         }
         self.resetBuffered(alloc);
-        self.sid.deinit(alloc);
         self.lines.deinit(alloc);
         var arena = self.arenaState.promote(alloc);
         arena.deinit();

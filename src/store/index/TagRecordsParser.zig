@@ -5,7 +5,7 @@
 /// - Re-encoding merged records back to binary format
 ///
 /// Constraints:
-/// - Input must be a valid tagToSids record: kind(1) + tenantID(16) + encodedTag + streamIDs
+/// - Input must be a valid tagToSids record: kind(1) + tenantID(8) + encodedTag + streamIDs
 /// - setup() modifies the input buffer in-place for tag unescaping
 /// - parseStreamIDs() must be called to populate streamIDs list from streamsRaw
 /// - Each streamID is 16 bytes (u128)
@@ -18,13 +18,12 @@ const Decoder = encoding.Decoder;
 
 const IndexKind = @import("Index.zig").IndexKind;
 
-const maxTenantIDLen = @import("../tenant.zig").maxTenantIDLen;
 const Field = @import("../lines.zig").Field;
 
 const Self = @This();
 
 streamIDs: std.ArrayList(u128) = .empty,
-tenantID: []const u8 = undefined,
+tenantID: u64 = 0,
 tag: Field = undefined,
 streamsRaw: []const u8 = undefined,
 
@@ -36,8 +35,9 @@ pub fn setup(self: *Self, item: []const u8) !void {
     self.streamIDs.clearRetainingCapacity();
 
     const kind = item[0];
-    const tenantOffset = 1 + maxTenantIDLen;
-    self.tenantID = item[1..tenantOffset];
+    const tenantOffset = 1 + @sizeOf(u64);
+    var dec = Decoder.init(item[1..tenantOffset]);
+    self.tenantID = dec.readInt(u64);
 
     std.debug.assert(kind == @intFromEnum(IndexKind.tagToSids));
 
@@ -77,31 +77,31 @@ pub fn parseStreamIDs(self: *Self, alloc: Allocator) !void {
 }
 
 pub fn encodePrefixBound(tag: Field) usize {
-    return 1 + maxTenantIDLen + tag.encodeIndexTagBound();
+    return 1 + @sizeOf(u64) + tag.encodeIndexTagBound();
 }
 
-pub fn encodePrefix(dst: []u8, tenantID: []const u8, tag: Field) void {
+pub fn encodePrefix(dst: []u8, tenantID: u64, tag: Field) void {
     dst[0] = @intFromEnum(IndexKind.tagToSids);
     var enc = Encoder.init(dst[1..]);
-    enc.writePadded(tenantID, maxTenantIDLen);
+    enc.writeInt(u64, tenantID);
     _ = tag.encodeIndexTag(enc.buf[enc.offset..]);
 }
 
 pub fn encodeRecordBound(tag: Field, streamIDsLen: usize) usize {
-    return 1 + maxTenantIDLen + tag.encodeIndexTagBound() + streamIDsLen * @sizeOf(u128);
+    return 1 + @sizeOf(u64) + tag.encodeIndexTagBound() + streamIDsLen * @sizeOf(u128);
 }
 
-pub fn encodeRecord(buf: []u8, tenantID: []const u8, tag: Field, streamIDs: []const u128) usize {
+pub fn encodeRecord(buf: []u8, tenantID: u64, tag: Field, streamIDs: []const u128) usize {
     var enc = Encoder.init(buf);
 
     enc.writeInt(u8, @intFromEnum(IndexKind.tagToSids));
-    enc.writePadded(tenantID, maxTenantIDLen);
+    enc.writeInt(u64, tenantID);
     const tagOffset = tag.encodeIndexTag(enc.buf[enc.offset..]);
     var streamEnc = Encoder.init(enc.buf[enc.offset + tagOffset ..]);
     for (streamIDs) |sid| {
         streamEnc.writeInt(u128, sid);
     }
-    return 1 + maxTenantIDLen + tagOffset + streamEnc.offset;
+    return 1 + @sizeOf(u64) + tagOffset + streamEnc.offset;
 }
 
 const testing = std.testing;
@@ -116,11 +116,11 @@ test "setup parses tag record" {
     const bufSize = encodeRecordBound(tag, streamIDs.len);
     const buf = try alloc.alloc(u8, bufSize);
     defer alloc.free(buf);
-    const totalLen = encodeRecord(buf, "tenant1", tag, streamIDs);
+    const totalLen = encodeRecord(buf, 42, tag, streamIDs);
 
     try state.setup(buf[0..totalLen]);
 
-    try testing.expectEqualStrings("tenant1", std.mem.trimEnd(u8, state.tenantID, &[_]u8{0}));
+    try testing.expectEqual(@as(u64, 42), state.tenantID);
     try testing.expectEqualStrings("env", state.tag.key);
     try testing.expectEqualStrings("prod", state.tag.value);
     try testing.expectEqual(@as(usize, 2), state.streamsLen());
@@ -150,7 +150,7 @@ test "parseStreamIDs empty" {
     const bufSize = encodeRecordBound(tag, streamIDs.len);
     const buf = try alloc.alloc(u8, bufSize);
     defer alloc.free(buf);
-    const totalLen = encodeRecord(buf, "t", tag, streamIDs);
+    const totalLen = encodeRecord(buf, 1, tag, streamIDs);
 
     try state.setup(buf[0..totalLen]);
     try state.parseStreamIDs(alloc);
@@ -165,10 +165,10 @@ test "setup resets parsed stream ids" {
 
     const tag = Field{ .key = "k", .value = "v" };
     const firstBuf = try alloc.alloc(u8, encodeRecordBound(tag, 3));
-    const first = firstBuf[0..encodeRecord(firstBuf, "tenant1", tag, &[_]u128{ 1, 2, 3 })];
+    const first = firstBuf[0..encodeRecord(firstBuf, 42, tag, &[_]u128{ 1, 2, 3 })];
     defer alloc.free(first);
     const secondBuf = try alloc.alloc(u8, encodeRecordBound(tag, 1));
-    const second = secondBuf[0..encodeRecord(secondBuf, "tenant1", tag, &[_]u128{9})];
+    const second = secondBuf[0..encodeRecord(secondBuf, 42, tag, &[_]u128{9})];
     defer alloc.free(second);
 
     try state.setup(first);
@@ -190,14 +190,14 @@ test "setupStreamsRaw resets parsed stream ids" {
     var tag = Field{ .key = "k", .value = "v" };
 
     const firstBuf = try alloc.alloc(u8, encodeRecordBound(tag, 3));
-    const first = firstBuf[0..encodeRecord(firstBuf, "tenant1", tag, &[_]u128{ 1, 2, 3 })];
+    const first = firstBuf[0..encodeRecord(firstBuf, 42, tag, &[_]u128{ 1, 2, 3 })];
     defer alloc.free(first);
 
     const secondBuf = try alloc.alloc(u8, encodeRecordBound(tag, 1));
-    const second = secondBuf[0..encodeRecord(secondBuf, "tenant1", tag, &[_]u128{9})];
+    const second = secondBuf[0..encodeRecord(secondBuf, 42, tag, &[_]u128{9})];
     defer alloc.free(second);
 
-    const tenantOffset = 1 + maxTenantIDLen;
+    const tenantOffset = 1 + @sizeOf(u64);
     const tagPortion = @constCast(first[tenantOffset..]);
     const offset = tag.decodeIndexTag(tagPortion);
 

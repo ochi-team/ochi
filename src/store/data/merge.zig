@@ -5,7 +5,6 @@ const Io = std.Io;
 const Heap = @import("../../stds/heap.zig").Heap;
 
 const sizing = @import("../inmem/sizing.zig");
-const maxTenantIDLen = @import("../tenant.zig").maxTenantIDLen;
 
 const TableHeader = @import("../inmem/TableHeader.zig");
 const SID = @import("../lines.zig").SID;
@@ -69,8 +68,7 @@ pub const StreamMerger = struct {
     // commit 0d6a3a45f7c4095101726ef1945c6988ea265fed
     // remove block content from data merger state
 
-    sid: SID = .{ .tenantID = "", .id = 0 },
-    sidTenantBuf: [maxTenantIDLen]u8 = [_]u8{0} ** maxTenantIDLen,
+    sid: SID = .{ .tenantID = 0, .id = 0 },
     totalKeys: usize = 0,
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
@@ -117,7 +115,7 @@ pub const StreamMerger = struct {
     fn reset(self: *StreamMerger, alloc: Allocator) void {
         self.totalKeys = 0;
         self.size = 0;
-        self.sid = .{ .tenantID = "", .id = 0 };
+        self.sid = .{ .tenantID = 0, .id = 0 };
 
         // TODO: if Lines holds all the fields slice we can reuse the array capacity
         for (self.lines.items) |line| freeLine(alloc, line);
@@ -147,7 +145,7 @@ pub const StreamMerger = struct {
         if (!blockData.sid.eql(&self.sid)) {
             // it means next stream begins, we have to flush the data
             try self.flushStream(io, alloc, blockWriter, writer);
-            self.setSID(blockData.sid);
+            self.sid = blockData.sid;
 
             if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
@@ -224,15 +222,6 @@ pub const StreamMerger = struct {
         // (test is implemented to confirm it, good to have it for merger),
         // then understand whether I can use blockData.uncompressedSizeBytes
         self.size += sizing.linesJsonSize(self.lines.items[offset..]);
-    }
-
-    fn setSID(self: *StreamMerger, sid: SID) void {
-        std.debug.assert(sid.tenantID.len <= maxTenantIDLen);
-        @memcpy(self.sidTenantBuf[0..sid.tenantID.len], sid.tenantID);
-        self.sid = .{
-            .tenantID = self.sidTenantBuf[0..sid.tenantID.len],
-            .id = sid.id,
-        };
     }
 
     // TODO: it's a common case to copy fields, move it to lines,
@@ -315,7 +304,7 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
             },
@@ -323,7 +312,7 @@ test "mergeLines" {
             .expected = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
             },
@@ -332,26 +321,26 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
             },
             .right = &[_]Line{
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
                 },
             },
             .expected = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
                 },
             },
@@ -360,46 +349,46 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
             },
             .right = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
             },
             .expected = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
             },
@@ -408,46 +397,46 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 12,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 123456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
             },
             .right = &[_]Line{
                 .{
                     .timestampNs = 1,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
             },
             .expected = &[_]Line{
                 .{
                     .timestampNs = 1,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 12,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
                 .{
                     .timestampNs = 123456,
-                    .sid = .{ .tenantID = "", .id = 1 },
+                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
             },
@@ -466,7 +455,7 @@ test "mergeLines" {
 test "mergeData keeps merged memtable buffers alive after source memtables deinit" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
-    const sid = SID{ .tenantID = "tenant-a", .id = 42 };
+    const sid = SID{ .tenantID = 1, .id = 42 };
 
     const expected = [_]struct {
         timestampNs: u64,
@@ -569,16 +558,7 @@ test "mergeData multi tenant" {
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const tenantIDs = [_][]const u8{
-        "1",
-        "22",
-        "333",
-        "4444",
-        "55555",
-        "666666",
-        "7777777",
-        "88888888",
-    };
+    const tenantIDs = [_]u64{ 1, 2, 3, 4, 5, 6, 7, 8 };
 
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tenantIDs.len);
     defer {

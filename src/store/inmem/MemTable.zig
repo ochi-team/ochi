@@ -223,12 +223,12 @@ fn populateSampleLines(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 2,
-            .sid = .{ .id = 1, .tenantID = "1234" },
+            .sid = .{ .id = 1, .tenantID = 1234 },
             .fields = sample.fields2[0..],
         },
         .{
             .timestampNs = 1,
-            .sid = .{ .id = 1, .tenantID = "1234" },
+            .sid = .{ .id = 1, .tenantID = 1234 },
             .fields = sample.fields1[0..],
         },
     };
@@ -288,7 +288,7 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const blockHeader = decodedBlockHeader.header;
 
         // TODO: compare all the fields in one expect
-        try std.testing.expectEqualStrings("1234", blockHeader.sid.tenantID);
+        try std.testing.expectEqual(1234, blockHeader.sid.tenantID);
         try std.testing.expectEqual(1, blockHeader.sid.id);
         try std.testing.expectEqual(140, blockHeader.size);
         try std.testing.expectEqual(2, blockHeader.len);
@@ -313,7 +313,7 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const decodedIndexBlockHeader = IndexBlockHeader.decode(decompressedBuf);
 
         // TODO: compare all the fields in one expect
-        try std.testing.expectEqualStrings("1234", decodedIndexBlockHeader.sid.tenantID);
+        try std.testing.expectEqual(1234, decodedIndexBlockHeader.sid.tenantID);
         try std.testing.expectEqual(1, decodedIndexBlockHeader.sid.id);
         try std.testing.expectEqual(1, decodedIndexBlockHeader.minTs);
         try std.testing.expectEqual(2, decodedIndexBlockHeader.maxTs);

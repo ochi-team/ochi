@@ -6,7 +6,6 @@ const httpz = @import("httpz");
 const DispatchMeter = @import("observe/DispatchMeter.zig");
 const StoreMeter = @import("observe/StoreMeter.zig");
 const AppConfig = @import("Conf.zig").AppConfig;
-const tenant = @import("store/tenant.zig");
 
 const Store = @import("Store.zig").Store;
 
@@ -16,7 +15,7 @@ pub const AppContext = struct {
     io: Io,
     allocator: Allocator,
     conf: AppConfig,
-    tenantID: tenant.TenantID,
+    tenantID: u64,
     store: *Store,
 
     dispatchMeter: *DispatchMeter,
@@ -56,7 +55,17 @@ pub const Dispatcher = struct {
         const startedAt = Io.Timestamp.now(self.io, .awake);
         defer self.observeRequest(req, res, startedAt);
 
-        const tenantID: tenant.TenantID = req.headers.get("x-scope-orgid") orelse "default";
+        const tenantIDStr: []const u8 = req.headers.get("x-scope-orgid") orelse "";
+        const tenantID = blk: {
+            if (tenantIDStr.len == 0) {
+                break :blk 0;
+            }
+            break :blk std.fmt.parseInt(u64, tenantIDStr, 10) catch {
+                res.status = 400;
+                res.body = "tenant id is invalid";
+                return;
+            };
+        };
 
         var ctx = AppContext{
             .io = self.io,
@@ -67,12 +76,6 @@ pub const Dispatcher = struct {
             .dispatchMeter = &self.meter,
             .storeMeter = &self.store.meter,
         };
-
-        if (!tenant.isValidID(ctx.tenantID)) {
-            res.status = 400;
-            res.body = "tenant id is invalid";
-            return;
-        }
 
         // TODO: add error logging to every handler,
         // define a standard approach:

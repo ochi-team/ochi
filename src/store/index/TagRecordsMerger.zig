@@ -79,7 +79,7 @@ fn removeDuplicatedStreams(self: *Self) void {
 }
 
 pub fn statesPrefixEqual(self: *const Self) bool {
-    if (!std.mem.eql(u8, self.state.tenantID, self.prevState.tenantID)) return false;
+    if (self.state.tenantID != self.prevState.tenantID) return false;
 
     if (!self.state.tag.eql(self.prevState.tag)) return false;
 
@@ -129,7 +129,7 @@ const Field = @import("../lines.zig").Field;
 
 pub fn createTagRecord(
     alloc: Allocator,
-    tenantID: []const u8,
+    tenantID: u64,
     tag: Field,
     streamIDs: []const u128,
 ) ![]const u8 {
@@ -141,30 +141,30 @@ pub fn createTagRecord(
 
 test "statesPrefixEqual" {
     const Case = struct {
-        tenantA: []const u8,
-        tenantB: []const u8,
+        tenantA: u64,
+        tenantB: u64,
         tagA: Field,
         tagB: Field,
         expected: bool,
     };
     const cases = [_]Case{
         .{
-            .tenantA = "tenant1",
-            .tenantB = "tenant1",
+            .tenantA = 1,
+            .tenantB = 1,
             .tagA = .{ .key = "env", .value = "prod" },
             .tagB = .{ .key = "env", .value = "prod" },
             .expected = true,
         },
         .{
-            .tenantA = "tenant1",
-            .tenantB = "tenant2",
+            .tenantA = 1,
+            .tenantB = 2,
             .tagA = .{ .key = "env", .value = "prod" },
             .tagB = .{ .key = "env", .value = "prod" },
             .expected = false,
         },
         .{
-            .tenantA = "tenant1",
-            .tenantB = "tenant1",
+            .tenantA = 1,
+            .tenantB = 1,
             .tagA = .{ .key = "env", .value = "prod" },
             .tagB = .{ .key = "env", .value = "dev" },
             .expected = false,
@@ -195,7 +195,7 @@ test "moveParsedState" {
 
     const tag = Field{ .key = "app", .value = "web" };
     const streamIDs = &[_]u128{ 100, 200, 300 };
-    const record = try createTagRecord(alloc, "tenant1", tag, streamIDs);
+    const record = try createTagRecord(alloc, 1, tag, streamIDs);
     defer alloc.free(record);
 
     try m.state.setup(record);
@@ -259,7 +259,7 @@ test "writeState" {
         var m: Self = .{};
         defer m.deinit(alloc);
 
-        const record = try createTagRecord(alloc, "tenant1", case.tag, case.recordStreamIDs);
+        const record = try createTagRecord(alloc, 1, case.tag, case.recordStreamIDs);
         defer alloc.free(record);
 
         try m.prevState.setup(record);

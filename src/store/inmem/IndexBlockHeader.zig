@@ -24,7 +24,7 @@ pub fn init(allocator: Allocator) !*Self {
     // TODO: test if it can be used by value, doesn't seem it needs an allocator
     const bh = try allocator.create(Self);
     bh.* = .{
-        .sid = .{ .tenantID = "", .id = 0 },
+        .sid = .{ .tenantID = 0, .id = 0 },
         .minTs = 0,
         .maxTs = 0,
         .offset = 0,
@@ -33,13 +33,8 @@ pub fn init(allocator: Allocator) !*Self {
     return bh;
 }
 
-pub fn deinit(self: *Self, allocator: Allocator) void {
-    self.deinitRead(allocator);
+pub fn deinit(self: *const Self, allocator: Allocator) void {
     allocator.destroy(self);
-}
-
-pub fn deinitRead(self: *Self, allocator: Allocator) void {
-    self.sid.deinit(allocator);
 }
 
 pub fn writeIndexBlock(
@@ -70,8 +65,8 @@ pub fn writeIndexBlock(
     self.maxTs = maxTs;
 }
 
-// sid 32 + self 32 = 64
-pub const encodeExpectedSize = 64;
+// sid 24 + self 32 = 56
+pub const encodeExpectedSize = 56;
 pub fn encode(self: *const Self, buf: []u8) usize {
     var enc = Encoder.init(buf);
     self.sid.encode(&enc);
@@ -85,24 +80,6 @@ pub fn encode(self: *const Self, buf: []u8) usize {
 pub fn decode(buf: []const u8) Self {
     var decoder = Decoder.init(buf);
     const sid = SID.decode(buf);
-    decoder.offset += 32; // SID is 32 bytes
-    const minTs = decoder.readInt(u64);
-    const maxTs = decoder.readInt(u64);
-    const offset = decoder.readInt(u64);
-    const size = decoder.readInt(u64);
-    return .{
-        .sid = sid,
-        .minTs = minTs,
-        .maxTs = maxTs,
-        .offset = offset,
-        .size = size,
-    };
-}
-
-// TODO: unify the way how we use SID
-pub fn decodeAlloc(allocator: Allocator, buf: []const u8) !Self {
-    var decoder = Decoder.init(buf);
-    const sid = try SID.decodeAlloc(allocator, buf);
     decoder.offset += SID.encodeBound;
     const minTs = decoder.readInt(u64);
     const maxTs = decoder.readInt(u64);
@@ -138,17 +115,14 @@ pub fn readIndexBlockHeaders(
 
     var dst = try allocator.alloc(Self, count);
     var i: usize = 0;
-    errdefer {
-        for (dst[0..i]) |*reader| reader.deinitRead(allocator);
-        allocator.free(dst);
-    }
+    errdefer allocator.free(dst);
 
     var off: usize = 0;
     while (off < decompressed.len) : ({
         off += encodeExpectedSize;
         i += 1;
     }) {
-        dst[i] = try decodeAlloc(allocator, decompressed[off .. off + encodeExpectedSize]);
+        dst[i] = decode(decompressed[off .. off + encodeExpectedSize]);
     }
 
     validateIndexBlockHeaders(dst);
@@ -174,7 +148,7 @@ test "IndexBlockHeaderEncode" {
         .{
             .header = .{
                 .sid = .{
-                    .tenantID = "tenant",
+                    .tenantID = 42,
                     .id = 42,
                 },
                 .minTs = 100,
@@ -191,7 +165,7 @@ test "IndexBlockHeaderEncode" {
         .{
             .header = .{
                 .sid = .{
-                    .tenantID = "tenant",
+                    .tenantID = 42,
                     .id = std.math.maxInt(u128),
                 },
                 .minTs = std.math.maxInt(u64),

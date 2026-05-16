@@ -344,7 +344,7 @@ pub fn queryLines(
     self: *Store,
     io: Io,
     alloc: Allocator,
-    tenantID: []const u8,
+    tenantID: u64,
     query: Query,
 ) !std.ArrayList(Line) {
     // TODO: query cancelation

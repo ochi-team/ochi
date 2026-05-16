@@ -86,8 +86,8 @@ pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Fiel
     entries[ei] = sidBuf;
     ei += 1;
 
-    const tenantID = enc.buf[1..17];
-    const streamID = enc.buf[17..];
+    const tenantID = enc.buf[1..9];
+    const streamID = enc.buf[9..];
 
     // index stream -> tags
     // it's stored in index instead of data
@@ -95,8 +95,8 @@ pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Fiel
     var sidTagsBuf = try alloc.alloc(u8, 1 + SID.encodeBound + encodedTags.len);
 
     sidTagsBuf[0] = @intFromEnum(IndexKind.sidToTags);
-    @memcpy(sidTagsBuf[1..33], enc.buf[1..33]);
-    @memcpy(sidTagsBuf[33..], encodedTags);
+    @memcpy(sidTagsBuf[1..25], enc.buf[1..25]);
+    @memcpy(sidTagsBuf[25..], encodedTags);
     entries[ei] = sidTagsBuf;
     ei += 1;
 
@@ -106,9 +106,9 @@ pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Fiel
         const tagSidsBuf = try alloc.alloc(u8, bufSize);
 
         tagSidsBuf[0] = @intFromEnum(IndexKind.tagToSids);
-        @memcpy(tagSidsBuf[1..17], tenantID);
-        const offset = tag.encodeIndexTag(tagSidsBuf[17..]);
-        @memcpy(tagSidsBuf[17 + offset ..], streamID);
+        @memcpy(tagSidsBuf[1..9], tenantID);
+        const offset = tag.encodeIndexTag(tagSidsBuf[9..]);
+        @memcpy(tagSidsBuf[9 + offset ..], streamID);
 
         entries[ei] = tagSidsBuf;
         ei += 1;
@@ -122,7 +122,7 @@ pub fn querySIDs(
     self: *Self,
     io: Io,
     alloc: Allocator,
-    tenantID: []const u8,
+    tenantID: u64,
     tags: *const FilterExpression,
 ) !QuerySIDsResult {
     // TODO: cache query => stream
@@ -152,7 +152,7 @@ pub fn querySIDs(
 fn querySIDsFromExpr(
     alloc: Allocator,
     lookup: *Lookup,
-    tenantID: []const u8,
+    tenantID: u64,
     expr: *const FilterExpression,
 ) !StreamIDsByPrefixesResult {
     switch (expr.*) {
@@ -194,7 +194,7 @@ fn querySIDsFromExpr(
 fn querySIDsFromPredicate(
     alloc: Allocator,
     lookup: *Lookup,
-    tenantID: []const u8,
+    tenantID: u64,
     p: FilterPredicate,
 ) !StreamIDsByPrefixesResult {
     const tag = Field{ .key = p.key, .value = p.value };
@@ -209,14 +209,9 @@ fn querySIDsFromPredicate(
     }
 }
 
-// TODO: when we collect only streams we con sort them without tenant,
+// TODO: when we collect only streams we can sort them without tenant,
 // and we can remove this function
 pub fn SidLessThan(_: void, self: SID, another: SID) bool {
-    // tenant is less
-    const lhs = self.tenantID;
-    const rhs = another.tenantID;
-    return std.mem.lessThan(u8, lhs, rhs) or
-        // or if tenant is eq than id is less
-        (std.mem.eql(u8, lhs, rhs) and
-            self.id < another.id);
+    return self.tenantID < another.tenantID or
+        (self.tenantID == another.tenantID and self.id < another.id);
 }

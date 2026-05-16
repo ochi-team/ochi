@@ -203,7 +203,7 @@ pub fn addLines(
     try self.data.addLines(io, allocator, lines.items);
 }
 
-pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: []const u8, query: Query) !std.ArrayList(Line) {
+pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: u64, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
     var result = try self.index.querySIDs(io, alloc, tenantID, query.tagsExpr);
@@ -214,7 +214,7 @@ pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: []const 
         // so a user could narrow a query
         // TODO: make query expression converted to strings
         std.debug.print(
-            "[WARN] query is cut off by index, tenantID: {s}, partition: {s}, query: {}\n",
+            "[WARN] query is cut off by index, tenantID: {d}, partition: {s}, query: {}\n",
             .{ tenantID, self.key, query.tagsExpr },
         );
     }

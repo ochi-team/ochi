@@ -190,7 +190,7 @@ test "process does not panic when values has three lines" {
         .io = testing.io,
         .allocator = testing.allocator,
         .conf = undefined,
-        .tenantID = "default",
+        .tenantID = 0,
         .store = &store,
         .dispatchMeter = undefined,
         .storeMeter = undefined,
@@ -205,5 +205,5 @@ test "process does not panic when values has three lines" {
         \\["1778922991218871002","line-3"]]}]}
     ;
 
-    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), testing.allocator, &ctx, body, .{ .tenantID = "default" }));
+    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), testing.allocator, &ctx, body, .{ .tenantID = ctx.tenantID }));
 }

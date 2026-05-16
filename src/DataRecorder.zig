@@ -623,18 +623,11 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
             fieldsCopy[fieldIndex] = .{ .key = key, .value = value };
         }
 
-        const tenantIDCopy: []const u8 = t: {
-            if (prevLine) |pl| {
-                if (std.mem.eql(u8, pl.sid.tenantID, line.sid.tenantID)) break :t pl.sid.tenantID;
-            }
-            break :t try arenaAlloc.dupe(u8, line.sid.tenantID);
-        };
         try shard.lines.append(alloc, .{
             .timestampNs = line.timestampNs,
             .sid = .{
-                .tenantID = tenantIDCopy,
+                .tenantID = line.sid.tenantID,
                 .id = line.sid.id,
-                .buf = null,
             },
             .fields = fieldsCopy,
         });
@@ -757,7 +750,7 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
     const fields = stableFields[variant % stableFields.len][0..];
     return .{
         .timestampNs = ts,
-        .sid = .{ .tenantID = "tenant-1", .id = streamID },
+        .sid = .{ .tenantID = 1, .id = streamID },
         .fields = fields,
     };
 }

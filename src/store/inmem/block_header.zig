@@ -65,8 +65,8 @@ pub const BlockHeader = struct {
         };
     }
 
-    // [32:sid][4:size][4:len][33:timestamps, 32 values and 1 encoding type][40:columns header]
-    pub const encodeExpectedSize = 32 + 4 + 4 + 32 + 1 + 40;
+    // [24:sid][4:size][4:len][33:timestamps, 32 values and 1 encoding type][40:columns header]
+    pub const encodeExpectedSize = SID.encodeBound + 4 + 4 + 32 + 1 + 40;
 
     pub fn encode(self: *const BlockHeader, buf: []u8) usize {
         var enc = Encoder.init(buf);
@@ -89,7 +89,7 @@ pub const BlockHeader = struct {
     pub fn decode(buf: []const u8) struct { header: BlockHeader, offset: usize } {
         var decoder = Decoder.init(buf);
 
-        const sid = SID.decode(decoder.readBytes(32));
+        const sid = SID.decode(decoder.readBytes(SID.encodeBound));
 
         const size = decoder.readInt(u32);
         const len = decoder.readInt(u32);
@@ -122,21 +122,12 @@ pub const BlockHeader = struct {
         src: []const u8,
     ) !void {
         const dstLen = dst.items.len;
-        var copied: usize = 0;
-        errdefer {
-            for (dst.items[dstLen .. dstLen + copied]) |header| {
-                allocator.free(header.sid.tenantID);
-            }
-            dst.shrinkRetainingCapacity(dstLen);
-        }
+        errdefer dst.shrinkRetainingCapacity(dstLen);
         var buf = src;
 
         while (buf.len > 0) {
-            var res = BlockHeader.decode(buf);
-            const tenantID = try allocator.dupe(u8, res.header.sid.tenantID);
-            res.header.sid.tenantID = tenantID;
+            const res = BlockHeader.decode(buf);
             try dst.append(allocator, res.header);
-            copied += 1;
             buf = buf[res.offset..];
         }
 
@@ -610,7 +601,7 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
         .{
             .header = .{
                 .sid = .{
-                    .tenantID = "tenant",
+                    .tenantID = 1,
                     .id = 1,
                 },
                 .size = 0,
@@ -627,12 +618,12 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
                 .columnsHeaderIndexOffset = 0,
                 .columnsHeaderIndexSize = 0,
             },
-            .expectedLen = 77,
+            .expectedLen = 69,
         },
         .{
             .header = .{
                 .sid = .{
-                    .tenantID = "tenant",
+                    .tenantID = 1,
                     .id = 42,
                 },
                 .size = 1234,
@@ -649,12 +640,12 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
                 .columnsHeaderIndexOffset = 30,
                 .columnsHeaderIndexSize = 40,
             },
-            .expectedLen = 77,
+            .expectedLen = 69,
         },
         .{
             .header = .{
                 .sid = .{
-                    .tenantID = "tenant",
+                    .tenantID = 1,
                     .id = std.math.maxInt(u128),
                 },
                 .size = std.math.maxInt(u32),
@@ -727,12 +718,7 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
 
     for (windowCases) |windowCase| {
         var decoded = try std.ArrayList(BlockHeader).initCapacity(alloc, 4);
-        defer {
-            for (decoded.items) |bh| {
-                alloc.free(bh.sid.tenantID);
-            }
-            decoded.deinit(alloc);
-        }
+        defer decoded.deinit(alloc);
 
         const window = IndexBlockHeader{
             .sid = windowCase.expected[0].sid,

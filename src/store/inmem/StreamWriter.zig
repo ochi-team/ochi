@@ -680,7 +680,7 @@ test "writeBlock and writeData produce identical buffer output" {
         .{ .key = "app", .value = "seq" },
         .{ .key = "level", .value = "warn" },
     };
-    const sid = SID{ .id = 1, .tenantID = "1111" };
+    const sid = SID{ .id = 1, .tenantID = 1111 };
     const line1 = Line{ .timestampNs = 1, .sid = sid, .fields = &fields1 };
     const line2 = Line{ .timestampNs = 2, .sid = sid, .fields = &fields2 };
     const line3 = Line{ .timestampNs = 3, .sid = sid, .fields = &fields3 };

@@ -5,27 +5,9 @@ const Decoder = @import("encoding").Decoder;
 
 const sizing = @import("inmem/sizing.zig");
 
-const maxTenantIDLen = @import("tenant.zig").maxTenantIDLen;
-
-// TODO: this brings a lot of problems across the codes base,
-// we can:
-// either make it a regular string, it requires writing its len to the files
-// or make it an integer, might work for us as well
-// alternatively we can assert tenant id len maxTenantIDLen in every call
-// and write tests accordingly creating padded tenant ids, but it smells odd
-fn trimTenantPadding(tenantID: []const u8) []const u8 {
-    var n = tenantID.len;
-    while (n > 0 and tenantID[n - 1] == 0) {
-        n -= 1;
-    }
-    return tenantID[0..n];
-}
-
 pub const SID = struct {
-    tenantID: []const u8,
+    tenantID: u64,
     id: u128,
-    // buf holds ownership of tenant id
-    buf: ?[]const u8 = null,
 
     pub fn order(one: SID, another: SID) std.math.Order {
         if (one.lessThan(&another)) {
@@ -38,62 +20,34 @@ pub const SID = struct {
     }
 
     pub fn eql(self: *const SID, another: *const SID) bool {
-        return std.mem.eql(
-            u8,
-            trimTenantPadding(self.tenantID),
-            trimTenantPadding(another.tenantID),
-        ) and
-            self.id == another.id;
+        return self.tenantID == another.tenantID and self.id == another.id;
     }
 
     // TODO: pass it by value maybe?
     pub fn lessThan(self: *const SID, another: *const SID) bool {
-        // tenant is less
-        const lhs = trimTenantPadding(self.tenantID);
-        const rhs = trimTenantPadding(another.tenantID);
-        return std.mem.lessThan(u8, lhs, rhs) or
-            // or if tenant is eq than id is less
-            (std.mem.eql(u8, lhs, rhs) and
-                self.id < another.id);
+        return self.tenantID < another.tenantID or
+            (self.tenantID == another.tenantID and self.id < another.id);
     }
 
-    pub const encodeBound = 32;
+    pub const encodeBound = 24; // 8 bytes (u64) + 16 bytes (u128)
     pub fn encode(self: *const SID, enc: *Encoder) void {
-        enc.writePadded(self.tenantID, maxTenantIDLen);
+        enc.writeInt(u64, self.tenantID);
         enc.writeInt(u128, self.id);
     }
 
     pub fn encodeTenantWithPrefix(self: *const SID, enc: *Encoder, prefix: u8) void {
         enc.writeInt(u8, prefix);
-        enc.writePadded(self.tenantID, maxTenantIDLen);
+        enc.writeInt(u64, self.tenantID);
     }
 
     pub fn decode(buf: []const u8) SID {
         var decoder = Decoder.init(buf);
-        const tenantID = decoder.readPadded(maxTenantIDLen);
+        const tenantID = decoder.readInt(u64);
         const id = decoder.readInt(u128);
         return .{
             .tenantID = tenantID,
             .id = id,
         };
-    }
-
-    pub fn decodeAlloc(allocator: std.mem.Allocator, buf: []const u8) !SID {
-        const tenantID = try allocator.alloc(u8, maxTenantIDLen);
-
-        var decoder = Decoder.init(buf);
-        decoder.readPaddedToBuf(maxTenantIDLen, tenantID);
-        const id = decoder.readInt(u128);
-        return .{
-            .tenantID = tenantID,
-            .id = id,
-            .buf = tenantID,
-        };
-    }
-
-    pub fn deinit(self: *SID, allocator: std.mem.Allocator) void {
-        if (self.buf) |buf| allocator.free(buf);
-        self.* = undefined;
     }
 };
 

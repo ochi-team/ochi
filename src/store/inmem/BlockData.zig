@@ -44,7 +44,7 @@ pub const BlockData = struct {
     }
 
     pub fn reset(self: *BlockData, allocator: std.mem.Allocator) void {
-        self.sid = .{ .tenantID = "", .id = 0 };
+        self.sid = .{ .tenantID = 0, .id = 0 };
         self.uncompressedSizeBytes = 0;
         self.len = 0;
 
@@ -228,17 +228,17 @@ fn populateSampleLines(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 1,
-            .sid = .{ .id = 2, .tenantID = "2222" },
+            .sid = .{ .id = 2, .tenantID = 2222 },
             .fields = sample.fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = .{ .id = 1, .tenantID = "1111" },
+            .sid = .{ .id = 1, .tenantID = 1111 },
             .fields = sample.fields2[0..],
         },
         .{
             .timestampNs = 3,
-            .sid = .{ .id = 1, .tenantID = "1111" },
+            .sid = .{ .id = 1, .tenantID = 1111 },
             .fields = sample.fields3[0..],
         },
     };

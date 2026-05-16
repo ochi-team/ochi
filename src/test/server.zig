@@ -83,7 +83,7 @@ pub const OchiClient = struct {
         const start = Io.Timestamp.now(io, .real).nanoseconds;
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
-            var resp = client.request(alloc, .GET, "/insert/loki/ready", "", "test", "application/json", null) catch |err| {
+            var resp = client.request(alloc, .GET, "/insert/loki/ready", "", "", "application/json", null) catch |err| {
                 std.debug.print("Server not ready yet, error: {}\n", .{err});
                 try Io.sleep(io, .fromMilliseconds(50), .real);
                 continue;
@@ -302,7 +302,10 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
             "snappy",
         );
         defer resp.deinit(alloc);
-        try std.testing.expectEqual(200, resp.statusCode);
+        std.testing.expectEqual(200, resp.statusCode) catch |err| {
+            std.debug.print("Ingest request failed, reponse body: {s}\n", .{resp.body});
+            return err;
+        };
     }
 
     {
@@ -314,7 +317,10 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     for (corpus.queries) |query| {
         var resp = try client.request(alloc, .POST, "/query", query.query, query.tenant, "application/loql", null);
         defer resp.deinit(alloc);
-        try std.testing.expectEqual(200, resp.statusCode);
+        std.testing.expectEqual(200, resp.statusCode) catch |err| {
+            std.debug.print("Query request failed, reponse body: {s}\n", .{resp.body});
+            return err;
+        };
 
         const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
             .ignore_unknown_fields = true,

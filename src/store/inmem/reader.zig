@@ -325,10 +325,7 @@ pub const BlockReader = struct {
             allocator,
             tableMem.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
         );
-        errdefer {
-            for (indexBlockHeaders) |*h| h.deinitRead(allocator);
-            allocator.free(indexBlockHeaders);
-        }
+        errdefer allocator.free(indexBlockHeaders);
 
         var blockHeaders = try std.ArrayList(BlockHeader).initCapacity(allocator, 64);
         errdefer blockHeaders.deinit(allocator);
@@ -374,12 +371,9 @@ pub const BlockReader = struct {
         if (streamReader.metaIndexBuf.len > 0) {
             indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, streamReader.metaIndexBuf);
         }
-        errdefer {
-            for (indexBlockHeaders) |*h| h.deinitRead(alloc);
-            if (indexBlockHeaders.len > 0) {
-                alloc.free(indexBlockHeaders);
-            }
-        }
+        errdefer if (indexBlockHeaders.len > 0) {
+            alloc.free(indexBlockHeaders);
+        };
 
         var blockHeaders = try std.ArrayList(BlockHeader).initCapacity(alloc, 64);
         errdefer blockHeaders.deinit(alloc);
@@ -413,17 +407,13 @@ pub const BlockReader = struct {
     }
 
     pub fn deinit(self: *BlockReader, allocator: Allocator) void {
-        for (self.blockHeaders.items) |header| {
-            allocator.free(header.sid.tenantID);
-        }
         self.blockHeaders.deinit(allocator);
         self.streamReader.deinit(allocator);
         self.blockData.deinit(allocator);
 
-        for (self.indexBlockHeaders) |*bh| {
-            bh.deinitRead(allocator);
+        if (self.indexBlockHeaders.len > 0) {
+            allocator.free(self.indexBlockHeaders);
         }
-        allocator.free(self.indexBlockHeaders);
 
         allocator.destroy(self);
     }
@@ -491,9 +481,6 @@ pub const BlockReader = struct {
         const indexBlockData = try readIndexBlock(allocator, ih, self.streamReader);
         defer allocator.free(indexBlockData);
 
-        for (self.blockHeaders.items) |*header| {
-            allocator.free(header.sid.tenantID);
-        }
         self.blockHeaders.clearRetainingCapacity();
         try BlockHeader.decodeFew(allocator, &self.blockHeaders, indexBlockData);
 
@@ -555,17 +542,17 @@ fn populateSampleLines(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 1,
-            .sid = .{ .id = 2, .tenantID = "2222" },
+            .sid = .{ .id = 2, .tenantID = 2222 },
             .fields = sample.fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = .{ .id = 1, .tenantID = "1111" },
+            .sid = .{ .id = 1, .tenantID = 1111 },
             .fields = sample.fields2[0..],
         },
         .{
             .timestampNs = 3,
-            .sid = .{ .id = 1, .tenantID = "1111" },
+            .sid = .{ .id = 1, .tenantID = 1111 },
             .fields = sample.fields3[0..],
         },
     };
@@ -602,7 +589,7 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
     try memTable.addLines(io, allocator, lines[0..]);
 
     const th = memTable.tableHeader;
-    try std.testing.expectEqual(@as(u32, 3), th.len);
+    try std.testing.expectEqual(3, th.len);
     try std.testing.expect(th.minTimestamp <= 1);
     try std.testing.expect(th.maxTimestamp >= 3);
     try std.testing.expect(th.blocksCount >= 1);
@@ -617,9 +604,9 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
         blocksRead += 1;
     }
 
-    try std.testing.expectEqual(@as(u32, 2), blocksRead);
-    try std.testing.expectEqual(@as(u64, 2), blockReader.globalBlocksCount);
-    try std.testing.expectEqual(@as(u64, 3), blockReader.globalRowsCount);
+    try std.testing.expectEqual(2, blocksRead);
+    try std.testing.expectEqual(2, blockReader.globalBlocksCount);
+    try std.testing.expectEqual(3, blockReader.globalRowsCount);
     try std.testing.expectEqual(th.uncompressedSize, blockReader.globalUncompressedSizeBytes);
     try std.testing.expectEqual(th.len, blockReader.globalRowsCount);
     try std.testing.expectEqual(th.blocksCount, blockReader.globalBlocksCount);
@@ -640,15 +627,15 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
         // columnsData may be empty in allocation-failure runs from checkAllocationFailures
         if (bd.columnsData.items.len >= 2) {
             blocksWithFullData += 1;
-            if (std.mem.eql(u8, bd.sid.tenantID, "1111") and bd.sid.id == 1) {
-                try std.testing.expectEqual(@as(u32, 2), bd.len);
-                try std.testing.expectEqual(@as(u64, 2), bd.timestampsData.minTimestamp);
-                try std.testing.expectEqual(@as(u64, 3), bd.timestampsData.maxTimestamp);
+            if (bd.sid.tenantID == 1111 and bd.sid.id == 1) {
+                try std.testing.expectEqual(2, bd.len);
+                try std.testing.expectEqual(2, bd.timestampsData.minTimestamp);
+                try std.testing.expectEqual(3, bd.timestampsData.maxTimestamp);
                 block1Sid1111 = true;
-            } else if (std.mem.eql(u8, bd.sid.tenantID, "2222") and bd.sid.id == 2) {
-                try std.testing.expectEqual(@as(u32, 1), bd.len);
-                try std.testing.expectEqual(@as(u64, 1), bd.timestampsData.minTimestamp);
-                try std.testing.expectEqual(@as(u64, 1), bd.timestampsData.maxTimestamp);
+            } else if (bd.sid.tenantID == 2222 and bd.sid.id == 2) {
+                try std.testing.expectEqual(1, bd.len);
+                try std.testing.expectEqual(1, bd.timestampsData.minTimestamp);
+                try std.testing.expectEqual(1, bd.timestampsData.maxTimestamp);
                 block2Sid2222 = true;
             }
         }
@@ -672,12 +659,12 @@ fn testInitFromDiskTable(allocator: Allocator, io: Io) !void {
 
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = "1234" },
+        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -706,13 +693,13 @@ fn testInitFromDiskTable(allocator: Allocator, io: Io) !void {
 
     try std.testing.expectEqual(memTable.tableHeader.blocksCount, blocksRead);
     try std.testing.expectEqual(
-        @as(u64, memTable.tableHeader.uncompressedSize),
+        memTable.tableHeader.uncompressedSize,
         blockReader.globalUncompressedSizeBytes,
     );
-    try std.testing.expectEqual(@as(u64, memTable.tableHeader.len), blockReader.globalRowsCount);
-    try std.testing.expectEqual(@as(u64, memTable.tableHeader.blocksCount), blockReader.globalBlocksCount);
+    try std.testing.expectEqual(memTable.tableHeader.len, blockReader.globalRowsCount);
+    try std.testing.expectEqual(memTable.tableHeader.blocksCount, blockReader.globalBlocksCount);
     try std.testing.expectEqual(
-        @as(u64, memTable.tableHeader.compressedSize),
+        memTable.tableHeader.compressedSize,
         blockReader.streamReader.totalBytesRead(),
     );
 }
