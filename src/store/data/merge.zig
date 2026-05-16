@@ -504,3 +504,69 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
     try std.testing.expectEqual(expected.len, expectedI);
 }
+
+test "mergeData multi tenant" {
+    const alloc = std.heap.page_allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const tenantIDs = [_][]const u8{
+        "1",
+        "22",
+        "333",
+        "4444",
+        "55555",
+        "666666",
+        "7777777",
+        "88888888",
+    };
+
+    var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tenantIDs.len);
+    defer {
+        for (readers.items) |reader| {
+            reader.deinit(alloc);
+        }
+        readers.deinit(alloc);
+    }
+
+    for (tenantIDs, 0..) |tenantID, i| {
+        const tablePath = try std.fmt.allocPrint(
+            alloc,
+            "{s}/table-{d}",
+            .{ rootPath, i },
+        );
+        defer alloc.free(tablePath);
+
+        const memTable = try MemTable.init(io, alloc);
+        defer memTable.deinit(io, alloc);
+
+        var fields = [_]Field{
+            .{ .key = "app", .value = "repro" },
+            .{ .key = "level", .value = "info" },
+        };
+        var lines = [_]Line{.{
+            .timestampNs = @intCast(i + 1),
+            .sid = .{ .tenantID = tenantID, .id = 1 },
+            .fields = fields[0..],
+        }};
+
+        try memTable.addLines(io, alloc, lines[0..]);
+        try memTable.storeToDisk(io, alloc, tablePath);
+
+        const reader = try BlockReader.initFromDiskTable(io, alloc, tablePath);
+        try readers.append(alloc, reader);
+    }
+
+    const dstMemTable = try MemTable.init(io, alloc);
+    defer dstMemTable.deinit(io, alloc);
+
+    const stopped: ?*std.atomic.Value(bool) = null;
+    dstMemTable.tableHeader = try mergeData(io, alloc, dstMemTable.streamWriter, &readers, stopped);
+
+    try std.testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);
+}
