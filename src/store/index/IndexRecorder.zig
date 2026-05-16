@@ -288,8 +288,8 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
 
     const maxSize = merger.getMaxInmemoryTableSize(self.runtime.cacheSize);
 
-    var left = try std.ArrayList(*Table).initCapacity(alloc, memTables.items.len);
-    defer left.deinit(alloc);
+    var left = try std.ArrayList(*Table).initCapacity(fbaAlloc, memTables.items.len);
+    defer left.deinit(fbaAlloc);
 
     // TODO: consider skipping this step and directly append tables to its collection,
     // it requires another way to handle mem tables semaphore,
@@ -967,22 +967,26 @@ const AddWorkerCtx = struct {
     alloc: Allocator,
     recorder: *IndexRecorder,
     workerID: usize,
-    items: usize,
+    rounds: usize,
 };
 
+const testWorkerBatchSize = 20;
 fn addWorker(ctx: *AddWorkerCtx) void {
-    var i: usize = 0;
-    while (i < ctx.items) : (i += 1) {
-        const item = stableItems[(ctx.workerID + i) % stableItems.len];
-        var batch = [_][]const u8{item};
-        ctx.recorder.add(ctx.io, ctx.alloc, &batch) catch |err| {
-            std.debug.print("failed to add item in worker {d}: {s}\n", .{ ctx.workerID, @errorName(err) });
+    var round: usize = 0;
+    while (round < ctx.rounds) : (round += 1) {
+        var batch: [testWorkerBatchSize][]const u8 = undefined;
+        for (0..testWorkerBatchSize) |i| {
+            batch[i] = stableItems[(ctx.workerID + round + i) % stableItems.len];
+        }
+
+        ctx.recorder.add(ctx.io, ctx.alloc, batch[0..]) catch |err| {
+            std.debug.print("failed to add batch in worker {d}: {s}\n", .{ ctx.workerID, @errorName(err) });
             return;
         };
     }
 }
 
-test "IndexRecorder concurrent add preserves item count" {
+test "IndexRecorder background flusher survives load" {
     const alloc = testing.allocator;
     const io = testing.io;
 
@@ -993,15 +997,20 @@ test "IndexRecorder concurrent add preserves item count" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+    runtime.cpus = 4;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
-    defer recorder.deinit(io, alloc);
+    recorder.maxMemBlockSize = 256;
+    try recorder.start(io, alloc);
+    defer recorder.stop(io, alloc) catch |err| {
+        std.debug.panic("failed to stop recorder: {s}", .{@errorName(err)});
+    };
 
     var g: std.Io.Group = .init;
     errdefer g.cancel(io);
 
     const workers = 4;
-    const items_per_worker = 64;
+    const rounds = 100;
     var ctxs: [workers]AddWorkerCtx = undefined;
 
     for (0..workers) |i| {
@@ -1010,17 +1019,16 @@ test "IndexRecorder concurrent add preserves item count" {
             .alloc = alloc,
             .recorder = recorder,
             .workerID = i,
-            .items = items_per_worker,
+            .rounds = rounds,
         };
         try g.concurrent(io, addWorker, .{&ctxs[i]});
     }
 
     try g.await(io);
-
     try recorder.flushForce(io, alloc);
 
-    try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
-    try testing.expectEqual(@as(u64, workers * items_per_worker), countDiskItemsInRecorder(recorder));
+    try testing.expectEqual(0, countMemItemsInRecorder(recorder));
+    try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
 }
 
 test "IndexRecorder reads free disk space from runtime" {

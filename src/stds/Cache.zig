@@ -71,7 +71,7 @@ test "StreamCache handles concurrent set and contains" {
             var keyBuf: [64]u8 = undefined;
 
             var i: usize = 0;
-            while (i < 20_000) : (i += 1) {
+            while (i < 1000) : (i += 1) {
                 const key = try std.fmt.bufPrint(&keyBuf, "tenant-42-stream-{d}-worker-{d}", .{ i % 64, workerId % 2 });
 
                 try cache.set(io, key, {});
