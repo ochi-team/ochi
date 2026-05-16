@@ -971,13 +971,51 @@ const AddWorkerCtx = struct {
     rounds: usize,
 };
 
-const testWorkerBatchSize = 20;
+const testWorkerBatchSize = 60;
 fn addWorker(ctx: *AddWorkerCtx) void {
     var round: usize = 0;
     while (round < ctx.rounds) : (round += 1) {
         var batch: [testWorkerBatchSize][]const u8 = undefined;
         for (0..testWorkerBatchSize) |i| {
             batch[i] = stableItems[(ctx.workerID + round + i) % stableItems.len];
+        }
+
+        ctx.recorder.add(ctx.io, ctx.alloc, batch[0..]) catch |err| {
+            std.debug.print("failed to add batch in worker {d}: {s}\n", .{ ctx.workerID, @errorName(err) });
+            return;
+        };
+    }
+}
+
+const WorkerCtxWithItems = struct {
+    io: Io,
+    alloc: Allocator,
+    recorder: *IndexRecorder,
+    workerID: usize,
+    rounds: usize,
+    items: []const []const u8,
+};
+
+fn allocCtxItem(alloc: Allocator, id: usize, len: usize) ![]u8 {
+    const buf = try alloc.alloc(u8, len);
+    errdefer alloc.free(buf);
+
+    const head = try std.fmt.bufPrint(buf, "tenant-42-{d:0>4}-", .{id});
+    if (head.len < len) {
+        for (head.len..len) |i| {
+            buf[i] = @intCast('a' + ((id + i) % 26));
+        }
+    }
+    return buf;
+}
+
+fn addWorkerWithItems(ctx: *WorkerCtxWithItems) void {
+    var round: usize = 0;
+    while (round < ctx.rounds) : (round += 1) {
+        var batch: [testWorkerBatchSize][]const u8 = undefined;
+        for (0..testWorkerBatchSize) |i| {
+            const idx = (ctx.workerID * ctx.rounds + round + i) % ctx.items.len;
+            batch[i] = ctx.items[idx];
         }
 
         ctx.recorder.add(ctx.io, ctx.alloc, batch[0..]) catch |err| {
@@ -1023,6 +1061,68 @@ test "IndexRecorder background flusher survives load" {
             .rounds = rounds,
         };
         try g.concurrent(io, addWorker, .{&ctxs[i]});
+    }
+
+    try g.await(io);
+    try recorder.flushForce(io, alloc);
+
+    try testing.expectEqual(0, countMemItemsInRecorder(recorder));
+    try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
+}
+
+test "IndexRecorder disk table merger survives large load" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+    runtime.cpus = 4;
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    recorder.maxMemBlockSize = 32 * 1024;
+    try recorder.start(io, alloc);
+    defer recorder.stop(io, alloc) catch |err| {
+        std.debug.panic("failed to stop recorder: {s}", .{@errorName(err)});
+    };
+
+    const minItemLen = 8 * 1024;
+    const maxItemLen = 24 * 1024;
+    const itemPoolSize = 120;
+    const lenSpan = maxItemLen - minItemLen + 1;
+
+    var itemPool = try std.ArrayList([]u8).initCapacity(alloc, itemPoolSize);
+    defer {
+        for (itemPool.items) |item| alloc.free(item);
+        itemPool.deinit(alloc);
+    }
+    for (0..itemPoolSize) |i| {
+        const itemLen = minItemLen + ((i * 8000) % lenSpan);
+        const item = try allocCtxItem(alloc, i, itemLen);
+        try itemPool.append(alloc, item);
+    }
+
+    var g: std.Io.Group = .init;
+    errdefer g.cancel(io);
+
+    const workers = 4;
+    const rounds = 40;
+    var ctxs: [workers]WorkerCtxWithItems = undefined;
+
+    for (0..workers) |i| {
+        ctxs[i] = .{
+            .io = io,
+            .alloc = alloc,
+            .recorder = recorder,
+            .workerID = i,
+            .rounds = rounds,
+            .items = itemPool.items,
+        };
+        try g.concurrent(io, addWorkerWithItems, .{&ctxs[i]});
     }
 
     try g.await(io);
