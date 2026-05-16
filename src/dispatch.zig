@@ -14,7 +14,7 @@ const ApiError = @import("server/error.zig").ApiError;
 pub const AppContext = struct {
     io: Io,
     allocator: Allocator,
-    conf: AppConfig,
+    conf: *const AppConfig,
     tenantID: u64,
     store: *Store,
 
@@ -25,11 +25,11 @@ pub const AppContext = struct {
 pub const Dispatcher = struct {
     io: Io,
     allocator: Allocator,
-    conf: AppConfig,
+    conf: *const AppConfig,
     store: *Store,
     meter: DispatchMeter,
 
-    pub fn init(io: Io, allocator: Allocator, conf: AppConfig, store: *Store) !Dispatcher {
+    pub fn init(io: Io, allocator: Allocator, conf: *const AppConfig, store: *Store) !Dispatcher {
         var meter = try DispatchMeter.init(allocator, io);
         errdefer meter.deinit();
 

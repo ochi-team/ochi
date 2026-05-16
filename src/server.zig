@@ -54,7 +54,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     defer store.deinit(io, allocator);
     try store.start(io, allocator);
 
-    var dispatcher = try Dispatcher.init(io, allocator, conf.app, &store);
+    var dispatcher = try Dispatcher.init(io, allocator, &conf.app, &store);
     defer dispatcher.deinit();
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .all(conf.server.port) }, &dispatcher);
     registerSigtermHandler();
