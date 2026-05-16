@@ -224,7 +224,11 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     try self.entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, self.blockHeader.entriesBlockSize);
     const itemsDest = self.entriesBlock.entriesBuf.unusedCapacitySlice()[0..self.blockHeader.entriesBlockSize];
     const itemsStart: usize = @intCast(self.blockHeader.entriesBlockOffset);
-    const itemsEnd = itemsStart + self.blockHeader.entriesBlockSize;
+    const itemsSize: usize = @intCast(self.blockHeader.entriesBlockSize);
+    if (itemsStart > self.dataBuf.items.len or itemsSize > self.dataBuf.items.len - itemsStart) {
+        return error.InvalidEntriesBlockRange;
+    }
+    const itemsEnd = itemsStart + itemsSize;
     @memmove(itemsDest, self.dataBuf.items[itemsStart..itemsEnd]);
     self.entriesBlock.entriesBuf.items.len = self.blockHeader.entriesBlockSize;
 
@@ -232,7 +236,11 @@ pub fn next(self: *BlockReader, alloc: Allocator) !bool {
     try self.entriesBlock.lensBuf.ensureUnusedCapacity(alloc, self.blockHeader.lensBlockSize);
     const lensDest = self.entriesBlock.lensBuf.unusedCapacitySlice()[0..self.blockHeader.lensBlockSize];
     const lensStart: usize = @intCast(self.blockHeader.lensBlockOffset);
-    const lensEnd = lensStart + self.blockHeader.lensBlockSize;
+    const lensSize: usize = @intCast(self.blockHeader.lensBlockSize);
+    if (lensStart > self.lensBuf.items.len or lensSize > self.lensBuf.items.len - lensStart) {
+        return error.InvalidLensBlockRange;
+    }
+    const lensEnd = lensStart + lensSize;
     @memmove(lensDest, self.lensBuf.items[lensStart..lensEnd]);
     self.entriesBlock.lensBuf.items.len = self.blockHeader.lensBlockSize;
 
@@ -271,7 +279,11 @@ fn readNextBlockHeaders(self: *BlockReader, alloc: Allocator) !bool {
 
     const indexDest = self.compressedBuf.unusedCapacitySlice()[0..mi.indexBlockSize];
     const indexStart: usize = @intCast(mi.indexBlockOffset);
-    const indexEnd = indexStart + mi.indexBlockSize;
+    const indexSize: usize = @intCast(mi.indexBlockSize);
+    if (indexStart > self.indexBuf.items.len or indexSize > self.indexBuf.items.len - indexStart) {
+        return error.InvalidIndexBlockRange;
+    }
+    const indexEnd = indexStart + indexSize;
     @memcpy(indexDest, self.indexBuf.items[indexStart..indexEnd]);
     self.compressedBuf.items.len = mi.indexBlockSize;
 
@@ -532,7 +544,7 @@ test "BlockReader.initFromMemTable reads items" {
     }
 }
 
-test "BlockReader.next panics on empty index buffer with non-empty metaindex" {
+test "BlockReader.next returns InvalidIndexBlockRange on empty index buffer with non-empty metaindex" {
     const alloc = testing.allocator;
     const io = testing.io;
 
@@ -557,5 +569,5 @@ test "BlockReader.next panics on empty index buffer with non-empty metaindex" {
 
     reader.indexBuf.clearRetainingCapacity();
 
-    _ = try reader.next(alloc);
+    try testing.expectError(error.InvalidIndexBlockRange, reader.next(alloc));
 }
