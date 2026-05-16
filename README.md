@@ -38,11 +38,12 @@ https://ochi.dev/docs/guides/installation/
 
 - [x] store persists the data, working simple API queries
 - [x] Grafana datasource available
-- [ ] home made query language
+- [x] home made query language
 - [ ] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
 - [ ] full support of Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
 - [ ] installation scripts
 - [ ] docker-compose with configured datasource to grafana
+- [ ] OTEL collector API support
 - [ ] configuration support
 
 ## Goals

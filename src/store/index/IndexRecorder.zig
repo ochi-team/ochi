@@ -1064,6 +1064,8 @@ test "IndexRecorder background flusher survives load" {
     }
 
     try g.await(io);
+    recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
     try recorder.flushForce(io, alloc);
 
     try testing.expectEqual(0, countMemItemsInRecorder(recorder));
@@ -1126,6 +1128,8 @@ test "IndexRecorder disk table merger survives large load" {
     }
 
     try g.await(io);
+    recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
     try recorder.flushForce(io, alloc);
 
     try testing.expectEqual(0, countMemItemsInRecorder(recorder));
