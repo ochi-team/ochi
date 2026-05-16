@@ -7,20 +7,28 @@ const snappy = @import("snappy").raw;
 // to a json/proto marshaller and don't keep the full uncompressed buffer in memory
 pub const Compression = enum(u8) {
     snappy,
+    gzip,
+    none,
     pub fn fromEncoding(encoding: []const u8) !Compression {
         if (std.mem.eql(u8, encoding, "snappy")) {
             return .snappy;
+        }
+
+        if (encoding.len == 0) {
+            return .none;
         }
 
         return error.CompressingNotSupported;
     }
     pub fn uncompress(compression: Compression, allocator: std.mem.Allocator, compressed: []const u8) ![]const u8 {
         return switch (compression) {
+            .gzip => return error.CompressionNotSupported,
             .snappy => {
                 const uncompressed = try allocator.alloc(u8, try snappy.uncompressedLength(compressed[0..]));
                 _ = try snappy.uncompress(compressed[0..], uncompressed);
                 return uncompressed;
             },
+            .none => return compressed,
         };
     }
 };

@@ -27,7 +27,7 @@ pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
     }
 
     // TODO: validate a disk has enough space
-    const encoding = r.headers.get("content-encoding") orelse "snappy";
+    const encoding = r.headers.get("content-encoding") orelse "";
     const compress = Compression.fromEncoding(encoding) catch
         return ApiError.ContentEncodingNotSupported;
 

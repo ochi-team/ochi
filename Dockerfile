@@ -17,12 +17,17 @@ RUN --mount=type=cache,target=/tmp/zig-cache \
 WORKDIR /app
 
 COPY build.zig build.zig.zon test_runner.zig ./
+RUN --mount=type=cache,target=/root/.cache/zig \
+    --mount=type=cache,target=/app/.zig-cache \
+    /usr/local/bin/zig build --fetch
+
 COPY src/ src/
 
-RUN --mount=type=cache,target=/app/.zig-cache /usr/local/bin/zig build -Doptimize=ReleaseSafe
+RUN --mount=type=cache,target=/root/.cache/zig \
+    --mount=type=cache,target=/app/.zig-cache \
+    /usr/local/bin/zig build -Doptimize=ReleaseSafe
 
-# TODO: use lighter image (e.g. scratch, distroless, etc.)
-FROM ubuntu:24.04 AS runtime
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 WORKDIR /app
 
