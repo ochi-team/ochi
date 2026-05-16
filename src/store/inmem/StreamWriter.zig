@@ -74,6 +74,7 @@ bloomValuesList: std.ArrayList(StreamDestination),
 bloomTokensList: std.ArrayList(StreamDestination),
 
 columnIDGen: *ColumnIDGen,
+columnKeyCopies: std.ArrayList([]u8),
 colIdx: std.AutoHashMap(u16, u16),
 nextColI: u16,
 maxColI: u16,
@@ -134,6 +135,7 @@ pub fn initMem(io: Io, allocator: Allocator, maxColI: u16) !*Self {
         .bloomTokensList = bloomTokensList,
 
         .columnIDGen = columnIDGen,
+        .columnKeyCopies = .empty,
         .colIdx = colIdx,
         .nextColI = 0,
         .maxColI = maxColI,
@@ -256,6 +258,7 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
         .bloomTokensList = bloomTokensList,
 
         .columnIDGen = columnIDGen,
+        .columnKeyCopies = .empty,
         .colIdx = colIdx,
         .nextColI = 0,
         .maxColI = bloomValuesMaxShardsCount,
@@ -289,6 +292,10 @@ pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
     self.bloomTokensList.deinit(allocator);
 
     self.columnIDGen.deinit(allocator);
+    for (self.columnKeyCopies.items) |key| {
+        allocator.free(key);
+    }
+    self.columnKeyCopies.deinit(allocator);
     self.colIdx.deinit();
 
     self.columnKeysBuf.deinit(io, allocator);
@@ -535,7 +542,10 @@ fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !
         return error.MessageBloomMustBeUsed;
     }
 
-    const colID = self.columnIDGen.genIDAssumeCapacity(key);
+    if (self.columnIDGen.keyIDs.get(key) == null) {
+        try self.ensureColumnKeyOwned(alloc, key);
+    }
+    const colID = self.columnIDGen.keyIDs.get(key).?;
     const maybeColI = self.colIdx.get(colID);
     if (maybeColI) |colI| {
         return colI;
@@ -569,6 +579,20 @@ fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !
     }
 
     return colI;
+}
+
+// TODO: find why we can't borrow a key
+fn ensureColumnKeyOwned(self: *Self, alloc: Allocator, key: []const u8) !void {
+    if (self.columnIDGen.keyIDs.get(key) != null) {
+        return;
+    }
+
+    try self.columnIDGen.keyIDs.ensureUnusedCapacity(alloc, 1);
+    const ownedKey = try alloc.dupe(u8, key);
+    errdefer alloc.free(ownedKey);
+
+    _ = self.columnIDGen.genIDAssumeCapacity(ownedKey);
+    try self.columnKeyCopies.append(alloc, ownedKey);
 }
 
 fn createBloomBuf(alloc: Allocator) !StreamDestination {
@@ -611,6 +635,13 @@ fn writeColumnsHeader(
     const dstIdxSize = cshIdx.encodeBound();
     const dst = try allocator.alloc(u8, dstSize + dstIdxSize);
     defer allocator.free(dst);
+
+    for (csh.headers) |header| {
+        try self.ensureColumnKeyOwned(allocator, header.key);
+    }
+    for (csh.celledColumns) |column| {
+        try self.ensureColumnKeyOwned(allocator, column.key);
+    }
 
     try cshIdx.columns.ensureUnusedCapacity(allocator, csh.headers.len);
     try cshIdx.celledColumns.ensureUnusedCapacity(allocator, csh.celledColumns.len);

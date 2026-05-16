@@ -5,6 +5,7 @@ const Io = std.Io;
 const Heap = @import("../../stds/heap.zig").Heap;
 
 const sizing = @import("../inmem/sizing.zig");
+const maxTenantIDLen = @import("../tenant.zig").maxTenantIDLen;
 
 const TableHeader = @import("../inmem/TableHeader.zig");
 const SID = @import("../lines.zig").SID;
@@ -69,6 +70,7 @@ pub const StreamMerger = struct {
     // remove block content from data merger state
 
     sid: SID = .{ .tenantID = "", .id = 0 },
+    sidTenantBuf: [maxTenantIDLen]u8 = [_]u8{0} ** maxTenantIDLen,
     totalKeys: usize = 0,
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
@@ -118,12 +120,12 @@ pub const StreamMerger = struct {
         self.sid = .{ .tenantID = "", .id = 0 };
 
         // TODO: if Lines holds all the fields slice we can reuse the array capacity
-        for (self.lines.items) |line| alloc.free(line.fields);
+        for (self.lines.items) |line| freeLine(alloc, line);
         self.lines.clearRetainingCapacity();
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
-        for (self.lines.items) |line| alloc.free(line.fields);
+        for (self.lines.items) |line| freeLine(alloc, line);
         self.lines.deinit(alloc);
         self.mergeBufferLines.deinit(alloc);
         self.unpacker.deinit(alloc);
@@ -145,7 +147,7 @@ pub const StreamMerger = struct {
         if (!blockData.sid.eql(&self.sid)) {
             // it means next stream begins, we have to flush the data
             try self.flushStream(io, alloc, blockWriter, writer);
-            self.sid = blockData.sid;
+            self.setSID(blockData.sid);
 
             if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
@@ -211,10 +213,62 @@ pub const StreamMerger = struct {
         const offset = self.lines.items.len;
         try block.gatherLines(alloc, &self.lines);
 
+        for (offset..self.lines.items.len) |lineI| {
+            const fields = self.lines.items[lineI].fields;
+            const copiedFields = try copyFields(alloc, fields);
+            alloc.free(fields);
+            self.lines.items[lineI].fields = copiedFields;
+        }
+
         // TODO: understand whether I can use sizing.blockJsonSize,
         // (test is implemented to confirm it, good to have it for merger),
         // then understand whether I can use blockData.uncompressedSizeBytes
         self.size += sizing.linesJsonSize(self.lines.items[offset..]);
+    }
+
+    fn setSID(self: *StreamMerger, sid: SID) void {
+        std.debug.assert(sid.tenantID.len <= maxTenantIDLen);
+        @memcpy(self.sidTenantBuf[0..sid.tenantID.len], sid.tenantID);
+        self.sid = .{
+            .tenantID = self.sidTenantBuf[0..sid.tenantID.len],
+            .id = sid.id,
+        };
+    }
+
+    // TODO: it's a common case to copy fields, move it to lines,
+    // same happens in the processor and data shard
+    // TODO: find why we can't borrow
+    fn copyFields(alloc: Allocator, fields: []const Field) ![]Field {
+        const copiedFields = try alloc.alloc(Field, fields.len);
+        var copied: usize = 0;
+        errdefer {
+            for (copiedFields[0..copied]) |field| {
+                alloc.free(field.key);
+                alloc.free(field.value);
+            }
+            alloc.free(copiedFields);
+        }
+
+        for (fields, 0..) |field, i| {
+            const key = try alloc.dupe(u8, field.key);
+            const value = alloc.dupe(u8, field.value) catch |err| {
+                alloc.free(key);
+                return err;
+            };
+
+            copiedFields[i] = .{ .key = key, .value = value };
+            copied += 1;
+        }
+
+        return copiedFields;
+    }
+
+    fn freeLine(alloc: Allocator, line: Line) void {
+        for (line.fields) |field| {
+            alloc.free(field.key);
+            alloc.free(field.value);
+        }
+        alloc.free(line.fields);
     }
 };
 
