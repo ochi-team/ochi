@@ -243,18 +243,26 @@ pub fn encode(
 }
 
 fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntriesBlock) !void {
+    entriesBlock.reset();
+
     try entriesBlock.entriesBuf.ensureUnusedCapacity(
         alloc,
-        self.buf.items.len - self.prefix.len * self.memEntries.items.len + self.prefix.len - self.memEntries.items[0].len,
+        self.buf.items.len - self.prefix.len * self.memEntries.items.len +
+            self.prefix.len - self.memEntries.items[0].len,
     );
-    try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, 2 * (self.memEntries.items.len - 1));
+
+    var lensSizeBound: usize = 0;
+    for (self.memEntries.items[1..]) |item| {
+        const len: u64 = @intCast(item.len - self.prefix.len);
+        lensSizeBound += Encoder.varIntBound(len);
+    }
+    try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, lensSizeBound);
 
     for (self.memEntries.items[1..]) |item| {
         const suffix = item[self.prefix.len..];
         entriesBlock.entriesBuf.appendSliceAssumeCapacity(suffix);
     }
 
-    // no chance any len value is larger than 16384 (0x4000)
     const slice = entriesBlock.lensBuf.unusedCapacitySlice();
     var enc = Encoder.init(slice);
     for (self.memEntries.items[1..]) |item| {

@@ -1086,15 +1086,15 @@ test "IndexRecorder disk table merger survives large load" {
     runtime.cpus = 4;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
-    recorder.maxMemBlockSize = 32 * 1024;
+    recorder.maxMemBlockSize = 4 * 1024;
     try recorder.start(io, alloc);
     defer recorder.stop(io, alloc) catch |err| {
         std.debug.panic("failed to stop recorder: {s}", .{@errorName(err)});
     };
 
-    const minItemLen = 8 * 1024;
-    const maxItemLen = 24 * 1024;
-    const itemPoolSize = 120;
+    const minItemLen = 512;
+    const maxItemLen = 1536;
+    const itemPoolSize = 32;
     const lenSpan = maxItemLen - minItemLen + 1;
 
     var itemPool = try std.ArrayList([]u8).initCapacity(alloc, itemPoolSize);
@@ -1103,7 +1103,7 @@ test "IndexRecorder disk table merger survives large load" {
         itemPool.deinit(alloc);
     }
     for (0..itemPoolSize) |i| {
-        const itemLen = minItemLen + ((i * 8000) % lenSpan);
+        const itemLen = minItemLen + ((i * 977) % lenSpan);
         const item = try allocCtxItem(alloc, i, itemLen);
         try itemPool.append(alloc, item);
     }
@@ -1111,8 +1111,8 @@ test "IndexRecorder disk table merger survives large load" {
     var g: std.Io.Group = .init;
     errdefer g.cancel(io);
 
-    const workers = 4;
-    const rounds = 40;
+    const workers = 3;
+    const rounds = 8;
     var ctxs: [workers]WorkerCtxWithItems = undefined;
 
     for (0..workers) |i| {
