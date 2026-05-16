@@ -242,6 +242,10 @@ fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return file_reader.interface.allocRemaining(allocator, .unlimited);
 }
 
+// TODO: test everything using checkAllAllocationFailures
+// TODO: test everything in a similar practice using io failures/cancelations
+// TODO: make sure we test fallback allocators either as failabable with capacity 1
+// and capacity 16k+
 test "addLines" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{std.testing.io});
 }
