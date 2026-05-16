@@ -874,7 +874,7 @@ test "flushMemEntries non-force respects flush deadline" {
     defer recorder.deinit(io, alloc);
 
     var block = try MemBlock.init(alloc, 64);
-    defer block.deinit(alloc);
+    errdefer block.deinit(alloc);
     const ok = block.add("alpha");
     try testing.expect(ok);
     try recorder.blocksToFlush.append(alloc, block);

@@ -315,11 +315,19 @@ fn createTestReaders(
     maxIndexBlockSize: u32,
 ) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocksData.len);
-    errdefer readers.deinit(alloc);
+    errdefer {
+        for (readers.items) |reader| {
+            reader.deinit(alloc);
+        }
+        readers.deinit(alloc);
+    }
     for (blocksData) |blockData| {
         const block = try createTestMemBlock(alloc, blockData, maxIndexBlockSize);
-        errdefer block.deinit(alloc);
-        const reader = try BlockReader.initFromMemBlock(alloc, block);
+        const reader = BlockReader.initFromMemBlock(alloc, block) catch |err| {
+            block.deinit(alloc);
+            return err;
+        };
+        reader.ownsBlock = true;
         errdefer reader.deinit(alloc);
         try readers.append(alloc, reader);
     }
