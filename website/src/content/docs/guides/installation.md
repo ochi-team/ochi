@@ -1,5 +1,5 @@
 ---
-title: Installation
+title: "Guide: Installation"
 slug: docs/guides/installation
 sidebar:
   order: 1

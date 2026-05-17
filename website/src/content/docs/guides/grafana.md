@@ -1,5 +1,5 @@
 ---
-title: Grafana data source
+title: "Guide: Grafana data source"
 slug: docs/guides/grafana
 sidebar:
   order: 2
