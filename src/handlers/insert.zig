@@ -11,6 +11,10 @@ const Params = @import("../process.zig").Params;
 const ApiError = @import("../server/error.zig").ApiError;
 const Compression = @import("../server/compression.zig").Compression;
 
+// TODO: document API in a typed spec
+// and find a way to test it extensively
+// to reproduce all the errors
+
 /// insertLokiJson defines a loki json insertion operation
 pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
     const contentType = r.headers.get("content-type");

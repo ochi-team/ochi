@@ -29,7 +29,6 @@ path: []const u8,
 
 indexBuf: []u8,
 entriesBuf: []u8,
-lensBuf: []u8,
 
 // holds ownership,
 // it's necessary in order to support ref counter
@@ -139,8 +138,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     errdefer alloc.free(indexBuf);
     const entriesBuf = try fs.readAll(io, alloc, entriesPath);
     errdefer alloc.free(entriesBuf);
-    const lensBuf = try fs.readAll(io, alloc, lensPath);
-    errdefer alloc.free(lensBuf);
 
     table.* = .{
         .mem = null,
@@ -154,7 +151,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 
         .indexBuf = indexBuf,
         .entriesBuf = entriesBuf,
-        .lensBuf = lensBuf,
     };
 
     return table;
@@ -163,7 +159,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 pub fn close(self: *Table, io: Io) void {
     if (self.disk) |disk| {
         self.alloc.free(self.entriesBuf);
-        self.alloc.free(self.lensBuf);
         self.alloc.free(self.indexBuf);
 
         disk.deinit(io, self.alloc);
@@ -220,11 +215,34 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .alloc = alloc,
 
         .entriesBuf = memTable.entriesBuf.items,
-        .lensBuf = memTable.lensBuf.items,
         .indexBuf = memTable.indexBuf.items,
     };
 
     return table;
+}
+
+pub fn readLens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    std.debug.assert(buf.len > 0);
+    if (self.disk) |disk| {
+        const n = try disk.lensFile.readPositionalAll(io, buf, offset);
+        return n;
+        // const fileReader = disk.lensFile.reader(io, buf);
+        // var reader = fileReader.interface;
+        // try reader.discardAll(offset);
+        // const n = try reader.readSliceShort(buf);
+        // if (n != reader.buffer.len) return error.EndOfStream;
+        // return n;
+    } else if (self.mem) |mem| {
+        const n = @min(buf.len, mem.lensBuf.items.len - offset);
+        @memcpy(buf[0..n], mem.lensBuf.items[offset .. offset + n]);
+        return n;
+        // var reader = std.Io.Reader.fixed(mem.lensBuf.items);
+        // try reader.discardAll(offset);
+        // const n = try reader.readSliceShort(buf);
+        // return n;
+    } else {
+        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    }
 }
 
 pub fn lessThan(_: void, one: *Table, another: *Table) bool {
@@ -388,12 +406,11 @@ test "fromMem creates proper table from mem table with populated data" {
     try testing.expect(table.mem != null);
     try testing.expect(table.disk == null);
     try testing.expect(table.entriesBuf.len > 0);
-    try testing.expect(table.lensBuf.len > 0);
+    try testing.expect(table.mem.?.lensBuf.items.len > 0);
     try testing.expect(table.indexBuf.len > 0);
 
     try testing.expectEqual(memTable.size(), table.size);
     try testing.expectEqualSlices(u8, memTable.entriesBuf.items, table.entriesBuf);
-    try testing.expectEqualSlices(u8, memTable.lensBuf.items, table.lensBuf);
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, table.indexBuf);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
@@ -438,9 +455,12 @@ test "open reads table from disk" {
     const expectedMetaindexCompressed = try readTestTableFile(io, alloc, tablePath, filenames.metaindex);
     defer alloc.free(expectedMetaindexCompressed);
 
+    var readBuf: [64]u8 = undefined;
+    const lensLen = try table.readLens(io, &readBuf, 0);
+
     try testing.expectEqualSlices(u8, expectedIndex, table.indexBuf);
     try testing.expectEqualSlices(u8, expectedEntries, table.entriesBuf);
-    try testing.expectEqualSlices(u8, expectedLens, table.lensBuf);
+    try testing.expectEqualSlices(u8, expectedLens, readBuf[0..lensLen]);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
         alloc,
@@ -454,6 +474,7 @@ test "open reads table from disk" {
 
     try testing.expectEqualDeep(expectedMetaindex.records, table.metaindexRecords);
 
-    const expectedSize = @as(u64, expectedMetaindexCompressed.len + expectedIndex.len + expectedEntries.len + expectedLens.len);
+    const expectedSize: u64 = expectedMetaindexCompressed.len +
+        expectedIndex.len + expectedEntries.len + expectedLens.len;
     try testing.expectEqual(expectedSize, table.size);
 }

@@ -60,7 +60,7 @@ pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID) !bool {
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
 
-    const maybeItem = try lookup.findFirstByPrefix(alloc, sidBuf);
+    const maybeItem = try lookup.findFirstByPrefix(io, alloc, sidBuf);
     if (maybeItem) |item| {
         return item.len == sidBuf.len;
     }
@@ -129,7 +129,7 @@ pub fn querySIDs(
     var lookup = try Lookup.init(io, alloc, self.recorder);
     defer lookup.deinit(io, alloc);
 
-    var result = try querySIDsFromExpr(alloc, &lookup, tenantID, tags);
+    var result = try querySIDsFromExpr(io, alloc, &lookup, tenantID, tags);
     defer result.streamIDs.deinit(alloc);
 
     if (result.streamIDs.keys().len == 0)
@@ -150,21 +150,22 @@ pub fn querySIDs(
 
 // TODO: pass destination AutoArrayHashMapUnmanaged to collect the keys
 fn querySIDsFromExpr(
+    io: Io,
     alloc: Allocator,
     lookup: *Lookup,
     tenantID: u64,
     expr: *const FilterExpression,
 ) !StreamIDsByPrefixesResult {
     switch (expr.*) {
-        .predicate => |p| return querySIDsFromPredicate(alloc, lookup, tenantID, p),
+        .predicate => |p| return querySIDsFromPredicate(io, alloc, lookup, tenantID, p),
         .andOp => |ops| {
-            var left = try querySIDsFromExpr(alloc, lookup, tenantID, ops[0]);
+            var left = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[0]);
             defer left.streamIDs.deinit(alloc);
 
             if (left.streamIDs.keys().len == 0)
                 return .{ .streamIDs = .empty, .cutOff = left.cutOff };
 
-            var right = try querySIDsFromExpr(alloc, lookup, tenantID, ops[1]);
+            var right = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[1]);
             defer right.streamIDs.deinit(alloc);
 
             var intersection: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
@@ -177,10 +178,10 @@ fn querySIDsFromExpr(
             return .{ .streamIDs = intersection, .cutOff = left.cutOff or right.cutOff };
         },
         .orOp => |ops| {
-            var left = try querySIDsFromExpr(alloc, lookup, tenantID, ops[0]);
+            var left = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[0]);
             errdefer left.streamIDs.deinit(alloc);
 
-            var right = try querySIDsFromExpr(alloc, lookup, tenantID, ops[1]);
+            var right = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[1]);
             defer right.streamIDs.deinit(alloc);
 
             for (right.streamIDs.keys()) |sid| {
@@ -192,6 +193,7 @@ fn querySIDsFromExpr(
 }
 
 fn querySIDsFromPredicate(
+    io: Io,
     alloc: Allocator,
     lookup: *Lookup,
     tenantID: u64,
@@ -203,7 +205,7 @@ fn querySIDsFromPredicate(
             const prefix = try alloc.alloc(u8, TagRecordsParser.encodePrefixBound(tag));
             defer alloc.free(prefix);
             TagRecordsParser.encodePrefix(prefix, tenantID, tag);
-            return lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{prefix});
+            return lookup.findAllStreamIDsByPrefixes(io, alloc, &[_][]const u8{prefix});
         },
         else => return error.QueryMatchOperationNotImplemented,
     }

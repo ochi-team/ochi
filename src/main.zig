@@ -22,7 +22,7 @@ pub fn main() !void {
         if (debugAlloc) |*da| _ = da.deinit();
     }
 
-    // TODO set io based on build options
+    // TODO replace IO API to evented/zio
     var io_impl: std.Io.Threaded = .init(alloc, .{});
     defer io_impl.deinit();
     const io = io_impl.io();

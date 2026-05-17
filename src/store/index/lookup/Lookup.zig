@@ -71,10 +71,10 @@ pub fn deinit(self: *Lookup, io: Io, alloc: Allocator) void {
 /// Semantics are the same as:
 /// 1) seek to the first item >= prefix
 /// 2) verify the returned candidate still has the prefix.
-pub fn findFirstByPrefix(self: *Lookup, alloc: Allocator, prefix: []const u8) !?[]const u8 {
-    try self.seek(alloc, prefix);
+pub fn findFirstByPrefix(self: *Lookup, io: Io, alloc: Allocator, prefix: []const u8) !?[]const u8 {
+    try self.seek(io, alloc, prefix);
 
-    if (!try self.next(alloc)) {
+    if (!try self.next(io, alloc)) {
         return null;
     }
 
@@ -99,6 +99,7 @@ pub const StreamIDsByPrefixesResult = struct {
 };
 pub fn findAllStreamIDsByPrefixes(
     self: *Lookup,
+    io: Io,
     alloc: Allocator,
     prefixes: []const []const u8,
 ) !StreamIDsByPrefixesResult {
@@ -118,9 +119,9 @@ pub fn findAllStreamIDsByPrefixes(
     // 1. split them into groups so we know if they share the same block/prefix
     // 2. if they ordered in .seek call we can skip previous block and continue from the current position
     for (prefixes) |prefix| {
-        try self.seek(alloc, prefix);
+        try self.seek(io, alloc, prefix);
 
-        while (try self.next(alloc)) {
+        while (try self.next(io, alloc)) {
             if (self.current.len >= prefix.len and
                 std.mem.eql(u8, self.current[0..prefix.len], prefix))
             {
@@ -151,7 +152,7 @@ pub fn findAllStreamIDsByPrefixes(
     };
 }
 
-fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
+fn seek(self: *Lookup, io: Io, alloc: Allocator, key: []const u8) !void {
     self.isRead = false;
     self.heapArray.clearRetainingCapacity();
 
@@ -159,8 +160,8 @@ fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
     // contributes its current item to the global min-heap.
     for (0..self.lookupTables.items.len) |i| {
         var lt = &self.lookupTables.items[i];
-        try lt.seek(alloc, key);
-        if (!try lt.next(alloc)) {
+        try lt.seek(io, alloc, key);
+        if (!try lt.next(io, alloc)) {
             continue;
         }
 
@@ -178,7 +179,7 @@ fn seek(self: *Lookup, alloc: Allocator, key: []const u8) !void {
     self.seekedIsCurrent = true;
 }
 
-fn next(self: *Lookup, alloc: Allocator) !bool {
+fn next(self: *Lookup, io: Io, alloc: Allocator) !bool {
     if (self.isRead) return false;
 
     if (self.seekedIsCurrent) {
@@ -186,16 +187,16 @@ fn next(self: *Lookup, alloc: Allocator) !bool {
         return true;
     }
 
-    const hasNext = try self.nextBlock(alloc);
+    const hasNext = try self.nextBlock(io, alloc);
     self.isRead = !hasNext;
     return hasNext;
 }
 
-fn nextBlock(self: *Lookup, alloc: Allocator) !bool {
+fn nextBlock(self: *Lookup, io: Io, alloc: Allocator) !bool {
     // We keep value copies of LookupTable in the heap array.
     // Advancing the min cursor and fixing the heap yields the next global item.
     var lt = &self.tablesHeap.array.items[0];
-    if (try lt.next(alloc)) {
+    if (try lt.next(io, alloc)) {
         self.tablesHeap.fix(0);
         self.current = self.tablesHeap.array.items[0].current;
         return true;
@@ -271,7 +272,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
         "zzzz",
     };
     for (prefixes) |prefix| {
-        const actual = try lookup.findFirstByPrefix(alloc, prefix);
+        const actual = try lookup.findFirstByPrefix(io, alloc, prefix);
         try testing.expect(actual == null);
     }
 }
@@ -300,7 +301,7 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
         "key:",
         "zzzz",
     };
-    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &prefixes);
+    var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, &prefixes);
     defer actual.streamIDs.deinit(alloc);
 
     try testing.expectEqual(actual.streamIDs.keys().len, 0);
@@ -382,7 +383,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
-        const actual = try lookup.findFirstByPrefix(alloc, case.prefix);
+        const actual = try lookup.findFirstByPrefix(io, alloc, case.prefix);
 
         if (case.expected) |want| {
             try testing.expect(actual != null);
@@ -507,7 +508,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
-        var actual = try lookup.findAllStreamIDsByPrefixes(alloc, case.prefixes);
+        var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, case.prefixes);
         defer actual.streamIDs.deinit(alloc);
 
         if (case.expected) |want| {
@@ -563,7 +564,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     var lookup = try Lookup.init(io, alloc, recorder);
     defer lookup.deinit(io, alloc);
 
-    var actual = try lookup.findAllStreamIDsByPrefixes(alloc, &[_][]const u8{keyValue});
+    var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, &[_][]const u8{keyValue});
     defer actual.streamIDs.deinit(alloc);
 
     try testing.expect(actual.streamIDs.keys().len != 0);
