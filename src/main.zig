@@ -7,10 +7,25 @@ const build = @import("build");
 const Conf = @import("Conf.zig");
 const server = @import("server.zig");
 
+pub const tracy_impl = @import("tracy_impl");
+pub const tracy = @import("tracy");
+pub const tracy_options: tracy.Options = .{
+    .on_demand = false,
+    .no_broadcast = false,
+    .only_localhost = false,
+    .only_ipv4 = false,
+    .delayed_init = false,
+    .manual_lifetime = false,
+    .verbose = false,
+    .data_port = null,
+    .broadcast_port = null,
+    .default_callstack_depth = 32,
+};
+
 pub fn main() !void {
     var debugAlloc: ?std.heap.DebugAllocator(.{}) = null;
 
-    const alloc: std.mem.Allocator = blk: {
+    var alloc: std.mem.Allocator = blk: {
         if (builtin.mode == .Debug) {
             debugAlloc = .init;
             break :blk debugAlloc.?.allocator();
@@ -21,6 +36,8 @@ pub fn main() !void {
     defer {
         if (debugAlloc) |*da| _ = da.deinit();
     }
+    var tracyAlloc = tracy.Allocator{ .parent = alloc };
+    alloc = tracyAlloc.allocator();
 
     // TODO replace IO API to evented/zio
     var io_impl: std.Io.Threaded = .init(alloc, .{});

@@ -1,8 +1,27 @@
 const std = @import("std");
 
+fn addOption(b: *std.Build, exe: *std.Build.Step.Compile) void {
+    // add build options to runtime
+    const options = b.addOptions();
+    exe.root_module.addOptions("build", options);
+
+    // build: version
+    const args = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
+    const version = b.run(args);
+    options.addOption([]const u8, "version", version);
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Allow the user to enable or disable Tracy support with a build flag
+    const tracy_enabled = b.option(
+        bool,
+        "tracy",
+        "Build with Tracy support.",
+    ) orelse false;
+    const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
 
     // 3d party dependencies
     const zeit = b.dependency("zeit", .{
@@ -22,6 +41,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const metrics = b.dependency("metrics", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const tracy = b.dependency("tracy", .{
         .target = target,
         .optimize = optimize,
     });
@@ -51,12 +74,15 @@ pub fn build(b: *std.Build) void {
     });
 
     // all the projects imports, main bin and tests
+    const tracyImpl = if (tracy_enabled) "tracy_impl_enabled" else "tracy_impl_disabled";
     const imports = [_]std.Build.Module.Import{
         std.Build.Module.Import{ .name = "zeit", .module = zeit.module("zeit") },
         std.Build.Module.Import{ .name = "httpz", .module = httpz.module("httpz") },
         std.Build.Module.Import{ .name = "snappy", .module = snappy.module("snappy") },
         std.Build.Module.Import{ .name = "zint", .module = zint.module("zint") },
         std.Build.Module.Import{ .name = "metrics", .module = metrics.module("metrics") },
+        std.Build.Module.Import{ .name = "tracy", .module = tracy.module("tracy") },
+        std.Build.Module.Import{ .name = "tracy_impl", .module = tracy.module(tracyImpl) },
         std.Build.Module.Import{ .name = "c", .module = cModule },
         std.Build.Module.Import{ .name = "encoding", .module = encodeModule },
     };
@@ -75,16 +101,9 @@ pub fn build(b: *std.Build) void {
             // concern is only to collect debug information (logging, crash events)
         }),
     });
+
     b.installArtifact(exe);
-
-    // add build options to runtime
-    const options = b.addOptions();
-    exe.root_module.addOptions("build", options);
-
-    // build: version
-    const args = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
-    const version = b.run(args);
-    options.addOption([]const u8, "version", version);
+    addOption(b, exe);
 
     // run command
     const run_exe = b.addRunArtifact(exe);
@@ -92,7 +111,6 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_exe.step);
 
     // prepare test
-    const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),

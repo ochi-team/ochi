@@ -5,9 +5,11 @@ services:
       dockerfile: Dockerfile
       args:
         OPTIMIZE: Debug
+        TRACY: true
     command: ["/usr/local/bin/ochi"]
     ports:
       - "9014:9014"
+      - "8086:8086"
 
   prometheus:
     image: prom/prometheus:v3.4.2

@@ -1,0 +1,30 @@
+version: '3.9'
+services:
+  ochi:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        OPTIMIZE: Debug
+    command: ["/usr/local/bin/ochi"]
+    ports:
+      - "9014:9014"
+
+  pyroscope:
+    image: 'grafana/pyroscope:latest'
+    ports:
+      - '4040:4040'
+
+  alloy:
+    image: 'grafana/alloy:latest'
+    privileged: true
+    pid: host
+    volumes:
+      - ./alloy.config:/etc/alloy/config.alloy
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
+    command: run /etc/alloy/config.alloy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - pyroscope
+
