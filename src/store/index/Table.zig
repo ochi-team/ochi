@@ -17,9 +17,7 @@ const catalog = @import("../table/catalog.zig");
 
 const Table = @This();
 
-// either one has to be available,
-// NOTE: adding a third one like object table may complicated it,
-// so then it would require implement at able as an interface
+// either one has to be available
 mem: ?*MemTable,
 disk: ?*DiskTable,
 
@@ -40,6 +38,7 @@ alloc: Allocator,
 // state
 
 // inMerge defines whether the table is taken by a merge job
+// TODO: maybe do it an atomic flag not to lock during the merges
 inMerge: bool = false,
 // toRemove defines if the table must be removed on releasing,
 // we do it via a flag instead of a direct removal,
