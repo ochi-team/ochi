@@ -5,7 +5,7 @@ export const options = {
   scenarios: {
     default: {
       executor: 'per-vu-iterations',
-      vus: 4,
+      vus: 8,
       iterations: 40,
     },
   },
@@ -18,10 +18,9 @@ const ratio = 0;
 
 const cardinalities = {
   app: 12,
-  namespace: 6,
-  pod: 24,
-  language: 6,
-  word: 40,
+  namespace: 4,
+  pod: 8,
+  language: 4,
 };
 
 const KB = 1024;
@@ -45,5 +44,5 @@ export default function () {
     'status is 200': (r) => r.status === 200,
   });
 
-  sleep(0.3);
+  sleep(0.2);
 }

@@ -12,6 +12,7 @@ pub const Params = struct {
     tenantID: u64,
 };
 
+// TODO: if we don't use decoding of it perhaps we don't need to encode lens
 fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
     var size: usize = Encoder.varIntBound(tags.len);
     for (tags) |tag| {

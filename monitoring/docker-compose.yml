@@ -4,12 +4,12 @@ services:
       context: ..
       dockerfile: Dockerfile
       args:
-        OPTIMIZE: Debug
-        TRACY: true
+        OPTIMIZE: ReleaseSafe
+        TRACY: false
     command: ["/usr/local/bin/ochi"]
     ports:
       - "9014:9014"
-      - "8086:8086"
+      # - "8086:8086"
 
   prometheus:
     image: prom/prometheus:v3.4.2
@@ -54,3 +54,21 @@ services:
       - /sys:/sys:ro
       # docker storage metadata for layer/filesystem usage insights
       - /var/lib/docker/:/var/lib/docker:ro
+  pyroscope:
+    image: 'grafana/pyroscope:latest'
+    ports:
+      - '4040:4040'
+
+  alloy:
+    image: 'grafana/alloy:latest'
+    privileged: true
+    pid: host
+    volumes:
+      - ./alloy.config:/etc/alloy/config.alloy
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
+    command: run /etc/alloy/config.alloy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - pyroscope
+
