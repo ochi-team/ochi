@@ -94,9 +94,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &imports,
-            // TODO: keep it only for debug mode
-            // .sanitize_c = .full,
-            // .sanitize_thread = true,
+            .sanitize_thread = optimize == .Debug,
             // TODO: try using .strip option to reduce the size of the binary,
             // concern is only to collect debug information (logging, crash events)
         }),
