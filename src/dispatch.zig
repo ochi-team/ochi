@@ -77,40 +77,39 @@ pub const Dispatcher = struct {
             .storeMeter = &self.store.meter,
         };
 
-        // TODO: add error logging to every handler,
-        // define a standard approach:
-        // 1. where to log
-        // 2. how do we propagate inner error, only diagnostic or real error
-        // 3. do we return ApiError or any from a handler
-        action(&ctx, req, res) catch |err| switch (err) {
-            ApiError.EmptyBody => {
-                res.status = 400;
-                res.body = "request body is empty";
-            },
-            ApiError.DecompressFailed => {
-                res.status = 400;
-                res.body = "failed to decompress request body";
-            },
-            ApiError.ContentEncodingNotSupported => {
-                res.status = 415;
-                res.body = "content-encoding is not supported";
-            },
-            ApiError.ContentTypeNotSupported => {
-                res.status = 415;
-                res.body = "content-type is not supported";
-            },
-            ApiError.MaxBodySize => {
-                res.status = 413;
-                res.body = "max body size is exceeded";
-            },
-            std.mem.Allocator.Error.OutOfMemory => {
-                res.status = 500;
-                res.body = "server is out of memory";
-            },
-            else => {
-                res.status = 500;
-                res.body = "internal server error";
-            },
+        action(&ctx, req, res) catch |err| {
+            std.debug.print("[ERROR] failed to handle request: {s}\n", .{@errorName(err)});
+
+            switch (err) {
+                ApiError.EmptyBody => {
+                    res.status = 400;
+                    res.body = "request body is empty";
+                },
+                ApiError.DecompressFailed => {
+                    res.status = 400;
+                    res.body = "failed to decompress request body";
+                },
+                ApiError.ContentEncodingNotSupported => {
+                    res.status = 415;
+                    res.body = "content-encoding is not supported";
+                },
+                ApiError.ContentTypeNotSupported => {
+                    res.status = 415;
+                    res.body = "content-type is not supported";
+                },
+                ApiError.MaxBodySize => {
+                    res.status = 413;
+                    res.body = "max body size is exceeded";
+                },
+                std.mem.Allocator.Error.OutOfMemory => {
+                    res.status = 500;
+                    res.body = "server is out of memory";
+                },
+                else => {
+                    res.status = 500;
+                    res.body = "internal server error";
+                },
+            }
         };
     }
 
