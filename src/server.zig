@@ -50,7 +50,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const n = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &storePathBuf);
 
-    var store = try Store.init(io, allocator, storePathBuf[0..n]);
+    var store = try Store.init(io, allocator, storePathBuf[0..n], &conf);
     defer store.deinit(io, allocator);
     try store.start(io, allocator);
 

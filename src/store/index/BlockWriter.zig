@@ -64,6 +64,9 @@ entriesBlock: EntriesBlock = .{},
 uncompressedIndexBlockBuf: std.ArrayList(u8) = .empty,
 uncompressedMetaindexBuf: std.ArrayList(u8) = .empty,
 compressedBuf: std.ArrayList(u8) = .empty,
+// TODO: perhaps we can make array list for metaIndex and don't hold this pointer,
+// or document why it's necessary
+firstEntryBuf: std.ArrayList(u8) = .empty,
 
 indexBlockOffset: u64 = 0,
 
@@ -125,6 +128,7 @@ pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
     self.uncompressedIndexBlockBuf.deinit(alloc);
     self.uncompressedMetaindexBuf.deinit(alloc);
     self.compressedBuf.deinit(alloc);
+    self.firstEntryBuf.deinit(alloc);
 }
 
 pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock) !void {
@@ -158,8 +162,10 @@ pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock
     self.uncompressedIndexBlockBuf.items.len += bhEncodeBound;
 
     // Write block header
-    if (self.mi.firstItem.len == 0) {
-        self.mi.firstItem = self.bh.firstEntry;
+    if (self.mi.firstEntry.len == 0) {
+        self.firstEntryBuf.clearRetainingCapacity();
+        try self.firstEntryBuf.appendSlice(alloc, self.bh.firstEntry);
+        self.mi.firstEntry = self.firstEntryBuf.items;
     }
     self.bh.reset();
     self.mi.blockHeadersCount += 1;
@@ -195,6 +201,7 @@ fn flushIndexData(self: *BlockWriter, io: Io, alloc: Allocator) !void {
     self.uncompressedMetaindexBuf.items.len += mrBound;
 
     self.mi.reset();
+    self.firstEntryBuf.clearRetainingCapacity();
 }
 
 fn writeData(self: *BlockWriter, io: Io, alloc: Allocator, data: []const u8) !void {
@@ -385,4 +392,41 @@ test "BlockWriter metaindexBuf may contain multiple records" {
         totalBlockHeaders += rec.blockHeadersCount;
     }
     try testing.expectEqual(@as(u64, @intCast(blocksCount)), totalBlockHeaders);
+}
+
+test "BlockWriter preserves first metaindex item when reusing source block" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var table = try MemTable.empty(alloc);
+    defer table.deinit(alloc);
+
+    var writer = BlockWriter.initFromMemTable(table);
+    defer writer.deinit(alloc);
+
+    var block = try MemBlock.init(alloc, 128);
+    defer block.deinit(alloc);
+
+    try testing.expect(block.add("alpha-001"));
+    try testing.expect(block.add("alpha-002"));
+    block.sortData();
+    try writer.writeBlock(io, alloc, block);
+
+    block.reset();
+    try testing.expect(block.add("omega-001"));
+    try testing.expect(block.add("omega-002"));
+    block.sortData();
+    try writer.writeBlock(io, alloc, block);
+
+    try writer.close(io, alloc);
+
+    const decoded = try MetaIndex.decodeDecompress(alloc, table.metaindexBuf.items, 2);
+    defer {
+        for (decoded.records) |*rec| rec.deinit(alloc);
+        if (decoded.records.len > 0) alloc.free(decoded.records);
+    }
+
+    try testing.expectEqual(@as(usize, 1), decoded.records.len);
+    try testing.expectEqualStrings("alpha-001", decoded.records[0].firstEntry);
+    try testing.expectEqual(@as(u32, 2), decoded.records[0].blockHeadersCount);
 }

@@ -18,13 +18,13 @@ pub const DecodedMetaIndex = struct {
 
 // TODO: make the json fields tiny bit shorter to consume less space on reading,
 // after that knowing the entry value limit we can know in advance how much buffer we need to decode it
-firstItem: []const u8 = "",
+firstEntry: []const u8 = "",
 blockHeadersCount: u32 = 0,
 indexBlockOffset: u64 = 0,
 indexBlockSize: u32 = 0,
 
 pub fn deinit(self: *const MetaIndex, alloc: Allocator) void {
-    alloc.free(self.firstItem);
+    alloc.free(self.firstEntry);
 }
 
 pub fn reset(self: *MetaIndex) void {
@@ -33,14 +33,14 @@ pub fn reset(self: *MetaIndex) void {
 
 // [firstItem.len:firstItem][4:count][8:offset][4:size] = firstItem.len + lenBound + 16
 pub fn bound(self: *const MetaIndex) usize {
-    const firstItemBound = Encoder.varIntBound(self.firstItem.len);
-    return firstItemBound + self.firstItem.len + 16;
+    const firstItemBound = Encoder.varIntBound(self.firstEntry.len);
+    return firstItemBound + self.firstEntry.len + 16;
 }
 
 pub fn encode(self: *const MetaIndex, buf: []u8) void {
     var enc = Encoder.init(buf);
 
-    enc.writeString(self.firstItem);
+    enc.writeString(self.firstEntry);
     enc.writeInt(u32, self.blockHeadersCount);
     enc.writeInt(u64, self.indexBlockOffset);
     enc.writeInt(u32, self.indexBlockSize);
@@ -57,7 +57,7 @@ pub fn encodeAlloc(self: *const MetaIndex, alloc: Allocator) ![]u8 {
 
 pub fn decode(self: *MetaIndex, alloc: Allocator, buf: []u8) !usize {
     var dec = Decoder.init(buf);
-    self.firstItem = try alloc.dupe(u8, dec.readString());
+    self.firstEntry = try alloc.dupe(u8, dec.readString());
     self.blockHeadersCount = dec.readInt(u32);
     self.indexBlockOffset = dec.readInt(u64);
     self.indexBlockSize = dec.readInt(u32);
@@ -124,11 +124,11 @@ pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u
 }
 
 pub fn lessThan(_: void, one: MetaIndex, another: MetaIndex) bool {
-    return std.mem.lessThan(u8, one.firstItem, another.firstItem);
+    return std.mem.lessThan(u8, one.firstEntry, another.firstEntry);
 }
 
 pub fn compareToKey(key: []const u8, record: MetaIndex) std.math.Order {
-    const order = std.mem.order(u8, key, record.firstItem);
+    const order = std.mem.order(u8, key, record.firstEntry);
     return switch (order) {
         .eq => .eq,
         .lt => .eq,
@@ -142,13 +142,13 @@ test "MetaIndex decodeDecompress roundtrip" {
     const alloc = testing.allocator;
 
     const rec1 = MetaIndex{
-        .firstItem = "alpha",
+        .firstEntry = "alpha",
         .blockHeadersCount = 2,
         .indexBlockOffset = 10,
         .indexBlockSize = 64,
     };
     const rec2 = MetaIndex{
-        .firstItem = "omega",
+        .firstEntry = "omega",
         .blockHeadersCount = 3,
         .indexBlockOffset = 74,
         .indexBlockSize = 128,
@@ -198,13 +198,13 @@ test "MetaIndex roundtrip file read/write" {
     defer alloc.free(tablePath);
 
     const rec1 = MetaIndex{
-        .firstItem = "alpha",
+        .firstEntry = "alpha",
         .blockHeadersCount = 2,
         .indexBlockOffset = 10,
         .indexBlockSize = 64,
     };
     const rec2 = MetaIndex{
-        .firstItem = "omega",
+        .firstEntry = "omega",
         .blockHeadersCount = 3,
         .indexBlockOffset = 74,
         .indexBlockSize = 128,

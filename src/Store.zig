@@ -180,7 +180,7 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
             return;
         },
     };
-    self.meter.setDiskUsage(io, usage);
+    self.meter.diskUsage.set(usage);
 }
 
 // TODO: the implementation watches the files stats, it's not efficient,

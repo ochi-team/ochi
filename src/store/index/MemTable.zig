@@ -135,7 +135,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     try self.indexBuf.appendSlice(alloc, compressed[0..n]);
 
     const metaIndex = MetaIndex{
-        .firstItem = self.blockHeader.firstEntry,
+        .firstEntry = self.blockHeader.firstEntry,
         .blockHeadersCount = 1,
         .indexBlockOffset = 0,
         .indexBlockSize = @intCast(n),
