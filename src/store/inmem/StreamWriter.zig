@@ -156,7 +156,7 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     // TODO: implement page cache support
     _ = fitsInCache;
 
-    fs.createDirAssert(io, path);
+    try fs.createDirAssert(io, path);
 
     var stack = std.heap.stackFallback(2048, alloc);
     const fba = stack.get();

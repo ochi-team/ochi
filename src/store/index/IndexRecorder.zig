@@ -120,9 +120,9 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
     return t;
 }
 
-pub fn createDir(io: Io, path: []const u8) void {
-    fs.createDirAssert(io, path);
-    fs.syncPathAndParentDir(io, path);
+pub fn createDir(io: Io, path: []const u8) !void {
+    try fs.createDirAssert(io, path);
+    try fs.syncPathAndParentDir(io, path);
 }
 
 pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
@@ -773,7 +773,7 @@ pub fn mergeTables(
         defer tableHeader.deinit(alloc);
         try tableHeader.writeFile(io, fbaFallback.get(), destinationTablePath);
 
-        fs.syncPathAndParentDir(io, destinationTablePath);
+        try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
     const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);

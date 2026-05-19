@@ -63,8 +63,8 @@ pub const FilterExpression = union(enum) {
         }
     }
 
-    pub fn stringifyLimited(filter: *const FilterExpression, buf: []u8) []const u8 {
-        var n = 0;
+    pub fn stringifyLimited(filter: *const FilterExpression, buf: []u8) ![]const u8 {
+        var n: usize = 0;
         while (n < buf.len) {
             switch (filter.*) {
                 .predicate => |p| {
@@ -78,19 +78,22 @@ pub const FilterExpression = union(enum) {
                         .greaterThan => ">",
                         .greaterThanOrEqual => ">=",
                     };
-                    n += std.fmt.bufPrint(buf[n..], "{s} {s} {s}", .{ p.key, opStr, p.value });
+                    const bb = try std.fmt.bufPrint(buf[n..], "{s} {s} {s}", .{ p.key, opStr, p.value });
+                    n += bb.len;
                 },
                 .andOp => |ops| {
-                    n += std.fmt.bufPrint(buf[n..], "({s}) AND ({s})", .{
+                    const bb = try std.fmt.bufPrint(buf[n..], "({s}) AND ({s})", .{
                         ops[0].stringifyLimited(buf[n..]),
                         ops[1].stringifyLimited(buf[n..]),
                     });
+                    n += bb.len;
                 },
                 .orOp => |ops| {
-                    n += std.fmt.bufPrint(buf[n..], "({s}) OR ({s})", .{
+                    const bb = try std.fmt.bufPrint(buf[n..], "({s}) OR ({s})", .{
                         ops[0].stringifyLimited(buf[n..]),
                         ops[1].stringifyLimited(buf[n..]),
                     });
+                    n += bb.len;
                 },
             }
         }
@@ -184,10 +187,10 @@ test "stringifyLimited" {
     };
 
     var buf: [8]u8 = undefined;
-    var str = orExpr.stringifyLimited(&buf);
+    var str = try orExpr.stringifyLimited(&buf);
     try testing.expectEqualStrings("((env ==", str);
 
     var bufLonger: [64]u8 = undefined;
-    str = orExpr.stringifyLimited(&bufLonger);
+    str = try orExpr.stringifyLimited(&bufLonger);
     try testing.expectEqualStrings("((env == prod) OR (service != worker))", str);
 }

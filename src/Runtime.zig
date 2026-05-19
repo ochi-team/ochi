@@ -49,7 +49,6 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) 
             var len: usize = @sizeOf(u64);
             const no = std.posix.system.sysctlbyname("hw.memsize", &memsize, &len, null, 0);
             if (std.posix.errno(no) != .SUCCESS) {
-                // TODO: handle the error for real adding an error code to a diagnostic
                 return error.UnknownTotalSystemMemory;
             }
 
@@ -103,7 +102,6 @@ pub fn getFreeDiskSpace(self: *Runtime, io: Io) u64 {
 
 fn updateDiskSpace(self: *Runtime, nowMs: u64) DiskSpace {
     const space = getDiskSpace(self.path, nowMs);
-    // TODO: log an error and return the old value, then signal to shutdown
     self.diskSpace = space;
     return space;
 }

@@ -73,8 +73,8 @@ pub fn open(
 
         std.debug.print("partition doesn't exist due to recent crash or a data loss," ++
             " creating missing partition, path: {s}\n", .{path});
-        IndexRecorder.createDir(io, indexPath);
-        DataRecorder.createDir(io, dataPath);
+        try IndexRecorder.createDir(io, indexPath);
+        try DataRecorder.createDir(io, dataPath);
     }
 
     const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
@@ -137,13 +137,13 @@ pub fn close(
     self.alloc.destroy(self);
 }
 
-pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []const u8) void {
-    fs.createDirAssert(io, path);
+pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []const u8) !void {
+    try fs.createDirAssert(io, path);
 
-    IndexRecorder.createDir(io, indexPath);
-    DataRecorder.createDir(io, dataPath);
+    try IndexRecorder.createDir(io, indexPath);
+    try DataRecorder.createDir(io, dataPath);
 
-    fs.syncPathAndParentDir(io, path);
+    try fs.syncPathAndParentDir(io, path);
 }
 
 // TODO: meter how much it takes usually

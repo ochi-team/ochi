@@ -37,7 +37,6 @@ pub fn init(io: Io, allocator: std.mem.Allocator) !*MemTable {
 
     const p = try allocator.create(MemTable);
     errdefer allocator.destroy(p);
-    //TODO should it be stack allocated instead?
     p.* = MemTable{
         .streamWriter = streamWriter,
         .tableHeader = .{},
@@ -196,7 +195,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
 
     try self.tableHeader.writeFile(io, allocator, path);
 
-    fs.syncPathAndParentDir(io, path);
+    try fs.syncPathAndParentDir(io, path);
 }
 
 const BlockHeader = @import("block_header.zig").BlockHeader;

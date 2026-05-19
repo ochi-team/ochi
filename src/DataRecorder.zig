@@ -111,10 +111,10 @@ memMergeSem: Io.Semaphore,
 memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
-// TODO: implement atomic value that change it's value depending on how many times it's read,
-// the idea is to test every break on stop.load() similar to check all allocations failure
 g: Io.Group = .init,
 // TODO: migrate to io cancelation
+// TODO: implement atomic value that change it's value depending on how many times it's read,
+// the idea is to test every break on stop.load() similar to check all allocations failure
 stopped: std.atomic.Value(bool) = .init(true),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
@@ -169,9 +169,9 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
     return t;
 }
 
-pub fn createDir(io: Io, path: []const u8) void {
-    fs.createDirAssert(io, path);
-    fs.syncPathAndParentDir(io, path);
+pub fn createDir(io: Io, path: []const u8) !void {
+    try fs.createDirAssert(io, path);
+    try fs.syncPathAndParentDir(io, path);
 }
 
 pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
@@ -537,7 +537,7 @@ fn mergeTables(
             break :blk try StreamWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
         }
     };
-    // TODO: remove this shame after rmoving writer from mem table
+    // TODO: remove this shame after removing writer from mem table
     defer if (tableKind != .mem) streamWriter.deinit(io, alloc);
 
     const tableHeader = mergeData(io, alloc, streamWriter, &readers, stopped) catch |err| {
@@ -569,7 +569,7 @@ fn mergeTables(
         var fba = std.heap.stackFallback(256, alloc);
         try tableHeader.writeFile(io, fba.get(), destinationTablePath);
 
-        fs.syncPathAndParentDir(io, destinationTablePath);
+        try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
     const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);

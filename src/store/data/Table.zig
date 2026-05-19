@@ -80,9 +80,6 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         ),
     };
 
-    // fsync after opening tables because it creates the files
-    defer fs.syncPathAndParentDir(io, path);
-
     var fba = std.heap.stackFallback(2048, parentAlloc);
     const alloc = fba.get();
 
@@ -114,6 +111,9 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         const table = try Table.open(io, parentAlloc, tablePath);
         tables.appendAssumeCapacity(table);
     }
+
+    // fsync after opening tables because it creates the files
+    try fs.syncPathAndParentDir(io, path);
 
     return tables;
 }

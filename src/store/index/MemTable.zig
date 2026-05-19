@@ -200,7 +200,7 @@ pub fn size(self: *MemTable) u64 {
 }
 
 pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) !void {
-    fs.createDirAssert(io, path);
+    try fs.createDirAssert(io, path);
 
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
@@ -222,5 +222,5 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) 
 
     try self.tableHeader.writeFile(io, alloc, path);
 
-    fs.syncPathAndParentDir(io, path);
+    try fs.syncPathAndParentDir(io, path);
 }

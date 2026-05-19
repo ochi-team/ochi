@@ -84,7 +84,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache
     // TODO: apply fitsInCache to create a component to write into a file taking OS cache into account
     _ = fitsInCache;
 
-    fs.createDirAssert(io, path);
+    try fs.createDirAssert(io, path);
 
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();

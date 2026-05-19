@@ -3,11 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 
-// TODO: perhaps worth replacing all the panics in the package,
-// and return regular error and handle them outside.
-// It allows testing its capabilities better
-// and handle the crash safer
-
+// TODO: document why we don't std tmp
 var tmpFileNum = std.atomic.Value(u64).init(0);
 
 pub fn pathExists(io: Io, path: []const u8) !bool {
@@ -21,40 +17,24 @@ pub fn pathExists(io: Io, path: []const u8) !bool {
     return true;
 }
 
-pub fn syncPathAndParentDir(io: Io, path: []const u8) void {
-    syncPath(io, path);
+pub fn syncPathAndParentDir(io: Io, path: []const u8) !void {
+    try syncPath(io, path);
 
-    const parent = std.fs.path.dirname(path) orelse std.debug.panic("path has no parent directory: '{s}'", .{path});
-    syncPath(io, parent);
+    const parent = std.fs.path.dirname(path) orelse return error.PathHasNoParent;
+    try syncPath(io, parent);
 }
 
-fn syncPath(io: Io, path: []const u8) void {
-    // TODO: handle the error and write data to a recovery log,
-    // panicking here means data loss
-    if (Dir.openFileAbsolute(io, path, .{})) |file| {
-        var f = file;
-        defer f.close(io);
-        f.sync(io) catch |err| {
-            std.debug.panic(
-                "FATAL: cannot flush '{s}' to storage: {s}",
-                .{ path, @errorName(err) },
-            );
-        };
-        return;
-    } else |err| {
-        std.debug.panic(
-            "FATAL: cannot flush '{s}' to storage: {s}",
-            .{ path, @errorName(err) },
-        );
-    }
+fn syncPath(io: Io, path: []const u8) !void {
+    // TODO: handle the error and write data to a recovery log
+    const f = try Dir.openFileAbsolute(io, path, .{});
+    defer f.close(io);
+    try f.sync(io);
 }
 
-pub fn createDirAssert(io: Io, path: []const u8) void {
+pub fn createDirAssert(io: Io, path: []const u8) !void {
     const e = Dir.accessAbsolute(io, path, .{});
     std.debug.assert(e == error.FileNotFound);
-    Dir.createDirAbsolute(io, path, .default_dir) catch |err| {
-        std.debug.panic("failed to make dir {s}: {s}", .{ path, @errorName(err) });
-    };
+    try Dir.createDirAbsolute(io, path, .default_dir);
 }
 
 pub fn writeBufferValToFile(
@@ -81,12 +61,11 @@ pub fn writeBufferToFileAtomic(
     truncate: bool,
 ) !void {
     if (!truncate) {
-        if (Dir.accessAbsolute(io, path, .{})) {
-            std.debug.panic("failed to write atomic file, path '{s}' already exists", .{path});
-        } else |err| switch (err) {
+        Dir.accessAbsolute(io, path, .{}) catch |err| switch (err) {
             error.FileNotFound => {},
-            else => std.debug.panic("failed to access file '{s}': {s}", .{ path, @errorName(err) }),
-        }
+            else => return err,
+        };
+        return error.FileAlreadyExists;
     }
 
     const n = tmpFileNum.fetchAdd(1, .monotonic);
@@ -106,7 +85,7 @@ pub fn writeBufferToFileAtomic(
     // could render a new file inaccessible even if you properly synchronized it.
     // If you did not just create the file, there is no need to synchronize its directory.
     const parent = std.fs.path.dirname(path) orelse return error.PathHasNoParent;
-    syncPath(io, parent);
+    try syncPath(io, parent);
 }
 
 pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
@@ -191,7 +170,7 @@ test "syncPathAndParentDir fsync file and parent directory" {
     const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    syncPathAndParentDir(io, abs_path);
+    try syncPathAndParentDir(io, abs_path);
 }
 
 test "syncPathAndParentDir fsync directory and parent directory" {
@@ -204,7 +183,7 @@ test "syncPathAndParentDir fsync directory and parent directory" {
     const abs_path = try tmp.dir.realPathFileAlloc(io, "nested", std.testing.allocator);
     defer std.testing.allocator.free(abs_path);
 
-    syncPathAndParentDir(io, abs_path);
+    try syncPathAndParentDir(io, abs_path);
 }
 
 test "readAll reads full file content from tmp directory" {
