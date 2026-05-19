@@ -1,43 +1,33 @@
 services:
-  ochi:
+  ochi-debug:
+    build:
+      context: ..
+      dockerfile: Dockerfile.debug
+      args:
+        OPTIMIZE: Debug
+        TRACY: true
+    environment:
+      TSAN_OPTIONS: "external_symbolizer_path=/usr/bin/llvm-symbolizer,symbolize=1,halt_on_error=1,verbosity=1"
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_PTRACE
+    command: ["/usr/local/bin/ochi"]
+    profiles: ["debug"]
+    ports:
+      - "9014:9014"
+      - "8086:8086"
+
+  ochi-profile:
     build:
       context: ..
       dockerfile: Dockerfile
       args:
         OPTIMIZE: ReleaseSafe
-        TRACY: false
     command: ["/usr/local/bin/ochi"]
+    profiles: ["profile"]
     ports:
       - "9014:9014"
-      # - "8086:8086"
-
-  prometheus:
-    image: prom/prometheus:v3.4.2
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      # enables reload API
-      - --web.enable-lifecycle
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    depends_on:
-      - ochi
-      - cadvisor
-
-  grafana:
-    image: grafana/grafana:11.1.4
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports:
-      - "3000:3000"
-    depends_on:
-      - prometheus
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
@@ -54,10 +44,13 @@ services:
       - /sys:/sys:ro
       # docker storage metadata for layer/filesystem usage insights
       - /var/lib/docker/:/var/lib/docker:ro
+    profiles: ["profile"]
+
   pyroscope:
     image: 'grafana/pyroscope:latest'
     ports:
       - '4040:4040'
+    profiles: ["profile"]
 
   alloy:
     image: 'grafana/alloy:latest'
@@ -71,4 +64,34 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - pyroscope
+    profiles: ["profile"]
+
+  prometheus:
+    image: prom/prometheus:v3.4.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # enables reload API
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - cadvisor
+    profiles: ["profile"]
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    profiles: ["profile"]
 
