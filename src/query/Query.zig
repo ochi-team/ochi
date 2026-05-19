@@ -62,6 +62,41 @@ pub const FilterExpression = union(enum) {
             },
         }
     }
+
+    pub fn stringifyLimited(filter: *const FilterExpression, buf: []u8) []const u8 {
+        var n = 0;
+        while (n < buf.len) {
+            switch (filter.*) {
+                .predicate => |p| {
+                    const opStr = switch (p.op) {
+                        .equal => "==",
+                        .notEqual => "!=",
+                        .matchRegex => "~",
+                        .notMatchRegex => "!~",
+                        .lessThan => "<",
+                        .lessThanOrEqual => "<=",
+                        .greaterThan => ">",
+                        .greaterThanOrEqual => ">=",
+                    };
+                    n += std.fmt.bufPrint(buf[n..], "{s} {s} {s}", .{ p.key, opStr, p.value });
+                },
+                .andOp => |ops| {
+                    n += std.fmt.bufPrint(buf[n..], "({s}) AND ({s})", .{
+                        ops[0].stringifyLimited(buf[n..]),
+                        ops[1].stringifyLimited(buf[n..]),
+                    });
+                },
+                .orOp => |ops| {
+                    n += std.fmt.bufPrint(buf[n..], "({s}) OR ({s})", .{
+                        ops[0].stringifyLimited(buf[n..]),
+                        ops[1].stringifyLimited(buf[n..]),
+                    });
+                },
+            }
+        }
+
+        return buf[0..n];
+    }
 };
 
 const testing = std.testing;
@@ -138,4 +173,21 @@ test "validateQuery" {
             try case.query.validate();
         }
     }
+}
+
+test "stringifyLimited" {
+    const orExpr: Query.FilterExpression = .{
+        .orOp = .{
+            &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+            &.{ .predicate = .{ .key = "service", .value = "worker", .op = .notEqual } },
+        },
+    };
+
+    var buf: [8]u8 = undefined;
+    var str = orExpr.stringifyLimited(&buf);
+    try testing.expectEqualStrings("((env ==", str);
+
+    var bufLonger: [64]u8 = undefined;
+    str = orExpr.stringifyLimited(&bufLonger);
+    try testing.expectEqualStrings("((env == prod) OR (service != worker))", str);
 }

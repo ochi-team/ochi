@@ -212,10 +212,11 @@ pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: u64, que
     if (result.cutOff) {
         // TODO: add a message to a response
         // so a user could narrow a query
-        // TODO: make query expression converted to strings
+        var tagsBuf: [128]u8 = undefined;
+        const tagsStr = query.tagsExpr.stringifyLimited(&tagsBuf);
         std.debug.print(
-            "[WARN] query is cut off by index, tenantID: {d}, partition: {s}, query: {}\n",
-            .{ tenantID, self.key, query.tagsExpr },
+            "[WARN] query is cut off by index, tenantID: {d}, partition: {s}, query: {s}\n",
+            .{ tenantID, self.key, tagsStr },
         );
     }
 
