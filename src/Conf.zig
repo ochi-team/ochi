@@ -15,6 +15,7 @@ pub const AppConfig = struct {
 
     // TODO: make it supporting absolute path
     storePath: []const u8 = ".ochi",
+    storeRetention: u64 = 30 * std.time.ns_per_day,
 };
 
 pub const ServerConfig = struct {

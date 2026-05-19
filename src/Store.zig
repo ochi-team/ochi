@@ -45,13 +45,14 @@ pathsBuf: std.ArrayList([]const u8) = .empty,
 
 // runtime stats
 runtime: *Runtime,
+conf: *const Conf,
 
 // TODO: start partitions retention watcher
-pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
+pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Store {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
-    const runtime = try Runtime.init(io, alloc, path, Conf.getConf().app.maxCachePortion);
+    const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
     errdefer runtime.deinit(alloc);
 
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -86,6 +87,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8) !Store {
         .streamCache = streamCache,
         .meter = meter,
         .runtime = runtime,
+        .conf = conf,
     };
 
     // TODO: try making it parallel, it speed up start up time
@@ -178,7 +180,7 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
             return;
         },
     };
-    self.meter.diskUsage.set(usage);
+    self.meter.setDiskUsage(io, usage);
 }
 
 // TODO: the implementation watches the files stats, it's not efficient,
@@ -221,7 +223,7 @@ pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []con
     Dir.accessAbsolute(io, path, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                createDir(io, path, partitionsPath);
+                try createDir(io, path, partitionsPath);
                 return Dir.openDirAbsolute(io, partitionsPath, .{ .iterate = true });
             },
             else => return err,
@@ -230,8 +232,8 @@ pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []con
     Dir.accessAbsolute(io, partitionsPath, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                fs.createDirAssert(io, partitionsPath);
-                fs.syncPathAndParentDir(io, path);
+                try fs.createDirAssert(io, partitionsPath);
+                try fs.syncPathAndParentDir(io, path);
             },
             else => return err,
         }
@@ -240,15 +242,13 @@ pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []con
     return Dir.openDirAbsolute(io, partitionsPath, .{ .iterate = true });
 }
 
-pub fn createDir(io: Io, path: []const u8, partitionsPath: []const u8) void {
-    fs.createDirAssert(io, path);
-    fs.createDirAssert(io, partitionsPath);
+pub fn createDir(io: Io, path: []const u8, partitionsPath: []const u8) !void {
+    try fs.createDirAssert(io, path);
+    try fs.createDirAssert(io, partitionsPath);
 
-    fs.syncPathAndParentDir(io, path);
+    try fs.syncPathAndParentDir(io, path);
 }
 
-// TODO: make it configurable
-const retentionNs: u64 = 30 * std.time.ns_per_day;
 pub fn addLines(
     self: *Store,
     io: Io,
@@ -261,7 +261,7 @@ pub fn addLines(
     // TODO: make partition interval configurable
     // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
     const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
-    const minDay = (nowNs - retentionNs) / std.time.ns_per_day;
+    const minDay = (nowNs - self.conf.app.storeRetention) / std.time.ns_per_day;
     // limit the incoming logs to now + 1 day,
     // in case an ingestor sends data with broken timezone or timestamp
     const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
@@ -303,7 +303,7 @@ pub fn addLines(
         if (day < minDay) {
             std.debug.print(
                 "[WARN] incoming log is out of the retentation range: lower range={d}, given={d}\n",
-                .{ nowNs - retentionNs, lines[idx].timestampNs },
+                .{ nowNs - self.conf.app.storeRetention, lines[idx].timestampNs },
             );
             continue;
         }
@@ -470,7 +470,7 @@ fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     Dir.accessAbsolute(io, partitionPath, .{ .read = true, .write = true }) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                Partition.createDir(io, partitionPath, indexPath, dataPath);
+                try Partition.createDir(io, partitionPath, indexPath, dataPath);
             },
             else => return err,
         }
@@ -708,7 +708,7 @@ test "init opens existing partitions, sorts them and sets lru" {
         try Dir.createDirAbsolute(io, dataPath, .default_dir);
     }
 
-    var store = try Store.init(io, alloc, storePath);
+    var store = try Store.init(io, alloc, storePath, &Conf.getConf());
     defer store.deinit(io, alloc);
 
     try testing.expectEqual(keys.len, store.partitions.items.len);
@@ -865,7 +865,7 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     defer alloc.free(partitionsRoot);
     try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
 
-    var store = try Store.init(io, alloc, rootPath);
+    var store = try Store.init(io, alloc, rootPath, &Conf.getConf());
     defer store.deinit(io, alloc);
 
     const dayOne: u64 = 10;
