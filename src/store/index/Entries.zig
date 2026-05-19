@@ -42,28 +42,41 @@ const EntriesShard = struct {
     ) !?EntriesShardAddResult {
         self.mx.lockUncancelable(io);
         defer self.mx.unlock(io);
+
+        var validBlockI: usize = 0;
         if (self.blocks.items.len == 0) {
+            var firstValid: usize = entries.len;
+            for (0..entries.len) |i| {
+                if (entries[i].len <= maxMemBlockSize) {
+                    firstValid = i;
+                    break;
+                }
+            }
+
+            if (firstValid == entries.len) {
+                std.debug.print(
+                    "[DEBUG] skip adding items to index block, items={d}, maxSize={d}\n",
+                    .{ entries.len, maxMemBlockSize },
+                );
+                return null;
+            }
+
+            // we identify whether we need to create a new block for the upcoming entry,
+            // during the flush we must end up either with no blocks,
+            // or with blocks having a content,
+            // passing the data without validation makes us create an empty block in advance,
+            // but it's a dangling block does nothing
+            validBlockI = firstValid;
             try self.blocks.ensureUnusedCapacity(alloc, 1);
-
             const b = try MemBlock.init(alloc, maxMemBlockSize);
-
             self.blocks.appendAssumeCapacity(b);
-
             self.flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         }
+
         var block = self.blocks.items[self.blocks.items.len - 1];
         var gatheredEntriesCount: usize = 0;
 
-        for (entries) |entry| {
-            if (block.add(entry)) {
-                gatheredEntriesCount += 1;
-                continue;
-            }
-
-            if (self.blocks.items.len >= maxBlocksPerShard) {
-                break;
-            }
-
+        for (entries[validBlockI..]) |entry| {
             // Skip too long item
             if (entry.len > maxMemBlockSize) {
                 var logPrefix = entry;
@@ -77,11 +90,19 @@ const EntriesShard = struct {
                 continue;
             }
 
+            if (block.add(entry)) {
+                gatheredEntriesCount += 1;
+                continue;
+            }
+
+            if (self.blocks.items.len >= maxBlocksPerShard) {
+                break;
+            }
+
             try self.blocks.ensureUnusedCapacity(alloc, 1);
 
             // if it didn't skip the block means the previous one has not enough space
             block = try MemBlock.init(alloc, maxMemBlockSize);
-
             self.blocks.appendAssumeCapacity(block);
 
             gatheredEntriesCount += 1;
@@ -217,7 +238,7 @@ test "EntriesShard.add" {
         .{
             .test_entries = &.{tooLarge},
             .expected_flush = false,
-            .expected_block_count = 1,
+            .expected_block_count = 0,
             .expected_last_block_entries_count = 0,
         },
         // no flush when at threshold-1 with small entry that fits

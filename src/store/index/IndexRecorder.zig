@@ -1136,6 +1136,39 @@ test "IndexRecorder disk table merger survives large load" {
     try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
 }
 
+test "IndexRecorder flushForce skips oversized-only input without crash" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+    runtime.cpus = 1;
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    defer recorder.deinit(io, alloc);
+    recorder.maxMemBlockSize = 64;
+
+    const tooLarge = "x" ** 512;
+    try recorder.add(io, alloc, &.{tooLarge});
+
+    // Must not crash: oversized entries are skipped before any mem block is created.
+    try recorder.flushForce(io, alloc);
+
+    try testing.expectEqual(@as(usize, 0), recorder.blocksToFlush.items.len);
+    var blocksInShards: usize = 0;
+    for (recorder.entries.shards) |shard| {
+        blocksInShards += shard.blocks.items.len;
+    }
+    try testing.expectEqual(@as(usize, 0), blocksInShards);
+    try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
+    try testing.expectEqual(@as(u64, 0), countDiskItemsInRecorder(recorder));
+}
+
 test "IndexRecorder reads free disk space from runtime" {
     const alloc = testing.allocator;
     const io = testing.io;

@@ -61,11 +61,16 @@ pub fn writeBufferToFileAtomic(
     truncate: bool,
 ) !void {
     if (!truncate) {
-        Dir.accessAbsolute(io, path, .{}) catch |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        };
-        return error.FileAlreadyExists;
+        if (Dir.accessAbsolute(io, path, .{})) {
+            return error.FileAlreadyExists;
+        } else |err| {
+            switch (err) {
+                // the only successful case,
+                // if we don't allow truncation then the file must not exist
+                error.FileNotFound => {},
+                else => return err,
+            }
+        }
     }
 
     const n = tmpFileNum.fetchAdd(1, .monotonic);
@@ -210,7 +215,7 @@ test "readAll reads full file content from tmp directory" {
     try std.testing.expectEqualStrings(content, actual);
 }
 
-test "writeBufferValToFileAtomic writes and overwrites atomically" {
+test "writeBufferValToFileAtomicWritesAndOverwritesAtomically" {
     const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{});
