@@ -63,13 +63,15 @@ pub const FilterExpression = union(enum) {
         }
     }
 
-    pub fn stringifyLimited(filter: *const FilterExpression, buf: []u8) ![]const u8 {
+    pub fn stringifyLimited(filter: *const FilterExpression, buf: []u8) usize {
+        std.debug.assert(buf.len > 0);
+
         var n: usize = 0;
         while (n < buf.len) {
             switch (filter.*) {
                 .predicate => |p| {
                     const opStr = switch (p.op) {
-                        .equal => "==",
+                        .equal => "=",
                         .notEqual => "!=",
                         .matchRegex => "~",
                         .notMatchRegex => "!~",
@@ -78,27 +80,77 @@ pub const FilterExpression = union(enum) {
                         .greaterThan => ">",
                         .greaterThanOrEqual => ">=",
                     };
-                    const bb = try std.fmt.bufPrint(buf[n..], "{s} {s} {s}", .{ p.key, opStr, p.value });
-                    n += bb.len;
+                    buf[n] = '(';
+                    n += 1;
+                    if (buf[n..].len < p.key.len) break;
+                    @memcpy(buf[n .. n + p.key.len], p.key);
+                    n += p.key.len;
+                    if (n >= buf.len) break;
+                    buf[n] = ' ';
+                    n += 1;
+                    if (buf[n..].len < opStr.len) break;
+                    @memcpy(buf[n .. n + opStr.len], opStr);
+                    n += opStr.len;
+                    if (n >= buf.len) break;
+                    buf[n] = ' ';
+                    n += 1;
+                    if (buf[n..].len < p.value.len) break;
+                    @memcpy(buf[n .. n + p.value.len], p.value);
+                    n += p.value.len;
+                    if (n < buf.len) {
+                        buf[n] = ')';
+                        n += 1;
+                    }
+                    break;
                 },
                 .andOp => |ops| {
-                    const bb = try std.fmt.bufPrint(buf[n..], "({s}) AND ({s})", .{
-                        ops[0].stringifyLimited(buf[n..]),
-                        ops[1].stringifyLimited(buf[n..]),
-                    });
-                    n += bb.len;
+                    buf[n] = '(';
+                    n += 1;
+                    if (n >= buf.len) break;
+                    n += stringifyLimited(ops[0], buf[n..]);
+                    if (n >= buf.len) break;
+                    buf[n] = ' ';
+                    n += 1;
+                    if (buf[n..].len < 3) break;
+                    @memcpy(buf[n .. n + 3], "AND");
+                    n += 3;
+                    if (n >= buf.len) break;
+                    buf[n] = ' ';
+                    n += 1;
+                    if (n >= buf.len) break;
+                    n += stringifyLimited(ops[1], buf[n..]);
+                    if (n < buf.len) {
+                        buf[n] = ')';
+                        n += 1;
+                    }
+                    break;
                 },
                 .orOp => |ops| {
-                    const bb = try std.fmt.bufPrint(buf[n..], "({s}) OR ({s})", .{
-                        ops[0].stringifyLimited(buf[n..]),
-                        ops[1].stringifyLimited(buf[n..]),
-                    });
-                    n += bb.len;
+                    buf[n] = '(';
+                    n += 1;
+                    if (n >= buf.len) break;
+                    n += stringifyLimited(ops[0], buf[n..]);
+                    if (n >= buf.len) break;
+                    buf[n] = ' ';
+                    n += 1;
+                    if (buf[n..].len < 2) break;
+                    @memcpy(buf[n .. n + 2], "OR");
+                    n += 2;
+                    if (n >= buf.len) break;
+                    buf[n] = ' ';
+                    n += 1;
+                    if (n >= buf.len) break;
+                    n += stringifyLimited(ops[1], buf[n..]);
+                    if (n < buf.len) {
+                        buf[n] = ')';
+                        n += 1;
+                    }
+                    break;
                 },
             }
         }
 
-        return buf[0..n];
+        return n;
     }
 };
 
@@ -186,11 +238,11 @@ test "stringifyLimited" {
         },
     };
 
-    var buf: [8]u8 = undefined;
-    var str = try orExpr.stringifyLimited(&buf);
-    try testing.expectEqualStrings("((env ==", str);
+    var buf: [12]u8 = undefined;
+    var n = orExpr.stringifyLimited(&buf);
+    try testing.expectEqualStrings("((env = prod", buf[0..n]);
 
     var bufLonger: [64]u8 = undefined;
-    str = try orExpr.stringifyLimited(&bufLonger);
-    try testing.expectEqualStrings("((env == prod) OR (service != worker))", str);
+    n = orExpr.stringifyLimited(&bufLonger);
+    try testing.expectEqualStrings("((env = prod) OR (service != worker))", bufLonger[0..n]);
 }
