@@ -126,7 +126,7 @@ pub const Dispatcher = struct {
         self.meter.throughput.incrBy(labels, size) catch |err| {
             std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
         };
-        self.meter.latency.observe(labels, latencyMs) catch |err| {
+        self.meter.latencyMs.observe(labels, latencyMs) catch |err| {
             std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
         };
     }

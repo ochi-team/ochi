@@ -19,7 +19,7 @@ fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
 
 fn metrics(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
-    res.header("content-type", "text/plain; version=0.0.4; charset=utf-8");
+    res.header("content-type", "text/plain");
 
     const w = res.writer();
     try ctx.dispatchMeter.write(w);
