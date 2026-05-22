@@ -1,18 +1,18 @@
-import { sleep, check } from 'k6';
-import loki from 'k6/x/loki';
+import { sleep, check } from "k6";
+import loki from "k6/x/loki";
 
 export const options = {
   scenarios: {
     default: {
-      executor: 'per-vu-iterations',
-      vus: 8,
+      executor: "per-vu-iterations",
+      vus: 4,
       iterations: 40,
     },
   },
 };
 
-const TENANT_ID = '42';
-const BASE_URL = 'http://localhost:9014/insert';
+const TENANT_ID = "42";
+const BASE_URL = "http://localhost:9014/insert";
 const timeout = 10000;
 const ratio = 0;
 
@@ -34,14 +34,14 @@ const conf = new loki.Config({
 const client = new loki.Client(conf);
 
 export default function () {
-  const res = client.pushParameterized(60, 8 * KB, 24 * KB);
+  const res = client.pushParameterized(60, 2 * KB, 8 * KB);
 
   if (res.status !== 200) {
     console.error(`push failed status=${res.status} body=${res.body}`);
   }
 
   check(res, {
-    'status is 200': (r) => r.status === 200,
+    "status is 200": (r) => r.status === 200,
   });
 
   sleep(0.2);

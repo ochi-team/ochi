@@ -581,13 +581,13 @@ fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !
     return colI;
 }
 
-// TODO: find why we can't borrow a key
 fn ensureColumnKeyOwned(self: *Self, alloc: Allocator, key: []const u8) !void {
     if (self.columnIDGen.keyIDs.get(key) != null) {
         return;
     }
 
     try self.columnIDGen.keyIDs.ensureUnusedCapacity(alloc, 1);
+    // TODO: find why we can't borrow a key
     const ownedKey = try alloc.dupe(u8, key);
     errdefer alloc.free(ownedKey);
 
