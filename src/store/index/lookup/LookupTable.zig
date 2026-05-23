@@ -172,26 +172,39 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
     self.metaindexRecords = self.table.metaindexRecords;
 }
 
+const LowerBoundBySuffixComparator = struct {
+    keySuffix: []const u8,
+    prefixLen: usize,
+};
+fn lowerBoundBySuffixComparatorFn(self: LowerBoundBySuffixComparator, item: []const u8) std.math.Order {
+    const itemSuffix = item[self.prefixLen..];
+    const order = std.mem.order(u8, self.keySuffix, itemSuffix);
+    return switch (order) {
+        .gt => .gt,
+        .eq, .lt => .eq,
+    };
+}
+
 // returns the first index with item[prefixLen..] >= keySuffix.
 // callers may receive items.len when keySuffix is greater than all suffixes.
-// TODO: replace to std.order.binarySearch
 // TODO: test alternative array layout
 fn lowerBoundBySuffix(items: []const []const u8, key: []const u8, prefixLen: usize) usize {
     if (items.len == 0) return 0;
 
     const keySuffix = key[prefixLen..];
 
-    var lo: usize = 0;
-    var hi: usize = items.len;
-    while (lo < hi) {
-        const mid = lo + (hi - lo) / 2;
-        if (std.mem.lessThan(u8, items[mid][prefixLen..], keySuffix)) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
+    // binarySearch may return any index from the `.eq` range;
+    // narrow the searched prefix until we reach its first index.
+    const comp = LowerBoundBySuffixComparator{ .keySuffix = keySuffix, .prefixLen = prefixLen };
+    var result = items.len;
+    var search = items;
+    while (search.len > 0) {
+        const i = std.sort.binarySearch([]const u8, search, comp, lowerBoundBySuffixComparatorFn) orelse break;
+        result = i;
+        search = search[0..i];
     }
-    return lo;
+
+    return result;
 }
 
 /// Moves to the next item in table order.
