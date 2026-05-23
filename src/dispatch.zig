@@ -11,6 +11,8 @@ const Store = @import("Store.zig").Store;
 
 const ApiError = @import("server/error.zig").ApiError;
 
+const QueryError = @import("query/Loql.zig").QueryError;
+
 pub const AppContext = struct {
     io: Io,
     allocator: Allocator,
@@ -100,6 +102,14 @@ pub const Dispatcher = struct {
                 ApiError.MaxBodySize => {
                     res.status = 413;
                     res.body = "max body size is exceeded";
+                },
+                QueryError.EmptyQuery => {
+                    res.status = 400;
+                    res.body = "query is too long";
+                },
+                QueryError.QueryTooLong => {
+                    res.status = 400;
+                    res.body = "query is too long";
                 },
                 std.mem.Allocator.Error.OutOfMemory => {
                     res.status = 500;

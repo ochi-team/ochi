@@ -11,6 +11,11 @@ const ErrorReporter = @import("ErrorReporter.zig");
 
 const Query = @import("Query.zig");
 
+pub const QueryError = error{
+    EmptyQuery,
+    QueryTooLong,
+};
+
 const Loql = @This();
 
 scanner: Scanner = .{},
@@ -23,6 +28,7 @@ pub fn deinit(self: *Loql, allocator: Allocator) void {
     self.translator.deinit(allocator);
 }
 
+const maxQueryLength = 4096;
 // TODO: it must accept a reader, not a query string
 pub fn translateQuery(
     self: *Loql,
@@ -32,6 +38,12 @@ pub fn translateQuery(
     nowNs: u64,
 ) !Query {
     const trimmedQueryStr = std.mem.trim(u8, fullQueryStr, " \n\t");
+    if (trimmedQueryStr.len == 0) {
+        return error.EmptyQuery;
+    }
+    if (trimmedQueryStr.len > maxQueryLength) {
+        return error.QueryTooLong;
+    }
 
     // TODO: validate whether it's a syntax error and return report content
     // or unknown error

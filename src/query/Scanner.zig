@@ -56,7 +56,6 @@ pub const TokenKind = enum {
 pub const Token = struct {
     kind: TokenKind,
     lexeme: []const u8,
-    // TODO: implement a query size validation min max
     line: u16,
     col: u16,
 };
