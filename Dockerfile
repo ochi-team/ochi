@@ -3,7 +3,7 @@ FROM ubuntu:24.04 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates git && rm -rf /var/lib/apt/lists/*
 ARG ZIG_VERSION=0.16.0
 # x86_64 or aarch64
-ARG TARGETARCH=aarch64
+ARG TARGETARCH=x86_64
 ARG OPTIMIZE=ReleaseSafe
 ARG TRACY=false
 RUN --mount=type=cache,target=/tmp/zig-cache \

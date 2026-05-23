@@ -1,29 +1,10 @@
 services:
-  ochi-debug:
-    build:
-      context: ..
-      dockerfile: Dockerfile.debug
-      args:
-        OPTIMIZE: Debug
-        TRACY: true
-    environment:
-      TSAN_OPTIONS: "external_symbolizer_path=/usr/bin/llvm-symbolizer,symbolize=1,halt_on_error=1,verbosity=1"
-    security_opt:
-      - seccomp=unconfined
-    cap_add:
-      - SYS_PTRACE
-    command: ["/usr/local/bin/ochi"]
-    profiles: ["debug"]
-    ports:
-      - "9014:9014"
-      - "8086:8086"
-
-  ochi-profile:
+  ochi:
     build:
       context: ..
       dockerfile: Dockerfile
       args:
-        OPTIMIZE: ReleaseSafe
+        OPTIMIZE: Debug
     command: ["/usr/local/bin/ochi"]
     profiles: ["profile"]
     ports:
