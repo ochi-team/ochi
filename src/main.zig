@@ -30,7 +30,7 @@ pub fn main() !void {
             debugAlloc = .init;
             break :blk debugAlloc.?.allocator();
         } else {
-            break :blk std.heap.page_allocator;
+            break :blk std.heap.c_allocator;
         }
     };
     defer {

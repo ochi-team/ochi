@@ -34,10 +34,13 @@ prefix: []const u8 = "",
 // 2. it requires storing max mem block size
 buf: std.ArrayList(u8) = .empty,
 
-// data entries are expected to have [kind, 1 byte][tenant: 16 bytes][stream id: 16] for every entry
-// plus tag is optional
-// TODO: this is a joke, but no idea what to do
-const minEntrySizeHint = if (!builtin.is_test) 33 else 1;
+// the smallest production index entry is sid: [kind:1][tenant:8][stream:16] = 25 bytes,
+// use this for initial memEntries capacity so tiny entries don't exhaust pointer slots
+// TODO: this is a joke, but no idea what to do,
+// 1.perhaps make test entities real, not just "x"
+// 2. it might overallocate a lot, we may find a better approach,
+// e.g. adjust a value size better and flush it earlier in order not to overallocate
+const minEntrySizeHint = if (!builtin.is_test) 25 else 1;
 
 pub fn init(
     alloc: Allocator,
@@ -72,6 +75,7 @@ pub fn reset(self: *MemBlock) void {
 
 pub fn add(self: *MemBlock, entry: []const u8) bool {
     std.debug.assert(entry.len > 0);
+    if (self.memEntries.items.len == self.memEntries.capacity) return false;
     if (self.buf.capacity - self.buf.items.len < entry.len) return false;
 
     const start = self.buf.items.len;
@@ -451,6 +455,30 @@ test "MemBlock.add respects max size and reset clears state" {
     block.reset();
     try testing.expectEqual(@as(usize, 0), block.memEntries.items.len);
     try testing.expectEqual(@as(u32, 0), block.buf.items.len);
+}
+
+test "MemBlock.add returns false when memEntries capacity is exhausted first" {
+    const alloc = testing.allocator;
+
+    var block = try MemBlock.init(alloc, 99);
+    defer block.deinit(alloc);
+
+    // Reproduce production-like shape where entry pointer capacity can be smaller
+    // than available bytes in the backing buffer.
+    block.memEntries.deinit(alloc);
+    block.memEntries = try std.ArrayList([]const u8).initCapacity(alloc, 3);
+
+    try testing.expectEqual(@as(usize, 3), block.memEntries.capacity);
+    try testing.expect(block.buf.capacity >= 99);
+
+    try testing.expect(block.add("a"));
+    try testing.expect(block.add("b"));
+    try testing.expect(block.add("c"));
+
+    // No panic: the block reports it cannot fit another item.
+    try testing.expect(!block.add("d"));
+    try testing.expectEqual(@as(usize, 3), block.memEntries.items.len);
+    try testing.expectEqual(@as(u32, 3), block.buf.items.len);
 }
 
 test "MemBlock.encode/decode plain and zstd cases" {
