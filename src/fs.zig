@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 
-// TODO: document why we don't std tmp
+// a global tmp file counter in order to create unique file names suffixes
 var tmpFileNum = std.atomic.Value(u64).init(0);
 
 pub fn pathExists(io: Io, path: []const u8) !bool {
@@ -53,7 +53,7 @@ pub fn writeBufferValToFile(
     try file.sync(io);
 }
 
-// TODO: take a look at std.Io.Dir.cwd().atomicFile
+// TODO: take a look at std.Io.Dir.cwd().createFileAtomic
 pub fn writeBufferToFileAtomic(
     io: Io,
     path: []const u8,

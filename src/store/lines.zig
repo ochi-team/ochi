@@ -277,7 +277,8 @@ pub const Line = struct {
 // TODO: we might want to introduce BlockLines type that holds a struct similar to
 // Block state: slice of timestamps, slice of columns, and slice of all the fields,
 // it allows us to allocate slice of fields all at once instead of per Line,
-// if this type gets wider usage worth naming it Lines instead
+// if this type gets wider usage worth naming it Lines instead,
+// the difference to MultiArray is []Fields is also a flat array for all the lines
 
 pub fn lineLessThan(_: void, one: Line, another: Line) bool {
     // sid is less

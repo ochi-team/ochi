@@ -28,8 +28,8 @@ pub fn deinit(self: *Loql, allocator: Allocator) void {
     self.translator.deinit(allocator);
 }
 
-const maxQueryLength = 4096;
-// TODO: it must accept a reader, not a query string
+const maxQueryLength = 2048;
+// TODO: it must accept a reader probably, not a query string
 pub fn translateQuery(
     self: *Loql,
     allocator: Allocator,

@@ -391,8 +391,10 @@ pub fn retain(self: *Table) void {
     _ = self.refCounter.fetchAdd(1, .acquire);
 }
 
-// TODO: question why we don't pass allocator on release,
-// perhaps we can do it and don't carry allocator in it
+// Table is a managed object, so it does not accept an allocator,
+// because the allocator is in a read path is (arena) not the same as in a write path which
+// which created that table
+// TODO: find how we can explicitly carry an allocator 
 pub fn release(self: *Table, io: Io) void {
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);

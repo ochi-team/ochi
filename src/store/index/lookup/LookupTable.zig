@@ -308,3 +308,82 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
 
     return memBlock;
 }
+
+test "lowerBoundBySuffix" {
+    const Case = struct {
+        name: []const u8,
+        items: []const []const u8,
+        key: []const u8,
+        prefixLen: usize,
+        expected: usize,
+    };
+
+    const sharedItems = [_][]const u8{
+        "stream-001",
+        "stream-010",
+        "stream-050",
+    };
+
+    const variedPrefixItems = [_][]const u8{
+        "aa-x",
+        "ab-b",
+        "ac-c",
+    };
+
+    const cases = [_]Case{
+        .{
+            .name = "empty items returns zero",
+            .items = &.{},
+            .key = "stream-010",
+            .prefixLen = 7,
+            .expected = 0,
+        },
+        .{
+            .name = "exact suffix match",
+            .items = &sharedItems,
+            .key = "stream-010",
+            .prefixLen = 7,
+            .expected = 1,
+        },
+        .{
+            .name = "between two suffixes",
+            .items = &sharedItems,
+            .key = "stream-020",
+            .prefixLen = 7,
+            .expected = 2,
+        },
+        .{
+            .name = "below all suffixes",
+            .items = &sharedItems,
+            .key = "stream-000",
+            .prefixLen = 7,
+            .expected = 0,
+        },
+        .{
+            .name = "above all suffixes returns len",
+            .items = &sharedItems,
+            .key = "stream-999",
+            .prefixLen = 7,
+            .expected = sharedItems.len,
+        },
+        .{
+            .name = "prefix length zero compares full value",
+            .items = &variedPrefixItems,
+            .key = "ab-a",
+            .prefixLen = 0,
+            .expected = 1,
+        },
+        .{
+            .name = "short key suffix falls before first",
+            .items = &variedPrefixItems,
+            .key = "ab",
+            .prefixLen = 2,
+            .expected = 0,
+        },
+    };
+
+    for (cases) |case| {
+        const actual = lowerBoundBySuffix(case.items, case.key, case.prefixLen);
+        try std.testing.expectEqual(case.expected, actual);
+    }
+}
