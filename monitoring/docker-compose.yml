@@ -25,6 +25,14 @@ services:
       - /sys:/sys:ro
       # docker storage metadata for layer/filesystem usage insights
       - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=15s
+      - --store_container_labels=false
+      - --disable_metrics=percpu,sched,tcp,udp,diskIO,hugetlb,referenced_memory
     profiles: ["profile"]
 
   pyroscope:
