@@ -8,7 +8,7 @@ bin/
 .claude/
 
 # load test report
-simulator/k6
+load/k6
 
 # IDEs
 .vscode

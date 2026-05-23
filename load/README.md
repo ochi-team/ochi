@@ -4,10 +4,10 @@ Install [xk6]( https://github.com/grafana/xk6 )
 
 Build k6 with Loki extension:
 ```sh
-xk6 build --with github.com/grafana/xk6-loki@latest
+xk6 build --k6-version v1.7.1 --with  github.com/grafana/xk6-loki@7c26c92
 ```
 
-Launch a debuggee from `monitoring/`, e.g.
+Launch a debugee from `monitoring/`, e.g.
 ```sh
 docker compose -f monitoring/docker-compose.yml up --build
 ```
