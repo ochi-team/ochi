@@ -11,27 +11,34 @@ services:
       - "9014:9014"
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     # cAdvisor needs host-level visibility to report metrics for all containers
     privileged: true
+    pid: host
     ports:
       - "8080:8080"
     volumes:
       # host root filesystem context for filesystem/path resolution
       - /:/rootfs:ro
       # runtime sockets for container runtime discovery and metadata
-      - /var/run:/var/run:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # host kernel and cgroup stats source: cpu, memory, blkio (block device io), network
       - /sys:/sys:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
       # docker storage metadata for layer/filesystem usage insights
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      # host containerd socket used by docker
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
     devices:
       - /dev/kmsg:/dev/kmsg
     command:
       - --docker_only=true
+      - --docker=unix:///var/run/docker.sock
+      - --containerd=/run/containerd/containerd.sock
+      - --containerd-namespace=moby
       - --housekeeping_interval=15s
-      - --store_container_labels=false
+      - --store_container_labels=true
+      - --disable_root_cgroup_stats=true
       - --disable_metrics=percpu,sched,tcp,udp,diskIO,hugetlb,referenced_memory
     profiles: ["profile"]
 
@@ -73,8 +80,11 @@ services:
   grafana:
     image: grafana/grafana:11.1.4
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: true
+      GF_AUTH_ANONYMOUS_ENABLED: true
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_SIGNOUT_MENU: true
+      GF_AUTH_DISABLE_LOGIN_FORM: true
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -83,4 +93,3 @@ services:
     depends_on:
       - prometheus
     profiles: ["profile"]
-

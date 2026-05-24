@@ -261,7 +261,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\".*ochi.*\"}[1m]))",
+          "expr": "sum(rate(container_cpu_usage_seconds_total{image=~\".*ochi.*\"}[1m]))",
           "legendFormat": "CPU",
           "range": true,
           "refId": "A"
@@ -324,7 +324,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(container_memory_working_set_bytes{name=~\".*ochi.*\"})",
+          "expr": "sum(container_memory_working_set_bytes{image=~\".*ochi.*\"})",
           "legendFormat": "Memory",
           "range": true,
           "refId": "A"
