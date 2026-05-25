@@ -25,7 +25,7 @@ blockHeaders: []BlockHeader,
 indexBuf: std.ArrayList(u8) = .empty,
 entriesBlock: EntriesBlock,
 
-metaindexRecords: []MetaIndex,
+metaIndexRecords: []MetaIndex,
 
 isRead: bool,
 
@@ -43,7 +43,7 @@ pub fn init(table: *Table, maxMemBlockSize: u32) LookupTable {
         .blockHeaders = &.{},
         .blockHeadersOwned = &.{},
         .entriesBlock = .{},
-        .metaindexRecords = &.{},
+        .metaIndexRecords = &.{},
         .memBlock = null,
         .memBlockIdx = 0,
     };
@@ -128,13 +128,13 @@ fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) 
         _ = try self.nextBlock(io, alloc);
         return;
     }
-    std.debug.assert(self.metaindexRecords.len != 0);
+    std.debug.assert(self.metaIndexRecords.len != 0);
 
     // Binary search can return the first row strictly above the key.
     // Step back by one row because the target may belong to the previous range.
-    var i = std.sort.binarySearch(MetaIndex, self.metaindexRecords, key, MetaIndex.compareToKey) orelse 0;
+    var i = std.sort.binarySearch(MetaIndex, self.metaIndexRecords, key, MetaIndex.compareToKey) orelse 0;
     if (i > 0) i -= 1;
-    self.metaindexRecords = self.metaindexRecords[i..];
+    self.metaIndexRecords = self.metaIndexRecords[i..];
     if (!try self.nextBlockHeaders(alloc)) {
         return;
     }
@@ -169,7 +169,7 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
     self.entriesBlock.reset();
 
     // Reset to full table scan window; seek narrows this slice later.
-    self.metaindexRecords = self.table.metaindexRecords;
+    self.metaIndexRecords = self.table.metaIndexRecords;
 }
 
 const LowerBoundBySuffixComparator = struct {
@@ -245,13 +245,13 @@ fn nextBlock(self: *LookupTable, io: Io, alloc: Allocator) !bool {
 }
 
 fn nextBlockHeaders(self: *LookupTable, alloc: Allocator) !bool {
-    if (self.metaindexRecords.len == 0) {
+    if (self.metaIndexRecords.len == 0) {
         self.isRead = true;
         return false;
     }
 
-    const metaIndex = self.metaindexRecords[0];
-    self.metaindexRecords = self.metaindexRecords[1..];
+    const metaIndex = self.metaIndexRecords[0];
+    self.metaIndexRecords = self.metaIndexRecords[1..];
 
     // TODO: cache block headers
 

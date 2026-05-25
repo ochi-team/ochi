@@ -799,7 +799,7 @@ fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*
             const reader = try BlockReader.initFromMemTable(alloc, memTable);
             readers.appendAssumeCapacity(reader);
         } else {
-            const reader = try BlockReader.initFromDiskTable(io, alloc, table.path);
+            const reader = try BlockReader.initFromDiskTable(io, alloc, table);
             readers.appendAssumeCapacity(reader);
         }
     }

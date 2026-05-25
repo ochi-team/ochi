@@ -22,7 +22,7 @@ mem: ?*MemTable,
 disk: ?*DiskTable,
 
 // fields for all the tables
-metaindexRecords: []MetaIndex,
+metaIndexRecords: []MetaIndex,
 tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
@@ -147,7 +147,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .disk = disk,
         .size = decodedMetaindex.compressedSize + indexSize + entriesSize + lensSize,
         .path = path,
-        .metaindexRecords = decodedMetaindex.records,
+        .metaIndexRecords = decodedMetaindex.records,
         .tableHeader = &table.disk.?.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
@@ -172,8 +172,8 @@ pub fn close(self: *Table, io: Io) void {
         mem.deinit(self.alloc);
     }
 
-    for (self.metaindexRecords) |*rec| rec.deinit(self.alloc);
-    if (self.metaindexRecords.len > 0) self.alloc.free(self.metaindexRecords);
+    for (self.metaIndexRecords) |*rec| rec.deinit(self.alloc);
+    if (self.metaIndexRecords.len > 0) self.alloc.free(self.metaIndexRecords);
 
     const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
     if (shouldRemove) {
@@ -214,7 +214,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .disk = null,
         .size = memTable.size(),
         .path = "",
-        .metaindexRecords = decodedMetaindex.records,
+        .metaIndexRecords = decodedMetaindex.records,
         .tableHeader = &memTable.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
@@ -435,7 +435,7 @@ test "fromMem creates proper table from mem table with populated data" {
         if (expectedMetaindex.records.len > 0) alloc.free(expectedMetaindex.records);
     }
 
-    try testing.expectEqualDeep(expectedMetaindex.records, table.metaindexRecords);
+    try testing.expectEqualDeep(expectedMetaindex.records, table.metaIndexRecords);
 }
 
 test "open reads table from disk" {
@@ -481,7 +481,7 @@ test "open reads table from disk" {
         if (expectedMetaindex.records.len > 0) alloc.free(expectedMetaindex.records);
     }
 
-    try testing.expectEqualDeep(expectedMetaindex.records, table.metaindexRecords);
+    try testing.expectEqualDeep(expectedMetaindex.records, table.metaIndexRecords);
 
     const expectedSize: u64 = expectedMetaindexCompressed.len +
         expectedIndex.len + expectedEntries.len + expectedLens.len;

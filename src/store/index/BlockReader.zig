@@ -9,6 +9,7 @@ const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 
 const MemBlock = @import("MemBlock.zig");
+const Table = @import("Table.zig");
 const MemTable = @import("MemTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const EntriesBlock = @import("EntriesBlock.zig");
@@ -21,8 +22,11 @@ const BlockReader = @This();
 // to show mem block is not owned on decoding it from mem table,
 // but apparently it's owning
 block: ?*MemBlock,
-// TODO: this is not ok, we must a better ownership model
+// TODO: this is not ok, we must a better ownership model,
+// it must take it from outside
 ownsBlock: bool = false,
+// TODO: no idea yet how to avoid it
+ownsStorage: bool = false,
 // TODO: so far it's used for validation purpose only,
 // it might be useful to expose it as metrics,
 // theoretically it also could be used to adjust zstd compression level
@@ -30,6 +34,7 @@ tableHeader: TableHeader,
 
 // TODO: these buffers could be files, on zig 0.16 implement a reader API,
 // this change will require implementing a proper close method
+// TODO: wtf is that array list, not a slice? document it
 indexBuf: std.ArrayList(u8),
 dataBuf: std.ArrayList(u8),
 lensBuf: std.ArrayList(u8),
@@ -74,6 +79,7 @@ pub fn initFromMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
     r.* = .{
         .block = block,
         .ownsBlock = false,
+        .ownsStorage = false,
         .tableHeader = undefined,
         .currentI = 0,
         .isRead = false,
@@ -93,6 +99,17 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
     );
     errdefer alloc.free(metaIndexRecords.records);
 
+    std.debug.print(
+        "index.BlockReader: open mem table" ++
+            " tableIndexLen={d} tableEntriesLen={d} tableLensLen={d} metaindexRecords={d}",
+        .{
+            memTable.indexBuf.items.len,
+            memTable.entriesBuf.items.len,
+            memTable.lensBuf.items.len,
+            metaIndexRecords.records.len,
+        },
+    );
+
     const block = try MemBlock.init(alloc, @intCast(memTable.tableHeader.entriesCount));
     errdefer block.deinit(alloc);
 
@@ -100,6 +117,7 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
     r.* = .{
         .block = block,
         .ownsBlock = true,
+        .ownsStorage = false,
         .metaIndexRecords = metaIndexRecords.records,
         .tableHeader = memTable.tableHeader,
         .indexBuf = memTable.indexBuf,
@@ -121,7 +139,8 @@ pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !*BlockReader {
 //
 // TODO: we must use Reader interface here instead of plain reading in order to
 // save required RAM to hold the content til it's merged, it lets us opening files one by one
-pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockReader {
+pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockReader {
+    const path = table.path;
     const tableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer tableHeader.deinit(alloc);
 
@@ -144,6 +163,8 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockRead
     const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
     defer fbaAlloc.free(lensPath);
 
+    // fs readAll allocates exact statsSize, so we don't need to call .stat on the file again
+    // TODO: if we replace the open buffers it's good to take stats files to log
     const indexBuf = try fs.readAll(io, alloc, indexPath);
     errdefer alloc.free(indexBuf);
     const entriesBuf = try fs.readAll(io, alloc, entriesPath);
@@ -151,11 +172,32 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockRead
     const lensBuf = try fs.readAll(io, alloc, lensPath);
     errdefer alloc.free(lensBuf);
 
+    std.debug.print(
+        "index.BlockReader: open disk table path={s}" ++
+            " tableIndexLen={d} tableEntriesLen={d} tableLensLen={d} metaindexRecords={d}" ++
+            " indexStatsSize={d} entriesStatsSize={d} lensStatsSize={d} inMerge={any}\n",
+        .{
+            table.path,
+            table.indexBuf.len,
+            table.entriesBuf.len,
+            table.lensBuf.len,
+            table.metaIndexRecords.len,
+            indexBuf.len,
+            entriesBuf.len,
+            lensBuf.len,
+            table.inMerge,
+        },
+    );
+
+    const block = try MemBlock.init(alloc, @intCast(tableHeader.entriesCount));
+    errdefer block.deinit(alloc);
+
     const r = try alloc.create(BlockReader);
     errdefer alloc.destroy(r);
     r.* = .{
-        .block = null,
-        .ownsBlock = false,
+        .block = block,
+        .ownsBlock = true,
+        .ownsStorage = true,
         .metaIndexRecords = metaIndex.records,
         .tableHeader = tableHeader,
         .currentI = 0,
@@ -164,6 +206,9 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockRead
         .dataBuf = .initBuffer(entriesBuf),
         .lensBuf = .initBuffer(lensBuf),
     };
+    r.indexBuf.items.len = indexBuf.len;
+    r.dataBuf.items.len = entriesBuf.len;
+    r.lensBuf.items.len = lensBuf.len;
 
     std.debug.assert(r.tableHeader.blocksCount != 0);
     std.debug.assert(r.tableHeader.entriesCount != 0);
@@ -173,6 +218,13 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockRead
 pub fn deinit(self: *BlockReader, alloc: Allocator) void {
     if (self.ownsBlock) {
         if (self.block) |block| block.deinit(alloc);
+    }
+
+    if (self.ownsStorage) {
+        self.indexBuf.deinit(alloc);
+        self.dataBuf.deinit(alloc);
+        self.lensBuf.deinit(alloc);
+        self.tableHeader.deinit(alloc);
     }
 
     for (self.metaIndexRecords) |*rec| rec.deinit(alloc);
@@ -271,7 +323,8 @@ fn readNextBlockHeaders(self: *BlockReader, alloc: Allocator) !bool {
         return false;
     }
 
-    const mi = &self.metaIndexRecords[self.metaIndexI];
+    const currentMetaIndexI = self.metaIndexI;
+    const mi = &self.metaIndexRecords[currentMetaIndexI];
     self.metaIndexI += 1;
 
     self.compressedBuf.clearRetainingCapacity();
@@ -281,6 +334,7 @@ fn readNextBlockHeaders(self: *BlockReader, alloc: Allocator) !bool {
     const indexStart: usize = @intCast(mi.indexBlockOffset);
     const indexSize: usize = @intCast(mi.indexBlockSize);
     if (indexStart > self.indexBuf.items.len or indexSize > self.indexBuf.items.len - indexStart) {
+        self.logInvalidIndexRange(currentMetaIndexI, mi, indexStart, indexSize, "readNextBlockHeaders");
         return error.InvalidIndexBlockRange;
     }
     const indexEnd = indexStart + indexSize;
@@ -300,6 +354,47 @@ fn readNextBlockHeaders(self: *BlockReader, alloc: Allocator) !bool {
     self.blockHeaders = try BlockHeader.decodeMany(alloc, self.uncompressedBuf.items, mi.blockHeadersCount);
     self.blockHeaderI = 0;
     return true;
+}
+
+// TODO: better to append data to diagnostic and log on the upper level
+fn logInvalidIndexRange(
+    self: *const BlockReader,
+    metaIndexI: usize,
+    mi: *const MetaIndex,
+    indexStart: usize,
+    indexSize: usize,
+    stage: []const u8,
+) void {
+    std.debug.print(
+        "InvalidIndexBlockRange stage={s} metaindexI={d} indexBufLen={d} indexStart={d}" ++
+            " indexSize={d} tableBlocks={d} tableEntries={d} miBlockHeaders={d}\n",
+        .{
+            stage,
+            metaIndexI,
+            self.indexBuf.items.len,
+            indexStart,
+            indexSize,
+            self.tableHeader.blocksCount,
+            self.tableHeader.entriesCount,
+            mi.blockHeadersCount,
+        },
+    );
+
+    if (metaIndexI > 0) {
+        const prev = self.metaIndexRecords[metaIndexI - 1];
+        std.debug.print(
+            "prevMetaindexI={d} prevOffset={d} prevSize={d} prevHeaders={d}\n",
+            .{ metaIndexI - 1, prev.indexBlockOffset, prev.indexBlockSize, prev.blockHeadersCount },
+        );
+    }
+
+    if (metaIndexI + 1 < self.metaIndexRecords.len) {
+        const nextMi = self.metaIndexRecords[metaIndexI + 1];
+        std.debug.print(
+            "hint: nextMetaindexI={d} nextOffset={d} nextSize={d} nextHeaders={d}\n",
+            .{ metaIndexI + 1, nextMi.indexBlockOffset, nextMi.indexBlockSize, nextMi.blockHeadersCount },
+        );
+    }
 }
 
 const testing = std.testing;
@@ -570,4 +665,41 @@ test "BlockReader.next returns InvalidIndexBlockRange on empty index buffer with
     reader.indexBuf.clearRetainingCapacity();
 
     try testing.expectError(error.InvalidIndexBlockRange, reader.next(alloc));
+}
+
+test "BlockReader.initFromDiskTable decodes blocks without null crash" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
+
+    const items = [_][]const u8{ "delta", "alpha", "beta" };
+    const expected = [_][]const u8{ "alpha", "beta", "delta" };
+
+    const block = try createTestMemBlock(alloc, &items);
+    defer block.deinit(alloc);
+
+    var blocks = [_]*MemBlock{block};
+    const memTable = try MemTable.init(io, alloc, &blocks);
+    defer memTable.deinit(alloc);
+
+    try memTable.storeToDisk(io, alloc, tablePath);
+
+    const diskTable = try Table.open(io, alloc, tablePath);
+    defer diskTable.close(io);
+
+    var reader = try BlockReader.initFromDiskTable(io, alloc, diskTable);
+    defer reader.deinit(alloc);
+
+    const hasNext = try reader.next(alloc);
+    try testing.expect(hasNext);
+    try testing.expect(reader.block != null);
+    try testing.expectEqualDeep(expected[0..], reader.block.?.memEntries.items);
+    try testing.expect(!try reader.next(alloc));
 }

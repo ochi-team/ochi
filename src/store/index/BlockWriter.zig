@@ -176,6 +176,8 @@ pub fn close(self: *BlockWriter, io: Io, alloc: Allocator) !void {
     try self.writeMetaindex(io, alloc);
     switch (self.destination) {
         .mem => {},
+        // we don't sync disk table here, because we must sync the parent dir as well
+        // after savhing the header
         .disk => |*disk| disk.close(io),
     }
 }
