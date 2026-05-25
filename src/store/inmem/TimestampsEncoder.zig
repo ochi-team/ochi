@@ -14,8 +14,10 @@ pub const EncodedTimestamps = struct {
     buf: []u8,
 };
 
+// TODO: benchmark against gorilla and deltas
 const Self = @This();
 // TODO: we should inline zint package, it must reduce the build size
+// and give a leverate to make it more optimal
 const zType = zint.Zint(u64);
 
 ctx: zint.Ctx,

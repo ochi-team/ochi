@@ -123,14 +123,14 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
     return self.allocator.realloc(result, actualSize);
 }
 
-fn packBytesBound(src_len: usize) !usize {
-    if (src_len < 128) {
+fn packBytesBound(srcLen: usize) !usize {
+    if (srcLen < 128) {
         // 1 compression kind, 1 len, len of the buf
-        return 2 + src_len;
+        return 2 + srcLen;
     }
-    // 1 compression kind, 10 compressed len via leb128, len of the compressed (worst case)
-    const compressSize = try encoding.compressBound(src_len);
-    return 11 + compressSize;
+    const compressSize = try encoding.compressBound(srcLen);
+    // 1 byte is a compression kind
+    return 1 + Encoder.varIntBound(srcLen) + compressSize;
 }
 
 fn packBytes(fba: std.mem.Allocator, dest: []u8, src: []u8) !usize {

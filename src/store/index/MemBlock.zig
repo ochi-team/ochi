@@ -224,7 +224,7 @@ pub fn encode(
     entriesBlock.lensBuf.items.len = try encoding.compressAuto(entriesBlock.lensBuf.unusedCapacitySlice(), lensData);
 
     // if compressed content is more than 90% of the original size - not worth it
-    // TODO: consider tweaking the value up to 80-85%
+    // TODO: consider tweaking the value up to 80-85%, take a meter to understand why it may happen
     if (@as(f64, @floatFromInt(entriesBlock.lensBuf.items.len)) >
         0.9 * @as(f64, @floatFromInt(self.buf.items.len - self.prefix.len * self.memEntries.items.len)))
     {

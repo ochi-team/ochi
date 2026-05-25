@@ -57,6 +57,9 @@ const columnKeysBufferSize = 512;
 const columnIndexesBufferSize = 128;
 
 // TODO: expose metrics on len/cap relations
+// TODO: continuous buffers might be not very efficient on large size,
+// 1. it can be a chunked buffer, an array of static buffers
+// 2. or reused buffers with a known size
 timestampsDst: StreamDestination,
 indexDst: StreamDestination,
 metaIndexDst: StreamDestination,

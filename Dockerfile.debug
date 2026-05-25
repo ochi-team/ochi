@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/tmp/zig-cache \
 
 WORKDIR /app
 
-COPY build.zig build.zig.zon test_runner.zig ./
+COPY build.zig build.zig.zon ./
 RUN --mount=type=cache,target=/root/.cache/zig \
     --mount=type=cache,target=/app/.zig-cache \
     /usr/local/bin/zig build --fetch

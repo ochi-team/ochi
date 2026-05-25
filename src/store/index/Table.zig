@@ -196,7 +196,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .compressedSize = undefined,
     };
     // TODO: we must generate a real table for this use case,
-    // but it requires an moving all the stub models generation from all the test to a designated package/file,
+    // but it requires moving all the stub models generation from all the test to a designated package/file,
     // then we can remove this dumb condition
     if (!builtin.is_test or memTable.metaindexBuf.items.len > 0) {
         decodedMetaindex = try MetaIndex.decodeDecompress(

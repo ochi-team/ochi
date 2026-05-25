@@ -1,6 +1,28 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+// TODO: investigate the sysmte's limits
+// Potential aspects to limit:
+// ingestion
+// request size
+// log lines per request
+// rate limit
+// log line fields
+// log line size
+// query
+// max response size
+// timeouts
+// pagination cap
+// max concurrent queries
+// rate limit / throttling
+// storage
+// retention period
+// max disk space per tenant
+// concurrency
+// thread pool size
+// max background jobs (e.g. merges)
+// configure the limits and apply them.
+
 pub const AppConfig = struct {
     maxRequestSize: u32 = 4 * 1024 * 1024,
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,

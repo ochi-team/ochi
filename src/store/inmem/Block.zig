@@ -832,6 +832,7 @@ test "Self.put" {
     };
     const linesArray5 = blk: {
         // a large value that exceeds maxCelledColumnValueSize
+        // TODO: audit undefined usage if it's possible to avoid them on empty buffers
         var largeValue: [300]u8 = undefined;
         @memset(&largeValue, 'x');
         var fields1 = [_]Field{
