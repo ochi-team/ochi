@@ -1,15 +1,37 @@
 services:
+  # TODO: this must be removed when either zig linter is fixed or we get rid of snappy package
+  ochi-tsan:
+    build:
+      context: ..
+      dockerfile: Dockerfile.debug
+      args:
+        OPTIMIZE: Debug
+        TRACY: true
+    environment:
+      TSAN_OPTIONS: "external_symbolizer_path=/usr/bin/llvm-symbolizer,symbolize=1,halt_on_error=1,verbosity=1"
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_PTRACE
+    command: ["/usr/local/bin/ochi"]
+    profiles: ["debug"]
+    ports:
+      - "9014:9014"
+      - "8086:8086"
+
   ochi:
     build:
       context: ..
       dockerfile: Dockerfile
       args:
-        OPTIMIZE: Debug
+        OPTIMIZE: ReleaseSafe
+        TRACY: true
     command: ["/usr/local/bin/ochi"]
     cgroup_parent: ochi
     profiles: ["profile"]
     ports:
       - "9014:9014"
+      - "8086:8086"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
