@@ -1,6 +1,7 @@
 /// Block writer is created once per ingestion request cycle,
 /// it expects sorted chunks of data broken by streams (stream id + tenant)
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -36,6 +37,10 @@ globalMinTimestamp: u64,
 globalMaxTimestamp: u64,
 blocksCount: u32,
 
+// state to validate ordering across all written blocks
+sidLast: ?SID,
+minTimestampLast: u64,
+
 // TODO: refactor this garbage to work with Wrter interface
 indexBlockBuf: std.ArrayList(u8),
 // TODO: make IndexBlockHeader as a value type
@@ -61,6 +66,9 @@ pub fn init(allocator: Allocator) !*Self {
         .globalMinTimestamp = 0,
         .globalMaxTimestamp = 0,
         .blocksCount = 0,
+
+        .sidLast = null,
+        .minTimestampLast = 0,
 
         .indexBlockBuf = indexBlockBuf,
         .indexBlockHeader = indexBlockHeader,
@@ -115,9 +123,11 @@ fn writeBlock(
     sid: SID,
     streamWriter: *StreamWriter,
 ) !void {
-    // TODO: assert incoming sid is growing,
-    // because it expects the caller passes blocks ordered by sid,
-    // assert in builting.is_test
+    var isSeenSid = false;
+    if (self.sidLast) |sidLast| {
+        std.debug.assert(!sid.lessThan(&sidLast));
+        isSeenSid = sid.eql(&sidLast);
+    }
 
     const hasState = self.sid != null;
     if (!hasState) {
@@ -138,6 +148,12 @@ fn writeBlock(
     if (!hasState or blockHeader.timestampsHeader.max > self.maxTimestamp) {
         self.maxTimestamp = blockHeader.timestampsHeader.max;
     }
+
+    if (isSeenSid) {
+        std.debug.assert(blockHeader.timestampsHeader.min >= self.minTimestampLast);
+    }
+    self.sidLast = sid;
+    self.minTimestampLast = blockHeader.timestampsHeader.min;
 
     self.size += blockHeader.size;
     self.len += blockHeader.len;
