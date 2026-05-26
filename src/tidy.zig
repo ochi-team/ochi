@@ -51,6 +51,9 @@ test "projectIsFormatted" {
 }
 
 // TODO: add linter
+// TODO: limit the funfctions size to 45 lines, length to 120 (class 13 inch monitor)
+// TODO: ban discarding returned param
+// TODO: make an ast automation tool that is able to check *const must be used instead of *
 // TODO: validate git history has no large files (256kb+)
 // TODO: ensure the licenses are ok and there are no AGPL
 // TODO: restrict constCast usage

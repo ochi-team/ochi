@@ -31,6 +31,7 @@ pub fn main() !void {
             debugAlloc = .init;
             break :blk debugAlloc.?.allocator();
         } else {
+            // TODO: hack a puzzle how we could eliminate runtime allocations
             break :blk std.heap.c_allocator;
         }
     };

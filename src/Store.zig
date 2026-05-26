@@ -93,6 +93,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Stor
 
     // TODO: try making it parallel, it speed up start up time
     var it = partitionsDir.iterate();
+    // TODO: ban while loops via linter and set explicit loops
     while (try it.next(io)) |entry| {
         const partitionPath = try std.fs.path.join(alloc, &.{ partitionsPath, entry.name });
         errdefer alloc.free(partitionPath);
