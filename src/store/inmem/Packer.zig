@@ -149,8 +149,8 @@ fn packBytes(fba: std.mem.Allocator, dest: []u8, src: []u8) !usize {
     defer fba.free(compressed);
     const compressedSize = try encoding.compressAuto(compressed, src);
 
-    // 1 compression kind, 10 compressed len via leb128, len of the compressed
     var enc = Encoder.init(dest);
+    // 1 compression kind
     enc.writeInt(u8, compressionKindZstd);
     enc.writeVarInt(compressedSize);
     enc.writeBytes(compressed[0..compressedSize]);

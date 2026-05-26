@@ -49,7 +49,7 @@ pub fn bound(self: *const Self) usize {
     // 1 byte for count + varint length + string data for each value
     var size: usize = 1; // u8 for count
     for (self.values.items) |str| {
-        size += Encoder.maxVarUint64Len; // varint length
+        size += Encoder.varIntBound(str.len); // varint length
         size += str.len; // string data
     }
     return size;

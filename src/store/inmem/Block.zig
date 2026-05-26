@@ -358,7 +358,7 @@ fn canBeSavedAsCelled(lines: []const Line, index: usize) bool {
 const SID = @import("../lines.zig").SID;
 const StreamWriter = @import("StreamWriter.zig");
 const StreamReader = @import("reader.zig").StreamReader;
-const BlockHeader = @import("block_header.zig").BlockHeader;
+const BlockHeader = @import("BlockHeader.zig");
 
 fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
     try std.testing.expectEqualSlices(u64, a.timestamps, b.timestamps);

@@ -8,7 +8,7 @@ const fs = @import("../../fs.zig");
 
 const SID = @import("../lines.zig").SID;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
-const BlockHeader = @import("block_header.zig").BlockHeader;
+const BlockHeader = @import("BlockHeader.zig");
 const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
 const BlockData = @import("BlockData.zig").BlockData;

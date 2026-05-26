@@ -48,9 +48,9 @@ pub fn encodeAsCelled(self: *Self, enc: *Encoder, comptime encodeKey: bool) void
 pub fn celledBound(self: *const Self, comptime encodeKey: bool) usize {
     var size: usize = 0;
     if (encodeKey) {
-        size += Encoder.maxVarUint64Len + self.key.len;
+        size += Encoder.varIntBound(self.key.len) + self.key.len;
     }
-    size += Encoder.maxVarUint64Len + self.values[0].len;
+    size += Encoder.varIntBound(self.values[0].len) + self.values[0].len;
     return size;
 }
 

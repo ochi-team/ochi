@@ -42,12 +42,7 @@ pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
     @memcpy(slice[0..bytes.len], bytes);
 }
 
-/// The maximum number of bytes a varint-encoded 64-bit integer can occupy.
-/// TODO: remove it and use varIntBound
-pub const maxVarUint64Len = 10;
-
-// Calculate the exact number of bytes needed to encode a value as a varint
-// TODO: Use this instead of maxVarUint64Len in encodeBound calculations for more precise memory allocation
+/// calculates a buffer size to write a variable int
 pub fn varIntBound(value: u64) usize {
     if (value < 0x80) return 1; // < 128
     if (value < 0x4000) return 2; // < 16384

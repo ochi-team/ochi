@@ -6,7 +6,7 @@ const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
 const ColumnDict = @import("ColumnDict.zig");
-const ColumnType = @import("block_header.zig").ColumnType;
+const ColumnType = @import("ColumnHeader.zig").ColumnType;
 
 pub const EncodeValueType = struct {
     type: ColumnType,

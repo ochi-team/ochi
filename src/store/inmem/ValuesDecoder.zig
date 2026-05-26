@@ -3,7 +3,7 @@ const Io = std.Io;
 
 const zeit = @import("zeit");
 
-const ColumnType = @import("block_header.zig").ColumnType;
+const ColumnType = @import("ColumnHeader.zig").ColumnType;
 
 const Self = @This();
 

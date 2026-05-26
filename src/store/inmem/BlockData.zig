@@ -3,13 +3,13 @@ const std = @import("std");
 
 const SID = @import("../lines.zig").SID;
 const Column = @import("Column.zig");
-const BlockHeader = @import("block_header.zig").BlockHeader;
-const TimestampsHeader = @import("block_header.zig").TimestampsHeader;
-const ColumnHeader = @import("block_header.zig").ColumnHeader;
-const ColumnsHeader = @import("block_header.zig").ColumnsHeader;
+const BlockHeader = @import("BlockHeader.zig");
+const TimestampsHeader = BlockHeader.TimestampsHeader;
+const ColumnHeader = @import("ColumnHeader.zig");
+const ColumnsHeader = @import("ColumnsHeader.zig");
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnDict = @import("ColumnDict.zig");
-const ColumnType = @import("block_header.zig").ColumnType;
+const ColumnType = ColumnHeader.ColumnType;
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const StreamReader = @import("reader.zig").StreamReader;
 

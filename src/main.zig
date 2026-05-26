@@ -40,9 +40,9 @@ pub fn main() !void {
     alloc = tracyAlloc.allocator();
 
     // TODO replace IO API to evented/zio
-    var io_impl: std.Io.Threaded = .init(alloc, .{});
-    defer io_impl.deinit();
-    const io = io_impl.io();
+    var ioImpl: std.Io.Threaded = .init(alloc, .{});
+    defer ioImpl.deinit();
+    const io = ioImpl.io();
 
     std.debug.print("Ochi version {s}", .{build.version});
 
@@ -64,7 +64,6 @@ test {
 }
 
 // TODO: good to move the packages to its places:
-// - extract structs from store/inmem/block_header.zig
 // - move data.zig to data/Data.zig
 // - extract components from BlockData
 // - separate data and data/MemTable packages

@@ -198,7 +198,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     try fs.syncPathAndParentDir(io, path);
 }
 
-const BlockHeader = @import("block_header.zig").BlockHeader;
+const BlockHeader = @import("BlockHeader.zig");
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
