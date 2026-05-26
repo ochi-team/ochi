@@ -11,7 +11,7 @@ pub const CompressError = error{
 const unknownSize: c_ulonglong = 0xffffffffffffffff;
 const errorSize: c_ulonglong = 0xfffffffffffffffe;
 
-//TODO: Need to more research about what value to choose for limiting the loop.
+//TODO: Need more research about what value to choose for limiting the loop.
 // Min one chunk block size = 4 KB
 // maxItrationsDecompressStream = 10 GB / 4KB
 const maxItrationsDecompressStream = 2_621_440;

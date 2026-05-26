@@ -16,3 +16,5 @@ Run the load:
 ```sh
 ./k6 run load_loki.js
 ```
+
+TODO: setup external benchmarks

@@ -62,6 +62,7 @@ pub const HashTokenizer = struct {
             try self.appendAsciiToken(allocator, dst, value);
         }
         // TODO: support unicode tokens
+        // https://github.com/jacobsandlund/uucode
         // try self.appendUnicodeToken(allocator, dst, value);
         return;
     }

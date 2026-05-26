@@ -73,6 +73,15 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     router.post("/query", query.queryHandler, .{});
     router.post("/flush", flush.flushHandler, .{});
 
+    // TODO: implement proper shutdown with cancel signal
+    // - graceful draining of connections
+    // - insert the rest incoming chunks
+    // - graceful data cleaning
+    // - stopping all the merge jobs
+    // TODO: handle the above described shutdown in case of resource lack:
+    // - memory resource (OOM)
+    // - disk resource (full disk)
+    // - file descriptors (too many open files)
     server.listen() catch |err| switch (err) {
         error.AddressInUse => {
             std.debug.print("can't start server, port={d} is in use\n", .{conf.server.port});

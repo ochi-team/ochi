@@ -789,6 +789,8 @@ fn maxItemsPerCachedTable(maxMem: u64, cacheSize: u64) u64 {
 }
 
 fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+    // TODO: take a meter of average readers amount and put them on stack if small enough (<= 16)
+    // same for data
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
     errdefer {
         for (readers.items) |reader| reader.deinit(alloc);

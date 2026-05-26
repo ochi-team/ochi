@@ -215,6 +215,10 @@ pub fn encode(
     enc = Encoder.init(encodedLens);
     enc.writeVarInts(u32, lens.items);
 
+    // TODO: avoid concat, the following options are possible to apply:
+    // - stream compression from both arrays sequentially (the best)
+    // - allocate double size of lens, it must be ok
+    // if most of the time it fits the stack size, so we know precisely how much memory it needs
     const lensData = try std.mem.concat(fba, u8, &[_][]const u8{ encodedPrefixLensBuf, encodedLens });
     defer fba.free(lensData);
 

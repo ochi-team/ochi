@@ -223,6 +223,14 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
 
     // TODO: review concurrent writing model whether it's possible to optimize further
     // and avoid block copy;
+    // Options:
+    // 1. Instead of copying the entire items slice upfront,
+    // detect the unsorted condition earlier by checking for duplicate streamIDs during the merge process:
+    // if (block.hasDuplicateStreams()) {
+    // return // Skip merging for this batch
+    // }
+    // 2. The current deduplication creates a new slice. it could optimize it by doing in-place deduplication when possible
+    // benchmark both
 
     // TODO: don't copy the items since the beginning, but create a destination and build it,
     // then as a fallback returns src, it allows not to dupe firstItem/lastItem in flush above

@@ -36,6 +36,17 @@ pub fn encode(self: *ColumnHeader, enc: *Encoder) void {
     enc.writeInt(u8, @intFromEnum(self.type));
 
     switch (self.type) {
+        // TODO: index strings as identities (min/max) in addition to bloom filter,
+        // so we can reduce bloom miss for high cardinality string columns.
+        // Currently the string are indexed only using limited size dictionaries.
+        // Integer values are indexed in data blocks as min/max values.
+        // There is a broad use case to index string identities in a
+        // similar manner in order not to rely on bloom filter.
+        // Treating strings as identities allows us to index unlimited cardinality values,
+        // but limited values sizes. e.g. max size of uuid is 36 bytes.
+        // if we can write min/max identity values to the block,
+        // not only bloom filter it can reduce bloom miss.
+        // In advance it requires measuring bloom miss metric.
         .string => self.encodeValuesAndBloom(enc),
         .dict => {
             self.dict.encode(enc);

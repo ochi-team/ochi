@@ -38,6 +38,13 @@ pub const AppConfig = struct {
     // TODO: make it supporting absolute path
     storePath: []const u8 = ".ochi",
     storeRetention: u64 = 30 * std.time.ns_per_day,
+    // TODO: confogure max cache size,
+    // this pool can be preallocated and given away only for the caches:
+    // - index queries
+    // - index ingestions
+    // - small tables page caches
+    // then document the list of use cases for all the caches
+    // in order to distributed it evenly
 };
 
 pub const ServerConfig = struct {
