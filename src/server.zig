@@ -67,8 +67,8 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     router.get("/health", health, .{});
     router.get("/metrics", metrics, .{});
 
-    router.get("/insert/loki/ready", insert.insertLokiReady, .{});
-    router.post("/insert/loki/api/v1/push", insert.insertLokiJsonHandler, .{});
+    router.get("/ingest/loki/ready", insert.insertLokiReady, .{});
+    router.post("/ingest/loki/api/v1/push", insert.insertLokiJsonHandler, .{});
 
     router.post("/query", query.queryHandler, .{});
     router.post("/flush", flush.flushHandler, .{});

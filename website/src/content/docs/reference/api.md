@@ -16,7 +16,7 @@ This page documents the HTTP API available in Ochi `0.2`.
 - Multi-tenant routing uses `X-Scope-OrgID` header.
 - If the header is not provided, Ochi uses tenant `default`.
 
-### `GET /insert/loki/ready`
+### `GET /ingest/loki/ready`
 
 Readiness probe endpoint.
 
@@ -33,7 +33,7 @@ Used primarily by Grafana to confirm the datasource availability.
 - Content-Type: text/plain
 - Body: `ready`
 
-### `POST /insert/loki/api/v1/push`
+### `POST /ingest/loki/api/v1/push`
 
 Ingest logs using Loki JSON push format.
 

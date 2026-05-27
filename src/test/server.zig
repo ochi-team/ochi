@@ -83,7 +83,7 @@ pub const OchiClient = struct {
         const start = Io.Timestamp.now(io, .real).nanoseconds;
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
-            var resp = client.request(alloc, .GET, "/insert/loki/ready", "", "", "application/json", null) catch |err| {
+            var resp = client.request(alloc, .GET, "/ingest/loki/ready", "", "", "application/json", null) catch |err| {
                 std.debug.print("Server not ready yet, error: {}\n", .{err});
                 try Io.sleep(io, .fromMilliseconds(50), .real);
                 continue;
@@ -295,7 +295,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
         var resp = try client.request(
             alloc,
             .POST,
-            "/insert/loki/api/v1/push",
+            "/ingest/loki/api/v1/push",
             compressed[0..compressedLen],
             corpus.ingest.tenant,
             "application/json",

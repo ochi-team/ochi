@@ -12,7 +12,7 @@ export const options = {
 };
 
 const TENANT_ID = "42";
-const BASE_URL = "http://localhost:9014/insert";
+const BASE_URL = "http://localhost:9014/ingest";
 const BASE_URL2 = "http://localhost:9018/insert";
 const timeout = 20000;
 const ratio = 0;
@@ -56,12 +56,12 @@ export default function () {
   const res2 = client2.pushParameterized(60, 2 * KB, 8 * KB);
 
   if (res2.status !== 200) {
-    console.error(`push failed status=${res2.status} body=${res2.body}`);
+    console.error(`push2 failed status=${res2.status} body=${res2.body}`);
   }
 
   check(res2, {
     "status is 200": (r) => r.status === 200,
   });
 
-  sleep(1);
+  sleep(4);
 }
