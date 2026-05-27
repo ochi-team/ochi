@@ -4,6 +4,7 @@ const Io = std.Io;
 const Dir = Io.Dir;
 
 const zeit = @import("zeit");
+const tracy = @import("tracy");
 
 const fs = @import("fs.zig");
 const sleepOrStop = @import("stds/async.zig").sleepOrStop;
@@ -257,6 +258,12 @@ pub fn addLines(
     tags: []Field,
     encodedTags: []const u8,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "Store.addLines",
+    });
+    defer z.end();
+
     if (lines.len == 0) return;
     // TODO: make partition interval configurable
     // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
