@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 
 pub const zeit = @import("zeit");
 
+const stdsTime = @import("../stds/time.zig");
 const Query = @import("Query.zig");
 const FilterExpression = Query.FilterExpression;
 const MatchOp = Query.MatchOp;
@@ -95,23 +96,7 @@ fn translateTimeValue(value: TimeValue, nowNs: u64) TranslateError!u64 {
 }
 
 fn translateTimeDuration(raw: []const u8) TranslateError!u64 {
-    if (raw.len < 2) {
-        return TranslateError.InvalidDuration;
-    }
-
-    const unit = raw[raw.len - 1];
-    const valueRaw = raw[0 .. raw.len - 1];
-    const value = std.fmt.parseInt(u64, valueRaw, 10) catch return TranslateError.InvalidDuration;
-
-    const multiplier: u64 = switch (unit) {
-        's' => std.time.ns_per_s,
-        'm' => std.time.ns_per_min,
-        'h' => std.time.ns_per_hour,
-        'd' => std.time.ns_per_day,
-        else => return TranslateError.InvalidDuration,
-    };
-
-    return std.math.mul(u64, value, multiplier) catch TranslateError.InvalidDuration;
+    return stdsTime.parseDurationNs(raw) catch return TranslateError.InvalidDuration;
 }
 
 fn translateExpression(self: *Translator, alloc: Allocator, tags: Expression) TranslateError!*FilterExpression {
