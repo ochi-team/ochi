@@ -96,7 +96,7 @@ pub fn encode(
     columnIDGen: *ColumnIDGen,
 ) usize {
     var enc = Encoder.init(dst);
-    enc.writeVarInt(@intCast(self.headers.len));
+    enc.writeVarInt(self.headers.len);
     var offset = enc.offset;
 
     for (self.headers) |*header| {
@@ -109,7 +109,7 @@ pub fn encode(
         offset = enc.offset;
     }
 
-    enc.writeVarInt(@intCast(self.celledColumns.len));
+    enc.writeVarInt(self.celledColumns.len);
     offset = enc.offset;
 
     for (self.celledColumns) |*celledCol| {

@@ -29,8 +29,10 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub fn encodeBound(self: *Self) usize {
+    // TODO: this encode bound must use varIntBound
     // [10:cols len][20 * cols len][10: cells len][20 * cells len]
-    return 10 + 20 * self.columns.items.len + 10 + 20 * self.celledColumns.items.len;
+    // use capacity, not lens, because we preallocated space knowing the expected len in advacnce
+    return 10 + 20 * self.columns.capacity + 10 + 20 * self.celledColumns.capacity;
 }
 
 pub fn encode(self: *Self, dst: []u8) usize {

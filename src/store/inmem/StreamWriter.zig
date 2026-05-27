@@ -641,11 +641,6 @@ fn writeColumnsHeader(
     var cshIdx = try ColumnsHeaderIndex.init(allocator);
     defer cshIdx.deinit(allocator);
 
-    const dstSize = csh.encodeBound();
-    const dstIdxSize = cshIdx.encodeBound();
-    const dst = try allocator.alloc(u8, dstSize + dstIdxSize);
-    defer allocator.free(dst);
-
     for (csh.headers) |header| {
         try self.ensureColumnKeyOwned(allocator, header.key);
     }
@@ -656,6 +651,12 @@ fn writeColumnsHeader(
     try cshIdx.columns.ensureUnusedCapacity(allocator, csh.headers.len);
     try cshIdx.celledColumns.ensureUnusedCapacity(allocator, csh.celledColumns.len);
     try self.columnIDGen.keyIDs.ensureUnusedCapacity(allocator, csh.celledColumns.len);
+
+    const dstSize = csh.encodeBound();
+    const dstIdxSize = cshIdx.encodeBound();
+    const dst = try allocator.alloc(u8, dstSize + dstIdxSize);
+    defer allocator.free(dst);
+
     const cshOffset = csh.encode(dst, cshIdx, self.columnIDGen);
     const cshIdxOffset = cshIdx.encode(dst[cshOffset..]);
 
@@ -766,4 +767,37 @@ test "writeBlock and writeData produce identical buffer output" {
     }
     try testing.expectEqualSlices(u8, writer1.columnKeysBuf.asSliceAssumeBuffer(), writer2.columnKeysBuf.asSliceAssumeBuffer());
     try testing.expectEqualSlices(u8, writer1.columnIdxsBuf.asSliceAssumeBuffer(), writer2.columnIdxsBuf.asSliceAssumeBuffer());
+}
+
+test "writeBlock with many columns does not overflow columns header index buffer" {
+    const alloc = testing.allocator;
+    const io = std.testing.io;
+
+    var fields = [_]Field{
+        .{ .key = "k01", .value = "v1" },
+        .{ .key = "k02", .value = "v2" },
+        .{ .key = "k03", .value = "v3" },
+        .{ .key = "k04", .value = "v4" },
+        .{ .key = "k05", .value = "v5" },
+        .{ .key = "k06", .value = "v6" },
+        .{ .key = "k07", .value = "v7" },
+        .{ .key = "k08", .value = "v8" },
+        .{ .key = "k09", .value = "v9" },
+        .{ .key = "k10", .value = "v10" },
+        .{ .key = "k11", .value = "v11" },
+        .{ .key = "k12", .value = "v12" },
+    };
+
+    const sid = SID{ .id = 1, .tenantID = 1111 };
+    const line = Line{ .timestampNs = 1, .sid = sid, .fields = &fields };
+    var lines = [_]Line{line};
+
+    const writer = try Self.initMem(io, alloc, 128);
+    defer writer.deinit(io, alloc);
+
+    const block = try Block.initFromLines(alloc, &lines);
+    defer block.deinit(alloc);
+
+    var bh = BlockHeader.initFromBlock(block, sid);
+    try writer.writeBlock(io, alloc, block, &bh);
 }
