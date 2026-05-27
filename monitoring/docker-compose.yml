@@ -27,7 +27,7 @@ services:
         OPTIMIZE: ReleaseSafe
         TRACY: true
     command: ["/usr/local/bin/ochi"]
-    cgroup_parent: ochi
+    cgroup_parent: ochi.slice
     profiles: ["profile"]
     ports:
       - "9014:9014"

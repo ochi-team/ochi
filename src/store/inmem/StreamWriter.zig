@@ -38,12 +38,6 @@ pub const Error = error{
 };
 
 // TODO: consider a better name:
-// - MemTableWriter
-// - LinesWriter
-// - ColumnsWriter
-// - TypedWriter
-// or find a better one,
-// then rename Self, StreamMerger and StreamReader accordingly
 const Self = @This();
 
 const tsBufferSize = 2 * 1024;

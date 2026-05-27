@@ -38,6 +38,9 @@ pub fn main() !void {
     }
     var tracyAlloc = tracy.Allocator{ .parent = alloc };
     alloc = tracyAlloc.allocator();
+    if (tracy.enabled) {
+        std.debug.print("Tracy profiler enabled\n", .{});
+    }
 
     // TODO replace IO API to evented/zio
     var ioImpl: std.Io.Threaded = .init(alloc, .{});

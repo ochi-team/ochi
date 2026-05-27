@@ -6,7 +6,7 @@
     .dependencies = .{
         .httpz = .{
             .url = "git+https://github.com/karlseguin/http.zig?ref=master#f35efa86b11a3892956e9820a8a8e0e1d498af23",
-            .hash = "httpz-0.0.0-PNVzrLjJCAD37S0CcrXpsjSqr86hVjK0rsALTDJ98AAJ",
+            .hash = "httpz-0.0.0-PNVzrCPKCAD_ZToPRc2km-aTOi0DB_KnDZP-dvW7o1He",
         },
         .snappy = .{
             .url = "git+https://github.com/chainsafe/snappy.zig#713942410426051da6107a955b29f3f152815622",
