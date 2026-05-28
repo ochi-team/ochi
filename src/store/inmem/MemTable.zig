@@ -355,6 +355,47 @@ test "flushToDisk writes buffers" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{std.testing.io});
 }
 
+test "tableHeader timestamp range matches all index blocks" {
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
+    const memTable = try MemTable.init(io, alloc);
+    defer memTable.deinit(io, alloc);
+
+    const lineCount = 2200;
+    var lines = try alloc.alloc(Line, lineCount);
+    defer alloc.free(lines);
+
+    var fields = [_]Field{.{ .key = "k", .value = "v" }};
+    for (0..lineCount) |i| {
+        lines[i] = .{
+            .timestampNs = @intCast(i + 1),
+            .sid = .{ .tenantID = 1, .id = @intCast(i + 1) },
+            .fields = fields[0..],
+        };
+    }
+
+    try memTable.addLines(io, alloc, lines);
+
+    const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
+        alloc,
+        memTable.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
+    );
+    defer alloc.free(indexBlockHeaders);
+
+    try std.testing.expect(indexBlockHeaders.len > 1);
+
+    var minTs = indexBlockHeaders[0].minTs;
+    var maxTs = indexBlockHeaders[0].maxTs;
+    for (indexBlockHeaders[1..]) |header| {
+        minTs = @min(minTs, header.minTs);
+        maxTs = @max(maxTs, header.maxTs);
+    }
+
+    try std.testing.expectEqual(minTs, memTable.tableHeader.minTimestamp);
+    try std.testing.expectEqual(maxTs, memTable.tableHeader.maxTimestamp);
+}
+
 fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     var sample: SampleLines = SampleLines{
         .fields1 = undefined,

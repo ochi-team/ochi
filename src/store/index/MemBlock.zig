@@ -70,7 +70,7 @@ pub fn deinit(self: *MemBlock, alloc: Allocator) void {
 pub fn reset(self: *MemBlock) void {
     self.memEntries.clearRetainingCapacity();
     self.buf.clearRetainingCapacity();
-    self.prefix = undefined;
+    self.prefix = "";
 }
 
 pub fn add(self: *MemBlock, entry: []const u8) bool {
@@ -306,10 +306,6 @@ pub fn decode(
         },
     }
 
-    // decode lens
-    var fba = std.heap.stackFallback(2048, alloc);
-    const fbaAlloc = fba.get();
-
     // decompress prefix lens
     const size = try encoding.getFrameContentSize(entriesBlock.lensBuf.items);
     const decompressedLensBuf = try alloc.alloc(u8, size);
@@ -317,8 +313,8 @@ pub fn decode(
     var n = try encoding.decompress(decompressedLensBuf, entriesBlock.lensBuf.items);
 
     // decode prefix lens
-    const decodedLens = try fbaAlloc.alloc(u64, itemsCount - 1);
-    defer fbaAlloc.free(decodedLens);
+    const decodedLens = try alloc.alloc(u64, itemsCount - 1);
+    defer alloc.free(decodedLens);
     var dec = encoding.Decoder.init(decompressedLensBuf[0..n]);
     dec.readVarInts(decodedLens);
     std.debug.assert(dec.offset <= dec.buf.len);

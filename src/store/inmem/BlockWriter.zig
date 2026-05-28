@@ -26,15 +26,15 @@ const Content = union(enum) {
     data: *BlockData,
 };
 
-// state to the latestBlocks til not flushed
+// state for the current index block (reset after flush)
 sid: ?SID,
-minTimestamp: u64,
-maxTimestamp: u64,
-// state to the all written blocks
+blockMinTimestamp: u64,
+blockMaxTimestamp: u64,
+// state for the table
 len: u32,
 size: u32,
-globalMinTimestamp: u64,
-globalMaxTimestamp: u64,
+tableMinTimestamp: u64,
+tableMaxTimestamp: u64,
 blocksCount: u32,
 
 // state to validate ordering across all written blocks
@@ -58,13 +58,13 @@ pub fn init(allocator: Allocator) !*Self {
     const bw = try allocator.create(Self);
     bw.* = Self{
         .sid = null,
-        .minTimestamp = 0,
-        .maxTimestamp = 0,
+        .blockMinTimestamp = 0,
+        .blockMaxTimestamp = 0,
 
         .len = 0,
         .size = 0,
-        .globalMinTimestamp = 0,
-        .globalMaxTimestamp = 0,
+        .tableMinTimestamp = 0,
+        .tableMaxTimestamp = 0,
         .blocksCount = 0,
 
         .sidLast = null,
@@ -136,17 +136,17 @@ fn writeBlock(
 
     const blockHeader = try writeContent(io, alloc, content, sid, streamWriter);
 
-    if (self.len == 0 or blockHeader.timestampsHeader.min < self.globalMinTimestamp) {
-        self.globalMinTimestamp = blockHeader.timestampsHeader.min;
+    if (self.len == 0 or blockHeader.timestampsHeader.min < self.tableMinTimestamp) {
+        self.tableMinTimestamp = blockHeader.timestampsHeader.min;
     }
-    if (self.len == 0 or blockHeader.timestampsHeader.max > self.globalMaxTimestamp) {
-        self.globalMaxTimestamp = blockHeader.timestampsHeader.max;
+    if (self.len == 0 or blockHeader.timestampsHeader.max > self.tableMaxTimestamp) {
+        self.tableMaxTimestamp = blockHeader.timestampsHeader.max;
     }
-    if (!hasState or blockHeader.timestampsHeader.min < self.minTimestamp) {
-        self.minTimestamp = blockHeader.timestampsHeader.min;
+    if (!hasState or blockHeader.timestampsHeader.min < self.blockMinTimestamp) {
+        self.blockMinTimestamp = blockHeader.timestampsHeader.min;
     }
-    if (!hasState or blockHeader.timestampsHeader.max > self.maxTimestamp) {
-        self.maxTimestamp = blockHeader.timestampsHeader.max;
+    if (!hasState or blockHeader.timestampsHeader.max > self.blockMaxTimestamp) {
+        self.blockMaxTimestamp = blockHeader.timestampsHeader.max;
     }
 
     if (isSeenSid) {
@@ -187,8 +187,8 @@ pub fn finish(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWr
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
-    th.minTimestamp = self.minTimestamp;
-    th.maxTimestamp = self.maxTimestamp;
+    th.minTimestamp = self.tableMinTimestamp;
+    th.maxTimestamp = self.tableMaxTimestamp;
     th.bloomValuesBuffersAmount = @intCast(streamWriter.bloomValuesList.items.len);
 
     try self.flushIndexBlock(io, allocator, streamWriter);
@@ -209,8 +209,8 @@ fn flushIndexBlock(self: *Self, io: Io, allocator: Allocator, streamWriter: *Str
             allocator,
             &self.indexBlockBuf,
             self.sid.?,
-            self.minTimestamp,
-            self.maxTimestamp,
+            self.blockMinTimestamp,
+            self.blockMaxTimestamp,
             streamWriter,
         );
 
@@ -221,8 +221,8 @@ fn flushIndexBlock(self: *Self, io: Io, allocator: Allocator, streamWriter: *Str
     }
 
     self.sid = null;
-    self.minTimestamp = 0;
-    self.maxTimestamp = 0;
+    self.blockMinTimestamp = 0;
+    self.blockMaxTimestamp = 0;
 }
 
 fn writeIndexBlockHeaders(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {

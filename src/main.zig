@@ -10,7 +10,8 @@ const server = @import("server.zig");
 pub const tracy_impl = @import("tracy_impl");
 pub const tracy = @import("tracy");
 pub const tracy_options: tracy.Options = .{
-    .on_demand = false,
+    // starts the profiling only on connection initiation
+    .on_demand = true,
     .no_broadcast = false,
     .only_localhost = false,
     .only_ipv4 = false,
@@ -36,16 +37,20 @@ pub fn main() !void {
     defer {
         if (debugAlloc) |*da| _ = da.deinit();
     }
-    var tracyAlloc = tracy.Allocator{ .parent = alloc };
-    alloc = tracyAlloc.allocator();
-    if (tracy.enabled) {
-        std.debug.print("Tracy profiler enabled\n", .{});
-    }
 
     // TODO replace IO API to evented/zio
     var ioImpl: std.Io.Threaded = .init(alloc, .{});
     defer ioImpl.deinit();
     const io = ioImpl.io();
+
+    var tracyAlloc = tracy.Allocator{
+        .parent = alloc,
+        .io = io,
+    };
+    alloc = tracyAlloc.allocator();
+    if (tracy.enabled) {
+        std.debug.print("Tracy profiler enabled\n", .{});
+    }
 
     std.debug.print("Ochi version {s}", .{build.version});
 

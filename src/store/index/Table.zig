@@ -68,7 +68,10 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, filenames.tables });
     defer alloc.free(tablesFilePath);
     var tableNames = try catalog.readNames(io, alloc, tablesFilePath, true);
-    defer tableNames.deinit(alloc);
+    defer {
+        for (tableNames.items) |name| alloc.free(name);
+        tableNames.deinit(alloc);
+    }
 
     // syncing tables with a json, make sure all the listed dirs exist
     try catalog.validateTablesExist(io, alloc, path, tableNames.items);
@@ -486,4 +489,54 @@ test "open reads table from disk" {
     const expectedSize: u64 = expectedMetaindexCompressed.len +
         expectedIndex.len + expectedEntries.len + expectedLens.len;
     try testing.expectEqual(expectedSize, table.size);
+}
+
+test "openAll frees catalog table names on error" {
+    try testing.checkAllAllocationFailures(testing.allocator, testOpenAllFreesCatalogTableNamesOnError, .{testing.io});
+}
+
+fn testOpenAllFreesCatalogTableNamesOnError(alloc: Allocator, io: Io) !void {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
+    defer alloc.free(tablesFilePath);
+    try fs.writeBufferToFileAtomic(io, tablesFilePath, "[\"table-a\",\"table-b\"]", true);
+
+    const res = Table.openAll(io, alloc, rootPath);
+    try testing.expectError(error.TableDoesNotExist, res);
+}
+
+test "openAll frees spilled catalog table names on error" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
+    defer alloc.free(tablesFilePath);
+
+    const longName = "table" ** 10;
+
+    var content = try std.ArrayList(u8).initCapacity(alloc, 4096);
+    defer content.deinit(alloc);
+    try content.append(alloc, '[');
+    for (0..5) |i| {
+        if (i > 0) try content.append(alloc, ',');
+        try content.append(alloc, '"');
+        try content.appendSlice(alloc, longName);
+        try content.append(alloc, '"');
+    }
+    try content.append(alloc, ']');
+
+    try fs.writeBufferToFileAtomic(io, tablesFilePath, content.items, true);
+
+    try testing.expectError(error.TableDoesNotExist, Table.openAll(io, alloc, rootPath));
 }

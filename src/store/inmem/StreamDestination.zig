@@ -23,7 +23,9 @@ pub const StreamDestination = union(Tag) {
     const Self = @This();
 
     pub fn initBuffer(allocator: Allocator, capacity: usize) !Self {
-        return .{ .buffer = try std.ArrayList(u8).initCapacity(allocator, capacity) };
+        const buffer = try std.ArrayList(u8).initCapacity(allocator, capacity);
+        errdefer buffer.deinit(allocator);
+        return .{ .buffer = buffer };
     }
 
     pub fn initFile(io: Io, file: Io.File) !Self {

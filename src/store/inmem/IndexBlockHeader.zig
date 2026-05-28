@@ -43,8 +43,8 @@ pub fn writeIndexBlock(
     allocator: Allocator,
     indexBlockBuf: *std.ArrayList(u8),
     sid: SID,
-    minTs: u64,
-    maxTs: u64,
+    minBlockTimestamp: u64,
+    maxBlockTimestamp: u64,
     streamWriter: *StreamWriter,
 ) !void {
     if (indexBlockBuf.items.len == 0) {
@@ -61,8 +61,8 @@ pub fn writeIndexBlock(
     self.offset = len;
     self.size = offset;
     self.sid = sid;
-    self.minTs = minTs;
-    self.maxTs = maxTs;
+    self.minTs = minBlockTimestamp;
+    self.maxTs = maxBlockTimestamp;
 }
 
 // sid 24 + self 32 = 56
