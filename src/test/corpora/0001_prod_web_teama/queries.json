@@ -1,49 +1,49 @@
 [
   {
     "description": "first field is equal",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod AND service=web} status=200",
     "match": ["web-001"]
   },
   {
     "description": "second field is equal",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod AND service=web} path=/api/orders",
     "match": ["web-002"]
   },
   {
     "description": "both fields are equal",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod AND service=web} status=500 AND path=/api/orders",
     "match": ["web-002"]
   },
   {
     "description": "one field is not equal",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod AND service=web} status!=200",
     "match": ["web-002"]
   },
   {
     "description": "second field is not equal",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod AND service=web} path!=/api/orders",
     "match": ["web-001"]
   },
   {
     "description": "prod logs",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod}",
     "match": ["web-001", "web-002"]
   },
   {
     "description": "web logs",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {service=web}",
     "match": ["web-001", "web-002"]
   },
   {
     "description": "both are not equal",
-    "tenant": "11",
+    "tenant": 11,
     "query": "[-60m,now] {env=prod AND service=web} status!=200 AND path!=/api/orders",
     "match": []
   },

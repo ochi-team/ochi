@@ -1,5 +1,5 @@
 {
-  "tenant": "11",
+  "tenant": 11,
   "stream": { "env": "prod", "service": "web" },
   "logs": [
     {

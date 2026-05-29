@@ -28,6 +28,10 @@ const HttpResponse = struct {
     }
 };
 
+const StreamIDsResponse = struct {
+    streamIDs: []const u128,
+};
+
 pub const OchiClient = struct {
     host: []const u8,
     client: std.http.Client,
@@ -38,7 +42,7 @@ pub const OchiClient = struct {
         method: std.http.Method,
         path: []const u8,
         body: []const u8,
-        tenant: []const u8,
+        tenant: u64,
         contentType: []const u8,
         contentEncoding: ?[]const u8,
     ) !HttpResponse {
@@ -54,7 +58,10 @@ pub const OchiClient = struct {
             headersBuf[headersLen] = .{ .name = "content-type", .value = contentType };
             headersLen += 1;
         }
-        headersBuf[headersLen] = .{ .name = "X-Scope-OrgID", .value = tenant };
+
+        var tenantStrBuf: [8]u8 = undefined;
+        const tenantStr = try std.fmt.bufPrint(&tenantStrBuf, "{d}", .{tenant});
+        headersBuf[headersLen] = .{ .name = "X-Scope-OrgID", .value = tenantStr };
         headersLen += 1;
         if (contentEncoding) |ce| {
             headersBuf[headersLen] = .{ .name = "content-encoding", .value = ce };
@@ -83,7 +90,7 @@ pub const OchiClient = struct {
         const start = Io.Timestamp.now(io, .real).nanoseconds;
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
-            var resp = client.request(alloc, .GET, "/ingest/loki/ready", "", "", "application/json", null) catch |err| {
+            var resp = client.request(alloc, .GET, "/ingest/loki/ready", "", 0, "application/json", null) catch |err| {
                 std.debug.print("Server not ready yet, error: {}\n", .{err});
                 try Io.sleep(io, .fromMilliseconds(50), .real);
                 continue;
@@ -118,14 +125,14 @@ const IngestionLog = struct {
     fields: std.json.Value,
 };
 const IngestCorpus = struct {
-    tenant: []const u8,
+    tenant: u64,
     stream: std.json.Value,
     logs: []IngestionLog,
 };
 
 const QueryCorpus = struct {
     description: []const u8,
-    tenant: []const u8,
+    tenant: u64,
     query: []const u8,
     match: []const []const u8,
 };
@@ -219,7 +226,7 @@ fn parseTestFile(comptime T: type, io: Io, alloc: Allocator, filePath: []const u
     }
 
     return std.json.parseFromSlice(T, alloc, fileBuf[0..n], .{
-        .ignore_unknown_fields = true,
+        .ignore_unknown_fields = false,
         .allocate = .alloc_always,
     });
 }
@@ -272,13 +279,73 @@ test "serverEndToEndViaHTTP" {
 
     try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
 
+    var ingestionsByTenant = std.AutoHashMap(u64, usize).init(alloc);
+    defer ingestionsByTenant.deinit();
+
     var corpusArena = std.heap.ArenaAllocator.init(alloc);
     defer corpusArena.deinit();
     const arenAlloc = corpusArena.allocator();
     for (corpora.items) |corpus| {
         const nowNs = Io.Timestamp.now(io, .real).nanoseconds;
         try runCorpus(arenAlloc, &ochiClient, corpus, @intCast(nowNs));
-        _ = corpusArena.reset(.retain_capacity);
+
+        const gop = try ingestionsByTenant.getOrPut(corpus.ingest.tenant);
+        if (gop.found_existing) {
+            gop.value_ptr.* += 1;
+        } else {
+            gop.value_ptr.* = 1;
+        }
+
+        var it = ingestionsByTenant.iterator();
+        while (it.next()) |entry| {
+            try expectStreamIDs(
+                arenAlloc,
+                &ochiClient,
+                entry.key_ptr.*,
+                entry.value_ptr.*,
+            );
+            _ = corpusArena.reset(.retain_capacity);
+        }
+    }
+}
+
+fn expectStreamIDs(
+    alloc: Allocator,
+    client: *OchiClient,
+    tenant: u64,
+    expectedIngestions: usize,
+) !void {
+    const nowNs: u64 = @intCast(Io.Timestamp.now(std.testing.io, .real).nanoseconds);
+    const body = try std.fmt.allocPrint(alloc, "{{\"from\":0,\"to\":{d}}}", .{nowNs});
+    defer alloc.free(body);
+
+    var resp = try client.request(
+        alloc,
+        .POST,
+        "/stream_ids",
+        body,
+        tenant,
+        "application/json",
+        null,
+    );
+    defer resp.deinit(alloc);
+
+    std.testing.expectEqual(200, resp.statusCode) catch |err| {
+        // TODO: implement a client and move all the error loging to it,
+        // it must be comptime configurable
+        std.debug.print("stream_ids request failed, response body: {s}\n", .{resp.body});
+        return err;
+    };
+
+    const parsed = try std.json.parseFromSlice(StreamIDsResponse, alloc, resp.body, .{
+        .ignore_unknown_fields = false,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(expectedIngestions, parsed.value.streamIDs.len);
+    for (parsed.value.streamIDs) |streamID| {
+        // validate it's not 00000, but a generated valid hash
+        try std.testing.expect(streamID > 0);
     }
 }
 
@@ -323,6 +390,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
         };
 
         const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
+            // TODO: removed sid from the response and switch it false
             .ignore_unknown_fields = true,
         });
         defer parsed.deinit();
