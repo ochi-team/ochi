@@ -392,6 +392,51 @@ pub fn queryLines(
     return results;
 }
 
+pub fn queryStreamIDs(
+    self: *Store,
+    io: Io,
+    alloc: Allocator,
+    tenantID: u64,
+    from: u64,
+    to: u64,
+) !std.AutoArrayHashMapUnmanaged(u128, void) {
+    self.partitionsMx.lockUncancelable(io);
+
+    const minDay: u32 = @intCast(from / std.time.ns_per_day);
+    const maxDay: u32 = @intCast(to / std.time.ns_per_day);
+
+    var fba = std.heap.stackFallback(64, alloc);
+    const fbaAlloc = fba.get();
+
+    const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
+    var parts = std.ArrayList(*Partition).initCapacity(fbaAlloc, slice.len) catch |err| {
+        self.partitionsMx.unlock(io);
+        return err;
+    };
+    defer {
+        for (parts.items) |part| part.release(io);
+        parts.deinit(fbaAlloc);
+    }
+    for (slice) |part| {
+        part.retain();
+        parts.appendAssumeCapacity(part);
+    }
+    self.partitionsMx.unlock(io);
+
+    var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
+
+    for (parts.items) |part| {
+        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID);
+        defer partStreamIDs.deinit(alloc);
+
+        for (partStreamIDs.keys()) |sid| {
+            try streamIDs.put(alloc, sid, {});
+        }
+    }
+
+    return streamIDs;
+}
+
 pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
     var parts = try std.ArrayList(*Partition).initCapacity(alloc, self.partitions.items.len);
     defer {

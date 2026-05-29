@@ -549,6 +549,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 }
 
 test "mergeData multi tenant" {
+    // TODO: make it testing alloc
     const alloc = std.heap.page_allocator;
     const io = std.testing.io;
 

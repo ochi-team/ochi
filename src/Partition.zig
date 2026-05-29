@@ -224,6 +224,23 @@ pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: u64, que
     return self.data.queryLines(io, alloc, result.sids.items, query);
 }
 
+pub fn queryStreamIDs(
+    self: *Partition,
+    io: Io,
+    alloc: Allocator,
+    tenantID: u64,
+) !std.AutoArrayHashMapUnmanaged(u128, void) {
+    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID);
+    if (res.cutOff) {
+        std.debug.print(
+            "[WARN] query stream ids is cut off by index, tenantID: {d}, partition: {s}\n",
+            .{ tenantID, self.key },
+        );
+    }
+
+    return res.streamIDs;
+}
+
 pub fn flushForce(self: *Partition, io: Io, alloc: Allocator) !void {
     try self.index.recorder.flushForce(io, alloc);
     try self.data.flushForce(io, alloc);

@@ -199,6 +199,7 @@ test "process does not panic when values has three lines" {
         .dispatchMeter = undefined,
         .storeMeter = undefined,
     };
+    // process uses leaky parsing, so we rely on arena
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 

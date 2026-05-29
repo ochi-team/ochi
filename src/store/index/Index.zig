@@ -68,6 +68,28 @@ pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID) !bool {
     return false;
 }
 
+pub fn queryAllStreamIDs(
+    self: *Self,
+    io: Io,
+    alloc: Allocator,
+    tenantID: u64,
+) !StreamIDsByPrefixesResult {
+    var lookup = try Lookup.init(io, alloc, self.recorder);
+    defer lookup.deinit(io, alloc);
+
+    const suffixLen: usize = 1 + @sizeOf(u64);
+    var tenantPrefix: [suffixLen]u8 = undefined;
+    var enc = Encoder.init(&tenantPrefix);
+    enc.writeInt(u8, @intFromEnum(IndexKind.sid));
+    enc.writeInt(u64, tenantID);
+
+    return lookup.findAllStreamIDsByPrefixes(
+        io,
+        alloc,
+        &.{&tenantPrefix},
+    );
+}
+
 pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
     var ei: usize = 0;

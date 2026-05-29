@@ -10,6 +10,7 @@ const Store = @import("Store.zig").Store;
 const insert = @import("handlers/insert.zig");
 const query = @import("handlers/query.zig");
 const flush = @import("handlers/flush.zig");
+const stream_ids = @import("handlers/stream_ids.zig");
 
 var global_server: ?*httpz.Server(*Dispatcher) = null;
 
@@ -71,6 +72,7 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     router.post("/ingest/loki/api/v1/push", insert.insertLokiJsonHandler, .{});
 
     router.post("/query", query.queryHandler, .{});
+    router.post("/stream_ids", stream_ids.streamIDsHandler, .{});
     router.post("/flush", flush.flushHandler, .{});
 
     // TODO: implement proper shutdown with cancel signal
