@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const Encoder = @import("encoding").Encoder;
+const QuerySIDsResult = @import("store/index/Index.zig").QuerySIDsResult;
 
 const DataRecorder = @import("DataRecorder.zig");
 const IndexRecorder = @import("store/index/IndexRecorder.zig");
@@ -207,21 +208,43 @@ pub fn addLines(
 pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: u64, query: Query) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    var result = try self.index.querySIDs(io, alloc, tenantID, query.tagsExpr);
-    defer result.sids.deinit(alloc);
+    var sidsRes: QuerySIDsResult = sids: {
+        // if streamIDs are passed in a query we don't need to query them,
+        // just sort and join with tenant
+        if (query.streamIDs) |streamIDs| {
+            var sids = try std.ArrayList(SID).initCapacity(alloc, streamIDs.len);
 
-    if (result.cutOff) {
+            for (streamIDs) |streamID| {
+                // TODO: this is a signal of idiotism, we have to split stream and tenants
+                // in query path
+                sids.appendAssumeCapacity(.{
+                    .tenantID = tenantID,
+                    .id = streamID,
+                });
+            }
+
+            std.mem.sortUnstable(SID, sids.items, {}, sidLessThan);
+
+            break :sids .{ .sids = sids, .cutOff = false };
+        } else {
+            const tagsExpr = query.tagsExpr orelse return Query.Error.NoTagsFilter;
+            break :sids try self.index.querySIDs(io, alloc, tenantID, tagsExpr);
+        }
+    };
+    defer sidsRes.sids.deinit(alloc);
+
+    if (sidsRes.cutOff) {
         // TODO: add a message to a response
         // so a user could narrow a query
         var tagsBuf: [128]u8 = undefined;
-        const tagsN = query.tagsExpr.stringifyLimited(&tagsBuf);
+        const tagsN = if (query.tagsExpr) |tagsExpr| tagsExpr.stringifyLimited(&tagsBuf) else 0;
         std.debug.print(
             "[WARN] query is cut off by index, tenantID: {d}, partition: {s}, query: {s}\n",
             .{ tenantID, self.key, tagsBuf[0..tagsN] },
         );
     }
 
-    return self.data.queryLines(io, alloc, result.sids.items, query);
+    return self.data.queryLines(io, alloc, sidsRes.sids.items, query);
 }
 
 pub fn queryStreamIDs(
@@ -266,4 +289,8 @@ fn cache(self: *Partition, io: Io, sid: SID) !void {
 
 pub fn lessThan(_: void, one: *Partition, another: *Partition) bool {
     return one.day < another.day;
+}
+
+fn sidLessThan(_: void, one: SID, another: SID) bool {
+    return one.lessThan(&another);
 }

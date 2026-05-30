@@ -52,6 +52,7 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
     res.status = 200;
 }
 
+// TODO: remove it when Line has no sid
 /// JSON response shape for a single log line.
 const LineResponse = struct {
     ts: u64,
@@ -71,22 +72,11 @@ fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
     const buf = try std.json.Stringify.valueAlloc(res.arena, lines, .{});
 
     res.body = buf;
+    std.debug.print("query response: {s}\n", .{buf});
     res.content_type = .JSON;
 }
 
 /// parseQuery unmarshals a JSON body into a Query.
-///
-/// Expected format:
-/// ```json
-/// {
-///   "start": "1234567890000000000",
-///   "end":   "1234567890000000000",
-///   "tags":   {"app": "myapp"},
-///   "fields": {"level": "error"}
-/// }
-/// ```
-/// `start` and `end` are nanosecond Unix timestamps encoded as strings.
-/// `tags` and `fields` are optional label-filter maps.
 fn parseQuery(alloc: Allocator, data: []const u8) !Query {
     return std.json.parseFromSliceLeaky(Query, alloc, data, .{ .allocate = .alloc_if_needed });
 }

@@ -7,47 +7,12 @@ const Encoder = @import("encoding").Encoder;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
+const encodeTags = @import("store/lines.zig").encodeTags;
+const makeStreamID = @import("store/lines.zig").makeStreamID;
 
 pub const Params = struct {
     tenantID: u64,
 };
-
-// TODO: if we don't use decoding of it perhaps we don't need to encode lens
-fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
-    var size: usize = Encoder.varIntBound(tags.len);
-    for (tags) |tag| {
-        size += Encoder.varIntBound(tag.key.len) + Encoder.varIntBound(tag.value.len);
-        size += tag.key.len + tag.value.len;
-    }
-    const buf = try allocator.alloc(u8, size);
-    errdefer allocator.free(buf);
-
-    var enc = Encoder.init(buf);
-    enc.writeVarInt(tags.len);
-    for (tags) |tag| {
-        enc.writeString(tag.key);
-        enc.writeString(tag.value);
-    }
-
-    std.debug.assert(enc.offset == buf.len);
-
-    return buf;
-}
-
-const magicStr = "xxhash";
-fn makeStreamID(tenantID: u64, encodedStream: []const u8) SID {
-    var hasher = std.hash.XxHash64.init(0);
-    hasher.update(encodedStream);
-    const first = hasher.final();
-    hasher.update(magicStr);
-    const second = hasher.final();
-    const id = @as(u128, first) << 64 | second;
-
-    return SID{
-        .tenantID = tenantID,
-        .id = id,
-    };
-}
 
 fn sortStreamFields(_: void, one: Field, another: Field) bool {
     return std.mem.order(u8, one.key, another.key) == .lt;

@@ -4,19 +4,48 @@ const Allocator = std.mem.Allocator;
 const Dir = Io.Dir;
 const snappy = @import("snappy").raw;
 
+const encodeTags = @import("../store/lines.zig").encodeTags;
+const makeStreamID = @import("../store/lines.zig").makeStreamID;
+const Field = @import("../store/lines.zig").Field;
+const SID = @import("../store/lines.zig").SID;
+const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
 const MemOrder = @import("../stds/sort.zig").MemOrder;
+
+fn makeSID(alloc: Allocator, tenantID: u64, tags: std.json.Value) !u128 {
+    if (tags != .object) return error.TagsMustBeObject;
+
+    const tagsCount = tags.object.count();
+    var parsedTags = try alloc.alloc(Field, tagsCount);
+    defer alloc.free(parsedTags);
+
+    var idx: usize = 0;
+    var it = tags.object.iterator();
+    while (it.next()) |entry| {
+        const value = switch (entry.value_ptr.*) {
+            .string => |s| s,
+            else => return error.TagValueMustBeString,
+        };
+        parsedTags[idx] = .{
+            .key = entry.key_ptr.*,
+            .value = value,
+        };
+        idx += 1;
+    }
+
+    std.mem.sortUnstable(Field, parsedTags, {}, fieldLessThan);
+
+    const encodedTags = try encodeTags(alloc, parsedTags);
+    defer alloc.free(encodedTags);
+
+    return makeStreamID(tenantID, encodedTags).id;
+}
 
 const Conf = @import("../Conf.zig");
 const server = @import("../server.zig");
 
-const QueryField = struct {
-    key: []const u8,
-    value: []const u8,
-};
-
 const QueryLine = struct {
     timestampNs: u64,
-    fields: []const QueryField,
+    fields: []const Field,
 };
 
 const HttpResponse = struct {
@@ -128,6 +157,24 @@ const IngestCorpus = struct {
     tenant: u64,
     stream: std.json.Value,
     logs: []IngestionLog,
+
+    fn getMinMaxTimestamps(ingest: *const IngestCorpus, nowNs: u64) !struct { min: u64, max: u64 } {
+        var minTs: u64 = std.math.maxInt(u64);
+        var maxTs: u64 = 0;
+
+        for (ingest.logs) |log| {
+            const offsetNs = @as(i128, log.offsetMin) * std.time.ns_per_min;
+            const tsNsSigned = @as(i128, nowNs) + offsetNs;
+            if (tsNsSigned < 0 or tsNsSigned > std.math.maxInt(u64)) {
+                return error.InvalidTimestamp;
+            }
+            const tsNs: u64 = @intCast(tsNsSigned);
+            if (tsNs < minTs) minTs = tsNs;
+            if (tsNs > maxTs) maxTs = tsNs;
+        }
+
+        return .{ .min = minTs, .max = maxTs };
+    }
 };
 
 const QueryCorpus = struct {
@@ -279,30 +326,40 @@ test "serverEndToEndViaHTTP" {
 
     try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
 
-    var ingestionsByTenant = std.AutoHashMap(u64, usize).init(alloc);
-    defer ingestionsByTenant.deinit();
+    // TODO: writing deinits in the testing code is overwhelming,
+    // we don't need to clean it eventually and use testing alloc only to pass to the server
+    var expectedSIDsByTenant = std.AutoHashMap(u64, std.ArrayList(u128)).init(alloc);
+    defer {
+        var it = expectedSIDsByTenant.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.deinit(alloc);
+        }
+        expectedSIDsByTenant.deinit();
+    }
 
     var corpusArena = std.heap.ArenaAllocator.init(alloc);
     defer corpusArena.deinit();
     const arenAlloc = corpusArena.allocator();
     for (corpora.items) |corpus| {
-        const nowNs = Io.Timestamp.now(io, .real).nanoseconds;
-        try runCorpus(arenAlloc, &ochiClient, corpus, @intCast(nowNs));
+        const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
+        const expectedSID = try makeSID(arenAlloc, corpus.ingest.tenant, corpus.ingest.stream);
 
-        const gop = try ingestionsByTenant.getOrPut(corpus.ingest.tenant);
-        if (gop.found_existing) {
-            gop.value_ptr.* += 1;
-        } else {
-            gop.value_ptr.* = 1;
+        try runCorpus(arenAlloc, &ochiClient, corpus, nowNs);
+        try expectQueryBySIDs(arenAlloc, &ochiClient, corpus, expectedSID, nowNs);
+
+        const gop = try expectedSIDsByTenant.getOrPut(corpus.ingest.tenant);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .empty;
         }
+        try appendUniqueSID(alloc, gop.value_ptr, expectedSID);
 
-        var it = ingestionsByTenant.iterator();
+        var it = expectedSIDsByTenant.iterator();
         while (it.next()) |entry| {
             try expectStreamIDs(
                 arenAlloc,
                 &ochiClient,
                 entry.key_ptr.*,
-                entry.value_ptr.*,
+                entry.value_ptr.items,
             );
             _ = corpusArena.reset(.retain_capacity);
         }
@@ -313,7 +370,7 @@ fn expectStreamIDs(
     alloc: Allocator,
     client: *OchiClient,
     tenant: u64,
-    expectedIngestions: usize,
+    expectedStreamIDs: []const u128,
 ) !void {
     const nowNs: u64 = @intCast(Io.Timestamp.now(std.testing.io, .real).nanoseconds);
     const body = try std.fmt.allocPrint(alloc, "{{\"from\":0,\"to\":{d}}}", .{nowNs});
@@ -342,14 +399,97 @@ fn expectStreamIDs(
     });
     defer parsed.deinit();
 
-    try std.testing.expectEqual(expectedIngestions, parsed.value.streamIDs.len);
-    for (parsed.value.streamIDs) |streamID| {
+    // TODO: avoid copying of test data and the pared value
+    const expectedSorted = try alloc.dupe(u128, expectedStreamIDs);
+    defer alloc.free(expectedSorted);
+    std.mem.sortUnstable(u128, expectedSorted, {}, std.sort.asc(u128));
+
+    const actualSorted = try alloc.dupe(u128, parsed.value.streamIDs);
+    defer alloc.free(actualSorted);
+    std.mem.sortUnstable(u128, actualSorted, {}, std.sort.asc(u128));
+
+    try std.testing.expectEqualSlices(u128, expectedSorted, actualSorted);
+    for (actualSorted) |streamID| {
         // validate it's not 00000, but a generated valid hash
         try std.testing.expect(streamID > 0);
     }
 }
 
+fn appendUniqueSID(alloc: Allocator, sids: *std.ArrayList(u128), sid: u128) !void {
+    for (sids.items) |existing| {
+        if (existing == sid) {
+            return;
+        }
+    }
+    try sids.append(alloc, sid);
+}
+
+fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, sid: u128, nowNs: u64) !void {
+    const tsRange = try corpus.ingest.getMinMaxTimestamps(nowNs);
+    const minTs = tsRange.min;
+    const maxTs = tsRange.max;
+
+    const body = try std.fmt.allocPrint(
+        alloc,
+        "{{\"start\":{d},\"end\":{d},\"streamIDs\":[{d}]}}",
+        .{ minTs, maxTs, sid },
+    );
+    defer alloc.free(body);
+
+    var resp = try client.request(
+        alloc,
+        .POST,
+        "/query",
+        body,
+        corpus.ingest.tenant,
+        "application/json",
+        null,
+    );
+    defer resp.deinit(alloc);
+
+    std.testing.expectEqual(200, resp.statusCode) catch |err| {
+        std.debug.print("Query-by-sids request failed, response body: {s}\n", .{resp.body});
+        return err;
+    };
+
+    const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    // TODO: since the query API is broken and returns sid we can't compare the log lines,
+    // fix it and the compare the lines completely
+    var actualIDs = std.ArrayList([]const u8).empty;
+    defer actualIDs.deinit(alloc);
+    for (parsed.value) |line| {
+        for (line.fields) |field| {
+            if (std.mem.eql(u8, field.key, "id")) {
+                try actualIDs.append(alloc, field.value);
+                break;
+            }
+        }
+    }
+
+    var expectedIDs = std.ArrayList([]const u8).empty;
+    defer expectedIDs.deinit(alloc);
+    for (corpus.ingest.logs) |log| {
+        if (log.fields != .object) return error.ExpectedFieldsObject;
+        const idVal = log.fields.object.get("id") orelse return error.MissingIDField;
+        if (idVal != .string) return error.IDFieldMustBeString;
+        try expectedIDs.append(alloc, idVal.string);
+    }
+
+    std.mem.sortUnstable([]const u8, actualIDs.items, {}, MemOrder(u8).lessThanConst);
+    std.mem.sortUnstable([]const u8, expectedIDs.items, {}, MemOrder(u8).lessThanConst);
+
+    try std.testing.expectEqual(expectedIDs.items.len, actualIDs.items.len);
+    for (expectedIDs.items, 0..) |expectedID, i| {
+        try std.testing.expectEqualStrings(expectedID, actualIDs.items[i]);
+    }
+}
+
 fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
+    // ingest
     {
         const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);
         std.debug.print("Ingest body: {s}\n", .{ingestBody});
@@ -375,12 +515,14 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
         };
     }
 
+    // flush
     {
         var resp = try client.request(alloc, .POST, "/flush", "", corpus.ingest.tenant, "", null);
         defer resp.deinit(alloc);
         try std.testing.expectEqual(200, resp.statusCode);
     }
 
+    // query all the test cases
     for (corpus.queries) |query| {
         var resp = try client.request(alloc, .POST, "/query", query.query, query.tenant, "application/loql", null);
         defer resp.deinit(alloc);
@@ -453,4 +595,4 @@ fn buildIngestBody(alloc: Allocator, ingest: IngestCorpus, nowNs: u64) ![]const 
     return buf.toOwnedSlice(alloc);
 }
 
-// TODO: test querying fields with "." in a key/value
+// TODO: test querying fields with ".", "0", "1", "_", "-", "@", "#", "\", "/" in a key/value

@@ -5,6 +5,42 @@ const Decoder = @import("encoding").Decoder;
 
 const sizing = @import("inmem/sizing.zig");
 
+// TODO: if we don't use decoding of it perhaps we don't need to encode lens
+pub fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
+    var size: usize = Encoder.varIntBound(tags.len);
+    for (tags) |tag| {
+        size += Encoder.varIntBound(tag.key.len) + Encoder.varIntBound(tag.value.len);
+        size += tag.key.len + tag.value.len;
+    }
+    const buf = try allocator.alloc(u8, size);
+    errdefer allocator.free(buf);
+
+    var enc = Encoder.init(buf);
+    enc.writeVarInt(tags.len);
+    for (tags) |tag| {
+        enc.writeString(tag.key);
+        enc.writeString(tag.value);
+    }
+
+    std.debug.assert(enc.offset == buf.len);
+
+    return buf;
+}
+const magicStr = "xxhash";
+pub fn makeStreamID(tenantID: u64, encodedStream: []const u8) SID {
+    var hasher = std.hash.XxHash64.init(0);
+    hasher.update(encodedStream);
+    const first = hasher.final();
+    hasher.update(magicStr);
+    const second = hasher.final();
+    const id = @as(u128, first) << 64 | second;
+
+    return SID{
+        .tenantID = tenantID,
+        .id = id,
+    };
+}
+
 pub const SID = struct {
     tenantID: u64,
     id: u128,

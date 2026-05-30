@@ -2,13 +2,23 @@ const std = @import("std");
 
 pub const Query = @This();
 
+pub const Error = error{
+    NoTagsFilter,
+};
+
+// api only fields
+
+streamIDs: ?[]const u128 = null,
+
+// fields participate in a query language
+
 // start time range inclusive in ns
 start: u64,
 // end time range inclusive in ns
 end: u64,
 
-tagsExpr: *const FilterExpression,
-fieldsExpr: ?*const FilterExpression,
+tagsExpr: ?*const FilterExpression = null,
+fieldsExpr: ?*const FilterExpression = null,
 
 pub fn validate(q: *const Query) !void {
     if (q.start >= q.end) {
@@ -16,7 +26,7 @@ pub fn validate(q: *const Query) !void {
     }
 
     // validate only tags, because we restrict them to use only equal and notEq operations
-    try q.tagsExpr.validateTags();
+    if (q.tagsExpr) |tagsExpr| try tagsExpr.validateTags();
 }
 
 pub const InvalidQueryError = error{

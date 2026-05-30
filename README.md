@@ -1,10 +1,3 @@
-
-<p align=center>
-  <img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/ochi-team/ochi">
-  <img alt="GitHub License" src="https://img.shields.io/github/license/ochi-team/ochi">
-  <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/ochi-team/ochi">
-</p>
-
 <h3 align="center">Ochi is a cost-effective, Loki compatible, database for logs.</h3>
 
 <p align="center">
@@ -52,7 +45,8 @@ https://ochi.dev/docs/guides/installation/
 - cost analysis built in
 - GDPR compliance
 - support ARM64 and x86_64 as Tier 1
-- support POSIX systems, but Linux remains Tier 1
+- support Windows and POSIX systems for development
+- support only Linux for production workloads (community if free to do whatever)
 - better core over features
 - documentation to answer 99% of questions
 
@@ -95,4 +89,3 @@ We encourage to use AI in order to:
 - tests must either cover data or effects, not both
 - to produce effect it must take a data to produce a pre determined effect
 - pure functions are welcome
-limitations under the License.

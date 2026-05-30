@@ -116,6 +116,7 @@ g: Io.Group = .init,
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
 stopped: std.atomic.Value(bool) = .init(true),
+// TODO: make mergeIdx and tmp file number as thread local
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,

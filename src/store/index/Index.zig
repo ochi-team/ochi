@@ -139,7 +139,8 @@ pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Fiel
     try self.recorder.add(io, alloc, entries);
 }
 
-const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
+// TODO: this bool flag under big question, redesign it later after solid query design
+pub const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
 pub fn querySIDs(
     self: *Self,
     io: Io,
