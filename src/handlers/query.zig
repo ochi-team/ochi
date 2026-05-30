@@ -72,7 +72,6 @@ fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
     const buf = try std.json.Stringify.valueAlloc(res.arena, lines, .{});
 
     res.body = buf;
-    std.debug.print("query response: {s}\n", .{buf});
     res.content_type = .JSON;
 }
 

@@ -60,7 +60,7 @@ pub fn deinit(self: *LookupTable, alloc: Allocator) void {
     self.* = undefined;
 }
 
-pub fn lessThan(one: LookupTable, another: LookupTable) bool {
+pub fn lessThanPtr(one: *const LookupTable, another: *const LookupTable) bool {
     return std.mem.lessThan(u8, one.current, another.current);
 }
 

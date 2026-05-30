@@ -19,8 +19,8 @@ recorder: *IndexRecorder,
 tables: std.ArrayList(*Table),
 lookupTables: std.ArrayList(LookupTable),
 
-heapArray: std.ArrayList(LookupTable),
-tablesHeap: Heap(LookupTable, LookupTable.lessThan),
+heapArray: std.ArrayList(*LookupTable),
+tablesHeap: Heap(*LookupTable, LookupTable.lessThanPtr),
 
 // state
 current: []const u8,
@@ -165,7 +165,7 @@ fn seek(self: *Lookup, io: Io, alloc: Allocator, key: []const u8) !void {
             continue;
         }
 
-        try self.heapArray.append(alloc, lt.*);
+        try self.heapArray.append(alloc, lt);
     }
 
     if (self.heapArray.items.len == 0) {
@@ -193,9 +193,9 @@ fn next(self: *Lookup, io: Io, alloc: Allocator) !bool {
 }
 
 fn nextBlock(self: *Lookup, io: Io, alloc: Allocator) !bool {
-    // We keep value copies of LookupTable in the heap array.
+    // The heap stores pointers to the reusable table cursors owned by lookupTables.
     // Advancing the min cursor and fixing the heap yields the next global item.
-    var lt = &self.tablesHeap.array.items[0];
+    const lt = self.tablesHeap.array.items[0];
     if (try lt.next(io, alloc)) {
         self.tablesHeap.fix(0);
         self.current = self.tablesHeap.array.items[0].current;
@@ -224,6 +224,43 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
 
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(io, alloc, &blocks);
+    errdefer memTable.deinit(alloc);
+
+    return Table.fromMem(alloc, memTable);
+}
+
+fn createMemTableFromItemsInBlocks(
+    io: Io,
+    alloc: Allocator,
+    items: []const []const u8,
+    entriesPerBlock: usize,
+) !*Table {
+    std.debug.assert(entriesPerBlock > 0);
+
+    var blocks = std.ArrayList(*MemBlock).empty;
+    defer {
+        for (blocks.items) |block| block.deinit(alloc);
+        blocks.deinit(alloc);
+    }
+
+    var i: usize = 0;
+    while (i < items.len) {
+        const end = @min(i + entriesPerBlock, items.len);
+        var total: u32 = 0;
+        for (items[i..end]) |item| total += @intCast(item.len);
+
+        var block = try MemBlock.init(alloc, total + 16);
+        errdefer block.deinit(alloc);
+        for (items[i..end]) |item| {
+            const ok = block.add(item);
+            try testing.expect(ok);
+        }
+        try blocks.append(alloc, block);
+
+        i = end;
+    }
+
+    const memTable = try MemTable.init(io, alloc, blocks.items);
     errdefer memTable.deinit(alloc);
 
     return Table.fromMem(alloc, memTable);
@@ -518,6 +555,55 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
             try testing.expectEqual(actual.streamIDs.keys().len, 0);
         }
     }
+    try recorder.flushForce(io, alloc);
+}
+
+test "Lookup.deinit after scan across multiple table blocks" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    defer recorder.deinit(io, alloc);
+    recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
+
+    var items = try std.ArrayList([]const u8).initCapacity(alloc, 2200);
+    defer items.deinit(alloc);
+    for (0..items.capacity) |i| {
+        const item = try alloc.alloc(u8, 20);
+        errdefer alloc.free(item);
+        @memcpy(item[0..4], "key:");
+        std.mem.writeInt(u128, item[4..20], i, .big);
+        items.appendAssumeCapacity(item);
+    }
+    defer {
+        for (items.items) |item| alloc.free(item);
+    }
+
+    {
+        const table = try createMemTableFromItemsInBlocks(io, alloc, items.items, 200);
+        errdefer table.close(io);
+        try recorder.memTables.append(alloc, table);
+    }
+
+    var lookup = try Lookup.init(io, alloc, recorder);
+    defer lookup.deinit(io, alloc);
+
+    try lookup.seek(io, alloc, "key:");
+    var count: usize = 0;
+    while (try lookup.next(io, alloc)) {
+        count += 1;
+    }
+    try testing.expectEqual(items.items.len, count);
+
     try recorder.flushForce(io, alloc);
 }
 
