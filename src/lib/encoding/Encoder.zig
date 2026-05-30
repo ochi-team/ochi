@@ -71,6 +71,7 @@ pub fn varIntsBound(comptime T: type, values: []T) usize {
 /// - proto var ints: https://protobuf.dev/programming-guides/encoding/#varints
 /// - leb 128: https://en.wikipedia.org/wiki/LEB128
 /// - vlq: https://en.wikipedia.org/wiki/Variable-length_quantity
+/// - Bijou64: https://www.inkandswitch.com/tangents/bijou64/
 pub fn writeVarInt(self: *Self, value: u64) void {
     const slice = self.buf[self.offset..];
 
