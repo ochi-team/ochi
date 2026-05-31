@@ -13,29 +13,12 @@ const Self = @This();
 // Maximum size for an index block (8MB)
 pub const maxIndexBlockSize: u64 = 8 * 1024 * 1024;
 
-sid: SID,
-minTs: u64,
-maxTs: u64,
+sid: SID = .{ .tenantID = 0, .id = 0 },
+minTs: u64 = 0,
+maxTs: u64 = 0,
 
-offset: u64,
-size: u64,
-
-pub fn init(allocator: Allocator) !*Self {
-    // TODO: test if it can be used by value, doesn't seem it needs an allocator
-    const bh = try allocator.create(Self);
-    bh.* = .{
-        .sid = .{ .tenantID = 0, .id = 0 },
-        .minTs = 0,
-        .maxTs = 0,
-        .offset = 0,
-        .size = 0,
-    };
-    return bh;
-}
-
-pub fn deinit(self: *const Self, allocator: Allocator) void {
-    allocator.destroy(self);
-}
+offset: u64 = 0,
+size: u64 = 0,
 
 pub fn writeIndexBlock(
     self: *Self,
@@ -67,7 +50,7 @@ pub fn writeIndexBlock(
 
 // sid 24 + self 32 = 56
 pub const encodeExpectedSize = 56;
-pub fn encode(self: *const Self, buf: []u8) usize {
+pub fn encode(self: Self, buf: []u8) usize {
     var enc = Encoder.init(buf);
     self.sid.encode(&enc);
     enc.writeInt(u64, self.minTs);

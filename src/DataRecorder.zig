@@ -27,7 +27,6 @@ const cap = @import("store/table/cap.zig");
 const swap = @import("store/table/swap.zig");
 
 const maxMemTables = 24;
-// TODO: it looks inconsistent, some take ponters, some don't
 const merger = merge.Merger(*Table, *MemTable, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
 
@@ -44,6 +43,7 @@ pub const DataShard = struct {
 
     mx: Io.Mutex = .init,
     lines: std.ArrayList(Line) = .empty,
+    // TODO: make all the arenas use page allocator under the hood instead of c allocator
     arenaState: std.heap.ArenaAllocator.State,
 
     /// size defines the amount of space is take by the shard,

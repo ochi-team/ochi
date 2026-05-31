@@ -43,15 +43,12 @@ minTimestampLast: u64,
 
 // TODO: refactor this garbage to work with Wrter interface
 indexBlockBuf: std.ArrayList(u8),
-// TODO: make IndexBlockHeader as a value type
-indexBlockHeader: *IndexBlockHeader,
+indexBlockHeader: IndexBlockHeader = .{},
 metaIndexBuf: std.ArrayList(u8),
 
 pub fn init(allocator: Allocator) !*Self {
     var indexBlockBuf = try std.ArrayList(u8).initCapacity(allocator, indexBlockSize);
     errdefer indexBlockBuf.deinit(allocator);
-    var indexBlockHeader = try IndexBlockHeader.init(allocator);
-    errdefer indexBlockHeader.deinit(allocator);
     var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexSize);
     errdefer metaIndexBuf.deinit(allocator);
 
@@ -71,7 +68,6 @@ pub fn init(allocator: Allocator) !*Self {
         .minTimestampLast = 0,
 
         .indexBlockBuf = indexBlockBuf,
-        .indexBlockHeader = indexBlockHeader,
         .metaIndexBuf = metaIndexBuf,
     };
     return bw;
@@ -79,7 +75,6 @@ pub fn init(allocator: Allocator) !*Self {
 
 pub fn deinit(self: *Self, allocator: Allocator) void {
     self.indexBlockBuf.deinit(allocator);
-    self.indexBlockHeader.deinit(allocator);
     self.metaIndexBuf.deinit(allocator);
     allocator.destroy(self);
 }

@@ -25,8 +25,6 @@ const EntriesShard = struct {
 
     pub fn deinit(self: *EntriesShard, alloc: Allocator) void {
         for (self.blocks.items) |block| {
-            // TODO: find a way to assert there are no items, this is critical,
-            // we must assert on shutdown path it's empty
             block.deinit(alloc);
         }
 
