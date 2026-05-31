@@ -120,3 +120,34 @@ Full language reference: [LOQL](../loql)
 - The log message is returned as a field with empty key (`"key": ""`).
 - Query filters are exact matches.
 
+### `POST /stream_ids`
+
+Fetch all the available stream ids.
+
+#### Request body
+
+```json
+{
+    "since": "2h"
+    "fromNs": 1780225324,
+    "toNs": 1780225600,
+    "from": "2025-12-19T16:39:57",
+    "to": "2025-12-19T16:59:57",
+}
+```
+
+The body needs to contain one of the following group of fields, the priorities are kept accordingly:
+- since - duration since what
+- fromNs/toNs - timestamps in nanoseconds to define the time range
+- from/to - timestamps in ISO8601 format to define the time range
+
+#### Response
+
+`200 OK` with JSON of matching stream ids:
+
+```json
+{
+    "streamIDs": [1715173665000000, 1715173665000001],
+}
+```
+

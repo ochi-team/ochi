@@ -373,9 +373,45 @@ fn expectStreamIDs(
     expectedStreamIDs: []const u128,
 ) !void {
     const nowNs: u64 = @intCast(Io.Timestamp.now(std.testing.io, .real).nanoseconds);
-    const body = try std.fmt.allocPrint(alloc, "{{\"from\":0,\"to\":{d}}}", .{nowNs});
-    defer alloc.free(body);
+    const Case = struct {
+        body: []const u8,
+        expectedStreamIDs: []const u128,
+    };
 
+    const fromNsToNsBody = try std.fmt.allocPrint(alloc, "{{\"fromNs\":0,\"toNs\":{d}}}", .{nowNs});
+    defer alloc.free(fromNsToNsBody);
+
+    const cases = [_]Case{
+        .{
+            .body = fromNsToNsBody,
+            .expectedStreamIDs = expectedStreamIDs,
+        },
+        .{
+            .body = "{\"from\":\"1970-01-01T00:00:00.000000001Z\",\"to\":\"2262-04-11T23:47:16Z\"}",
+            .expectedStreamIDs = expectedStreamIDs,
+        },
+        .{
+            .body = "{\"since\":\"1h\"}",
+            .expectedStreamIDs = expectedStreamIDs,
+        },
+        .{
+            .body = "{\"fromNs\":1,\"toNs\":1}",
+            .expectedStreamIDs = &.{},
+        },
+    };
+
+    for (cases) |case| {
+        try expectStreamIDsByBody(alloc, client, tenant, case.body, case.expectedStreamIDs);
+    }
+}
+
+fn expectStreamIDsByBody(
+    alloc: Allocator,
+    client: *OchiClient,
+    tenant: u64,
+    body: []const u8,
+    expectedStreamIDs: []const u128,
+) !void {
     var resp = try client.request(
         alloc,
         .POST,

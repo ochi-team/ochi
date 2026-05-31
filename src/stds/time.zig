@@ -1,8 +1,15 @@
 const std = @import("std");
 
+const zeit = @import("zeit");
+
 pub const ParserDurationError = error{
     InvalidDuration,
 };
+
+pub const TimestampError = error{
+    InvalidTimestamp,
+};
+
 pub fn parseDurationNs(raw: []const u8) ParserDurationError!u64 {
     if (raw.len < 2) {
         return ParserDurationError.InvalidDuration;
@@ -21,6 +28,18 @@ pub fn parseDurationNs(raw: []const u8) ParserDurationError!u64 {
     };
 
     return std.math.mul(u64, value, multiplier) catch ParserDurationError.InvalidDuration;
+}
+
+pub fn parseTimestamp(ts: []const u8) TimestampError!u64 {
+    const timestamp = zeit.Time.fromISO8601(ts) catch return error.InvalidTimestamp;
+    const ns = timestamp.instant().timestamp;
+    if (ns <= 0) {
+        return error.InvalidTimestamp;
+    }
+    if (ns > std.math.maxInt(u64)) {
+        return error.InvalidTimestamp;
+    }
+    return @intCast(ns);
 }
 
 const testing = std.testing;

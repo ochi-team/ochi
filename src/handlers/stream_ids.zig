@@ -2,9 +2,11 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const zeit = @import("zeit");
 const httpz = @import("httpz");
 
 const parseDurationNs = @import("../stds/time.zig").parseDurationNs;
+const parseTimestamp = @import("../stds/time.zig").parseTimestamp;
 
 const AppContext = @import("../dispatch.zig").AppContext;
 const ApiError = @import("../server/error.zig").ApiError;
@@ -14,13 +16,10 @@ const StreamIDsRequest = struct {
     // read more parseDurationNs.
     // if since is presented it's used instead of [from, to] as [since, now()]
     since: ?[]const u8 = null,
-    from: ?u64 = null,
-    to: ?u64 = null,
-};
-
-const TimeRange = struct {
-    from: u64,
-    to: u64,
+    fromNs: ?u64 = null,
+    toNs: ?u64 = null,
+    from: ?[]const u8 = null,
+    to: ?[]const u8 = null,
 };
 
 pub fn streamIDsHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
@@ -55,6 +54,11 @@ fn parseRequest(alloc: Allocator, data: []const u8) !StreamIDsRequest {
     return std.json.parseFromSliceLeaky(StreamIDsRequest, alloc, data, .{ .allocate = .alloc_if_needed });
 }
 
+const TimeRange = struct {
+    from: u64,
+    to: u64,
+};
+
 fn resolveTimeRange(io: Io, request: StreamIDsRequest) !TimeRange {
     if (request.since) |since| {
         const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
@@ -66,12 +70,37 @@ fn resolveTimeRange(io: Io, request: StreamIDsRequest) !TimeRange {
         };
     }
 
+    const timerange: TimeRange = timerange: {
+        if (request.fromNs != null and request.toNs != null) {
+            const fromNs = request.fromNs.?;
+            const toNs = request.toNs.?;
+
+            break :timerange .{
+                .from = fromNs,
+                .to = toNs,
+            };
+        }
+
+        if (request.from != null and request.to != null) {
+            const from = request.from.?;
+            const to = request.to.?;
+
+            const fromNs = try parseTimestamp(from);
+            const toNs = try parseTimestamp(to);
+
+            break :timerange .{
+                .from = fromNs,
+                .to = toNs,
+            };
+        }
+
+        return error.MissingFromToTimestamp;
+    };
+
     // TODO: all the APIs need a proper errors documentation and handling
-    const from = request.from orelse return error.MissingFrom;
-    const to = request.to orelse return error.MissingTo;
-    if (from > to) {
+    if (timerange.from > timerange.to) {
         return error.InvalidTimeRange;
     }
 
-    return .{ .from = from, .to = to };
+    return timerange;
 }

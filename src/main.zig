@@ -47,7 +47,6 @@ pub fn main() !void {
 
     var tracyAlloc = tracy.Allocator{
         .parent = alloc,
-        .io = io,
     };
     alloc = tracyAlloc.allocator();
     if (tracy.enabled) {
