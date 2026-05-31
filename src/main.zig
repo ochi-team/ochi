@@ -24,6 +24,7 @@ pub const tracy_options: tracy.Options = .{
 };
 
 pub fn main() !void {
+    // TODO: play with madvise
     var debugAlloc: ?std.heap.DebugAllocator(.{}) = null;
 
     var alloc: std.mem.Allocator = blk: {

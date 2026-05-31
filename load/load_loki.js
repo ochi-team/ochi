@@ -6,13 +6,13 @@ export const options = {
     default: {
       executor: "per-vu-iterations",
       vus: 4,
-      iterations: 2000,
+      iterations: 50,
     },
   },
 };
 
-const TENANT_ID = "42";
-const BASE_URL = "http://localhost:9014/insert";
+const TENANT_ID = "0";
+const BASE_URL = "http://localhost:9014/ingest";
 const timeout = 20000;
 const ratio = 0;
 

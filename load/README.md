@@ -7,6 +7,11 @@ Build k6 with Loki extension:
 xk6 build --k6-version v1.7.1 --with  github.com/grafana/xk6-loki@7c26c92
 ```
 
+Or for a double write extension:
+```sh
+xk6 build --k6-version v1.7.1 --with github.com/ochi-team/xk6-loki@66a322b
+```
+
 Launch a debugee from `monitoring/`, e.g.
 ```sh
 docker compose -f monitoring/docker-compose.yml up --build
