@@ -25,6 +25,7 @@ const TableHeader = @import("TableHeader.zig");
 const IndexKind = @import("Index.zig").IndexKind;
 const TagRecordsMerger = @import("TagRecordsMerger.zig");
 const MemTable = @import("MemTable.zig");
+const Table = @import("Table.zig");
 
 const Heap = @import("../../stds/heap.zig").Heap;
 
@@ -38,7 +39,7 @@ block: *MemBlock,
 
 /// init creates a BlockMerger instance from the readers
 /// be aware it mutates readers list inside
-pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerger {
+pub fn init(io: Io, alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerger {
     // TODO: collect metrics and experiment with flat array on 1-3 elements
     // TODO: experiment with Loser tree intead of heap:
     // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
@@ -48,7 +49,7 @@ pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !BlockMerge
     var i: usize = 0;
     while (i < readers.items.len) {
         const reader = readers.items[i];
-        const hasNext = try reader.next(alloc);
+        const hasNext = try reader.next(io, alloc);
         if (!hasNext) {
             reader.deinit(alloc);
             _ = readers.swapRemove(i);
@@ -128,7 +129,7 @@ pub fn merge(
         }
 
         if (reader.currentI == items.len) {
-            if (try reader.next(alloc)) {
+            if (try reader.next(io, alloc)) {
                 self.heap.fix(0);
                 continue;
             }
@@ -431,7 +432,7 @@ test "BlockMerger.mergeBasicScenarios" {
         var writer = BlockWriter.initFromMemTable(memTable);
         defer writer.deinit(alloc);
 
-        var merger = try BlockMerger.init(alloc, &readers);
+        var merger = try BlockMerger.init(io, alloc, &readers);
         defer merger.deinit(alloc);
 
         const tableHeader = try merger.merge(io, alloc, &writer, null);
@@ -493,7 +494,7 @@ test "BlockMerger.merge block overflow" {
         var writer = BlockWriter.initFromMemTable(memTable);
         defer writer.deinit(alloc);
 
-        var merger = try BlockMerger.init(alloc, &readers);
+        var merger = try BlockMerger.init(io, alloc, &readers);
         defer merger.deinit(alloc);
 
         const tableHeader = try merger.merge(io, alloc, &writer, null);
@@ -543,7 +544,7 @@ test "BlockMerger.merge oversized entries" {
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);
 
-    var merger = try BlockMerger.init(alloc, &readers);
+    var merger = try BlockMerger.init(io, alloc, &readers);
     defer merger.deinit(alloc);
 
     const tableHeader = try merger.merge(io, alloc, &writer, null);
@@ -726,7 +727,7 @@ test "BlockMerger.merge tag records" {
         var writer = BlockWriter.initFromMemTable(memTable);
         defer writer.deinit(alloc);
 
-        var merger = try BlockMerger.init(alloc, &readers);
+        var merger = try BlockMerger.init(io, alloc, &readers);
         defer merger.deinit(alloc);
 
         const tableHeader = try merger.merge(io, alloc, &writer, null);
@@ -751,7 +752,7 @@ test "BlockMerger.merge stopped flag" {
     var writer = BlockWriter.initFromMemTable(memTable);
     defer writer.deinit(alloc);
 
-    var merger = try BlockMerger.init(alloc, &readers);
+    var merger = try BlockMerger.init(io, alloc, &readers);
     defer merger.deinit(alloc);
 
     const res = merger.merge(io, alloc, &writer, &stopped);
@@ -776,17 +777,19 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     // memTable is defined out of the block to ensure the source blocks are gone
     const memTable = blk: {
         var leftBlocks = [_]*MemBlock{leftBlock};
-        var leftMemTable = try MemTable.init(io, alloc, &leftBlocks);
-        defer leftMemTable.deinit(alloc);
+        const leftMemTable = try MemTable.init(io, alloc, &leftBlocks);
+        var leftTable = try Table.fromMem(alloc, leftMemTable);
+        defer leftTable.close(io);
 
         var rightBlocks = [_]*MemBlock{rightBlock};
-        var rightMemTable = try MemTable.init(io, alloc, &rightBlocks);
-        defer rightMemTable.deinit(alloc);
+        const rightMemTable = try MemTable.init(io, alloc, &rightBlocks);
+        var rightTable = try Table.fromMem(alloc, rightMemTable);
+        defer rightTable.close(io);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightTable));
 
         var mergedMemTable = try MemTable.empty(alloc);
         errdefer mergedMemTable.deinit(alloc);
@@ -794,7 +797,7 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
         var writer = BlockWriter.initFromMemTable(mergedMemTable);
         defer writer.deinit(alloc);
 
-        var merger = try BlockMerger.init(alloc, &readers);
+        var merger = try BlockMerger.init(io, alloc, &readers);
         defer merger.deinit(alloc);
 
         mergedMemTable.tableHeader = try merger.merge(io, alloc, &writer, null);
@@ -809,14 +812,15 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
 
         break :blk mergedMemTable;
     };
-    defer memTable.deinit(alloc);
+    var table = try Table.fromMem(alloc, memTable);
+    defer table.close(io);
 
-    var mergedReader = try BlockReader.initFromMemTable(alloc, memTable);
+    var mergedReader = try BlockReader.initFromMemTable(alloc, table);
     defer mergedReader.deinit(alloc);
 
     var expectedI: usize = 0;
     var blocksRead: usize = 0;
-    while (try mergedReader.next(alloc)) {
+    while (try mergedReader.next(io, alloc)) {
         blocksRead += 1;
         try testing.expect(blocksRead <= expected.len);
         const decoded = mergedReader.block.?.memEntries.items;

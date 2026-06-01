@@ -27,10 +27,6 @@ tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
 
-indexBuf: []u8,
-entriesBuf: []u8,
-lensBuf: []u8,
-
 // holds ownership,
 // it's necessary in order to support ref counter
 alloc: Allocator,
@@ -99,6 +95,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
 }
 
 pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
+    // TODO: no point using allocator, just join them to a buffer
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
 
@@ -136,14 +133,21 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .lensFile = lensFile,
     };
 
-    // TODO: this is complete garbage, we must use real reader API here
     const table = try alloc.create(Table);
-    const indexBuf = try fs.readAll(io, alloc, indexPath);
-    errdefer alloc.free(indexBuf);
-    const entriesBuf = try fs.readAll(io, alloc, entriesPath);
-    errdefer alloc.free(entriesBuf);
-    const lensBuf = try fs.readAll(io, alloc, lensPath);
-    errdefer alloc.free(lensBuf);
+
+    std.debug.print(
+        "index.Table: open disk table path={s}" ++
+            " metaindexRecordsSize={d} metaindexRecordsLen={d}" ++
+            " indexStatsSize={d} entriesStatsSize={d} lensStatsSize={d}\n",
+        .{
+            path,
+            decodedMetaindex.compressedSize,
+            decodedMetaindex.records.len,
+            indexSize,
+            entriesSize,
+            lensSize,
+        },
+    );
 
     table.* = .{
         .mem = null,
@@ -154,10 +158,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .tableHeader = &table.disk.?.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
-
-        .indexBuf = indexBuf,
-        .entriesBuf = entriesBuf,
-        .lensBuf = lensBuf,
     };
 
     return table;
@@ -165,10 +165,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 
 pub fn close(self: *Table, io: Io) void {
     if (self.disk) |disk| {
-        self.alloc.free(self.entriesBuf);
-        self.alloc.free(self.indexBuf);
-        self.alloc.free(self.lensBuf);
-
         disk.deinit(io, self.alloc);
     }
     if (self.mem) |mem| {
@@ -196,7 +192,7 @@ pub fn close(self: *Table, io: Io) void {
 pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     var decodedMetaindex: MetaIndex.DecodedMetaIndex = .{
         .records = &.{},
-        .compressedSize = undefined,
+        .compressedSize = 0,
     };
     // TODO: we must generate a real table for this use case,
     // but it requires moving all the stub models generation from all the test to a designated package/file,
@@ -221,45 +217,52 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .tableHeader = &memTable.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
-
-        .entriesBuf = memTable.entriesBuf.items,
-        .indexBuf = memTable.indexBuf.items,
-        .lensBuf = memTable.lensBuf.items,
     };
 
     return table;
 }
 
-// TODO: this was an attempt to implement IO reader,
-// it's time didn't come yet, but most likely will
 pub fn readLens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
-    _ = io;
+    if (self.disk) |disk| {
+        return readFile(disk.lensFile, io, buf, offset);
+    } else if (self.mem) |mem| {
+        return readBuf(buf, mem.lensBuf.items, offset);
+    } else {
+        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    }
+}
 
-    std.debug.assert(buf.len > 0);
-    const n = @min(buf.len, self.lensBuf.len - offset);
-    @memcpy(buf[0..n], self.lensBuf[offset .. offset + n]);
+pub fn readEntries(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    if (self.disk) |disk| {
+        return readFile(disk.entriesFile, io, buf, offset);
+    } else if (self.mem) |mem| {
+        return readBuf(buf, mem.entriesBuf.items, offset);
+    } else {
+        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    }
+}
+
+pub fn readIndex(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    if (self.disk) |disk| {
+        return readFile(disk.indexFile, io, buf, offset);
+    } else if (self.mem) |mem| {
+        return readBuf(buf, mem.indexBuf.items, offset);
+    } else {
+        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    }
+}
+
+fn readFile(file: Io.File, io: Io, buf: []u8, offset: u64) !usize {
+    const n = try file.readPositionalAll(io, buf, offset);
     return n;
+}
 
-    // if (self.disk) |disk| {
-    //     const n = try disk.lensFile.readPositionalAll(io, buf, offset);
-    //     return n;
-    //     // const fileReader = disk.lensFile.reader(io, buf);
-    //     // var reader = fileReader.interface;
-    //     // try reader.discardAll(offset);
-    //     // const n = try reader.readSliceShort(buf);
-    //     // if (n != reader.buffer.len) return error.EndOfStream;
-    //     // return n;
-    // } else if (self.mem) |mem| {
-    //     const n = @min(buf.len, mem.lensBuf.items.len - offset);
-    //     @memcpy(buf[0..n], mem.lensBuf.items[offset .. offset + n]);
-    //     return n;
-    //     // var reader = std.Io.Reader.fixed(mem.lensBuf.items);
-    //     // try reader.discardAll(offset);
-    //     // const n = try reader.readSliceShort(buf);
-    //     // return n;
-    // } else {
-    //     std.debug.panic("invalid table state: both mem and disk are null", .{});
-    // }
+fn readBuf(dst: []u8, src: []const u8, offset: u64) !usize {
+    const start: usize = @intCast(offset);
+    if (start >= src.len) return 0;
+    const n = @min(dst.len, src.len - start);
+    @memcpy(dst[0..n], src[start .. start + n]);
+    return n;
 }
 
 pub fn lessThan(_: void, one: *Table, another: *Table) bool {
@@ -341,12 +344,6 @@ fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
     try header.writeFile(io, alloc, tablePath);
 }
 
-fn readTestTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
-    const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
-    defer alloc.free(filePath);
-    return fs.readAll(io, alloc, filePath);
-}
-
 // TODO: bunch of tests/things is duplicated between data/index tables,
 // there must be a way to make them more generic
 test "release keeps table unless toRemove is set, then removes table dir" {
@@ -422,11 +419,18 @@ test "fromMem creates proper table from mem table with populated data" {
 
     try testing.expect(table.mem != null);
     try testing.expect(table.disk == null);
-    try testing.expect(table.entriesBuf.len > 0);
-    try testing.expect(table.indexBuf.len > 0);
-    try testing.expectEqualSlices(u8, memTable.entriesBuf.items, table.entriesBuf);
-    try testing.expectEqualSlices(u8, memTable.indexBuf.items, table.indexBuf);
-    try testing.expectEqualSlices(u8, memTable.lensBuf.items, table.lensBuf);
+    var buf: [64]u8 = undefined;
+    var i: usize = 0;
+
+    i = try table.readLens(io, &buf, 0);
+    try testing.expect(i > 0);
+    try testing.expectEqualSlices(u8, memTable.lensBuf.items, buf[0..i]);
+    i = try table.readEntries(io, &buf, 0);
+    try testing.expect(i > 0);
+    try testing.expectEqualSlices(u8, memTable.entriesBuf.items, buf[0..i]);
+    i = try table.readIndex(io, &buf, 0);
+    try testing.expect(i > 0);
+    try testing.expectEqualSlices(u8, memTable.indexBuf.items, buf[0..i]);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
         alloc,
@@ -461,18 +465,27 @@ test "open reads table from disk" {
 
     try testing.expect(table.disk != null);
 
-    const expectedIndex = try readTestTableFile(io, alloc, tablePath, filenames.index);
+    const expectedIndex = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.index);
     defer alloc.free(expectedIndex);
-    const expectedEntries = try readTestTableFile(io, alloc, tablePath, filenames.entries);
+    const expectedEntries = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.entries);
     defer alloc.free(expectedEntries);
-    const expectedLens = try readTestTableFile(io, alloc, tablePath, filenames.lens);
+    const expectedLens = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.lens);
     defer alloc.free(expectedLens);
-    const expectedMetaindexCompressed = try readTestTableFile(io, alloc, tablePath, filenames.metaindex);
+    const expectedMetaindexCompressed = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.metaindex);
     defer alloc.free(expectedMetaindexCompressed);
 
-    try testing.expectEqualSlices(u8, expectedIndex, table.indexBuf);
-    try testing.expectEqualSlices(u8, expectedEntries, table.entriesBuf);
-    try testing.expectEqualSlices(u8, expectedLens, table.lensBuf);
+    var buf = try alloc.alloc(u8, @max(expectedIndex.len, @max(expectedEntries.len, expectedLens.len)));
+    defer alloc.free(buf);
+
+    var n = try table.readIndex(io, buf[0..expectedIndex.len], 0);
+    try testing.expectEqual(expectedIndex.len, n);
+    try testing.expectEqualSlices(u8, expectedIndex, buf[0..n]);
+    n = try table.readEntries(io, buf[0..expectedEntries.len], 0);
+    try testing.expectEqual(expectedEntries.len, n);
+    try testing.expectEqualSlices(u8, expectedEntries, buf[0..n]);
+    n = try table.readLens(io, buf[0..expectedLens.len], 0);
+    try testing.expectEqual(expectedLens.len, n);
+    try testing.expectEqualSlices(u8, expectedLens, buf[0..n]);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
         alloc,

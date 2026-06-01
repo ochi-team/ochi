@@ -23,6 +23,7 @@ current: []const u8,
 // blockHeaders may point into a tail subslice while scanning
 blockHeaders: []BlockHeader,
 indexBuf: std.ArrayList(u8) = .empty,
+compressedIndexBuf: std.ArrayList(u8) = .empty,
 entriesBlock: EntriesBlock,
 
 metaIndexRecords: []MetaIndex,
@@ -55,6 +56,7 @@ pub fn deinit(self: *LookupTable, alloc: Allocator) void {
     if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
 
     self.indexBuf.deinit(alloc);
+    self.compressedIndexBuf.deinit(alloc);
     self.entriesBlock.deinit(alloc);
 
     self.* = undefined;
@@ -130,16 +132,16 @@ fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) 
     }
     std.debug.assert(self.metaIndexRecords.len != 0);
 
-    // Binary search can return the first row strictly above the key.
-    // Step back by one row because the target may belong to the previous range.
+    // binary search can return the first row strictly above the key.
+    // step back by one row because the target may belong to the previous range.
     var i = std.sort.binarySearch(MetaIndex, self.metaIndexRecords, key, MetaIndex.compareToKey) orelse 0;
     if (i > 0) i -= 1;
     self.metaIndexRecords = self.metaIndexRecords[i..];
-    if (!try self.nextBlockHeaders(alloc)) {
+    if (!try self.nextBlockHeaders(io, alloc)) {
         return;
     }
 
-    // Same idea at block-header level: include the previous block as candidate.
+    // same idea at block-header level: include the previous block as candidate.
     i = std.sort.binarySearch(BlockHeader, self.blockHeaders, key, BlockHeader.compareToKey) orelse 0;
     if (i > 0) i -= 1;
     self.blockHeaders = self.blockHeaders[i..];
@@ -228,7 +230,7 @@ pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
 
 fn nextBlock(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     if (self.blockHeaders.len == 0) {
-        const hasNext = try self.nextBlockHeaders(alloc);
+        const hasNext = try self.nextBlockHeaders(io, alloc);
         if (!hasNext) return false;
     }
 
@@ -244,7 +246,7 @@ fn nextBlock(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     return true;
 }
 
-fn nextBlockHeaders(self: *LookupTable, alloc: Allocator) !bool {
+fn nextBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     if (self.metaIndexRecords.len == 0) {
         self.isRead = true;
         return false;
@@ -255,9 +257,9 @@ fn nextBlockHeaders(self: *LookupTable, alloc: Allocator) !bool {
 
     // TODO: cache block headers
 
-    const blockHeadersOwned = try self.readBlockHeaders(alloc, metaIndex);
+    const blockHeadersOwned = try self.readBlockHeaders(io, alloc, metaIndex);
 
-    // Always free the previous decode batch before loading the next one,
+    // always free the previous decode batch before loading the next one,
     // only after readBlockHeaders went successful
     if (self.blockHeadersOwned.len > 0) {
         alloc.free(self.blockHeadersOwned);
@@ -269,14 +271,19 @@ fn nextBlockHeaders(self: *LookupTable, alloc: Allocator) !bool {
     return true;
 }
 
-fn readBlockHeaders(self: *LookupTable, alloc: Allocator, metaIndex: MetaIndex) ![]BlockHeader {
-    const end = metaIndex.indexBlockOffset + metaIndex.indexBlockSize;
-    const compressedIndex = self.table.indexBuf[metaIndex.indexBlockOffset..end];
+fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: MetaIndex) ![]BlockHeader {
+    self.compressedIndexBuf.clearRetainingCapacity();
+    try self.compressedIndexBuf.ensureUnusedCapacity(alloc, metaIndex.indexBlockSize);
 
-    const indexSize = try encoding.getFrameContentSize(compressedIndex);
+    const compressedIndex = self.compressedIndexBuf.unusedCapacitySlice()[0..metaIndex.indexBlockSize];
+    const compressedLen = try self.table.readIndex(io, compressedIndex, metaIndex.indexBlockOffset);
+    std.debug.assert(compressedLen == metaIndex.indexBlockSize);
+    self.compressedIndexBuf.items.len = compressedLen;
+
+    self.indexBuf.clearRetainingCapacity();
+    const indexSize = try encoding.getFrameContentSize(self.compressedIndexBuf.items);
     try self.indexBuf.ensureUnusedCapacity(alloc, indexSize);
-    const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), compressedIndex);
-    std.debug.assert(n == indexSize);
+    const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), self.compressedIndexBuf.items);
     self.indexBuf.items.len = n;
 
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
@@ -290,15 +297,11 @@ fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockH
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
     self.entriesBlock.reset();
 
-    // Copy exact encoded slices for this block and decode them into a fresh MemBlock.
+    // copy exact encoded slices for this block and decode them into a fresh MemBlock.
     try self.entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, blockHeader.entriesBlockSize);
-    const itemsStart: usize = @intCast(blockHeader.entriesBlockOffset);
-    const itemsEnd = itemsStart + blockHeader.entriesBlockSize;
-    const itemsSrc = self.table.entriesBuf[itemsStart..itemsEnd];
     const itemsDst = self.entriesBlock.entriesBuf.unusedCapacitySlice()[0..blockHeader.entriesBlockSize];
-    @memcpy(itemsDst, itemsSrc);
-
-    std.debug.assert(itemsSrc.len == blockHeader.entriesBlockSize);
+    const entriesLen = try self.table.readEntries(io, itemsDst, blockHeader.entriesBlockOffset);
+    std.debug.assert(entriesLen == blockHeader.entriesBlockSize);
     self.entriesBlock.entriesBuf.items.len = blockHeader.entriesBlockSize;
 
     try self.entriesBlock.lensBuf.ensureUnusedCapacity(alloc, blockHeader.lensBlockSize);

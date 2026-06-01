@@ -276,7 +276,7 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     return block;
 }
 
-fn readTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
+pub fn readTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
     const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
     defer alloc.free(filePath);
     return fs.readAll(io, alloc, filePath);

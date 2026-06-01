@@ -15,6 +15,7 @@ const BlockReader = @import("BlockReader.zig");
 const EntriesBlock = @import("EntriesBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockMerger = @import("BlockMerger.zig");
+const Table = @import("Table.zig");
 
 const MemTable = @This();
 
@@ -70,7 +71,7 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     return t;
 }
 
-pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*MemTable) !*MemTable {
+pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*Table) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     defer {
         for (readers.items) |r| r.deinit(alloc);
@@ -83,7 +84,7 @@ pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*MemTable) !*MemTab
     const t = try empty(alloc);
     errdefer t.deinit(alloc);
 
-    const flushToDiskAtUs = flush.getFlushMemTableToDiskDeadline(io, *MemTable, memTables);
+    const flushToDiskAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, *MemTable, memTables);
     try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs);
     return t;
 }
@@ -184,7 +185,7 @@ pub fn mergeBlocks(
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
-    var merger = try BlockMerger.init(alloc, readers);
+    var merger = try BlockMerger.init(io, alloc, readers);
     defer merger.deinit(alloc);
 
     const tableHeader = try merger.merge(io, alloc, writer, stopped);

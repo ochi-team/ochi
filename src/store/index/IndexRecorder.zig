@@ -327,7 +327,7 @@ fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !
     var mergedTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, 8);
     defer mergedTables.deinit(fbaAlloc);
 
-    var memToMerge = try std.ArrayList(*MemTable).initCapacity(fbaAlloc, 8);
+    var memToMerge = try std.ArrayList(*Table).initCapacity(fbaAlloc, 8);
     defer memToMerge.deinit(fbaAlloc);
 
     std.debug.assert(memTables.items.len != 0);
@@ -344,10 +344,10 @@ fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !
 
         try memToMerge.ensureUnusedCapacity(fbaAlloc, toMerge.len);
         for (toMerge) |table| {
-            const mem = table.mem orelse {
+            _ = table.mem orelse {
                 std.debug.panic("mergeMemTables expects mem tables only", .{});
             };
-            memToMerge.appendAssumeCapacity(mem);
+            memToMerge.appendAssumeCapacity(table);
         }
 
         // TODO: I don't need it, we already have merging from []*Table, replace it
@@ -797,12 +797,14 @@ fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        if (table.mem) |memTable| {
-            const reader = try BlockReader.initFromMemTable(alloc, memTable);
+        if (table.mem != null) {
+            const reader = try BlockReader.initFromMemTable(alloc, table);
             readers.appendAssumeCapacity(reader);
-        } else {
+        } else if (table.disk != null) {
             const reader = try BlockReader.initFromDiskTable(io, alloc, table);
             readers.appendAssumeCapacity(reader);
+        } else {
+            std.debug.panic("expected mem or disk table", .{});
         }
     }
 

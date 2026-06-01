@@ -379,7 +379,7 @@ pub fn decode(
 
     std.debug.assert(decompressedItemsSlice.len == 0);
     std.debug.assert(self.buf.items.len == dataLen);
-    if (builtin.is_test) {
+    if (builtin.mode == .Debug) {
         self.assertIsSorted();
     }
 }
