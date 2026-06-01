@@ -15,7 +15,7 @@ const StreamWriter = @import("StreamWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const encoding = @import("encoding");
 
-const Self = @This();
+const BlockWriter = @This();
 
 pub const indexBlockSize = 16 * 1024;
 pub const indexBlockFlushThreshold = 128 * 1024;
@@ -46,14 +46,14 @@ indexBlockBuf: std.ArrayList(u8),
 indexBlockHeader: IndexBlockHeader = .{},
 metaIndexBuf: std.ArrayList(u8),
 
-pub fn init(allocator: Allocator) !*Self {
+pub fn init(allocator: Allocator) !*BlockWriter {
     var indexBlockBuf = try std.ArrayList(u8).initCapacity(allocator, indexBlockSize);
     errdefer indexBlockBuf.deinit(allocator);
     var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexSize);
     errdefer metaIndexBuf.deinit(allocator);
 
-    const bw = try allocator.create(Self);
-    bw.* = Self{
+    const bw = try allocator.create(BlockWriter);
+    bw.* = BlockWriter{
         .sid = null,
         .blockMinTimestamp = 0,
         .blockMaxTimestamp = 0,
@@ -73,14 +73,14 @@ pub fn init(allocator: Allocator) !*Self {
     return bw;
 }
 
-pub fn deinit(self: *Self, allocator: Allocator) void {
+pub fn deinit(self: *BlockWriter, allocator: Allocator) void {
     self.indexBlockBuf.deinit(allocator);
     self.metaIndexBuf.deinit(allocator);
     allocator.destroy(self);
 }
 
 pub fn writeLines(
-    self: *Self,
+    self: *BlockWriter,
     io: Io,
     allocator: Allocator,
     sid: SID,
@@ -99,7 +99,7 @@ pub fn writeLines(
 }
 
 pub fn writeData(
-    self: *Self,
+    self: *BlockWriter,
     io: Io,
     allocator: Allocator,
     data: *BlockData,
@@ -110,7 +110,7 @@ pub fn writeData(
 }
 
 fn writeBlock(
-    self: *Self,
+    self: *BlockWriter,
     io: Io,
     alloc: Allocator,
     // block: *Block,
@@ -178,7 +178,7 @@ fn writeContent(io: Io, alloc: Allocator, content: Content, sid: SID, streamWrit
     }
 }
 
-pub fn finish(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
+pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *StreamWriter, th: *TableHeader) !void {
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
@@ -196,7 +196,7 @@ pub fn finish(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWr
     th.compressedSize = streamWriter.size();
 }
 
-fn flushIndexBlock(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
+fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
     defer self.indexBlockBuf.clearRetainingCapacity();
     if (self.indexBlockBuf.items.len > 0) {
         try self.indexBlockHeader.writeIndexBlock(
@@ -220,7 +220,7 @@ fn flushIndexBlock(self: *Self, io: Io, allocator: Allocator, streamWriter: *Str
     self.blockMaxTimestamp = 0;
 }
 
-fn writeIndexBlockHeaders(self: *Self, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
+fn writeIndexBlockHeaders(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
     const slice = try streamWriter.metaIndexDst.allocSlice(allocator, bound);
     const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);

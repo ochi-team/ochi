@@ -38,7 +38,7 @@ pub const Error = error{
 };
 
 // TODO: consider a better name:
-const Self = @This();
+const StreamWriter = @This();
 
 const tsBufferSize = 2 * 1024;
 const indexBufferSize = 2 * 1024;
@@ -80,7 +80,7 @@ timestampsEncoder: *TimestampsEncoder,
 
 path: []const u8,
 
-pub fn initMem(io: Io, allocator: Allocator, maxColI: u16) !*Self {
+pub fn initMem(io: Io, allocator: Allocator, maxColI: u16) !*StreamWriter {
     var timestampsDst = try StreamDestination.initBuffer(allocator, tsBufferSize);
     errdefer timestampsDst.deinit(io, allocator);
     var indexDst = try StreamDestination.initBuffer(allocator, indexBufferSize);
@@ -115,10 +115,10 @@ pub fn initMem(io: Io, allocator: Allocator, maxColI: u16) !*Self {
     const timestampsEncoder = try TimestampsEncoder.init(allocator);
     errdefer timestampsEncoder.deinit(allocator);
 
-    const w = try allocator.create(Self);
+    const w = try allocator.create(StreamWriter);
     errdefer allocator.destroy(w);
 
-    w.* = Self{
+    w.* = StreamWriter{
         .timestampsDst = timestampsDst,
         .indexDst = indexDst,
         .metaIndexDst = metaIndexDst,
@@ -147,7 +147,7 @@ pub fn initMem(io: Io, allocator: Allocator, maxColI: u16) !*Self {
     return w;
 }
 
-pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !*Self {
+pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !*StreamWriter {
     std.debug.assert(path.len != 0);
 
     // TODO: implement page cache support
@@ -238,10 +238,10 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     const timestampsEncoder = try TimestampsEncoder.init(alloc);
     errdefer timestampsEncoder.deinit(alloc);
 
-    const w = try alloc.create(Self);
+    const w = try alloc.create(StreamWriter);
     errdefer alloc.destroy(w);
 
-    w.* = Self{
+    w.* = StreamWriter{
         .timestampsDst = timestampsDst,
         .indexDst = indexDst,
         .metaIndexDst = metaIndexDst,
@@ -269,7 +269,7 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     return w;
 }
 
-pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
+pub fn deinit(self: *StreamWriter, io: Io, allocator: Allocator) void {
     self.timestampsDst.deinit(io, allocator);
     self.indexDst.deinit(io, allocator);
     self.metaIndexDst.deinit(io, allocator);
@@ -305,7 +305,7 @@ pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
 
 /// size gives the amount of all the buffers bytes,
 /// the content of the buffers is compressed
-pub fn size(self: *Self) u32 {
+pub fn size(self: *StreamWriter) u32 {
     var res: usize = self.timestampsDst.len();
     res += self.indexDst.len();
     res += self.metaIndexDst.len();
@@ -324,14 +324,14 @@ pub fn size(self: *Self) u32 {
     return @intCast(res);
 }
 
-pub fn writeColumnKeys(self: *Self, io: Io, allocator: Allocator) !void {
+pub fn writeColumnKeys(self: *StreamWriter, io: Io, allocator: Allocator) !void {
     const encodingBound = try self.columnIDGen.bound();
     const slice = try self.columnKeysBuf.allocSlice(allocator, encodingBound);
     const offset = try self.columnIDGen.encode(allocator, slice);
     try self.columnKeysBuf.appendAllocated(io, slice, offset);
 }
 
-pub fn writeColumnIndexes(self: *Self, io: Io, allocator: Allocator) !void {
+pub fn writeColumnIndexes(self: *StreamWriter, io: Io, allocator: Allocator) !void {
     const count = self.colIdx.count();
 
     var bound = Encoder.varIntBound(count);
@@ -354,7 +354,7 @@ pub fn writeColumnIndexes(self: *Self, io: Io, allocator: Allocator) !void {
 }
 
 pub fn writeBlock(
-    self: *Self,
+    self: *StreamWriter,
     io: Io,
     allocator: Allocator,
     block: *Block,
@@ -380,7 +380,7 @@ pub fn writeBlock(
 }
 
 pub fn writeData(
-    self: *Self,
+    self: *StreamWriter,
     io: Io,
     alloc: Allocator,
     blockHeader: *BlockHeader,
@@ -405,7 +405,7 @@ pub fn writeData(
 }
 
 fn writeTimestamps(
-    self: *Self,
+    self: *StreamWriter,
     io: Io,
     allocator: Allocator,
     tsHeader: *TimestampsHeader,
@@ -446,7 +446,7 @@ fn writeTimestamps(
 // It could be especially useful for large files that contains 100k+ lines,
 // it must help speed up queries with a narrow time range for stale data
 fn writeTimestampsData(
-    self: *Self,
+    self: *StreamWriter,
     io: Io,
     alloc: Allocator,
     tsHeader: *TimestampsHeader,
@@ -464,7 +464,7 @@ fn writeTimestampsData(
     try self.timestampsDst.appendSlice(io, alloc, timestampsData.data);
 }
 
-fn writeColumn(self: *Self, io: Io, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
+fn writeColumn(self: *StreamWriter, io: Io, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
     ch.key = col.key;
 
     const valuesEncoder = try ValuesEncoder.init(allocator);
@@ -513,7 +513,7 @@ fn writeColumn(self: *Self, io: Io, allocator: Allocator, col: Column, ch: *Colu
     try bloomTokensBuf.appendSlice(io, allocator, bloomHash);
 }
 
-fn writeColumnData(self: *Self, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
+fn writeColumnData(self: *StreamWriter, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
     const dataLen = col.bloomValues.len;
     std.debug.assert(dataLen <= maxValuesBlockSize);
 
@@ -547,7 +547,7 @@ fn writeColumnData(self: *Self, io: Io, alloc: Allocator, col: ColumnData, ch: *
     if (col.bloomTokens) |d| try bloomTokensBuf.appendSlice(io, alloc, d);
 }
 
-fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !u16 {
+fn getBloomBufferIndex(self: *StreamWriter, io: Io, alloc: Allocator, key: []const u8) !u16 {
     if (key.len == 0) {
         return error.MessageBloomMustBeUsed;
     }
@@ -591,7 +591,7 @@ fn getBloomBufferIndex(self: *Self, io: Io, alloc: Allocator, key: []const u8) !
     return colI;
 }
 
-fn ensureColumnKeyOwned(self: *Self, alloc: Allocator, key: []const u8) !void {
+fn ensureColumnKeyOwned(self: *StreamWriter, alloc: Allocator, key: []const u8) !void {
     if (self.columnIDGen.keyIDs.get(key) != null) {
         return;
     }
@@ -632,7 +632,7 @@ fn createBloomTokensValues(io: Io, alloc: Allocator, tablePath: []const u8, i: u
 }
 
 fn writeColumnsHeader(
-    self: *Self,
+    self: *StreamWriter,
     io: Io,
     allocator: Allocator,
     csh: *ColumnsHeader,
@@ -699,7 +699,7 @@ test "writeBlock and writeData produce identical buffer output" {
 
     // Writer 1: encode via writeBlock
     const maxColI = 128;
-    const writer1 = try Self.initMem(io, alloc, maxColI);
+    const writer1 = try StreamWriter.initMem(io, alloc, maxColI);
     defer writer1.deinit(io, alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
@@ -739,7 +739,7 @@ test "writeBlock and writeData produce identical buffer output" {
     try bd.readFrom(alloc, &bh1, &sr);
 
     // Writer 2: re-encode the same data via writeData
-    const writer2 = try Self.initMem(io, alloc, maxColI);
+    const writer2 = try StreamWriter.initMem(io, alloc, maxColI);
     defer writer2.deinit(io, alloc);
 
     var bh2 = BlockHeader.initFromData(&bd, sid);
@@ -792,7 +792,7 @@ test "writeBlock with many columns does not overflow columns header index buffer
     const line = Line{ .timestampNs = 1, .sid = sid, .fields = &fields };
     var lines = [_]Line{line};
 
-    const writer = try Self.initMem(io, alloc, 128);
+    const writer = try StreamWriter.initMem(io, alloc, 128);
     defer writer.deinit(io, alloc);
 
     const block = try Block.initFromLines(alloc, &lines);

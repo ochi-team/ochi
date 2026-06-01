@@ -23,7 +23,7 @@ const MemDestination = struct {
     metaindexBuf: *std.ArrayList(u8),
 };
 
-// TODO: refactor this garbage to work with Wrter interface
+// it could be a Io.Writer, but it's not
 const DiskDestination = struct {
     entriesFile: Io.File,
     lensFile: Io.File,
