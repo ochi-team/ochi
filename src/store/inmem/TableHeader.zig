@@ -22,6 +22,7 @@ bloomValuesBuffersAmount: u32 = 0,
 
 /// flush writes header file to disk,
 /// header is saved as a json structure
+// TODO: we must be able to calculate a size of it in advance knowing all the limits
 pub fn writeFile(
     self: *const TableHeader,
     io: Io,

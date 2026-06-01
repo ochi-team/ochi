@@ -31,9 +31,11 @@ const Table = @This();
 disk: ?*DiskTable,
 mem: ?*MemTable,
 
-// fields for all the tables
 indexBlockHeaders: []IndexBlockHeader,
 tableHeader: *TableHeader,
+columnIDGen: *ColumnIDGen,
+columnIdxs: std.StringHashMapUnmanaged(u16),
+
 // size is amount of bytes of compressed buffers content
 size: u64,
 path: []const u8,
@@ -47,9 +49,6 @@ messageBloomTokens: []const u8,
 messageBloomValues: []const u8,
 bloomTokensShards: [][]const u8,
 bloomValuesShards: [][]const u8,
-
-columnIDGen: *ColumnIDGen,
-columnIdxs: std.StringHashMapUnmanaged(u16),
 
 // holds ownership,
 // it's necessary in order to support ref counter
@@ -130,12 +129,14 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .tableHeader = header,
     };
 
+    // TODO: join the paths to a static buffer
     const columnKeysPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnKeys });
     defer fbaAlloc.free(columnKeysPath);
     const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
     defer fbaAlloc.free(columnIdxsPath);
     const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
     defer fbaAlloc.free(metaindexPath);
+
     const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
     defer fbaAlloc.free(indexPath);
     const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeaderIndex });
