@@ -5,8 +5,6 @@ const Io = std.Io;
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
 
-const TableContract = @import("contract.zig").TableContract;
-
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
 // guess based number, might be changed on the practical data
 const mergeMultiple = 2;
@@ -32,17 +30,8 @@ const MergeWindowBound = struct {
 
 pub fn Merger(
     comptime T: type,
-    comptime M: type,
     maxMemTables: comptime_int,
 ) type {
-    const contract = TableContract(T, M);
-    comptime {
-        contract.satisfies(T, true) catch |err| {
-            @compileError("TableContract is not satisfied by " ++ @typeName(T) ++ ": " ++ @errorName(err));
-        };
-    }
-    const lessThanFnType = contract.funcs[0].type;
-
     return struct {
         // assumes toMerge destination has preallocated capacity
         pub fn filterTablesToMerge(
@@ -126,7 +115,7 @@ pub fn Merger(
 
         fn areTablesMem(tables: []T) bool {
             for (tables) |table| {
-                if (table.mem) |_| {
+                if (table.inner == .mem) {
                     continue;
                 } else {
                     return false;
@@ -229,7 +218,7 @@ pub fn Merger(
                 },
             )),
         };
-        const lessThanFn: lessThanFnType = @field(ownerType, "lessThan");
+        const lessThanFn = @field(ownerType, "lessThan");
         fn sortToMerge(toMerge: []T) void {
             std.mem.sortUnstable(T, toMerge, {}, lessThanFn);
         }
@@ -297,7 +286,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
             tables.appendAssumeCapacity(t);
         }
 
-        const merger = Merger(*Table, *MemTable, 16);
+        const merger = Merger(*Table, 16);
         const edge = merger.selectTablesToMerge(&tables);
         try testing.expectEqual(case.bound.upper - case.bound.lower, edge);
         var actual = try alloc.alloc(u16, edge);
@@ -341,7 +330,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     var toMerge = try std.ArrayList(*Table).initCapacity(alloc, tables.items.len);
     defer toMerge.deinit(alloc);
 
-    const merger = Merger(*Table, *MemTable, 16);
+    const merger = Merger(*Table, 16);
     const window = merger.filterTablesToMerge(tables.items, &toMerge, std.math.maxInt(u64));
     try testing.expect(window != null);
     const w = window.?;
@@ -355,7 +344,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
 fn createDiskTableFromItems(io: Io, alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
     const memTable = try createMemTableFromItems(io, alloc, items);
     defer memTable.close(io);
-    const mem = memTable.mem.?;
+    const mem = memTable.inner.mem;
     try mem.storeToDisk(io, alloc, tablePath);
     return Table.open(io, alloc, tablePath);
 }
@@ -384,7 +373,7 @@ test "getDestinationTableKind rules" {
     defer small2.close(io);
 
     var bothSmall = [_]*Table{ small1, small2 };
-    const merger = Merger(*Table, *MemTable, 16);
+    const merger = Merger(*Table, 16);
     const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(1024 * 1024 * 1024);
 
     try testing.expectEqual(TableKind.mem, merger.getDestinationTableKind(bothSmall[0..], false, maxInmemoryTableSize));

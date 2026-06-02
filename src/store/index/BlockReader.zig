@@ -86,7 +86,7 @@ pub fn initFromMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
 }
 
 pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
-    const memTable = table.mem.?;
+    const memTable = table.inner.mem;
     std.debug.assert(memTable.tableHeader.blocksCount > 0);
     const metaIndexRecords = try MetaIndex.decodeDecompress(
         alloc,

@@ -4,19 +4,10 @@ const Io = std.Io;
 
 const merge = @import("merge.zig");
 
-const TableRefCountContract = @import("contract.zig").TableRefCountContract;
-
 pub fn Swapper(
     comptime Self: type,
     comptime T: type,
 ) type {
-    const contract = TableRefCountContract(T);
-    comptime {
-        contract.satisfies(T, false) catch |err| {
-            @compileError("TableRefCountContract is not satisfied by " ++ @typeName(T) ++ ": " ++ @errorName(err));
-        };
-    }
-
     return struct {
         pub fn swapTables(
             self: *Self,

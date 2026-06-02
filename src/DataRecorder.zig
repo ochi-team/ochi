@@ -27,7 +27,7 @@ const cap = @import("store/table/cap.zig");
 const swap = @import("store/table/swap.zig");
 
 const maxMemTables = 24;
-const merger = merge.Merger(*Table, *MemTable, maxMemTables);
+const merger = merge.Merger(*Table, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
 
 // TODO: move flush interval to config
@@ -309,7 +309,7 @@ fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool
     defer tables.deinit(allocator);
 
     for (self.memTables.items) |memTable| {
-        const isTimeToMerge = memTable.mem.?.flushAtUs <= nowUs;
+        const isTimeToMerge = memTable.inner.mem.flushAtUs <= nowUs;
         if (!memTable.inMerge and (force or isTimeToMerge)) {
             memTable.inMerge = true;
             tables.appendAssumeCapacity(memTable);
@@ -500,8 +500,8 @@ fn mergeTables(
     errdefer if (destinationTablePath.len > 0)
         alloc.free(destinationTablePath);
 
-    if (force and tables.len == 1 and tables[0].mem != null) {
-        const table = tables[0].mem.?;
+    if (force and tables.len == 1 and tables[0].inner == .mem) {
+        const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
 
         const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
@@ -683,7 +683,7 @@ fn openCreatedTable(
     maybeMemTable: ?*MemTable,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, *MemTable, tables);
+        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
         return Table.fromMem(alloc, memTable);
     }
 
@@ -697,12 +697,15 @@ fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        if (table.mem) |memTable| {
-            const reader = try BlockReader.initFromMemTable(alloc, memTable);
-            readers.appendAssumeCapacity(reader);
-        } else {
-            const reader = try BlockReader.initFromDiskTable(io, alloc, table.path);
-            readers.appendAssumeCapacity(reader);
+        switch (table.inner) {
+            .mem => |memTable| {
+                const reader = try BlockReader.initFromMemTable(alloc, memTable);
+                readers.appendAssumeCapacity(reader);
+            },
+            .disk => {
+                const reader = try BlockReader.initFromDiskTable(io, alloc, table.path);
+                readers.appendAssumeCapacity(reader);
+            },
         }
     }
 
@@ -816,8 +819,7 @@ test "selectTablesInRange selects overlap and handles gaps" {
     const newTable = struct {
         fn new(header: *TableHeader) Table {
             return .{
-                .disk = null,
-                .mem = null,
+                .inner = .{ .mem = undefined },
                 .indexBlockHeaders = &.{},
                 .tableHeader = header,
                 .size = 0,
@@ -982,7 +984,7 @@ test "mergeTables force single mem table creates disk table" {
     try recorder.mergeTables(io, alloc, single[0..], true, null);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
-    try testing.expect(recorder.diskTables.items[0].disk != null);
+    try testing.expect(recorder.diskTables.items[0].inner == .disk);
 }
 
 test "DataRecorder.addAndReopenPreservesLineCount" {

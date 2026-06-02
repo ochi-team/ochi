@@ -278,7 +278,7 @@ fn createDiskTableFromItems(
 
     const memTable = try createMemTableFromItems(io, alloc, items);
     defer memTable.close(io);
-    try memTable.mem.?.storeToDisk(io, alloc, tablePath);
+    try memTable.inner.mem.storeToDisk(io, alloc, tablePath);
 
     return Table.open(io, alloc, tablePath);
 }

@@ -26,7 +26,7 @@ const Runtime = @import("../../Runtime.zig");
 const blocksInMemTable = 15;
 const maxMemTables = 24;
 
-const merger = merge.Merger(*Table, *MemTable, maxMemTables);
+const merger = merge.Merger(*Table, maxMemTables);
 const swapper = swap.Swapper(IndexRecorder, Table);
 
 const IndexRecorder = @This();
@@ -344,9 +344,7 @@ fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !
 
         try memToMerge.ensureUnusedCapacity(fbaAlloc, toMerge.len);
         for (toMerge) |table| {
-            _ = table.mem orelse {
-                std.debug.panic("mergeMemTables expects mem tables only", .{});
-            };
+            std.debug.assert(table.inner == .mem);
             memToMerge.appendAssumeCapacity(table);
         }
 
@@ -566,7 +564,7 @@ fn flushMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, force: bool) !
 
     self.mxTables.lockUncancelable(io);
     for (self.memTables.items) |memTable| {
-        if (!memTable.inMerge and (force or memTable.mem.?.flushAtUs < nowUs)) {
+        if (!memTable.inMerge and (force or memTable.inner.mem.flushAtUs < nowUs)) {
             memTable.inMerge = true;
             toFlush.append(fbaAlloc, memTable) catch |err| {
                 for (toFlush.items) |table| table.inMerge = false;
@@ -703,8 +701,8 @@ pub fn mergeTables(
         );
     }
 
-    if (force and tables.len == 1 and tables[0].mem != null) {
-        const table = tables[0].mem.?;
+    if (force and tables.len == 1 and tables[0].inner == .mem) {
+        const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
         const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
@@ -797,10 +795,10 @@ fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        if (table.mem != null) {
+        if (table.inner == .mem) {
             const reader = try BlockReader.initFromMemTable(alloc, table);
             readers.appendAssumeCapacity(reader);
-        } else if (table.disk != null) {
+        } else if (table.inner == .disk) {
             const reader = try BlockReader.initFromDiskTable(io, alloc, table);
             readers.appendAssumeCapacity(reader);
         } else {
@@ -819,7 +817,7 @@ fn openCreatedTable(
     maybeMemTable: ?*MemTable,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, *MemTable, tables);
+        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
         return Table.fromMem(alloc, memTable);
     }
 
@@ -922,7 +920,7 @@ test "mergeTables force single mem table creates disk table" {
     try recorder.mergeTables(io, alloc, single[0..], true, null);
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
-    try testing.expect(recorder.diskTables.items[0].disk != null);
+    try testing.expect(recorder.diskTables.items[0].inner == .disk);
 }
 
 test "IndexRecorder add and reopen preserves item count" {

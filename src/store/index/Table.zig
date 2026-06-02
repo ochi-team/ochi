@@ -15,11 +15,15 @@ const MemBlock = @import("MemBlock.zig");
 
 const catalog = @import("../table/catalog.zig");
 
+const InnerTag = enum { mem, disk };
+const Inner = union(InnerTag) {
+    mem: *MemTable,
+    disk: *DiskTable,
+};
+
 const Table = @This();
 
-// either one has to be available
-mem: ?*MemTable,
-disk: ?*DiskTable,
+inner: Inner,
 
 // fields for all the tables
 metaIndexRecords: []MetaIndex,
@@ -150,12 +154,11 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     );
 
     table.* = .{
-        .mem = null,
-        .disk = disk,
+        .inner = .{ .disk = disk },
         .size = decodedMetaindex.compressedSize + indexSize + entriesSize + lensSize,
         .path = path,
         .metaIndexRecords = decodedMetaindex.records,
-        .tableHeader = &table.disk.?.tableHeader,
+        .tableHeader = &disk.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
     };
@@ -164,17 +167,15 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 }
 
 pub fn close(self: *Table, io: Io) void {
-    if (self.disk) |disk| {
-        disk.deinit(io, self.alloc);
-    }
-    if (self.mem) |mem| {
-        mem.deinit(self.alloc);
+    switch (self.inner) {
+        .disk => |disk| disk.deinit(io, self.alloc),
+        .mem => |mem| mem.deinit(self.alloc),
     }
 
     for (self.metaIndexRecords) |*rec| rec.deinit(self.alloc);
     if (self.metaIndexRecords.len > 0) self.alloc.free(self.metaIndexRecords);
 
-    const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
+    const shouldRemove = self.inner == .disk and self.toRemove.load(.acquire);
     if (shouldRemove) {
         // TODO: replace to an error log
         fs.deleteTreeAbsolute(io, self.path) catch |err| {
@@ -209,8 +210,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     const table = try alloc.create(Table);
 
     table.* = .{
-        .mem = memTable,
-        .disk = null,
+        .inner = .{ .mem = memTable },
         .size = memTable.size(),
         .path = "",
         .metaIndexRecords = decodedMetaindex.records,
@@ -223,32 +223,23 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
 }
 
 pub fn readLens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
-    if (self.disk) |disk| {
-        return readFile(disk.lensFile, io, buf, offset);
-    } else if (self.mem) |mem| {
-        return readBuf(buf, mem.lensBuf.items, offset);
-    } else {
-        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.lensFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.lensBuf.items, offset),
     }
 }
 
 pub fn readEntries(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
-    if (self.disk) |disk| {
-        return readFile(disk.entriesFile, io, buf, offset);
-    } else if (self.mem) |mem| {
-        return readBuf(buf, mem.entriesBuf.items, offset);
-    } else {
-        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.entriesFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.entriesBuf.items, offset),
     }
 }
 
 pub fn readIndex(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
-    if (self.disk) |disk| {
-        return readFile(disk.indexFile, io, buf, offset);
-    } else if (self.mem) |mem| {
-        return readBuf(buf, mem.indexBuf.items, offset);
-    } else {
-        std.debug.panic("invalid table state: both mem and disk are null", .{});
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.indexFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.indexBuf.items, offset),
     }
 }
 
@@ -274,7 +265,7 @@ pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) 
     defer tableNames.deinit(alloc);
 
     for (tables) |table| {
-        if (table.disk == null) {
+        if (table.inner != .disk) {
             // collect only disk table names
             continue;
         }
@@ -417,8 +408,7 @@ test "fromMem creates proper table from mem table with populated data" {
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
 
-    try testing.expect(table.mem != null);
-    try testing.expect(table.disk == null);
+    try testing.expect(table.inner == .mem);
     var buf: [64]u8 = undefined;
     var i: usize = 0;
 
@@ -463,7 +453,7 @@ test "open reads table from disk" {
     const table = try Table.open(io, alloc, tablePathOwned);
     defer table.release(io);
 
-    try testing.expect(table.disk != null);
+    try testing.expect(table.inner == .disk);
 
     const expectedIndex = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.index);
     defer alloc.free(expectedIndex);

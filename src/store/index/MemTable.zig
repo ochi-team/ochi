@@ -84,7 +84,7 @@ pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*Table) !*MemTable 
     const t = try empty(alloc);
     errdefer t.deinit(alloc);
 
-    const flushToDiskAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, *MemTable, memTables);
+    const flushToDiskAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, memTables);
     try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs);
     return t;
 }

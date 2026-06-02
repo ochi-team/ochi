@@ -23,13 +23,15 @@ const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
+const InnerTag = enum { mem, disk };
+const Inner = union(InnerTag) {
+    mem: *MemTable,
+    disk: *DiskTable,
+};
+
 const Table = @This();
 
-// either one has to be available
-// // NOTE: adding a third one like object table may complicated it,
-// so then it would require implement at able as an interface
-disk: ?*DiskTable,
-mem: ?*MemTable,
+inner: Inner,
 
 indexBlockHeaders: []IndexBlockHeader,
 tableHeader: *TableHeader,
@@ -232,8 +234,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 
     const table = try alloc.create(Table);
     table.* = .{
-        .mem = null,
-        .disk = disk,
+        .inner = .{ .disk = disk },
         .size = header.compressedSize,
         .path = path,
         .indexBlockHeaders = indexBlockHeaders,
@@ -256,24 +257,25 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 }
 
 pub fn close(self: *Table, io: Io) void {
-    if (self.disk) |disk| {
-        self.alloc.free(self.indexBuf);
-        self.alloc.free(self.columnsHeaderIndexBuf);
-        self.alloc.free(self.columnsHeaderBuf);
-        self.alloc.free(self.timestampsBuf);
-        self.alloc.free(self.messageBloomTokens);
-        self.alloc.free(self.messageBloomValues);
-        for (self.bloomTokensShards) |shard| {
-            self.alloc.free(shard);
-        }
-        for (self.bloomValuesShards) |shard| {
-            self.alloc.free(shard);
-        }
-        disk.deinit(self.alloc);
-    }
-
-    if (self.mem) |mem| {
-        mem.deinit(self.alloc);
+    switch (self.inner) {
+        .disk => |disk| {
+            self.alloc.free(self.indexBuf);
+            self.alloc.free(self.columnsHeaderIndexBuf);
+            self.alloc.free(self.columnsHeaderBuf);
+            self.alloc.free(self.timestampsBuf);
+            self.alloc.free(self.messageBloomTokens);
+            self.alloc.free(self.messageBloomValues);
+            for (self.bloomTokensShards) |shard| {
+                self.alloc.free(shard);
+            }
+            for (self.bloomValuesShards) |shard| {
+                self.alloc.free(shard);
+            }
+            disk.deinit(self.alloc);
+        },
+        .mem => |mem| {
+            mem.deinit(self.alloc);
+        },
     }
 
     if (self.indexBlockHeaders.len > 0) self.alloc.free(self.indexBlockHeaders);
@@ -283,7 +285,7 @@ pub fn close(self: *Table, io: Io) void {
     self.alloc.free(self.bloomTokensShards);
     self.alloc.free(self.bloomValuesShards);
 
-    const shouldRemove = self.disk != null and self.toRemove.load(.acquire);
+    const shouldRemove = self.inner == .disk and self.toRemove.load(.acquire);
     if (shouldRemove) {
         // TODO: replace to an error log
         // TODO: review it to make removing more reliable,
@@ -338,8 +340,7 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
 
     const table = try alloc.create(Table);
     table.* = .{
-        .mem = memTable,
-        .disk = null,
+        .inner = .{ .mem = memTable },
         .size = memTable.tableHeader.compressedSize,
         .path = "",
         .indexBlockHeaders = indexBlockHeaders,
@@ -369,7 +370,7 @@ pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) 
     defer tableNames.deinit(fba);
 
     for (tables) |table| {
-        std.debug.assert(table.disk != null);
+        std.debug.assert(table.inner == .disk);
         tableNames.appendAssumeCapacity(std.fs.path.basename(table.path));
     }
 
@@ -779,7 +780,7 @@ test "open reads table from disk" {
     const table = try Table.open(io, alloc, tablePathOwned);
     defer table.release(io);
 
-    try testing.expect(table.disk != null);
+    try testing.expect(table.inner == .disk);
     try testing.expectEqual(memTable.indexBuf.items.len, table.indexBuf.len);
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, table.indexBuf);
     try testing.expectEqualSlices(u8, memTable.columnsHeaderIndexBuf.items, table.columnsHeaderIndexBuf);

@@ -56,7 +56,7 @@ pub const StreamReader = struct {
         errdefer bloomTokensList.deinit(allocator);
         bloomTokensList.appendAssumeCapacity(tableMem.bloomTokensBuf.items);
 
-        // TODO: this could be take from a stream writer theoretically
+        // TODO: this could be taken from a stream writer theoretically
         const columnIDGen = if (tableMem.columnKeysBuf.items.len > 0)
             try ColumnIDGen.decode(allocator, tableMem.columnKeysBuf.items)
         else
