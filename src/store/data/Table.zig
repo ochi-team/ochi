@@ -41,16 +41,6 @@ columnIdxs: std.StringHashMapUnmanaged(u16),
 size: u64,
 path: []const u8,
 
-indexBuf: []const u8,
-columnsHeaderIndexBuf: []const u8,
-columnsHeaderBuf: []const u8,
-timestampsBuf: []const u8,
-
-messageBloomTokens: []const u8,
-messageBloomValues: []const u8,
-bloomTokensShards: [][]const u8,
-bloomValuesShards: [][]const u8,
-
 // holds ownership,
 // it's necessary in order to support ref counter
 alloc: Allocator,
@@ -124,12 +114,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 
     const header = try TableHeader.readFile(io, alloc, path);
 
-    const disk = try alloc.create(DiskTable);
-    errdefer alloc.destroy(disk);
-    disk.* = .{
-        .tableHeader = header,
-    };
-
     try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
     const columnKeysContent = try fs.readAll(io, alloc, pathWriter.buffered());
     defer alloc.free(columnKeysContent);
@@ -165,8 +149,8 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
     try std.fs.path.fmtJoin(&.{ path, filenames.index }).format(&pathWriter);
-    const indexBuf = try fs.readAll(io, alloc, pathWriter.buffered());
-    errdefer alloc.free(indexBuf);
+    const indexFile = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
+    errdefer indexFile.close(io);
     pathWriter.end = 0;
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeaderIndex }).format(&pathWriter);
@@ -231,6 +215,12 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         bloomTokensShards[shardIdx] = bloomTokensBuf;
         bloomValuesShards[shardIdx] = bloomValuesBuf;
     }
+
+    const disk = try alloc.create(DiskTable);
+    errdefer alloc.destroy(disk);
+    disk.* = .{
+        .tableHeader = header,
+    };
 
     const table = try alloc.create(Table);
     table.* = .{
