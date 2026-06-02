@@ -726,7 +726,7 @@ pub fn mergeTables(
         } else {
             var sourceItemsCount: u64 = 0;
             for (tables) |table| {
-                sourceItemsCount += table.tableHeader.entriesCount;
+                sourceItemsCount += table.tableHeader().entriesCount;
             }
             // TODO: test if we can record compressed size and make caching more reliable
             const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable(self.runtime.maxMem, self.runtime.cacheSize);
@@ -843,7 +843,7 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
 fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
     var count: u64 = 0;
     for (recorder.memTables.items) |table| {
-        count += table.tableHeader.entriesCount;
+        count += table.tableHeader().entriesCount;
     }
     return count;
 }
@@ -851,7 +851,7 @@ fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
 fn countDiskItemsInRecorder(recorder: *IndexRecorder) u64 {
     var count: u64 = 0;
     for (recorder.diskTables.items) |table| {
-        count += table.tableHeader.entriesCount;
+        count += table.tableHeader().entriesCount;
     }
     return count;
 }

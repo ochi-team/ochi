@@ -34,7 +34,6 @@ const Table = @This();
 inner: Inner,
 
 indexBlockHeaders: []IndexBlockHeader,
-tableHeader: *TableHeader,
 columnIDGen: *ColumnIDGen,
 columnIdxs: std.StringHashMapUnmanaged(u16),
 
@@ -238,7 +237,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .size = header.compressedSize,
         .path = path,
         .indexBlockHeaders = indexBlockHeaders,
-        .tableHeader = &disk.tableHeader,
         .indexBuf = indexBuf,
         .columnsHeaderIndexBuf = columnsHeaderIndexBuf,
         .columnsHeaderBuf = columnsHeaderBuf,
@@ -344,7 +342,6 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .size = memTable.tableHeader.compressedSize,
         .path = "",
         .indexBlockHeaders = indexBlockHeaders,
-        .tableHeader = &memTable.tableHeader,
         .indexBuf = memTable.indexBuf.items,
         .columnsHeaderIndexBuf = memTable.columnsHeaderIndexBuf.items,
         .columnsHeaderBuf = memTable.columnsHeaderBuf.items,
@@ -360,6 +357,13 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     };
 
     return table;
+}
+
+pub fn tableHeader(self: *const Table) TableHeader {
+    switch (self.inner) {
+        .disk => |disk| return disk.tableHeader,
+        .mem => |mem| return mem.tableHeader,
+    }
 }
 
 pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) anyerror!void {
@@ -791,7 +795,7 @@ test "open reads table from disk" {
 
     try testing.expectEqual(
         memTable.tableHeader.bloomValuesBuffersAmount,
-        table.tableHeader.bloomValuesBuffersAmount,
+        table.tableHeader().bloomValuesBuffersAmount,
     );
     try testing.expectEqual(@as(usize, 1), table.bloomValuesShards.len);
     try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, table.bloomTokensShards[0]);

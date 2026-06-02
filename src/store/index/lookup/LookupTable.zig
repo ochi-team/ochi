@@ -70,7 +70,7 @@ pub fn lessThanPtr(one: *const LookupTable, another: *const LookupTable) bool {
 pub fn seek(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) !void {
     self.isRead = false;
 
-    if (std.mem.lessThan(u8, self.table.tableHeader.lastEntry, key)) {
+    if (std.mem.lessThan(u8, self.table.tableHeader().lastEntry, key)) {
         self.isRead = true;
         return;
     }
@@ -124,8 +124,9 @@ fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
 fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) !void {
     self.resetState(alloc);
 
-    if (std.mem.eql(u8, key, self.table.tableHeader.firstEntry) or
-        std.mem.lessThan(u8, key, self.table.tableHeader.firstEntry))
+    const tableHeader = self.table.tableHeader();
+    if (std.mem.eql(u8, key, tableHeader.firstEntry) or
+        std.mem.lessThan(u8, key, tableHeader.firstEntry))
     {
         _ = try self.nextBlock(io, alloc);
         return;

@@ -530,7 +530,7 @@ fn mergeTables(
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
-                sourceCompressedSizeTotal += table.tableHeader.compressedSize;
+                sourceCompressedSizeTotal += table.tableHeader().compressedSize;
             }
             const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize(
                 self.runtime.maxMem,
@@ -720,7 +720,7 @@ fn selectTablesInRange(
     end: u64,
 ) !void {
     for (tables) |table| {
-        if (table.tableHeader.maxTimestamp < start_ or table.tableHeader.minTimestamp > end) {
+        if (table.tableHeader().maxTimestamp < start_ or table.tableHeader().minTimestamp > end) {
             continue;
         }
         table.retain();
@@ -770,7 +770,7 @@ fn createMemTableFromLines(io: Io, alloc: Allocator, lines: []Line) !*Table {
 fn countMemLinesInRecorder(recorder: *DataRecorder) u64 {
     var n: u64 = 0;
     for (recorder.memTables.items) |table| {
-        n += table.tableHeader.len;
+        n += table.tableHeader().len;
     }
     return n;
 }
@@ -778,7 +778,7 @@ fn countMemLinesInRecorder(recorder: *DataRecorder) u64 {
 fn countDiskLinesInRecorder(recorder: *DataRecorder) u64 {
     var n: u64 = 0;
     for (recorder.diskTables.items) |table| {
-        n += table.tableHeader.len;
+        n += table.tableHeader().len;
     }
     return n;
 }
@@ -809,19 +809,20 @@ test "selectTablesInRange selects overlap and handles gaps" {
                 try selectTablesInRange(alloc_, &selected, tables, case.from, case.to);
                 try testing.expectEqual(case.expected.len, selected.items.len);
                 for (case.expected, 0..) |expected, i| {
-                    try testing.expectEqual(expected.min, selected.items[i].tableHeader.minTimestamp);
-                    try testing.expectEqual(expected.max, selected.items[i].tableHeader.maxTimestamp);
+                    try testing.expectEqual(expected.min, selected.items[i].tableHeader().minTimestamp);
+                    try testing.expectEqual(expected.max, selected.items[i].tableHeader().maxTimestamp);
                 }
             }
         }
     }.run;
 
     const newTable = struct {
-        fn new(header: *TableHeader) Table {
+        fn new(allocator: Allocator, header: TableHeader) !Table {
+            const memTable = try allocator.create(MemTable);
+            memTable.tableHeader = header;
             return .{
-                .inner = .{ .mem = undefined },
+                .inner = .{ .mem = memTable },
                 .indexBlockHeaders = &.{},
-                .tableHeader = header,
                 .size = 0,
                 .path = "",
                 .indexBuf = &.{},
@@ -834,7 +835,7 @@ test "selectTablesInRange selects overlap and handles gaps" {
                 .bloomValuesShards = &.{},
                 .columnIDGen = undefined,
                 .columnIdxs = .{},
-                .alloc = undefined,
+                .alloc = allocator,
                 .inMerge = false,
                 .toRemove = .init(false),
                 .refCounter = .init(1),
@@ -852,8 +853,9 @@ test "selectTablesInRange selects overlap and handles gaps" {
     }
 
     {
-        var h = TableHeader{ .minTimestamp = 100, .maxTimestamp = 110 };
-        var t = newTable(&h);
+        const h = TableHeader{ .minTimestamp = 100, .maxTimestamp = 110 };
+        var t = try newTable(alloc, h);
+        defer alloc.destroy(t.inner.mem);
         const tables = [_]*Table{&t};
         try check(io, alloc, &tables, &[_]Case{
             .{ .from = 100, .to = 110, .expected = &.{.{ .min = 100, .max = 110 }} },
@@ -866,12 +868,15 @@ test "selectTablesInRange selects overlap and handles gaps" {
     }
 
     {
-        var h10 = TableHeader{ .minTimestamp = 10, .maxTimestamp = 19 };
-        var h30 = TableHeader{ .minTimestamp = 30, .maxTimestamp = 39 };
-        var h50 = TableHeader{ .minTimestamp = 50, .maxTimestamp = 59 };
-        var t10 = newTable(&h10);
-        var t30 = newTable(&h30);
-        var t50 = newTable(&h50);
+        const h10 = TableHeader{ .minTimestamp = 10, .maxTimestamp = 19 };
+        const h30 = TableHeader{ .minTimestamp = 30, .maxTimestamp = 39 };
+        const h50 = TableHeader{ .minTimestamp = 50, .maxTimestamp = 59 };
+        var t10 = try newTable(alloc, h10);
+        defer alloc.destroy(t10.inner.mem);
+        var t30 = try newTable(alloc, h30);
+        defer alloc.destroy(t30.inner.mem);
+        var t50 = try newTable(alloc, h50);
+        defer alloc.destroy(t50.inner.mem);
         const tables = [_]*Table{ &t10, &t30, &t50 };
         try check(io, alloc, &tables, &[_]Case{
             .{ .from = 20, .to = 29, .expected = &.{} },
@@ -892,16 +897,21 @@ test "selectTablesInRange selects overlap and handles gaps" {
     }
 
     {
-        var h10 = TableHeader{ .minTimestamp = 10, .maxTimestamp = 19 };
-        var h20 = TableHeader{ .minTimestamp = 20, .maxTimestamp = 29 };
-        var h30 = TableHeader{ .minTimestamp = 30, .maxTimestamp = 39 };
-        var h40 = TableHeader{ .minTimestamp = 40, .maxTimestamp = 49 };
-        var h50 = TableHeader{ .minTimestamp = 50, .maxTimestamp = 59 };
-        var t10 = newTable(&h10);
-        var t20 = newTable(&h20);
-        var t30 = newTable(&h30);
-        var t40 = newTable(&h40);
-        var t50 = newTable(&h50);
+        const h10 = TableHeader{ .minTimestamp = 10, .maxTimestamp = 19 };
+        const h20 = TableHeader{ .minTimestamp = 20, .maxTimestamp = 29 };
+        const h30 = TableHeader{ .minTimestamp = 30, .maxTimestamp = 39 };
+        const h40 = TableHeader{ .minTimestamp = 40, .maxTimestamp = 49 };
+        const h50 = TableHeader{ .minTimestamp = 50, .maxTimestamp = 59 };
+        var t10 = try newTable(alloc, h10);
+        defer alloc.destroy(t10.inner.mem);
+        var t20 = try newTable(alloc, h20);
+        defer alloc.destroy(t20.inner.mem);
+        var t30 = try newTable(alloc, h30);
+        defer alloc.destroy(t30.inner.mem);
+        var t40 = try newTable(alloc, h40);
+        defer alloc.destroy(t40.inner.mem);
+        var t50 = try newTable(alloc, h50);
+        defer alloc.destroy(t50.inner.mem);
         const tables = [_]*Table{ &t10, &t20, &t30, &t40, &t50 };
         try check(io, alloc, &tables, &[_]Case{
             .{ .from = 10, .to = 59, .expected = &.{

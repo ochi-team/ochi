@@ -38,20 +38,20 @@ const MemTable = @This();
 // TODO: continuous buffers might be not very efficient on large size,
 // 1. it can be a chunked buffer, an array of static buffers
 // 2. or reused buffers with a known size
-timestampsBuf: std.ArrayList(u8),
-indexBuf: std.ArrayList(u8),
-metaIndexBuf: std.ArrayList(u8),
+timestampsBuf: std.ArrayList(u8) = .empty,
+indexBuf: std.ArrayList(u8) = .empty,
+metaIndexBuf: std.ArrayList(u8) = .empty,
 
-columnsHeaderBuf: std.ArrayList(u8),
-columnsHeaderIndexBuf: std.ArrayList(u8),
+columnsHeaderBuf: std.ArrayList(u8) = .empty,
+columnsHeaderIndexBuf: std.ArrayList(u8) = .empty,
 
-columnKeysBuf: std.ArrayList(u8),
-columnIdxsBuf: std.ArrayList(u8),
+columnKeysBuf: std.ArrayList(u8) = .empty,
+columnIdxsBuf: std.ArrayList(u8) = .empty,
 
-messageBloomValuesBuf: std.ArrayList(u8),
-messageBloomTokensBuf: std.ArrayList(u8),
-bloomValuesBuf: std.ArrayList(u8),
-bloomTokensBuf: std.ArrayList(u8),
+messageBloomValuesBuf: std.ArrayList(u8) = .empty,
+messageBloomTokensBuf: std.ArrayList(u8) = .empty,
+bloomValuesBuf: std.ArrayList(u8) = .empty,
+bloomTokensBuf: std.ArrayList(u8) = .empty,
 
 tableHeader: TableHeader,
 

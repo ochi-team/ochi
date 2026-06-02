@@ -27,7 +27,6 @@ inner: Inner,
 
 // fields for all the tables
 metaIndexRecords: []MetaIndex,
-tableHeader: *TableHeader,
 size: u64,
 path: []const u8,
 
@@ -103,10 +102,10 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
 
-    var tableHeader = try TableHeader.readFile(io, alloc, path);
-    errdefer tableHeader.deinit(alloc);
+    var parsedTableHeader = try TableHeader.readFile(io, alloc, path);
+    errdefer parsedTableHeader.deinit(alloc);
 
-    const decodedMetaindex = try MetaIndex.readFile(io, alloc, path, tableHeader.blocksCount);
+    const decodedMetaindex = try MetaIndex.readFile(io, alloc, path, parsedTableHeader.blocksCount);
     errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
@@ -131,7 +130,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     const disk = try alloc.create(DiskTable);
     errdefer alloc.destroy(disk);
     disk.* = .{
-        .tableHeader = tableHeader,
+        .tableHeader = parsedTableHeader,
         .indexFile = indexFile,
         .entriesFile = entriesFile,
         .lensFile = lensFile,
@@ -158,7 +157,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .size = decodedMetaindex.compressedSize + indexSize + entriesSize + lensSize,
         .path = path,
         .metaIndexRecords = decodedMetaindex.records,
-        .tableHeader = &disk.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
     };
@@ -214,12 +212,18 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         .size = memTable.size(),
         .path = "",
         .metaIndexRecords = decodedMetaindex.records,
-        .tableHeader = &memTable.tableHeader,
         .refCounter = .init(1),
         .alloc = alloc,
     };
 
     return table;
+}
+
+pub fn tableHeader(self: *const Table) TableHeader {
+    switch (self.inner) {
+        .disk => |disk| return disk.tableHeader,
+        .mem => |mem| return mem.tableHeader,
+    }
 }
 
 pub fn readLens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
@@ -480,7 +484,7 @@ test "open reads table from disk" {
     const expectedMetaindex = try MetaIndex.decodeDecompress(
         alloc,
         expectedMetaindexCompressed,
-        table.tableHeader.blocksCount,
+        table.tableHeader().blocksCount,
     );
     defer {
         for (expectedMetaindex.records) |*rec| rec.deinit(alloc);
