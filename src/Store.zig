@@ -232,7 +232,14 @@ pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []con
         }
     };
 
-    return Dir.openDirAbsolute(io, partitionsPath, .{ .iterate = true });
+    return Dir.openDirAbsolute(io, partitionsPath, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            try fs.createDirAssert(io, partitionsPath);
+            try fs.syncPathAndParentDir(io, partitionsPath);
+            return Dir.openDirAbsolute(io, partitionsPath, .{ .iterate = true });
+        },
+        else => return err,
+    };
 }
 
 pub fn createDir(io: Io, path: []const u8, partitionsPath: []const u8) !void {

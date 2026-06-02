@@ -470,10 +470,10 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     const fieldKey = "key";
 
     const mergedMemTable = blk: {
-        const leftMemTable = try MemTable.init(io, alloc);
-        defer leftMemTable.deinit(io, alloc);
-        const rightMemTable = try MemTable.init(io, alloc);
-        defer rightMemTable.deinit(io, alloc);
+        const leftMemTable = try MemTable.init(alloc);
+        defer leftMemTable.deinit(alloc);
+        const rightMemTable = try MemTable.init(alloc);
+        defer rightMemTable.deinit(alloc);
 
         var leftFields1 = [_]Field{.{ .key = fieldKey, .value = "left-1" }};
         var leftFields2 = [_]Field{.{ .key = fieldKey, .value = "left-2" }};
@@ -498,20 +498,22 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
         try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
 
-        const dstMemTable = try MemTable.init(io, alloc);
-        errdefer dstMemTable.deinit(io, alloc);
+        const dstMemTable = try MemTable.init(alloc);
+        errdefer dstMemTable.deinit(alloc);
         const stopped: ?*std.atomic.Value(bool) = null;
-        dstMemTable.tableHeader = try mergeData(io, alloc, dstMemTable.streamWriter, &readers, stopped);
+        const streamWriter = try StreamWriter.initMem(alloc, dstMemTable);
+        defer streamWriter.deinit(alloc);
+        dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
 
-        try std.testing.expect(dstMemTable.streamWriter.indexDst.len() > 0);
-        try std.testing.expect(dstMemTable.streamWriter.metaIndexDst.len() > 0);
-        try std.testing.expect(dstMemTable.streamWriter.columnsHeaderIndexDst.len() > 0);
-        try std.testing.expect(dstMemTable.streamWriter.columnsHeaderDst.len() > 0);
-        try std.testing.expect(dstMemTable.streamWriter.timestampsDst.len() > 0);
+        try std.testing.expect(dstMemTable.indexBuf.items.len > 0);
+        try std.testing.expect(dstMemTable.metaIndexBuf.items.len > 0);
+        try std.testing.expect(dstMemTable.columnsHeaderIndexBuf.items.len > 0);
+        try std.testing.expect(dstMemTable.columnsHeaderBuf.items.len > 0);
+        try std.testing.expect(dstMemTable.timestampsBuf.items.len > 0);
 
         break :blk dstMemTable;
     };
-    defer mergedMemTable.deinit(io, alloc);
+    defer mergedMemTable.deinit(alloc);
 
     var mergedReader = try BlockReader.initFromMemTable(alloc, mergedMemTable);
     defer mergedReader.deinit(alloc);
@@ -577,8 +579,8 @@ test "mergeData multi tenant" {
         );
         defer alloc.free(tablePath);
 
-        const memTable = try MemTable.init(io, alloc);
-        defer memTable.deinit(io, alloc);
+        const memTable = try MemTable.init(alloc);
+        defer memTable.deinit(alloc);
 
         var fields = [_]Field{
             .{ .key = "app", .value = "repro" },
@@ -597,11 +599,13 @@ test "mergeData multi tenant" {
         try readers.append(alloc, reader);
     }
 
-    const dstMemTable = try MemTable.init(io, alloc);
-    defer dstMemTable.deinit(io, alloc);
+    const dstMemTable = try MemTable.init(alloc);
+    defer dstMemTable.deinit(alloc);
 
     const stopped: ?*std.atomic.Value(bool) = null;
-    dstMemTable.tableHeader = try mergeData(io, alloc, dstMemTable.streamWriter, &readers, stopped);
+    const streamWriter = try StreamWriter.initMem(alloc, dstMemTable);
+    defer streamWriter.deinit(alloc);
+    dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
 
     try std.testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);
 }

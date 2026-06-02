@@ -262,8 +262,8 @@ test "BlockData readFrom populates columnsData and celledColumns" {
         sample.lines[2],
     };
 
-    const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(io, allocator);
+    const memTable = try MemTable.init(allocator);
+    defer memTable.deinit(allocator);
     try memTable.addLines(io, allocator, lines[0..]);
 
     const blockReader = try BlockReader.initFromMemTable(allocator, memTable);

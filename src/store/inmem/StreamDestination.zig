@@ -22,8 +22,8 @@ pub const StreamDestination = union(Tag) {
 
     const Self = @This();
 
-    pub fn initBuffer(buffer: *std.ArrayList(u8)) !Self {
-        return .{ .buffer = &buffer };
+    pub fn initBuffer(buffer: *std.ArrayList(u8)) Self {
+        return .{ .buffer = buffer };
     }
 
     pub fn initFile(io: Io, file: Io.File, buf: *std.ArrayList(u8)) !Self {
@@ -34,8 +34,9 @@ pub const StreamDestination = union(Tag) {
     }
 
     pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
+        _ = allocator;
         switch (self.*) {
-            .buffer => |*buf| buf.deinit(allocator),
+            .buffer => {},
             .file => |*f| {
                 f.file.close(io);
             },
@@ -49,9 +50,17 @@ pub const StreamDestination = union(Tag) {
         };
     }
 
+    // TODO: try removing it
+    pub fn asSliceAssumeBuffer(self: *const Self) []const u8 {
+        return switch (self.*) {
+            .buffer => |buf| buf.items,
+            .file => unreachable,
+        };
+    }
+
     pub fn appendSlice(self: *Self, io: Io, allocator: Allocator, src: []const u8) !void {
         switch (self.*) {
-            .buffer => |*buf| try buf.appendSlice(allocator, src),
+            .buffer => |buf| try buf.appendSlice(allocator, src),
             .file => |*f| {
                 try f.file.writeStreamingAll(io, src);
                 f.len += src.len;
@@ -61,7 +70,7 @@ pub const StreamDestination = union(Tag) {
 
     fn readAll(self: *Self, io: Io, allocator: Allocator) ![]u8 {
         switch (self.*) {
-            .buffer => |*buf| return allocator.dupe(u8, buf.items),
+            .buffer => |buf| return allocator.dupe(u8, buf.items),
             .file => |*f| {
                 const size: usize = @intCast((try f.file.stat(
                     io,
@@ -84,7 +93,7 @@ pub const StreamDestination = union(Tag) {
 
     pub fn allocSlice(self: *Self, alloc: Allocator, cap: usize) ![]u8 {
         return switch (self.*) {
-            .buffer => |*buf| {
+            .buffer => |buf| {
                 try buf.ensureUnusedCapacity(alloc, cap);
                 return buf.unusedCapacitySlice()[0..cap];
             },
@@ -100,7 +109,7 @@ pub const StreamDestination = union(Tag) {
     /// moves items for a buffer, assumes writing to unused capacity slice happened via allocSlice
     pub fn appendAllocated(self: *Self, io: Io, slice: []const u8, cap: usize) !void {
         switch (self.*) {
-            .buffer => |*buf| buf.items.len += cap,
+            .buffer => |buf| buf.items.len += cap,
             .file => |*f| {
                 try f.file.writeStreamingAll(io, slice[0..cap]);
                 f.len += cap;
@@ -113,7 +122,9 @@ test "StreamDestination buffer destination" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
 
-    var dst = try StreamDestination.initBuffer(alloc, 8);
+    var buf = try std.ArrayList(u8).initCapacity(alloc, 8);
+    defer buf.deinit(alloc);
+    var dst = StreamDestination.initBuffer(&buf);
     defer dst.deinit(io, alloc);
 
     try dst.appendSlice(io, alloc, "abc");
@@ -139,7 +150,9 @@ test "StreamDestination file destination" {
     defer alloc.free(filePath);
 
     const file = try Dir.createFileAbsolute(io, filePath, .{ .truncate = true, .read = true });
-    var dst = try StreamDestination.initFile(io, file);
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(alloc);
+    var dst = try StreamDestination.initFile(io, file, &buf);
     defer dst.deinit(io, alloc);
 
     const res = "hello-world";

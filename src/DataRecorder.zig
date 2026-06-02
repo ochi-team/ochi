@@ -77,8 +77,8 @@ pub const DataShard = struct {
             return null;
         }
 
-        const memTable = try MemTable.init(io, alloc);
-        errdefer memTable.deinit(io, alloc);
+        const memTable = try MemTable.init(alloc);
+        errdefer memTable.deinit(alloc);
 
         sem.waitUncancelable(io);
 
@@ -524,8 +524,9 @@ fn mergeTables(
 
     const streamWriter: *StreamWriter = blk: {
         if (tableKind == .mem) {
-            newMemTable = try MemTable.init(io, alloc);
-            break :blk newMemTable.?.streamWriter;
+            const memTable = try MemTable.init(alloc);
+            newMemTable = memTable;
+            break :blk try StreamWriter.initMem(alloc, memTable);
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
@@ -538,8 +539,7 @@ fn mergeTables(
             break :blk try StreamWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
         }
     };
-    // TODO: remove this shame after removing writer from mem table
-    defer if (tableKind != .mem) streamWriter.deinit(io, alloc);
+    defer streamWriter.deinit(alloc);
 
     const tableHeader = mergeData(io, alloc, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
@@ -757,8 +757,8 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
 }
 
 fn createMemTableFromLines(io: Io, alloc: Allocator, lines: []Line) !*Table {
-    const memTable = try MemTable.init(io, alloc);
-    errdefer memTable.deinit(io, alloc);
+    const memTable = try MemTable.init(alloc);
+    errdefer memTable.deinit(alloc);
 
     try memTable.addLines(io, alloc, lines);
     return Table.fromMem(alloc, memTable);

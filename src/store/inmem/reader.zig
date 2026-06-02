@@ -37,45 +37,56 @@ pub const StreamReader = struct {
     columnIDGen: *ColumnIDGen,
     colIdx: *std.AutoHashMap(u16, u16),
 
-    // TODO: this flag doesn't look smart,
+    // TODO: these flags don't look smart,
     // there must be a better idea to track ownership
     ownsBuffers: bool = false,
+    ownsMetadata: bool = false,
 
     pub fn initFromMem(allocator: Allocator, tableMem: *MemTable) !*StreamReader {
         var bloomValuesList = try std.ArrayList([]const u8).initCapacity(
             allocator,
-            tableMem.streamWriter.bloomValuesList.items.len,
+            1,
         );
         errdefer bloomValuesList.deinit(allocator);
-        for (tableMem.streamWriter.bloomValuesList.items) |buf| {
-            bloomValuesList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
-        }
+        bloomValuesList.appendAssumeCapacity(tableMem.bloomValuesBuf.items);
         var bloomTokensList = try std.ArrayList([]const u8).initCapacity(
             allocator,
-            tableMem.streamWriter.bloomTokensList.items.len,
+            1,
         );
         errdefer bloomTokensList.deinit(allocator);
-        for (tableMem.streamWriter.bloomTokensList.items) |buf| {
-            bloomTokensList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+        bloomTokensList.appendAssumeCapacity(tableMem.bloomTokensBuf.items);
+
+        // TODO: this could be take from a stream writer theoretically
+        const columnIDGen = if (tableMem.columnKeysBuf.items.len > 0)
+            try ColumnIDGen.decode(allocator, tableMem.columnKeysBuf.items)
+        else
+            try ColumnIDGen.init(allocator);
+        errdefer columnIDGen.deinit(allocator);
+
+        const colIdx = try decodeColumnIdxs(allocator, tableMem.columnIdxsBuf.items);
+        errdefer {
+            colIdx.deinit();
+            allocator.destroy(colIdx);
         }
 
         const r = try allocator.create(StreamReader);
         r.* = StreamReader{
-            .timestampsBuf = tableMem.streamWriter.timestampsDst.asSliceAssumeBuffer(),
-            .indexBuf = tableMem.streamWriter.indexDst.asSliceAssumeBuffer(),
-            .metaIndexBuf = tableMem.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
-            .columnsHeaderBuf = tableMem.streamWriter.columnsHeaderDst.asSliceAssumeBuffer(),
-            .columnsHeaderIndexBuf = tableMem.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer(),
+            .timestampsBuf = tableMem.timestampsBuf.items,
+            .indexBuf = tableMem.indexBuf.items,
+            .metaIndexBuf = tableMem.metaIndexBuf.items,
+            .columnsHeaderBuf = tableMem.columnsHeaderBuf.items,
+            .columnsHeaderIndexBuf = tableMem.columnsHeaderIndexBuf.items,
 
-            .messageBloomValuesBuf = tableMem.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
-            .messageBloomTokensBuf = tableMem.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
+            .messageBloomValuesBuf = tableMem.messageBloomValuesBuf.items,
+            .messageBloomTokensBuf = tableMem.messageBloomTokensBuf.items,
             .bloomValuesList = bloomValuesList,
             .bloomTokensList = bloomTokensList,
 
-            .columnIDGen = tableMem.streamWriter.columnIDGen,
-            .colIdx = &tableMem.streamWriter.colIdx,
-            .columnsKeysBuf = tableMem.streamWriter.columnKeysBuf.asSliceAssumeBuffer(),
-            .columnIdxsBuf = tableMem.streamWriter.columnIdxsBuf.asSliceAssumeBuffer(),
+            .columnIDGen = columnIDGen,
+            .colIdx = colIdx,
+            .columnsKeysBuf = tableMem.columnKeysBuf.items,
+            .columnIdxsBuf = tableMem.columnIdxsBuf.items,
+            .ownsMetadata = true,
         };
         return r;
     }
@@ -141,12 +152,11 @@ pub const StreamReader = struct {
             }
         }
         while (shardIdx < shardCount) : (shardIdx += 1) {
-            const bloomTokensPath = try MemTable.getBloomTokensFilePath(fbaAlloc, path, @intCast(shardIdx));
-            defer fbaAlloc.free(bloomTokensPath);
-            const bloomValuesPath = try MemTable.getBloomValuesFilePath(fbaAlloc, path, @intCast(shardIdx));
-            defer fbaAlloc.free(bloomValuesPath);
-
+            var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+            const bloomTokensPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomTokens, @intCast(shardIdx));
             const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
+
+            const bloomValuesPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomValues, @intCast(shardIdx));
             const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
 
             bloomValuesList.appendAssumeCapacity(bloomValuesBuf);
@@ -192,6 +202,11 @@ pub const StreamReader = struct {
         if (!self.ownsBuffers) {
             self.bloomValuesList.deinit(allocator);
             self.bloomTokensList.deinit(allocator);
+            if (self.ownsMetadata) {
+                self.columnIDGen.deinit(allocator);
+                self.colIdx.deinit();
+                allocator.destroy(self.colIdx);
+            }
             allocator.destroy(self);
             return;
         }
@@ -323,7 +338,7 @@ pub const BlockReader = struct {
     pub fn initFromMemTable(allocator: Allocator, tableMem: *MemTable) !*BlockReader {
         const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
             allocator,
-            tableMem.streamWriter.metaIndexDst.asSliceAssumeBuffer(),
+            tableMem.metaIndexBuf.items,
         );
         errdefer allocator.free(indexBlockHeaders);
 
@@ -584,8 +599,8 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
         sample.lines[2],
     };
 
-    const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(io, allocator);
+    const memTable = try MemTable.init(allocator);
+    defer memTable.deinit(allocator);
     try memTable.addLines(io, allocator, lines[0..]);
 
     const th = memTable.tableHeader;
@@ -678,8 +693,8 @@ fn testInitFromDiskTable(allocator: Allocator, io: Io) !void {
     const tablePath = try std.fs.path.join(allocator, &.{ rootPath, "table-1" });
     defer allocator.free(tablePath);
 
-    const memTable = try MemTable.init(io, allocator);
-    defer memTable.deinit(io, allocator);
+    const memTable = try MemTable.init(allocator);
+    defer memTable.deinit(allocator);
     try memTable.addLines(io, allocator, lines[0..]);
     try memTable.storeToDisk(io, allocator, tablePath);
 
