@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const columnKeys = "columnKeys.bin";
 pub const columnIdxs = "columnIdxs.bin";
 pub const columnsHeaderIndex = "columnsHeaderIndex.bin";
@@ -21,3 +23,7 @@ pub const dataTables = "data";
 pub const partitions = "partitions";
 
 pub const lock = "lock";
+
+pub fn writeBloomFilePath(buf: []u8, tablePath: []const u8, filename: []const u8, shardIdx: u64) ![]u8 {
+    return std.fmt.bufPrint(buf, "{s}/{s}{d}", .{ tablePath, filename, shardIdx });
+}

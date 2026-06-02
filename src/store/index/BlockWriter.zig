@@ -30,14 +30,7 @@ const DiskDestination = struct {
     indexFile: Io.File,
     metaindexFile: Io.File,
 
-    fn sync(self: *DiskDestination, io: Io) !void {
-        try self.entriesFile.sync(io);
-        try self.lensFile.sync(io);
-        try self.indexFile.sync(io);
-        try self.metaindexFile.sync(io);
-    }
-
-    fn close(self: *DiskDestination, io: Io) void {
+    fn close(self: *const DiskDestination, io: Io) void {
         self.entriesFile.close(io);
         self.lensFile.close(io);
         self.indexFile.close(io);
@@ -45,6 +38,8 @@ const DiskDestination = struct {
     }
 };
 
+// TODO: remove it and use StreamDestination,
+// move StreamDestination to its place
 const Destination = union(enum) {
     mem: MemDestination,
     disk: DiskDestination,
@@ -141,7 +136,7 @@ pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock
     self.bh.encodingType = encoded.encodingType;
 
     // Write data
-    try self.writeData(io, alloc, self.entriesBlock.entriesBuf.items);
+    try self.writeEntries(io, alloc, self.entriesBlock.entriesBuf.items);
     self.bh.entriesBlockSize = @intCast(self.entriesBlock.entriesBuf.items.len);
     self.bh.entriesBlockOffset = self.itemsBlockOffset;
     self.itemsBlockOffset += self.bh.entriesBlockSize;
@@ -206,7 +201,7 @@ fn flushIndexData(self: *BlockWriter, io: Io, alloc: Allocator) !void {
     self.firstEntryBuf.clearRetainingCapacity();
 }
 
-fn writeData(self: *BlockWriter, io: Io, alloc: Allocator, data: []const u8) !void {
+fn writeEntries(self: *BlockWriter, io: Io, alloc: Allocator, data: []const u8) !void {
     switch (self.destination) {
         .mem => |mem| try mem.entriesBuf.appendSlice(alloc, data),
         .disk => |*disk| try disk.entriesFile.writeStreamingAll(io, data),

@@ -7,7 +7,8 @@ pub const FileDestination = struct {
     file: Io.File,
     len: usize,
     /// buffer holds allocated chunk to reuse between write operations
-    buf: std.ArrayList(u8) = .empty,
+    /// it's borrowed and shared between others destinations, so we don't clean it
+    buf: *std.ArrayList(u8),
 };
 
 pub const Tag = enum {
@@ -15,34 +16,27 @@ pub const Tag = enum {
     file,
 };
 
-// TODO: it is what it is, but we must migrate to io.Writer
 pub const StreamDestination = union(Tag) {
-    buffer: std.ArrayList(u8),
+    buffer: *std.ArrayList(u8),
     file: FileDestination,
 
     const Self = @This();
 
-    pub fn initBuffer(allocator: Allocator, capacity: usize) !Self {
-        const buffer = try std.ArrayList(u8).initCapacity(allocator, capacity);
-        errdefer buffer.deinit(allocator);
-        return .{ .buffer = buffer };
+    pub fn initBuffer(buffer: *std.ArrayList(u8)) !Self {
+        return .{ .buffer = &buffer };
     }
 
-    pub fn initFile(io: Io, file: Io.File) !Self {
+    pub fn initFile(io: Io, file: Io.File, buf: *std.ArrayList(u8)) !Self {
         const stat = try file.stat(io);
         const initialLen: usize = @intCast(stat.size);
 
-        var buffer: [4096]u8 = undefined;
-        var file_reader = file.reader(io, &buffer);
-        try file_reader.seekTo(stat.size);
-        return .{ .file = .{ .file = file, .len = initialLen } };
+        return .{ .file = .{ .file = file, .len = initialLen, .buf = buf } };
     }
 
     pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
         switch (self.*) {
             .buffer => |*buf| buf.deinit(allocator),
             .file => |*f| {
-                f.buf.deinit(allocator);
                 f.file.close(io);
             },
         }
@@ -88,13 +82,6 @@ pub const StreamDestination = union(Tag) {
         }
     }
 
-    pub fn asSliceAssumeBuffer(self: *const Self) []const u8 {
-        return switch (self.*) {
-            .buffer => |buf| buf.items,
-            .file => std.debug.panic("not a buffer destination", .{}),
-        };
-    }
-
     pub fn allocSlice(self: *Self, alloc: Allocator, cap: usize) ![]u8 {
         return switch (self.*) {
             .buffer => |*buf| {
@@ -102,10 +89,9 @@ pub const StreamDestination = union(Tag) {
                 return buf.unusedCapacitySlice()[0..cap];
             },
             .file => |*f| {
-                // TODO: reuse the buffer across different write destinations,
-                // it doesn't make much sense have different buffered writes since we write everything sequentially
                 f.buf.clearRetainingCapacity();
                 try f.buf.ensureUnusedCapacity(alloc, cap);
+                std.debug.print("[DEBUG] allocating a data stream destination buffer, len={d}\n", .{cap});
                 return f.buf.unusedCapacitySlice()[0..cap];
             },
         };

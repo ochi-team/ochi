@@ -19,33 +19,112 @@ const filenames = @import("../../filenames.zig");
 // TODO: move to a better place, it's used in the merger (disk table)
 pub const maxBlockSize = 2 * 1024 * 1024;
 
+const tsBufferSize = 2 * 1024;
+const indexBufferSize = 2 * 1024;
+const metaIndexBufferSize = 2 * 1024;
+const columnsHeaderBufferSize = 2 * 1024;
+const columnsHeaderIndexBufferSize = 2 * 1024;
+const bloomValuesSize = 2 * 1024;
+const bloomTokensSize = 2 * 1024;
+const columnKeysBufferSize = 512;
+const columnIndexesBufferSize = 128;
+
 pub const Error = error{
     EmptyLines,
 };
 
 const MemTable = @This();
 
-// TODO: decouple this relation, writer must not be here
-streamWriter: *StreamWriter,
+// TODO: continuous buffers might be not very efficient on large size,
+// 1. it can be a chunked buffer, an array of static buffers
+// 2. or reused buffers with a known size
+timestampsBuf: std.ArrayList(u8),
+indexBuf: std.ArrayList(u8),
+metaIndexBuf: std.ArrayList(u8),
+
+columnsHeaderBuf: std.ArrayList(u8),
+columnsHeaderIndexBuf: std.ArrayList(u8),
+
+columnKeysBuf: std.ArrayList(u8),
+columnIdxsBuf: std.ArrayList(u8),
+
+messageBloomValuesBuf: std.ArrayList(u8),
+messageBloomTokensBuf: std.ArrayList(u8),
+bloomValuesBuf: std.ArrayList(u8),
+bloomTokensBuf: std.ArrayList(u8),
+
 tableHeader: TableHeader,
 
 flushAtUs: i64 = std.math.maxInt(i64),
 
 pub fn init(io: Io, allocator: std.mem.Allocator) !*MemTable {
-    const streamWriter = try StreamWriter.initMem(io, allocator, 1);
-    errdefer streamWriter.deinit(io, allocator);
+    var timestampsBuf = try std.ArrayList(u8).initCapacity(allocator, tsBufferSize);
+    errdefer timestampsBuf.deinit(io, allocator);
+    var indexBuf = try std.ArrayList(u8).initCapacity(allocator, indexBufferSize);
+    errdefer indexBuf.deinit(io, allocator);
+    var metaIndexBuf = try std.ArrayList(u8).initCapacity(allocator, metaIndexBufferSize);
+    errdefer metaIndexBuf.deinit(io, allocator);
+
+    var columnsHeaderBuf = try std.ArrayList(u8).initCapacity(allocator, columnsHeaderBufferSize);
+    errdefer columnsHeaderBuf.deinit(io, allocator);
+    var columnsHeaderIndexBuf = try std.ArrayList(u8).initCapacity(allocator, columnsHeaderIndexBufferSize);
+    errdefer columnsHeaderIndexBuf.deinit(io, allocator);
+
+    var columnKeysBuf = try std.ArrayList(u8).initCapacity(allocator, columnKeysBufferSize);
+    errdefer columnKeysBuf.deinit(io, allocator);
+    var columnIdxsBuf = try std.ArrayList(u8).initCapacity(allocator, columnIndexesBufferSize);
+    errdefer columnIdxsBuf.deinit(io, allocator);
+
+    var msgBloomValuesBuf = try std.ArrayList(u8).initCapacity(allocator, bloomValuesSize);
+    errdefer msgBloomValuesBuf.deinit(io, allocator);
+    var msgBloomTokensBuf = try std.ArrayList(u8).initCapacity(allocator, bloomTokensSize);
+    errdefer msgBloomTokensBuf.deinit(io, allocator);
+    var bloomValuesBuf = try std.ArrayList(u8).initCapacity(allocator, bloomValuesSize);
+    errdefer bloomValuesBuf.deinit(io, allocator);
+    var bloomTokensBuf = try std.ArrayList(u8).initCapacity(allocator, bloomTokensSize);
+    errdefer bloomTokensBuf.deinit(io, allocator);
 
     const p = try allocator.create(MemTable);
     errdefer allocator.destroy(p);
     p.* = MemTable{
-        .streamWriter = streamWriter,
         .tableHeader = .{},
+        .timestampsBuf = timestampsBuf,
+        .indexBuf = indexBuf,
+        .metaIndexBuf = metaIndexBuf,
+        .columnsHeaderBuf = columnsHeaderBuf,
+        .columnsHeaderIndexBuf = columnsHeaderIndexBuf,
+        .columnKeysBuf = columnKeysBuf,
+        .columnIdxsBuf = columnIdxsBuf,
+        .messageBloomValuesBuf = msgBloomValuesBuf,
+        .messageBloomTokensBuf = msgBloomTokensBuf,
+        .bloomValuesBuf = bloomValuesBuf,
+        .bloomTokensBuf = bloomTokensBuf,
     };
 
     return p;
 }
-pub fn deinit(self: *MemTable, io: Io, allocator: std.mem.Allocator) void {
-    self.streamWriter.deinit(io, allocator);
+pub fn deinit(self: *MemTable, allocator: std.mem.Allocator) void {
+    self.timestampsBuf.deinit(allocator);
+    self.indexBuf.deinit(allocator);
+    self.metaIndexBuf.deinit(allocator);
+
+    self.columnsHeaderBuf.deinit(allocator);
+    self.columnsHeaderIndexBuf.deinit(allocator);
+
+    self.columnKeysBuf.deinit(allocator);
+    self.columnIdxsBuf.deinit(allocator);
+
+    self.messageBloomValuesBuf.deinit(allocator);
+    self.messageBloomTokensBuf.deinit(allocator);
+    for (self.bloomValuesList.items) |*bv| {
+        bv.deinit(allocator);
+    }
+    self.bloomValuesList.deinit(allocator);
+    for (self.bloomTokensList.items) |*bv| {
+        bv.deinit(allocator);
+    }
+    self.bloomTokensList.deinit(allocator);
+
     allocator.destroy(self);
 }
 
@@ -85,22 +164,7 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
     try blockWriter.finish(io, allocator, self.streamWriter, &self.tableHeader);
 }
 
-// TODO: this is not the best place for bloom path generation
-pub fn getBloomValuesFilePath(alloc: std.mem.Allocator, partPath: []const u8, shardIdx: u64) ![]u8 {
-    const shardIdxLen = std.fmt.count("{}", .{shardIdx});
-    const path = try alloc.alloc(u8, partPath.len + 1 + filenames.bloomValues.len + shardIdxLen);
-    _ = try std.fmt.bufPrint(path, "{s}/{s}{}", .{ partPath, filenames.bloomValues, shardIdx });
-    return path;
-}
-
-// TODO: this is not the best place for bloom path generation
-pub fn getBloomTokensFilePath(alloc: std.mem.Allocator, tablePath: []const u8, shardIdx: u64) ![]u8 {
-    const shardIdxLen = std.fmt.count("{}", .{shardIdx});
-    const path = try alloc.alloc(u8, tablePath.len + 1 + filenames.bloomTokens.len + shardIdxLen);
-    _ = try std.fmt.bufPrint(path, "{s}/{s}{}", .{ tablePath, filenames.bloomTokens, shardIdx });
-    return path;
-}
-
+// TODO: find out if we can use StreamWriter to flush the table to disk
 pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
     if (Dir.openDirAbsolute(io, path, .{})) |dir| {
@@ -116,8 +180,8 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     }
 
     // for mem table it's expect to have a single bloom filter shard
-    std.debug.assert(self.streamWriter.bloomTokensList.items.len <= 1);
-    std.debug.assert(self.streamWriter.bloomValuesList.items.len <= 1);
+    std.debug.assert(self.bloomTokensList.items.len <= 1);
+    std.debug.assert(self.bloomValuesList.items.len <= 1);
 
     var stack = std.heap.stackFallback(2048, alloc);
     const allocator = stack.get();
@@ -158,37 +222,39 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
         try std.fs.path.join(allocator, &.{ path, filenames.messageTokens });
     defer allocator.free(messageBloomFilterPath);
 
-    try fs.writeBufferValToFile(io, columnKeysPath, self.streamWriter.columnKeysBuf.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(io, columnIdxsPath, self.streamWriter.columnIdxsBuf.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(io, metaindexPath, self.streamWriter.metaIndexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(io, indexPath, self.streamWriter.indexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(io, columnsHeaderIndexPath, self.streamWriter.columnsHeaderIndexDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(io, columnsHeaderPath, self.streamWriter.columnsHeaderDst.asSliceAssumeBuffer());
-    try fs.writeBufferValToFile(io, timestampsPath, self.streamWriter.timestampsDst.asSliceAssumeBuffer());
+    try fs.writeBufferValToFile(io, columnKeysPath, self.columnKeysBuf.items);
+    try fs.writeBufferValToFile(io, columnIdxsPath, self.columnIdxsBuf.items);
+    try fs.writeBufferValToFile(io, metaindexPath, self.metaIndexBuf.items);
+    try fs.writeBufferValToFile(io, indexPath, self.indexBuf.items);
+    try fs.writeBufferValToFile(io, columnsHeaderIndexPath, self.columnsHeaderIndexBuf.items);
+    try fs.writeBufferValToFile(io, columnsHeaderPath, self.columnsHeaderBuf.items);
+    try fs.writeBufferValToFile(io, timestampsPath, self.timestampsBuf.items);
 
     try fs.writeBufferValToFile(
         io,
         messageBloomFilterPath,
-        self.streamWriter.messageBloomTokensDst.asSliceAssumeBuffer(),
+        self.messageBloomTokensBuf.items,
     );
     try fs.writeBufferValToFile(
         io,
         messageValuesPath,
-        self.streamWriter.messageBloomValuesDst.asSliceAssumeBuffer(),
+        self.messageBloomValuesBuf.items,
     );
 
-    const bloomTokensPath = try getBloomTokensFilePath(allocator, path, 0);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+
+    const bloomTokensPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomTokens, 0);
     defer allocator.free(bloomTokensPath);
-    const bloomTokensContent = if (self.streamWriter.bloomTokensList.items.len > 0)
-        self.streamWriter.bloomTokensList.items[0].asSliceAssumeBuffer()
+    const bloomTokensContent = if (self.bloomTokensList.items.len > 0)
+        self.bloomTokensList.items[0].items
     else
         "";
     try fs.writeBufferValToFile(io, bloomTokensPath, bloomTokensContent);
 
-    const bloomValuesPath = try getBloomValuesFilePath(allocator, path, 0);
+    const bloomValuesPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomValues, 0);
     defer allocator.free(bloomValuesPath);
-    const bloomValuesContent = if (self.streamWriter.bloomValuesList.items.len > 0)
-        self.streamWriter.bloomValuesList.items[0].asSliceAssumeBuffer()
+    const bloomValuesContent = if (self.bloomValuesList.items.len > 0)
+        self.bloomValuesList.items[0].items
     else
         "";
     try fs.writeBufferValToFile(io, bloomValuesPath, bloomValuesContent);

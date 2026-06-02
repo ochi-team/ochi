@@ -6,6 +6,8 @@ const TableHeader = @import("TableHeader.zig");
 
 const DiskTable = @This();
 
+// TODO: makes no sense to dupliated tableHeader in both tables,
+// find why we do it and document or move to Table
 tableHeader: TableHeader,
 
 indexFile: Io.File,

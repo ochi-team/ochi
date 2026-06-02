@@ -437,22 +437,22 @@ test "initFromLines and initFromData produce identical blocks" {
 
         var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomValuesList.items.len);
         defer bloomValuesList.deinit(alloc);
-        for (writer.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+        for (writer.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.buffer.items);
 
         var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomTokensList.items.len);
         defer bloomTokensList.deinit(alloc);
-        for (writer.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+        for (writer.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.buffer.items);
 
         const sr = StreamReader{
-            .timestampsBuf = writer.timestampsDst.asSliceAssumeBuffer(),
-            .indexBuf = writer.indexDst.asSliceAssumeBuffer(),
-            .metaIndexBuf = writer.metaIndexDst.asSliceAssumeBuffer(),
-            .columnsHeaderBuf = writer.columnsHeaderDst.asSliceAssumeBuffer(),
-            .columnsHeaderIndexBuf = writer.columnsHeaderIndexDst.asSliceAssumeBuffer(),
-            .columnsKeysBuf = writer.columnKeysBuf.asSliceAssumeBuffer(),
-            .columnIdxsBuf = writer.columnIdxsBuf.asSliceAssumeBuffer(),
-            .messageBloomValuesBuf = writer.messageBloomValuesDst.asSliceAssumeBuffer(),
-            .messageBloomTokensBuf = writer.messageBloomTokensDst.asSliceAssumeBuffer(),
+            .timestampsBuf = writer.timestampsDst.buffer.items,
+            .indexBuf = writer.indexDst.buffer.items,
+            .metaIndexBuf = writer.metaindexDst.buffer.items,
+            .columnsHeaderBuf = writer.columnsHeaderDst.buffer.items,
+            .columnsHeaderIndexBuf = writer.columnsHeaderIndexDst.buffer.items,
+            .columnsKeysBuf = writer.columnKeysDst.buffer.items,
+            .columnIdxsBuf = writer.columnIdxsDst.buffer.items,
+            .messageBloomValuesBuf = writer.messageBloomValuesDst.buffer.items,
+            .messageBloomTokensBuf = writer.messageBloomTokensDst.buffer.items,
             .bloomValuesList = bloomValuesList,
             .bloomTokensList = bloomTokensList,
             .columnIDGen = writer.columnIDGen,

@@ -231,15 +231,6 @@ pub fn createStoreDirIfNotExists(io: Io, path: []const u8, partitionsPath: []con
             else => return err,
         }
     };
-    Dir.accessAbsolute(io, partitionsPath, .{}) catch |err| {
-        switch (err) {
-            error.FileNotFound => {
-                try fs.createDirAssert(io, partitionsPath);
-                try fs.syncPathAndParentDir(io, path);
-            },
-            else => return err,
-        }
-    };
 
     return Dir.openDirAbsolute(io, partitionsPath, .{ .iterate = true });
 }

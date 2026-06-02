@@ -222,8 +222,8 @@ fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, streamWrite
 
 fn writeIndexBlockHeaders(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *StreamWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
-    const slice = try streamWriter.metaIndexDst.allocSlice(allocator, bound);
+    const slice = try streamWriter.metaindexDst.allocSlice(allocator, bound);
     const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
 
-    try streamWriter.metaIndexDst.appendAllocated(io, slice, offset);
+    try streamWriter.metaindexDst.appendAllocated(io, slice, offset);
 }

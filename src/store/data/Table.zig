@@ -120,6 +120,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
 pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     var fba = std.heap.stackFallback(2048, alloc);
     const fbaAlloc = fba.get();
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
 
     const header = try TableHeader.readFile(io, alloc, path);
 
@@ -207,22 +208,24 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         }
     }
     while (shardIdx < shardCount) : (shardIdx += 1) {
-        const bloomTokensPath = try MemTable.getBloomTokensFilePath(
-            fbaAlloc,
+        const bloomTokensPath = try filenames.writeBloomFilePath(
+            &pathBuf,
             path,
+            filenames.bloomTokens,
             @intCast(shardIdx),
         );
-        defer fbaAlloc.free(bloomTokensPath);
-        const bloomValuesPath = try MemTable.getBloomValuesFilePath(
-            fbaAlloc,
-            path,
-            @intCast(shardIdx),
-        );
-        defer fbaAlloc.free(bloomValuesPath);
         const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
         errdefer alloc.free(bloomTokensBuf);
+
+        const bloomValuesPath = try filenames.writeBloomFilePath(
+            &pathBuf,
+            path,
+            filenames.bloomValues,
+            @intCast(shardIdx),
+        );
         const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
         errdefer alloc.free(bloomValuesBuf);
+
         bloomTokensShards[shardIdx] = bloomTokensBuf;
         bloomValuesShards[shardIdx] = bloomValuesBuf;
     }
