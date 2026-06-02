@@ -119,9 +119,8 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
 }
 
 pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
-    var fba = std.heap.stackFallback(2048, alloc);
-    const fbaAlloc = fba.get();
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
     const header = try TableHeader.readFile(io, alloc, path);
 
@@ -131,29 +130,10 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .tableHeader = header,
     };
 
-    // TODO: join the paths to a static buffer
-    const columnKeysPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnKeys });
-    defer fbaAlloc.free(columnKeysPath);
-    const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
-    defer fbaAlloc.free(columnIdxsPath);
-    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
-    defer fbaAlloc.free(metaindexPath);
-
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
-    defer fbaAlloc.free(indexPath);
-    const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeaderIndex });
-    defer fbaAlloc.free(columnsHeaderIndexPath);
-    const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeader });
-    defer fbaAlloc.free(columnsHeaderPath);
-    const timestampsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.timestamps });
-    defer fbaAlloc.free(timestampsPath);
-    const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageTokens });
-    defer fbaAlloc.free(messageBloomTokensPath);
-    const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageValues });
-    defer fbaAlloc.free(messageBloomValuesPath);
-
-    const columnKeysContent = try fs.readAll(io, alloc, columnKeysPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
+    const columnKeysContent = try fs.readAll(io, alloc, pathWriter.buffered());
     defer alloc.free(columnKeysContent);
+    pathWriter.end = 0;
     var columnIDGen: *ColumnIDGen = blk: {
         if (columnKeysContent.len > 0) {
             break :blk try ColumnIDGen.decode(alloc, columnKeysContent);
@@ -166,32 +146,53 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
     errdefer columnIdxs.deinit(alloc);
 
-    const columnIdxsContent = try fs.readAll(io, alloc, columnIdxsPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnIdxs }).format(&pathWriter);
+    const columnIdxsContent = try fs.readAll(io, alloc, pathWriter.buffered());
     defer alloc.free(columnIdxsContent);
+    pathWriter.end = 0;
     if (columnIdxsContent.len > 0) {
         columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, columnIdxsContent);
     }
 
-    const metaindexContent = try fs.readAll(io, alloc, metaindexPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.metaindex }).format(&pathWriter);
+    const metaindexContent = try fs.readAll(io, alloc, pathWriter.buffered());
     defer alloc.free(metaindexContent);
+    pathWriter.end = 0;
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     if (metaindexContent.len > 0) {
         indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaindexContent);
     }
     errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
-    const indexBuf = try fs.readAll(io, alloc, indexPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.index }).format(&pathWriter);
+    const indexBuf = try fs.readAll(io, alloc, pathWriter.buffered());
     errdefer alloc.free(indexBuf);
-    const columnsHeaderIndexBuf = try fs.readAll(io, alloc, columnsHeaderIndexPath);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeaderIndex }).format(&pathWriter);
+    const columnsHeaderIndexBuf = try fs.readAll(io, alloc, pathWriter.buffered());
     errdefer alloc.free(columnsHeaderIndexBuf);
-    const columnsHeaderBuf = try fs.readAll(io, alloc, columnsHeaderPath);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeader }).format(&pathWriter);
+    const columnsHeaderBuf = try fs.readAll(io, alloc, pathWriter.buffered());
     errdefer alloc.free(columnsHeaderBuf);
-    const timestampsBuf = try fs.readAll(io, alloc, timestampsPath);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.timestamps }).format(&pathWriter);
+    const timestampsBuf = try fs.readAll(io, alloc, pathWriter.buffered());
     errdefer alloc.free(timestampsBuf);
-    const messageBloomTokensBuf = try fs.readAll(io, alloc, messageBloomTokensPath);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.messageTokens }).format(&pathWriter);
+    const messageBloomTokensBuf = try fs.readAll(io, alloc, pathWriter.buffered());
     errdefer alloc.free(messageBloomTokensBuf);
-    const messageBloomValuesBuf = try fs.readAll(io, alloc, messageBloomValuesPath);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.messageValues }).format(&pathWriter);
+    const messageBloomValuesBuf = try fs.readAll(io, alloc, pathWriter.buffered());
     errdefer alloc.free(messageBloomValuesBuf);
+    pathWriter.end = 0;
 
     const shardCount: usize = @intCast(header.bloomValuesBuffersAmount);
     var bloomTokensShards = try alloc.alloc([]const u8, shardCount);

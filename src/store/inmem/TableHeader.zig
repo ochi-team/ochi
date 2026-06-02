@@ -53,13 +53,11 @@ pub fn readFile(
     var fba = std.heap.stackFallback(1024, allocator);
     const fbaAlloc = fba.get();
 
-    const metadataPath = try std.fs.path.join(
-        fbaAlloc,
-        &.{ path, filenames.header },
-    );
-    defer fbaAlloc.free(metadataPath);
+    var metadataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var metadataPathWriter = std.Io.Writer.fixed(&metadataPathBuf);
+    try std.fs.path.fmtJoin(&.{ path, filenames.header }).format(&metadataPathWriter);
 
-    var file = try Dir.openFileAbsolute(io, metadataPath, .{});
+    var file = try Dir.openFileAbsolute(io, metadataPathWriter.buffered(), .{});
     defer file.close(io);
 
     var file_reader = file.reader(io, &.{});

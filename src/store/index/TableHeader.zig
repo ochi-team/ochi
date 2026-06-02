@@ -40,22 +40,23 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     var fba = std.heap.stackFallback(1024, alloc);
     const fbaAlloc = fba.get();
 
-    const metadataPath = try std.fs.path.join(fbaAlloc, &[_][]const u8{ path, filenames.header });
-    defer fbaAlloc.free(metadataPath);
+    var metadataBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var metadataPathWriter = std.Io.Writer.fixed(&metadataBuf);
+    try std.fs.path.fmtJoin(&.{ path, filenames.header }).format(&metadataPathWriter);
 
-    var file = Dir.openFileAbsolute(io, metadataPath, .{}) catch |err| {
-        std.debug.panic("can't open table header '{s}': {s}", .{ metadataPath, @errorName(err) });
+    var file = Dir.openFileAbsolute(io, metadataPathWriter.buffered(), .{}) catch |err| {
+        std.debug.panic("can't open table header '{s}': {s}", .{ path, @errorName(err) });
     };
     defer file.close(io);
 
-    var file_reader = file.reader(io, &.{});
-    const data = file_reader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes)) catch |err| {
-        std.debug.panic("can't read table header '{s}': {s}", .{ metadataPath, @errorName(err) });
+    var fileReader = file.reader(io, &metadataBuf);
+    const data = fileReader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes)) catch |err| {
+        std.debug.panic("can't read table header '{s}': {s}", .{ path, @errorName(err) });
     };
     defer fbaAlloc.free(data);
 
     const parsed = std.json.parseFromSlice(TableHeader, fbaAlloc, data, .{}) catch |err| {
-        std.debug.panic("can't parse table header '{s}': {s}", .{ metadataPath, @errorName(err) });
+        std.debug.panic("can't parse table header '{s}': {s}", .{ path, @errorName(err) });
     };
     defer parsed.deinit();
 
