@@ -50,14 +50,6 @@ pub const StreamDestination = union(Tag) {
         };
     }
 
-    // TODO: try removing it
-    pub fn asSliceAssumeBuffer(self: *const Self) []const u8 {
-        return switch (self.*) {
-            .buffer => |buf| buf.items,
-            .file => unreachable,
-        };
-    }
-
     pub fn appendSlice(self: *Self, io: Io, allocator: Allocator, src: []const u8) !void {
         switch (self.*) {
             .buffer => |buf| try buf.appendSlice(allocator, src),

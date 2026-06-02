@@ -659,22 +659,22 @@ test "writeBlock and writeData produce identical buffer output" {
     // Build StreamReader from writer1's buffers to populate BlockData
     var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomValuesList.items.len);
     defer bloomValuesList.deinit(alloc);
-    for (writer1.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+    for (writer1.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.buffer.items);
 
     var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomTokensList.items.len);
     defer bloomTokensList.deinit(alloc);
-    for (writer1.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.asSliceAssumeBuffer());
+    for (writer1.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.buffer.items);
 
     const sr = StreamReader{
-        .timestampsBuf = writer1.timestampsDst.asSliceAssumeBuffer(),
-        .indexBuf = writer1.indexDst.asSliceAssumeBuffer(),
-        .metaIndexBuf = writer1.metaindexDst.asSliceAssumeBuffer(),
-        .columnsHeaderBuf = writer1.columnsHeaderDst.asSliceAssumeBuffer(),
-        .columnsHeaderIndexBuf = writer1.columnsHeaderIndexDst.asSliceAssumeBuffer(),
-        .columnsKeysBuf = writer1.columnKeysDst.asSliceAssumeBuffer(),
-        .columnIdxsBuf = writer1.columnIdxsDst.asSliceAssumeBuffer(),
-        .messageBloomValuesBuf = writer1.messageBloomValuesDst.asSliceAssumeBuffer(),
-        .messageBloomTokensBuf = writer1.messageBloomTokensDst.asSliceAssumeBuffer(),
+        .timestampsBuf = writer1.timestampsDst.buffer.items,
+        .indexBuf = writer1.indexDst.buffer.items,
+        .metaIndexBuf = writer1.metaindexDst.buffer.items,
+        .columnsHeaderBuf = writer1.columnsHeaderDst.buffer.items,
+        .columnsHeaderIndexBuf = writer1.columnsHeaderIndexDst.buffer.items,
+        .columnsKeysBuf = writer1.columnKeysDst.buffer.items,
+        .columnIdxsBuf = writer1.columnIdxsDst.buffer.items,
+        .messageBloomValuesBuf = writer1.messageBloomValuesDst.buffer.items,
+        .messageBloomTokensBuf = writer1.messageBloomTokensDst.buffer.items,
         .bloomValuesList = bloomValuesList,
         .bloomTokensList = bloomTokensList,
         .columnIDGen = writer1.columnIDGen,
@@ -702,21 +702,21 @@ test "writeBlock and writeData produce identical buffer output" {
     try writer2.writeColumnIndexes(io, alloc);
 
     // Compare all data buffers
-    try testing.expectEqualSlices(u8, writer1.timestampsDst.asSliceAssumeBuffer(), writer2.timestampsDst.asSliceAssumeBuffer());
-    try testing.expectEqualSlices(u8, writer1.columnsHeaderDst.asSliceAssumeBuffer(), writer2.columnsHeaderDst.asSliceAssumeBuffer());
-    try testing.expectEqualSlices(u8, writer1.columnsHeaderIndexDst.asSliceAssumeBuffer(), writer2.columnsHeaderIndexDst.asSliceAssumeBuffer());
-    try testing.expectEqualSlices(u8, writer1.messageBloomValuesDst.asSliceAssumeBuffer(), writer2.messageBloomValuesDst.asSliceAssumeBuffer());
-    try testing.expectEqualSlices(u8, writer1.messageBloomTokensDst.asSliceAssumeBuffer(), writer2.messageBloomTokensDst.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.timestampsDst.buffer.items, writer2.timestampsDst.buffer.items);
+    try testing.expectEqualSlices(u8, writer1.columnsHeaderDst.buffer.items, writer2.columnsHeaderDst.buffer.items);
+    try testing.expectEqualSlices(u8, writer1.columnsHeaderIndexDst.buffer.items, writer2.columnsHeaderIndexDst.buffer.items);
+    try testing.expectEqualSlices(u8, writer1.messageBloomValuesDst.buffer.items, writer2.messageBloomValuesDst.buffer.items);
+    try testing.expectEqualSlices(u8, writer1.messageBloomTokensDst.buffer.items, writer2.messageBloomTokensDst.buffer.items);
     try testing.expectEqual(writer1.bloomValuesList.items.len, writer2.bloomValuesList.items.len);
     for (writer1.bloomValuesList.items, writer2.bloomValuesList.items) |b1, b2| {
-        try testing.expectEqualSlices(u8, b1.asSliceAssumeBuffer(), b2.asSliceAssumeBuffer());
+        try testing.expectEqualSlices(u8, b1.buffer.items, b2.buffer.items);
     }
     try testing.expectEqual(writer1.bloomTokensList.items.len, writer2.bloomTokensList.items.len);
     for (writer1.bloomTokensList.items, writer2.bloomTokensList.items) |b1, b2| {
-        try testing.expectEqualSlices(u8, b1.asSliceAssumeBuffer(), b2.asSliceAssumeBuffer());
+        try testing.expectEqualSlices(u8, b1.buffer.items, b2.buffer.items);
     }
-    try testing.expectEqualSlices(u8, writer1.columnKeysDst.asSliceAssumeBuffer(), writer2.columnKeysDst.asSliceAssumeBuffer());
-    try testing.expectEqualSlices(u8, writer1.columnIdxsDst.asSliceAssumeBuffer(), writer2.columnIdxsDst.asSliceAssumeBuffer());
+    try testing.expectEqualSlices(u8, writer1.columnKeysDst.buffer.items, writer2.columnKeysDst.buffer.items);
+    try testing.expectEqualSlices(u8, writer1.columnIdxsDst.buffer.items, writer2.columnIdxsDst.buffer.items);
 }
 
 test "writeBlock with many columns does not overflow columns header index buffer" {
