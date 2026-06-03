@@ -154,44 +154,40 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     pathWriter.end = 0;
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeaderIndex }).format(&pathWriter);
-    const columnsHeaderIndexBuf = try fs.readAll(io, alloc, pathWriter.buffered());
-    errdefer alloc.free(columnsHeaderIndexBuf);
+    const columnsHeaderIndexFile = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
+    errdefer columnsHeaderIndexFile.close(io);
     pathWriter.end = 0;
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeader }).format(&pathWriter);
-    const columnsHeaderBuf = try fs.readAll(io, alloc, pathWriter.buffered());
-    errdefer alloc.free(columnsHeaderBuf);
+    const columnsHeaderFile = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
+    errdefer columnsHeaderFile.close(io);
     pathWriter.end = 0;
 
     try std.fs.path.fmtJoin(&.{ path, filenames.timestamps }).format(&pathWriter);
-    const timestampsBuf = try fs.readAll(io, alloc, pathWriter.buffered());
-    errdefer alloc.free(timestampsBuf);
+    const timestampsFile = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
+    errdefer timestampsFile.close(io);
     pathWriter.end = 0;
 
     try std.fs.path.fmtJoin(&.{ path, filenames.messageTokens }).format(&pathWriter);
-    const messageBloomTokensBuf = try fs.readAll(io, alloc, pathWriter.buffered());
-    errdefer alloc.free(messageBloomTokensBuf);
+    const messageBloomTokensFile = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
+    errdefer messageBloomTokensFile.close(io);
     pathWriter.end = 0;
 
     try std.fs.path.fmtJoin(&.{ path, filenames.messageValues }).format(&pathWriter);
-    const messageBloomValuesBuf = try fs.readAll(io, alloc, pathWriter.buffered());
-    errdefer alloc.free(messageBloomValuesBuf);
+    const messageBloomValuesFile = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
+    errdefer messageBloomValuesFile.close(io);
     pathWriter.end = 0;
 
     const shardCount: usize = @intCast(header.bloomValuesBuffersAmount);
-    var bloomTokensShards = try alloc.alloc([]const u8, shardCount);
-    errdefer alloc.free(bloomTokensShards);
-    var bloomValuesShards = try alloc.alloc([]const u8, shardCount);
-    errdefer alloc.free(bloomValuesShards);
+    var bloomTokensFiles = try alloc.alloc(std.Io.File, shardCount);
+    errdefer alloc.free(bloomTokensFiles);
+    var bloomValuesFiles = try alloc.alloc(std.Io.File, shardCount);
+    errdefer alloc.free(bloomValuesFiles);
 
     var shardIdx: usize = 0;
     errdefer {
-        for (bloomTokensShards[0..shardIdx]) |shard| {
-            alloc.free(shard);
-        }
-        for (bloomValuesShards[0..shardIdx]) |shard| {
-            alloc.free(shard);
-        }
+        for (bloomTokensFiles[0..shardIdx]) |file| file.close(io);
+        for (bloomValuesFiles[0..shardIdx]) |file| file.close(io);
     }
     while (shardIdx < shardCount) : (shardIdx += 1) {
         const bloomTokensPath = try filenames.writeBloomFilePath(
@@ -200,26 +196,35 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
             filenames.bloomTokens,
             @intCast(shardIdx),
         );
-        const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
-        errdefer alloc.free(bloomTokensBuf);
-
         const bloomValuesPath = try filenames.writeBloomFilePath(
             &pathBuf,
             path,
             filenames.bloomValues,
             @intCast(shardIdx),
         );
-        const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
-        errdefer alloc.free(bloomValuesBuf);
 
-        bloomTokensShards[shardIdx] = bloomTokensBuf;
-        bloomValuesShards[shardIdx] = bloomValuesBuf;
+        const bloomTokensFile = try std.Io.Dir.openFileAbsolute(io, bloomTokensPath, .{});
+        errdefer bloomTokensFile.close(io);
+
+        const bloomValuesFile = try std.Io.Dir.openFileAbsolute(io, bloomValuesPath, .{});
+        errdefer bloomValuesFile.close(io);
+
+        bloomTokensFiles[shardIdx] = bloomTokensFile;
+        bloomValuesFiles[shardIdx] = bloomValuesFile;
     }
 
     const disk = try alloc.create(DiskTable);
     errdefer alloc.destroy(disk);
     disk.* = .{
         .tableHeader = header,
+        .indexFile = indexFile,
+        .columnsHeaderIndexFile = columnsHeaderIndexFile,
+        .columnsHeaderFile = columnsHeaderFile,
+        .timestampsFile = timestampsFile,
+        .messageBloomTokensFile = messageBloomTokensFile,
+        .messageBloomValuesFile = messageBloomValuesFile,
+        .bloomTokensFiles = bloomTokensFiles,
+        .bloomValuesFiles = bloomValuesFiles,
     };
 
     const table = try alloc.create(Table);
@@ -228,14 +233,6 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
         .size = header.compressedSize,
         .path = path,
         .indexBlockHeaders = indexBlockHeaders,
-        .indexBuf = indexBuf,
-        .columnsHeaderIndexBuf = columnsHeaderIndexBuf,
-        .columnsHeaderBuf = columnsHeaderBuf,
-        .timestampsBuf = timestampsBuf,
-        .messageBloomTokens = messageBloomTokensBuf,
-        .messageBloomValues = messageBloomValuesBuf,
-        .bloomTokensShards = bloomTokensShards,
-        .bloomValuesShards = bloomValuesShards,
         .columnIDGen = columnIDGen,
         .columnIdxs = columnIdxs,
         .refCounter = .init(1),
@@ -248,19 +245,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 pub fn close(self: *Table, io: Io) void {
     switch (self.inner) {
         .disk => |disk| {
-            self.alloc.free(self.indexBuf);
-            self.alloc.free(self.columnsHeaderIndexBuf);
-            self.alloc.free(self.columnsHeaderBuf);
-            self.alloc.free(self.timestampsBuf);
-            self.alloc.free(self.messageBloomTokens);
-            self.alloc.free(self.messageBloomValues);
-            for (self.bloomTokensShards) |shard| {
-                self.alloc.free(shard);
-            }
-            for (self.bloomValuesShards) |shard| {
-                self.alloc.free(shard);
-            }
-            disk.deinit(self.alloc);
+            disk.deinit(io, self.alloc);
         },
         .mem => |mem| {
             mem.deinit(self.alloc);
@@ -271,8 +256,6 @@ pub fn close(self: *Table, io: Io) void {
 
     self.columnIDGen.deinit(self.alloc);
     self.columnIdxs.deinit(self.alloc);
-    self.alloc.free(self.bloomTokensShards);
-    self.alloc.free(self.bloomValuesShards);
 
     const shouldRemove = self.inner == .disk and self.toRemove.load(.acquire);
     if (shouldRemove) {
@@ -320,27 +303,12 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
         columnIdxs = try columnIDGen.decodeColumnIdxs(alloc, memTable.columnIdxsBuf.items);
     }
 
-    var bloomTokensShards = try alloc.alloc([]const u8, 1);
-    errdefer alloc.free(bloomTokensShards);
-    var bloomValuesShards = try alloc.alloc([]const u8, 1);
-    errdefer alloc.free(bloomValuesShards);
-    bloomTokensShards[0] = memTable.bloomTokensBuf.items;
-    bloomValuesShards[0] = memTable.bloomValuesBuf.items;
-
     const table = try alloc.create(Table);
     table.* = .{
         .inner = .{ .mem = memTable },
         .size = memTable.tableHeader.compressedSize,
         .path = "",
         .indexBlockHeaders = indexBlockHeaders,
-        .indexBuf = memTable.indexBuf.items,
-        .columnsHeaderIndexBuf = memTable.columnsHeaderIndexBuf.items,
-        .columnsHeaderBuf = memTable.columnsHeaderBuf.items,
-        .timestampsBuf = memTable.timestampsBuf.items,
-        .messageBloomTokens = memTable.messageBloomTokensBuf.items,
-        .messageBloomValues = memTable.messageBloomValuesBuf.items,
-        .bloomTokensShards = bloomTokensShards,
-        .bloomValuesShards = bloomValuesShards,
         .columnIDGen = columnIDGen,
         .columnIdxs = columnIdxs,
         .refCounter = .init(1),
@@ -399,6 +367,26 @@ pub fn release(self: *Table, io: Io) void {
     self.close(io);
 }
 
+pub fn readIndex(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.indexFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.indexBuf.items, offset),
+    }
+}
+
+fn readFile(file: Io.File, io: Io, buf: []u8, offset: u64) !usize {
+    const n = try file.readPositionalAll(io, buf, offset);
+    return n;
+}
+
+fn readBuf(dst: []u8, src: []const u8, offset: u64) !usize {
+    const start: usize = @intCast(offset);
+    if (start >= src.len) return 0;
+    const n = @min(dst.len, src.len - start);
+    @memcpy(dst[0..n], src[start .. start + n]);
+    return n;
+}
+
 pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
     // TODO: assert sids are sorted
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -437,7 +425,11 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
 
         var blockHeaders = std.ArrayList(BlockHeader).empty;
         defer blockHeaders.deinit(alloc);
-        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, self.indexBuf, indexBlockHeader);
+        const indexBuffer = try alloc.alloc(u8, indexBlockHeader.size - indexBlockHeader.offset);
+        defer alloc.free(indexBuffer);
+        n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
+        std.debug.assert(indexBuffer.len == n);
+        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, indexBuffer, indexBlockHeader);
 
         var blockHeadersToRead = blockHeaders.items;
         while (blockHeadersToRead.len > 0) {
@@ -474,7 +466,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
 }
 
 fn queryBlock(
-    self: *Table,
+    self: *const Table,
     io: Io,
     alloc: Allocator,
     dst: *std.ArrayList(Line),
@@ -497,17 +489,9 @@ fn queryBlock(
     bloomTokensList.items.len = self.bloomTokensShards.len;
 
     const streamReader = StreamReader{
-        .timestampsBuf = self.timestampsBuf,
-        .indexBuf = self.indexBuf,
-        .metaIndexBuf = &.{},
-        .columnsHeaderBuf = self.columnsHeaderBuf,
-        .columnsHeaderIndexBuf = self.columnsHeaderIndexBuf,
+        .tabke = self,
         .columnsKeysBuf = &.{},
         .columnIdxsBuf = &.{},
-        .messageBloomValuesBuf = self.messageBloomValues,
-        .messageBloomTokensBuf = self.messageBloomTokens,
-        .bloomValuesList = bloomValuesList,
-        .bloomTokensList = bloomTokensList,
         .columnIDGen = self.columnIDGen,
         .colIdx = &colIdx,
     };
