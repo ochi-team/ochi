@@ -33,6 +33,7 @@ pub fn main() !void {
             break :blk debugAlloc.?.allocator();
         } else {
             // TODO: hack a puzzle how we could eliminate runtime allocations
+            // TODO: play with mallopt, such a mmap threshold
             break :blk std.heap.c_allocator;
         }
     };

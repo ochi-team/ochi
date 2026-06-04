@@ -41,6 +41,7 @@ pub fn empty(alloc: Allocator) !*MemTable {
     return t;
 }
 
+// TODO: log mem tables buffers size on init
 pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocks.len);
     defer {

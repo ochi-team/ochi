@@ -1042,4 +1042,5 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
 // TODO: benchmark different filesystems
 // TODO: try tagging fadvise with different access patterns
-// TODO: experiment with mmap files, start with a small case e.g. only merge or read index
+// TODO: experiment with mmap files in merges
+// since it's a single threaded operation we don't expect os lock

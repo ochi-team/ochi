@@ -43,6 +43,8 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     }
 }
 
+// TODO: validate on startup ulimit -n is larger than 4k for a running process and log an error
+// OR fail in release model with a recommendation 1 << 16 or unlimited
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},

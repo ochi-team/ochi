@@ -42,6 +42,13 @@ pub const StreamReader = struct {
     ownsBuffers: bool = false,
     ownsMetadata: bool = false,
 
+    pub fn init(allocator: Allocator, table: *const Table) !*StreamReader {
+        switch (table.inner) {
+            .mem => |mem| return initFromMem(allocator, mem),
+            .disk => |disk| return initFromMem(allocator, table.path, disk.tableHeader),
+        }
+    }
+
     pub fn initFromMem(allocator: Allocator, tableMem: *MemTable) !*StreamReader {
         var bloomValuesList = try std.ArrayList([]const u8).initCapacity(
             allocator,
@@ -94,6 +101,10 @@ pub const StreamReader = struct {
     fn initFromDisk(io: Io, alloc: Allocator, path: []const u8, tableHeader: TableHeader) !*StreamReader {
         var fba = std.heap.stackFallback(2048, alloc);
         const fbaAlloc = fba.get();
+
+        // instead of reusing the table files it opens them again due to:
+        // - keep the query cache clean
+        // - manage different fadvise for different descriptors
 
         // TODO: open files in parallel to speed up high-latency storage.
         const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
