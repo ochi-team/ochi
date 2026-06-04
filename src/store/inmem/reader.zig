@@ -11,9 +11,9 @@ const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
+const Table = @import("../data/Table.zig");
 const BlockData = @import("BlockData.zig").BlockData;
 const ColumnIDGen = @import("ColumnIDGen.zig");
-const StreamDestination = @import("StreamDestination.zig").StreamDestination;
 
 // TODO: check maybe i don't need allocator.create
 pub const StreamReader = struct {
@@ -42,10 +42,10 @@ pub const StreamReader = struct {
     ownsBuffers: bool = false,
     ownsMetadata: bool = false,
 
-    pub fn init(allocator: Allocator, table: *const Table) !*StreamReader {
+    pub fn init(io: Io, allocator: Allocator, table: *const Table) !*StreamReader {
         switch (table.inner) {
             .mem => |mem| return initFromMem(allocator, mem),
-            .disk => |disk| return initFromMem(allocator, table.path, disk.tableHeader),
+            .disk => |disk| return initFromDisk(io, allocator, table.path, disk.tableHeader),
         }
     }
 

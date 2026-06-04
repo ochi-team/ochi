@@ -56,6 +56,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // refCounter follows how many clients open a table,
 // first time it's open on start up,
 // then readers can retain it
+// TODO: make it u16
 refCounter: std.atomic.Value(u32),
 
 // TODO: investigate how we could make a checksum and validate it on opening a table
@@ -374,6 +375,27 @@ pub fn readIndex(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
     }
 }
 
+pub fn readColumnsHeaderIndex(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.columnsHeaderIndexFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.columnsHeaderIndexBuf.items, offset),
+    }
+}
+
+pub fn readColumnsHeader(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.columnsHeaderFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.columnsHeaderBuf.items, offset),
+    }
+}
+
+pub fn readTimestamps(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.timestampsFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.timestampsBuf.items, offset),
+    }
+}
+
 fn readFile(file: Io.File, io: Io, buf: []u8, offset: u64) !usize {
     const n = try file.readPositionalAll(io, buf, offset);
     return n;
@@ -483,22 +505,11 @@ fn queryBlock(
         colIdx.putAssumeCapacity(colID, entry.value_ptr.*);
     }
 
-    var bloomValuesList = std.ArrayList([]const u8).initBuffer(self.bloomValuesShards);
-    bloomValuesList.items.len = self.bloomValuesShards.len;
-    var bloomTokensList = std.ArrayList([]const u8).initBuffer(self.bloomTokensShards);
-    bloomTokensList.items.len = self.bloomTokensShards.len;
-
-    const streamReader = StreamReader{
-        .tabke = self,
-        .columnsKeysBuf = &.{},
-        .columnIdxsBuf = &.{},
-        .columnIDGen = self.columnIDGen,
-        .colIdx = &colIdx,
-    };
+    const streamReader: *StreamReader = try .init(io, alloc, self);
 
     var blockData = BlockData.initEmpty();
     defer blockData.deinit(alloc);
-    try blockData.readFrom(alloc, &blockHeader, &streamReader);
+    try blockData.readFrom(alloc, &blockHeader, streamReader);
 
     const unpacker = try Unpacker.init(alloc);
     defer unpacker.deinit(alloc);
@@ -699,22 +710,31 @@ test "fromMem creates proper table from mem table with populated data" {
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
 
-    try testing.expect(table.indexBuf.len > 0);
-    try testing.expect(table.columnsHeaderIndexBuf.len > 0);
-    try testing.expect(table.columnsHeaderBuf.len > 0);
-    try testing.expect(table.timestampsBuf.len > 0);
+    var indexBuf: [256]u8 = undefined;
+    const indexN = try table.readIndex(io, &indexBuf, 0);
+    var columnsHeaderIndexBuf: [256]u8 = undefined;
+    const columnsHeaderIndexN = try table.readColumnsHeaderIndex(io, &indexBuf, 0);
+    var columnsHeaderBuf: [256]u8 = undefined;
+    const columnsHeaderN = try table.readColumnsHeader(io, &indexBuf, 0);
+    var timestampsBuf: [256]u8 = undefined;
+    const timestampsN = try table.readTimestamps(io, &indexBuf, 0);
 
-    try testing.expectEqual(@as(usize, 1), table.bloomValuesShards.len);
-    // wait, if "info" or "seq" is added, the bloom filters and values could be generated
-    try testing.expect(table.bloomValuesShards[0].len > 0);
+    try testing.expect(indexBuf[0..indexN].len > 0);
+    try testing.expect(columnsHeaderIndexBuf[0..columnsHeaderIndexN].len > 0);
+    try testing.expect(columnsHeaderBuf[0..columnsHeaderN].len > 0);
+    try testing.expect(timestampsBuf[0..timestampsN].len > 0);
+
+    // if "info" or "seq" is added, the bloom filters and values could be generated
+    try testing.expect(table.inner.mem.bloomValuesBuf.items.len > 0);
+    try testing.expect(table.inner.mem.bloomTokensBuf.items.len > 0);
 
     try testing.expect(table.columnIdxs.count() > 0);
     try testing.expect(table.columnIDGen.keyIDs.count() > 0);
 
-    try testing.expectEqual(memTable.indexBuf.items.len, table.indexBuf.len);
-    try testing.expectEqual(memTable.columnsHeaderIndexBuf.items.len, table.columnsHeaderIndexBuf.len);
-    try testing.expectEqual(memTable.columnsHeaderBuf.items.len, table.columnsHeaderBuf.len);
-    try testing.expectEqual(memTable.timestampsBuf.items.len, table.timestampsBuf.len);
+    try testing.expectEqual(memTable.indexBuf.items.len, indexBuf[0..indexN].len);
+    try testing.expectEqual(memTable.columnsHeaderIndexBuf.items.len, columnsHeaderIndexBuf[0..columnsHeaderIndexN].len);
+    try testing.expectEqual(memTable.columnsHeaderBuf.items.len, columnsHeaderBuf[0..columnsHeaderN].len);
+    try testing.expectEqual(memTable.timestampsBuf.items.len, timestampsBuf[0..timestampsN].len);
 }
 
 test "open reads table from disk" {
