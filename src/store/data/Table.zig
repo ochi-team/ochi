@@ -562,12 +562,18 @@ fn queryBlock(
 
     var i = dst.items.len;
     try block.gatherLines(alloc, dst);
+    var converted: usize = 0;
     errdefer {
-        for (dst.items[i..]) |line| freeFields(alloc, line.fields);
+        for (dst.items[i .. i + converted]) |line| freeFields(alloc, line.fields);
+        for (dst.items[i + converted ..]) |line| alloc.free(line.fields);
         dst.shrinkRetainingCapacity(i);
     }
     for (dst.items[i..]) |*line| {
-        line.fields = try copyFields(alloc, line.fields);
+        const gatheredFields = line.fields;
+        const copiedFields = try copyFields(alloc, gatheredFields);
+        alloc.free(gatheredFields);
+        line.fields = copiedFields;
+        converted += 1;
     }
 
     std.debug.assert(dst.items.len > i);
@@ -722,7 +728,7 @@ const Field = @import("../lines.zig").Field;
 
 fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
     for (lines.items) |line| {
-        alloc.free(line.fields);
+        freeFields(alloc, line.fields);
     }
     lines.deinit(alloc);
 }
@@ -1006,7 +1012,7 @@ test "queryLines" {
 
     for (cases) |case| {
         for (queried.items) |line| {
-            alloc.free(line.fields);
+            freeFields(alloc, line.fields);
         }
         queried.clearRetainingCapacity();
 
@@ -1055,7 +1061,7 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     var queried = std.ArrayList(Line).empty;
     defer {
         for (queried.items) |line| {
-            alloc.free(line.fields);
+            freeFields(alloc, line.fields);
         }
         queried.deinit(alloc);
     }
