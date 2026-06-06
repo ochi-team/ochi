@@ -25,6 +25,7 @@ pub const tracy_options: tracy.Options = .{
 
 pub fn main() !void {
     // TODO: play with madvise
+    // TODO: on startup validate overcomittment is not allowed
     var debugAlloc: ?std.heap.DebugAllocator(.{}) = null;
 
     var alloc: std.mem.Allocator = blk: {
