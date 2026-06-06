@@ -9,7 +9,7 @@ const lineLessThan = @import("../lines.zig").lineLessThan;
 const fieldLessThan = @import("../lines.zig").fieldLessThan;
 const SID = @import("../lines.zig").SID;
 
-const StreamWriter = @import("StreamWriter.zig");
+const TableWriter = @import("TableWriter.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const filenames = @import("../../filenames.zig");
@@ -144,7 +144,7 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
 
     var blockWriter = try BlockWriter.init(allocator);
     defer blockWriter.deinit(allocator);
-    const streamWriter = try StreamWriter.initMem(allocator, self);
+    const streamWriter = try TableWriter.initMem(allocator, self);
     defer streamWriter.deinit(allocator);
 
     var streamI: usize = 0;

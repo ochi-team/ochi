@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const SID = @import("../lines.zig").SID;
-const StreamWriter = @import("StreamWriter.zig");
+const TableWriter = @import("TableWriter.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
@@ -28,7 +28,7 @@ pub fn writeIndexBlock(
     sid: SID,
     minBlockTimestamp: u64,
     maxBlockTimestamp: u64,
-    streamWriter: *StreamWriter,
+    streamWriter: *TableWriter,
 ) !void {
     if (indexBlockBuf.items.len == 0) {
         return;

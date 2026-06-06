@@ -13,7 +13,7 @@ const SID = @import("../lines.zig").SID;
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 
-const StreamWriter = @import("../inmem/StreamWriter.zig");
+const TableWriter = @import("../inmem/TableWriter.zig");
 const BlockWriter = @import("../inmem/BlockWriter.zig");
 const MemTable = @import("../inmem/MemTable.zig");
 const Block = @import("../inmem/Block.zig");
@@ -26,7 +26,7 @@ const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
 pub fn mergeData(
     io: Io,
     alloc: Allocator,
-    writer: *StreamWriter,
+    writer: *TableWriter,
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
@@ -137,7 +137,7 @@ pub const StreamMerger = struct {
         io: Io,
         alloc: Allocator,
         blockWriter: *BlockWriter,
-        writer: *StreamWriter,
+        writer: *TableWriter,
         blockData: *BlockData,
     ) !void {
         // TODO: assert the data and merger state
@@ -175,7 +175,7 @@ pub const StreamMerger = struct {
 
     // TODO: this and many more demonstartes obvious dependece of block and stream writers,
     // they always go together, I have to inject one into another probably
-    fn flushStream(self: *StreamMerger, io: Io, alloc: Allocator, writer: *BlockWriter, streamWriter: *StreamWriter) !void {
+    fn flushStream(self: *StreamMerger, io: Io, alloc: Allocator, writer: *BlockWriter, streamWriter: *TableWriter) !void {
         if (self.lines.items.len > 0) {
             try writer.writeLines(io, alloc, self.sid, self.lines.items, streamWriter);
         }
@@ -189,7 +189,7 @@ pub const StreamMerger = struct {
         alloc: Allocator,
         blockData: *BlockData,
         blockWriter: *BlockWriter,
-        writer: *StreamWriter,
+        writer: *TableWriter,
     ) !void {
         const len = self.lines.items.len;
         try self.decodeLines(io, alloc, blockData);
@@ -469,7 +469,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         const dstMemTable = try MemTable.init(alloc);
         errdefer dstMemTable.deinit(alloc);
         const stopped: ?*std.atomic.Value(bool) = null;
-        const streamWriter = try StreamWriter.initMem(alloc, dstMemTable);
+        const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
         defer streamWriter.deinit(alloc);
         dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
 
@@ -571,7 +571,7 @@ test "mergeData multi tenant" {
     defer dstMemTable.deinit(alloc);
 
     const stopped: ?*std.atomic.Value(bool) = null;
-    const streamWriter = try StreamWriter.initMem(alloc, dstMemTable);
+    const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
     defer streamWriter.deinit(alloc);
     dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
 

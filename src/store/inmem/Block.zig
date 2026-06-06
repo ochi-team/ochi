@@ -356,7 +356,7 @@ fn canBeSavedAsCelled(lines: []const Line, index: usize) bool {
 }
 
 const SID = @import("../lines.zig").SID;
-const StreamWriter = @import("StreamWriter.zig");
+const TableWriter = @import("TableWriter.zig");
 const MemTable = @import("MemTable.zig");
 const StreamReader = @import("reader.zig").StreamReader;
 const BlockHeader = @import("BlockHeader.zig");
@@ -432,7 +432,7 @@ test "initFromLines and initFromData produce identical blocks" {
 
         const memTable = try MemTable.init(alloc);
         defer memTable.deinit(alloc);
-        const writer = try StreamWriter.initMem(alloc, memTable);
+        const writer = try TableWriter.initMem(alloc, memTable);
         defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);

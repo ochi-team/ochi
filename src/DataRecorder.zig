@@ -12,7 +12,7 @@ const SID = @import("store/lines.zig").SID;
 
 const MemTable = @import("store/inmem/MemTable.zig");
 const BlockWriter = @import("store/inmem/BlockWriter.zig");
-const StreamWriter = @import("store/inmem/StreamWriter.zig");
+const TableWriter = @import("store/inmem/TableWriter.zig");
 const TableHeader = @import("store/inmem/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/inmem/reader.zig").BlockReader;
@@ -522,11 +522,11 @@ fn mergeTables(
     const blockWriter = try BlockWriter.init(alloc);
     defer blockWriter.deinit(alloc);
 
-    const streamWriter: *StreamWriter = blk: {
+    const streamWriter: *TableWriter = blk: {
         if (tableKind == .mem) {
             const memTable = try MemTable.init(alloc);
             newMemTable = memTable;
-            break :blk try StreamWriter.initMem(alloc, memTable);
+            break :blk try TableWriter.initMem(alloc, memTable);
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
@@ -536,7 +536,7 @@ fn mergeTables(
                 self.runtime.maxMem,
                 self.runtime.cacheSize,
             );
-            break :blk try StreamWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
+            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
         }
     };
     defer streamWriter.deinit(alloc);

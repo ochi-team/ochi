@@ -51,7 +51,8 @@ blockHeaderI: usize = 0,
 // all block headers read from the buffers
 blockHeaders: []BlockHeader = &.{},
 // current block header
-// TODO: perhaps remove it in order not to hold the pointer
+// SAFETY: it's a state and it's not initialized by default,
+// it relies on the correct order of the API calls
 blockHeader: *BlockHeader = undefined,
 // current storage block
 entriesBlock: EntriesBlock = .{},
