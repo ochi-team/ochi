@@ -7,6 +7,8 @@ const Heap = @import("../../stds/heap.zig").Heap;
 const sizing = @import("../inmem/sizing.zig");
 
 const TableHeader = @import("../inmem/TableHeader.zig");
+const copyFields = @import("../lines.zig").copyFields;
+const freeFields = @import("../lines.zig").freeFields;
 const SID = @import("../lines.zig").SID;
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
@@ -118,12 +120,12 @@ pub const StreamMerger = struct {
         self.sid = .{ .tenantID = 0, .id = 0 };
 
         // TODO: if Lines holds all the fields slice we can reuse the array capacity
-        for (self.lines.items) |line| freeLine(alloc, line);
+        for (self.lines.items) |line| freeFields(alloc, line.fields);
         self.lines.clearRetainingCapacity();
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
-        for (self.lines.items) |line| freeLine(alloc, line);
+        for (self.lines.items) |line| freeFields(alloc, line.fields);
         self.lines.deinit(alloc);
         self.mergeBufferLines.deinit(alloc);
         self.unpacker.deinit(alloc);
@@ -213,6 +215,8 @@ pub const StreamMerger = struct {
 
         for (offset..self.lines.items.len) |lineI| {
             const fields = self.lines.items[lineI].fields;
+            // data is short living, so we need to copy key values buffers,
+            // TODO: we may move field array instead of copying it, do it for every copyFields usage
             const copiedFields = try copyFields(alloc, fields);
             alloc.free(fields);
             self.lines.items[lineI].fields = copiedFields;
@@ -222,42 +226,6 @@ pub const StreamMerger = struct {
         // (test is implemented to confirm it, good to have it for merger),
         // then understand whether I can use blockData.uncompressedSizeBytes
         self.size += sizing.linesJsonSize(self.lines.items[offset..]);
-    }
-
-    // TODO: it's a common case to copy fields, move it to lines,
-    // same happens in the processor and data shard
-    // TODO: find why we can't borrow
-    fn copyFields(alloc: Allocator, fields: []const Field) ![]Field {
-        const copiedFields = try alloc.alloc(Field, fields.len);
-        var copied: usize = 0;
-        errdefer {
-            for (copiedFields[0..copied]) |field| {
-                alloc.free(field.key);
-                alloc.free(field.value);
-            }
-            alloc.free(copiedFields);
-        }
-
-        for (fields, 0..) |field, i| {
-            const key = try alloc.dupe(u8, field.key);
-            const value = alloc.dupe(u8, field.value) catch |err| {
-                alloc.free(key);
-                return err;
-            };
-
-            copiedFields[i] = .{ .key = key, .value = value };
-            copied += 1;
-        }
-
-        return copiedFields;
-    }
-
-    fn freeLine(alloc: Allocator, line: Line) void {
-        for (line.fields) |field| {
-            alloc.free(field.key);
-            alloc.free(field.value);
-        }
-        alloc.free(line.fields);
     }
 };
 

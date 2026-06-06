@@ -1033,6 +1033,8 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 }
 
 // TODO: benchmark different filesystems
+// TODO: benchmark different IO schedulers
 // TODO: try tagging fadvise with different access patterns
 // TODO: experiment with mmap files in merges
-// since it's a single threaded operation we don't expect os lock
+// since it's a single threaded operation we don't expect os lock,
+// or write a blog post why it doesn't fit

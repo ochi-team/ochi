@@ -62,3 +62,10 @@ test "projectIsFormatted" {
 // TODO: add a ast grep rule to use *const isntead of * everywhere as possible
 // TODO: restrict short path to error.xxx, use only full path
 // TODO: restrict TODO / FIXME comments, must be the last rule to fix them all
+// TODO: after last TODO we audit the codebase for the following:
+// 1. state writing, it must be properly re-cleaned, allocate first, encode, then append
+// 2. refactor tests: all the test data and the fixtures must be in its package,
+// 3. test all failures: allocations, io, disk, etc.
+// 4. setup limits to everything
+// 5. fix allocations
+// 6. work on improved testing: failovers, branch testing, fuzz, properties

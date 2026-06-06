@@ -19,6 +19,8 @@ const StreamReader = @import("../inmem/reader.zig").StreamReader;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
+const copyFields = @import("../lines.zig").copyFields;
+const freeFields = @import("../lines.zig").freeFields;
 const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
@@ -396,6 +398,44 @@ pub fn readTimestamps(self: *const Table, io: Io, buf: []u8, offset: u64) !usize
     }
 }
 
+pub fn readMessageBloomTokens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.messageBloomTokensFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.messageBloomTokensBuf.items, offset),
+    }
+}
+
+pub fn readMessageBloomValues(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.messageBloomValuesFile, io, buf, offset),
+        .mem => |mem| return readBuf(buf, mem.messageBloomValuesBuf.items, offset),
+    }
+}
+
+pub fn readBloomTokens(self: *const Table, io: Io, buf: []u8, offset: u64, shardIdx: usize) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.bloomTokensFiles[shardIdx], io, buf, offset),
+        .mem => |mem| {
+            std.debug.assert(shardIdx == 0);
+            return readBuf(buf, mem.bloomTokensBuf.items, offset);
+        },
+    }
+}
+
+pub fn readBloomValues(self: *const Table, io: Io, buf: []u8, offset: u64, shardIdx: usize) !usize {
+    switch (self.inner) {
+        .disk => |disk| return readFile(disk.bloomValuesFiles[shardIdx], io, buf, offset),
+        .mem => |mem| {
+            std.debug.assert(shardIdx == 0);
+            return readBuf(buf, mem.bloomValuesBuf.items, offset);
+        },
+    }
+}
+
+// TODO: compare to reading from the interface,
+// the trick is the read operations are page aligned and it makes sense to continue reading
+// from the rest of the cache in case of many small read calls,
+// ideally get the page size at the compile time if possible
 fn readFile(file: Io.File, io: Io, buf: []u8, offset: u64) !usize {
     const n = try file.readPositionalAll(io, buf, offset);
     return n;
@@ -506,6 +546,7 @@ fn queryBlock(
     }
 
     const streamReader: *StreamReader = try .init(io, alloc, self);
+    defer streamReader.deinit(alloc);
 
     var blockData = BlockData.initEmpty();
     defer blockData.deinit(alloc);
@@ -521,6 +562,13 @@ fn queryBlock(
 
     var i = dst.items.len;
     try block.gatherLines(alloc, dst);
+    errdefer {
+        for (dst.items[i..]) |line| freeFields(alloc, line.fields);
+        dst.shrinkRetainingCapacity(i);
+    }
+    for (dst.items[i..]) |*line| {
+        line.fields = try copyFields(alloc, line.fields);
+    }
 
     std.debug.assert(dst.items.len > i);
     while (i < dst.items.len) {
@@ -528,13 +576,13 @@ fn queryBlock(
 
         if (line.timestampNs < query.start or line.timestampNs > query.end) {
             const removed = dst.swapRemove(i);
-            alloc.free(removed.fields);
+            freeFields(alloc, removed.fields);
             continue;
         }
         if (query.fieldsExpr) |expr| {
             if (!try matchesFilterExpression(line.fields, expr)) {
                 const removed = dst.swapRemove(i);
-                alloc.free(removed.fields);
+                freeFields(alloc, removed.fields);
                 continue;
             }
         }
@@ -673,7 +721,7 @@ test "release fromMem does not affect filesystem path" {
 const Field = @import("../lines.zig").Field;
 
 fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
-    for (lines.items) |*line| {
+    for (lines.items) |line| {
         alloc.free(line.fields);
     }
     lines.deinit(alloc);
@@ -710,23 +758,22 @@ test "fromMem creates proper table from mem table with populated data" {
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
 
-    var indexBuf: [256]u8 = undefined;
+    var indexBuf: [128]u8 = undefined;
     const indexN = try table.readIndex(io, &indexBuf, 0);
-    var columnsHeaderIndexBuf: [256]u8 = undefined;
-    const columnsHeaderIndexN = try table.readColumnsHeaderIndex(io, &indexBuf, 0);
-    var columnsHeaderBuf: [256]u8 = undefined;
-    const columnsHeaderN = try table.readColumnsHeader(io, &indexBuf, 0);
-    var timestampsBuf: [256]u8 = undefined;
-    const timestampsN = try table.readTimestamps(io, &indexBuf, 0);
+    var columnsHeaderIndexBuf: [128]u8 = undefined;
+    const columnsHeaderIndexN = try table.readColumnsHeaderIndex(io, &columnsHeaderIndexBuf, 0);
+    var columnsHeaderBuf: [128]u8 = undefined;
+    const columnsHeaderN = try table.readColumnsHeader(io, &columnsHeaderBuf, 0);
+    var timestampsBuf: [128]u8 = undefined;
+    const timestampsN = try table.readTimestamps(io, &timestampsBuf, 0);
 
     try testing.expect(indexBuf[0..indexN].len > 0);
     try testing.expect(columnsHeaderIndexBuf[0..columnsHeaderIndexN].len > 0);
     try testing.expect(columnsHeaderBuf[0..columnsHeaderN].len > 0);
     try testing.expect(timestampsBuf[0..timestampsN].len > 0);
 
-    // if "info" or "seq" is added, the bloom filters and values could be generated
+    // if "info" or "seq" is added, the bloom values should be generated
     try testing.expect(table.inner.mem.bloomValuesBuf.items.len > 0);
-    try testing.expect(table.inner.mem.bloomTokensBuf.items.len > 0);
 
     try testing.expect(table.columnIdxs.count() > 0);
     try testing.expect(table.columnIDGen.keyIDs.count() > 0);
@@ -780,21 +827,45 @@ test "open reads table from disk" {
     defer table.release(io);
 
     try testing.expect(table.inner == .disk);
-    try testing.expectEqual(memTable.indexBuf.items.len, table.indexBuf.len);
-    try testing.expectEqualSlices(u8, memTable.indexBuf.items, table.indexBuf);
-    try testing.expectEqualSlices(u8, memTable.columnsHeaderIndexBuf.items, table.columnsHeaderIndexBuf);
-    try testing.expectEqualSlices(u8, memTable.columnsHeaderBuf.items, table.columnsHeaderBuf);
-    try testing.expectEqualSlices(u8, memTable.timestampsBuf.items, table.timestampsBuf);
-    try testing.expectEqualSlices(u8, memTable.messageBloomTokensBuf.items, table.messageBloomTokens);
-    try testing.expectEqualSlices(u8, memTable.messageBloomValuesBuf.items, table.messageBloomValues);
+
+    var buf: [128]u8 = undefined;
+    var n = try table.readIndex(io, buf[0..memTable.indexBuf.items.len], 0);
+    try testing.expectEqual(memTable.indexBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.indexBuf.items, buf[0..n]);
+
+    n = try table.readColumnsHeaderIndex(io, buf[0..memTable.columnsHeaderIndexBuf.items.len], 0);
+    try testing.expectEqual(memTable.columnsHeaderIndexBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.columnsHeaderIndexBuf.items, buf[0..n]);
+
+    n = try table.readColumnsHeader(io, buf[0..memTable.columnsHeaderBuf.items.len], 0);
+    try testing.expectEqual(memTable.columnsHeaderBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.columnsHeaderBuf.items, buf[0..n]);
+
+    n = try table.readTimestamps(io, buf[0..memTable.timestampsBuf.items.len], 0);
+    try testing.expectEqual(memTable.timestampsBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.timestampsBuf.items, buf[0..n]);
+
+    n = try table.readMessageBloomTokens(io, buf[0..memTable.messageBloomTokensBuf.items.len], 0);
+    try testing.expectEqual(memTable.messageBloomTokensBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.messageBloomTokensBuf.items, buf[0..n]);
+
+    n = try table.readMessageBloomValues(io, buf[0..memTable.messageBloomValuesBuf.items.len], 0);
+    try testing.expectEqual(memTable.messageBloomValuesBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.messageBloomValuesBuf.items, buf[0..n]);
 
     try testing.expectEqual(
         memTable.tableHeader.bloomValuesBuffersAmount,
         table.tableHeader().bloomValuesBuffersAmount,
     );
-    try testing.expectEqual(@as(usize, 1), table.bloomValuesShards.len);
-    try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, table.bloomTokensShards[0]);
-    try testing.expectEqualSlices(u8, memTable.bloomValuesBuf.items, table.bloomValuesShards[0]);
+    try testing.expectEqual(@as(usize, 1), table.tableHeader().bloomValuesBuffersAmount);
+
+    n = try table.readBloomTokens(io, buf[0..memTable.bloomTokensBuf.items.len], 0, 0);
+    try testing.expectEqual(memTable.bloomTokensBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, buf[0..n]);
+
+    n = try table.readBloomValues(io, buf[0..memTable.bloomValuesBuf.items.len], 0, 0);
+    try testing.expectEqual(memTable.bloomValuesBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.bloomValuesBuf.items, buf[0..n]);
 
     try testing.expect(table.columnIDGen.keyIDs.count() > 0);
     try testing.expect(table.columnIdxs.count() > 0);
@@ -994,4 +1065,58 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     var requested = [_]SID{sid};
 
     try table.queryLines(io, alloc, &queried, requested[0..], query);
+}
+
+test "queryLines reads disk table fields after open" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
+    defer alloc.free(tablePath);
+
+    const sid = SID{ .id = 1, .tenantID = 11 };
+    var fields1 = [_]Field{
+        .{ .key = "", .value = "GET /api/health 200 3ms" },
+        .{ .key = "id", .value = "web-001" },
+        .{ .key = "status", .value = "200" },
+        .{ .key = "path", .value = "/api/health" },
+    };
+    var fields2 = [_]Field{
+        .{ .key = "", .value = "POST /api/orders 500 timeout" },
+        .{ .key = "id", .value = "web-002" },
+        .{ .key = "status", .value = "500" },
+        .{ .key = "path", .value = "/api/orders" },
+    };
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = fields1[0..] },
+        .{ .timestampNs = 2, .sid = sid, .fields = fields2[0..] },
+    };
+
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.storeToDisk(io, alloc, tablePath);
+
+    const tablePathOwned = try alloc.dupe(u8, tablePath);
+    const table = try Table.open(io, alloc, tablePathOwned);
+    defer table.release(io);
+
+    var queried = std.ArrayList(Line).empty;
+    defer deinitQueriedLines(alloc, &queried);
+
+    const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
+    const statusExpr: Query.FilterExpression = .{ .predicate = .{ .key = "status", .value = "200", .op = .equal } };
+    const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = &statusExpr };
+    var requested = [_]SID{sid};
+
+    try table.queryLines(io, alloc, &queried, requested[0..], query);
+    try testing.expectEqual(@as(usize, 1), queried.items.len);
+    try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
+    try testing.expectEqualSlices(u8, "id", queried.items[0].fields[1].key);
+    try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields[1].value);
 }

@@ -261,6 +261,40 @@ pub const LinesSizeError = error{
     MaxLineSizeExceeded,
 };
 
+// TODO: it's a common case to copy fields, move it to lines,
+// same happens in the processor and data shard
+pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
+    const copiedFields = try alloc.alloc(Field, fields.len);
+    var copied: usize = 0;
+    errdefer {
+        for (copiedFields[0..copied]) |field| {
+            alloc.free(field.key);
+            alloc.free(field.value);
+        }
+        alloc.free(copiedFields);
+    }
+
+    for (fields, 0..) |field, i| {
+        const key = try alloc.dupe(u8, field.key);
+        errdefer alloc.free(key);
+        const value = try alloc.dupe(u8, field.value);
+        errdefer alloc.free(value);
+
+        copiedFields[i] = .{ .key = key, .value = value };
+        copied += 1;
+    }
+
+    return copiedFields;
+}
+
+pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
+    for (fields) |field| {
+        alloc.free(field.key);
+        alloc.free(field.value);
+    }
+    alloc.free(fields);
+}
+
 // Line is an internal representation of a log line,
 // TODO: make Array(Line) use MultiArray(Line) to see if it improves the data layout
 pub const Line = struct {

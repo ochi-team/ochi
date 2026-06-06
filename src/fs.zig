@@ -17,6 +17,10 @@ pub fn pathExists(io: Io, path: []const u8) !bool {
     return true;
 }
 
+// Calling fsync() does not necessarily ensure that the entry in the directory
+// containing the file has also reached disk.
+// For that an explicit fsync() on a file descriptor for the directory is also needed.
+// https://linux.die.net/man/2/fsync
 pub fn syncPathAndParentDir(io: Io, path: []const u8) !void {
     try syncPath(io, path);
 
