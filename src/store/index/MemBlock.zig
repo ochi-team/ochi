@@ -62,12 +62,20 @@ pub fn init(
 }
 
 pub fn deinit(self: *MemBlock, alloc: Allocator) void {
+    std.debug.print(
+        "deini index mem block, bufcap={d} buflen={d} entriescap={d} entrieslen={d}\n",
+        .{ self.buf.capacity, self.buf.items.len, self.memEntries.capacity, self.memEntries.items.len },
+    );
     self.memEntries.deinit(alloc);
     self.buf.deinit(alloc);
     alloc.destroy(self);
 }
 
 pub fn reset(self: *MemBlock) void {
+    std.debug.print(
+        "reet index mem block, bufcap={d} buflen={d} entriescap={d} entrieslen={d}\n",
+        .{ self.buf.capacity, self.buf.items.len, self.memEntries.capacity, self.memEntries.items.len },
+    );
     self.memEntries.clearRetainingCapacity();
     self.buf.clearRetainingCapacity();
     self.prefix = "";
