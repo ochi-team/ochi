@@ -36,17 +36,15 @@ buf: std.ArrayList(u8) = .empty,
 
 // the smallest production index entry is sid: [kind:1][tenant:8][stream:16] = 25 bytes,
 // use this for initial memEntries capacity so tiny entries don't exhaust pointer slots
-// TODO: this is a joke, but no idea what to do,
-// 1.perhaps make test entities real, not just "x"
-// 2. it might overallocate a lot, we may find a better approach,
-// e.g. adjust a value size better and flush it earlier in order not to overallocate
-const minEntrySizeHint = if (!builtin.is_test) 25 else 1;
+// TODO: make it configurable for tests
+const minEntrySizeHint = if (!builtin.is_test) 60 else 1;
 
 pub fn init(
     alloc: Allocator,
     maxMemBlockSize: u32,
 ) !*MemBlock {
-    // TODO: instead of a buf we can hold a slice of integers u32 to point to an index in the slice
+    // TODO: instead of a buf we can hold a slice of integers u32 to point to an index in the slice,
+    // theoretically saves x4 memory on this array
     var data = try std.ArrayList([]const u8).initCapacity(alloc, maxMemBlockSize / minEntrySizeHint);
     errdefer data.deinit(alloc);
 
