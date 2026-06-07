@@ -17,8 +17,7 @@ const ColumnIDGen = @import("ColumnIDGen.zig");
 
 // TODO: check maybe i don't need allocator.create
 pub const StreamReader = struct {
-    timestampsBuf: []const u8,
-    indexBuf: []const u8,
+    table: *const Table,
     metaIndexBuf: []const u8,
 
     columnsHeaderBuf: []const u8,
@@ -44,33 +43,34 @@ pub const StreamReader = struct {
 
     pub fn init(io: Io, allocator: Allocator, table: *const Table) !*StreamReader {
         switch (table.inner) {
-            .mem => |mem| return initFromMem(allocator, mem),
-            .disk => |disk| return initFromDisk(io, allocator, table.path, disk.tableHeader),
+            .mem => return initFromMem(allocator, table),
+            .disk => return initFromDisk(io, allocator, table),
         }
     }
 
-    pub fn initFromMem(allocator: Allocator, tableMem: *MemTable) !*StreamReader {
+    pub fn initFromMem(allocator: Allocator, table: *const Table) !*StreamReader {
+        const memTable = table.inner.mem;
         var bloomValuesList = try std.ArrayList([]const u8).initCapacity(
             allocator,
             1,
         );
         errdefer bloomValuesList.deinit(allocator);
-        bloomValuesList.appendAssumeCapacity(tableMem.bloomValuesBuf.items);
+        bloomValuesList.appendAssumeCapacity(memTable.bloomValuesBuf.items);
         var bloomTokensList = try std.ArrayList([]const u8).initCapacity(
             allocator,
             1,
         );
         errdefer bloomTokensList.deinit(allocator);
-        bloomTokensList.appendAssumeCapacity(tableMem.bloomTokensBuf.items);
+        bloomTokensList.appendAssumeCapacity(memTable.bloomTokensBuf.items);
 
         // TODO: this could be taken from a stream writer theoretically
-        const columnIDGen = if (tableMem.columnKeysBuf.items.len > 0)
-            try ColumnIDGen.decode(allocator, tableMem.columnKeysBuf.items)
+        const columnIDGen = if (memTable.columnKeysBuf.items.len > 0)
+            try ColumnIDGen.decode(allocator, memTable.columnKeysBuf.items)
         else
             try ColumnIDGen.init(allocator);
         errdefer columnIDGen.deinit(allocator);
 
-        const colIdx = try decodeColumnIdxs(allocator, tableMem.columnIdxsBuf.items);
+        const colIdx = try decodeColumnIdxs(allocator, memTable.columnIdxsBuf.items);
         errdefer {
             colIdx.deinit();
             allocator.destroy(colIdx);
@@ -78,47 +78,46 @@ pub const StreamReader = struct {
 
         const r = try allocator.create(StreamReader);
         r.* = StreamReader{
-            .timestampsBuf = tableMem.timestampsBuf.items,
-            .indexBuf = tableMem.indexBuf.items,
-            .metaIndexBuf = tableMem.metaIndexBuf.items,
-            .columnsHeaderBuf = tableMem.columnsHeaderBuf.items,
-            .columnsHeaderIndexBuf = tableMem.columnsHeaderIndexBuf.items,
+            .table = table,
+            .metaIndexBuf = memTable.metaIndexBuf.items,
+            .columnsHeaderBuf = memTable.columnsHeaderBuf.items,
+            .columnsHeaderIndexBuf = memTable.columnsHeaderIndexBuf.items,
 
-            .messageBloomValuesBuf = tableMem.messageBloomValuesBuf.items,
-            .messageBloomTokensBuf = tableMem.messageBloomTokensBuf.items,
+            .messageBloomValuesBuf = memTable.messageBloomValuesBuf.items,
+            .messageBloomTokensBuf = memTable.messageBloomTokensBuf.items,
             .bloomValuesList = bloomValuesList,
             .bloomTokensList = bloomTokensList,
 
             .columnIDGen = columnIDGen,
             .colIdx = colIdx,
-            .columnsKeysBuf = tableMem.columnKeysBuf.items,
-            .columnIdxsBuf = tableMem.columnIdxsBuf.items,
+            .columnsKeysBuf = memTable.columnKeysBuf.items,
+            .columnIdxsBuf = memTable.columnIdxsBuf.items,
             .ownsMetadata = true,
         };
         return r;
     }
 
-    fn initFromDisk(io: Io, alloc: Allocator, path: []const u8, tableHeader: TableHeader) !*StreamReader {
+    // TODO: instead of reusing the table files open them again due to:
+    // - keep the query cache clean
+    // - manage different fadvise for different descriptors
+    // also benchmark against mmap since it requires only reading
+    // - based on it reimplement totalBytesRead
+    fn initFromDisk(io: Io, alloc: Allocator, table: *const Table) !*StreamReader {
         var fba = std.heap.stackFallback(2048, alloc);
         const fbaAlloc = fba.get();
 
-        // instead of reusing the table files it opens them again due to:
-        // - keep the query cache clean
-        // - manage different fadvise for different descriptors
+        const path = table.path;
+        const tableHeader = table.tableHeader();
 
         // TODO: open files in parallel to speed up high-latency storage.
         const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
         defer fbaAlloc.free(columnIdxsPath);
         const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
         defer fbaAlloc.free(metaindexPath);
-        const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
-        defer fbaAlloc.free(indexPath);
         const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeaderIndex });
         defer fbaAlloc.free(columnsHeaderIndexPath);
         const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeader });
         defer fbaAlloc.free(columnsHeaderPath);
-        const timestampsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.timestamps });
-        defer fbaAlloc.free(timestampsPath);
         const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageTokens });
         defer fbaAlloc.free(messageBloomTokensPath);
         const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageValues });
@@ -130,14 +129,10 @@ pub const StreamReader = struct {
         errdefer alloc.free(columnIdxsBuf);
         const metaIndexBuf = try fs.readAll(io, alloc, metaindexPath);
         errdefer alloc.free(metaIndexBuf);
-        const indexBuf = try fs.readAll(io, alloc, indexPath);
-        errdefer alloc.free(indexBuf);
         const columnsHeaderIndexBuf = try fs.readAll(io, alloc, columnsHeaderIndexPath);
         errdefer alloc.free(columnsHeaderIndexBuf);
         const columnsHeaderBuf = try fs.readAll(io, alloc, columnsHeaderPath);
         errdefer alloc.free(columnsHeaderBuf);
-        const timestampsBuf = try fs.readAll(io, alloc, timestampsPath);
-        errdefer alloc.free(timestampsBuf);
         const messageBloomTokensBuf = try fs.readAll(io, alloc, messageBloomTokensPath);
         errdefer alloc.free(messageBloomTokensBuf);
         const messageBloomValuesBuf = try fs.readAll(io, alloc, messageBloomValuesPath);
@@ -164,10 +159,20 @@ pub const StreamReader = struct {
         }
         while (shardIdx < shardCount) : (shardIdx += 1) {
             var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
-            const bloomTokensPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomTokens, @intCast(shardIdx));
+            const bloomTokensPath = try filenames.writeBloomFilePath(
+                &pathBuf,
+                path,
+                filenames.bloomTokens,
+                @intCast(shardIdx),
+            );
             const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
 
-            const bloomValuesPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomValues, @intCast(shardIdx));
+            const bloomValuesPath = try filenames.writeBloomFilePath(
+                &pathBuf,
+                path,
+                filenames.bloomValues,
+                @intCast(shardIdx),
+            );
             const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
 
             bloomValuesList.appendAssumeCapacity(bloomValuesBuf);
@@ -191,8 +196,7 @@ pub const StreamReader = struct {
         const streamReader = try alloc.create(StreamReader);
 
         streamReader.* = .{
-            .timestampsBuf = timestampsBuf,
-            .indexBuf = indexBuf,
+            .table = table,
             .metaIndexBuf = metaIndexBuf,
             .columnsHeaderBuf = columnsHeaderBuf,
             .columnsHeaderIndexBuf = columnsHeaderIndexBuf,
@@ -222,10 +226,7 @@ pub const StreamReader = struct {
             return;
         }
 
-        allocator.free(self.timestampsBuf);
-        allocator.free(self.indexBuf);
         allocator.free(self.metaIndexBuf);
-
         allocator.free(self.columnsHeaderBuf);
         allocator.free(self.columnsHeaderIndexBuf);
 
@@ -255,23 +256,7 @@ pub const StreamReader = struct {
 
     /// totalBytesRead returns the total number of bytes read from all buffers.
     pub fn totalBytesRead(self: *const StreamReader) u64 {
-        var total: u64 = 0;
-        total += self.timestampsBuf.len;
-        total += self.indexBuf.len;
-        total += self.metaIndexBuf.len;
-        total += self.columnsHeaderBuf.len;
-        total += self.columnsHeaderIndexBuf.len;
-        total += self.messageBloomValuesBuf.len;
-        total += self.messageBloomTokensBuf.len;
-        for (self.bloomValuesList.items) |buf| {
-            total += buf.len;
-        }
-        for (self.bloomTokensList.items) |buf| {
-            total += buf.len;
-        }
-        total += self.columnsKeysBuf.len;
-        total += self.columnIdxsBuf.len;
-        return total;
+        return self.table.tableHeader().compressedSize;
     }
 
     pub fn getBloomBuffer(
@@ -346,21 +331,30 @@ pub const BlockReader = struct {
     // TODO: make it a pointer, seems it holds a lot of fields
     blockData: BlockData,
 
-    pub fn initFromMemTable(allocator: Allocator, tableMem: *MemTable) !*BlockReader {
+    pub fn init(io: Io, alloc: Allocator, table: *const Table) !*BlockReader {
+        return switch (table.inner) {
+            .mem => initFromMemTable(alloc, table),
+            .disk => initFromDiskTable(io, alloc, table),
+        };
+    }
+
+    pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
+        const memTable = table.inner.mem;
+        const tableHeader = memTable.tableHeader;
         const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
-            allocator,
-            tableMem.metaIndexBuf.items,
+            alloc,
+            memTable.metaIndexBuf.items,
         );
-        errdefer allocator.free(indexBlockHeaders);
+        errdefer alloc.free(indexBlockHeaders);
 
-        var blockHeaders = try std.ArrayList(BlockHeader).initCapacity(allocator, 64);
-        errdefer blockHeaders.deinit(allocator);
+        var blockHeaders = try std.ArrayList(BlockHeader).initCapacity(alloc, 64);
+        errdefer blockHeaders.deinit(alloc);
 
-        const streamReader = try StreamReader.initFromMem(allocator, tableMem);
-        errdefer streamReader.deinit(allocator);
+        const streamReader = try StreamReader.initFromMem(alloc, table);
+        errdefer streamReader.deinit(alloc);
 
-        const br = try allocator.create(BlockReader);
-        errdefer allocator.destroy(br);
+        const br = try alloc.create(BlockReader);
+        errdefer alloc.destroy(br);
 
         br.* = .{
             .blocksCount = 0,
@@ -376,7 +370,7 @@ pub const BlockReader = struct {
             .nextBlockIdx = 0,
             .nextIndexBlockIdx = 0,
 
-            .tableHeader = tableMem.tableHeader,
+            .tableHeader = tableHeader,
             .streamReader = streamReader,
 
             .globalUncompressedSizeBytes = 0,
@@ -388,10 +382,10 @@ pub const BlockReader = struct {
         return br;
     }
 
-    pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8) !*BlockReader {
-        const tableHeader = try TableHeader.readFile(io, alloc, path);
+    pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockReader {
+        const tableHeader = table.inner.disk.tableHeader;
 
-        const streamReader = try StreamReader.initFromDisk(io, alloc, path, tableHeader);
+        const streamReader = try StreamReader.init(io, alloc, table);
         errdefer streamReader.deinit(alloc);
         var indexBlockHeaders: []IndexBlockHeader = &.{};
         if (streamReader.metaIndexBuf.len > 0) {
@@ -447,10 +441,10 @@ pub const BlockReader = struct {
     /// nextBlock reads the next block from the reader and puts it into blockData.
     /// Returns false if there are no more blocks.
     /// blockData is valid until the next call to NextBlock().
-    pub fn nextBlock(self: *BlockReader, allocator: Allocator) !bool {
+    pub fn nextBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
         // Load more blocks if needed
         while (self.nextBlockIdx >= self.blockHeaders.items.len) {
-            if (!try self.nextIndexBlock(allocator)) {
+            if (!try self.nextIndexBlock(io, allocator)) {
                 return false;
             }
         }
@@ -470,7 +464,7 @@ pub const BlockReader = struct {
         std.debug.assert(th.min >= ih.minTs);
         std.debug.assert(th.max <= ih.maxTs);
 
-        try self.blockData.readFrom(allocator, bh, self.streamReader);
+        try self.blockData.readFrom(io, allocator, bh, self.streamReader);
 
         self.globalUncompressedSizeBytes += bh.size;
         self.globalRowsCount += bh.len;
@@ -486,7 +480,7 @@ pub const BlockReader = struct {
         return true;
     }
 
-    fn nextIndexBlock(self: *BlockReader, allocator: Allocator) !bool {
+    fn nextIndexBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
         if (self.nextIndexBlockIdx >= self.indexBlockHeaders.len) {
             // No more blocks left
             // Validate tableHeader
@@ -504,7 +498,7 @@ pub const BlockReader = struct {
         std.debug.assert(ih.minTs >= self.tableHeader.minTimestamp);
         std.debug.assert(ih.maxTs <= self.tableHeader.maxTimestamp);
 
-        const indexBlockData = try readIndexBlock(allocator, ih, self.streamReader);
+        const indexBlockData = try readIndexBlock(io, allocator, ih, self.streamReader);
         defer allocator.free(indexBlockData);
 
         self.blockHeaders.clearRetainingCapacity();
@@ -529,11 +523,16 @@ pub const BlockReader = struct {
 };
 
 fn readIndexBlock(
+    io: Io,
     allocator: Allocator,
     ih: *const IndexBlockHeader,
     streamReader: *StreamReader,
 ) ![]u8 {
-    const compressed = streamReader.indexBuf[ih.offset..][0..ih.size];
+    const compressed = try allocator.alloc(u8, ih.size);
+    defer allocator.free(compressed);
+    const n = try streamReader.table.readIndex(io, compressed, ih.offset);
+    std.debug.assert(n == compressed.len);
+
     const decompressedSize = try encoding.getFrameContentSize(compressed);
     const decompressed = try allocator.alloc(u8, decompressedSize);
     errdefer allocator.free(decompressed);
@@ -611,7 +610,11 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
     };
 
     const memTable = try MemTable.init(allocator);
-    defer memTable.deinit(allocator);
+    const table = Table.fromMem(allocator, memTable) catch |err| {
+        memTable.deinit(allocator);
+        return err;
+    };
+    defer table.close(io);
     try memTable.addLines(io, allocator, lines[0..]);
 
     const th = memTable.tableHeader;
@@ -622,11 +625,11 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
     try std.testing.expect(th.uncompressedSize > 0);
     try std.testing.expect(th.compressedSize > 0);
 
-    const blockReader = try BlockReader.initFromMemTable(allocator, memTable);
+    const blockReader = try BlockReader.initFromMemTable(allocator, table);
     defer blockReader.deinit(allocator);
 
     var blocksRead: u32 = 0;
-    while (try blockReader.nextBlock(allocator)) {
+    while (try blockReader.nextBlock(io, allocator)) {
         blocksRead += 1;
     }
 
@@ -639,13 +642,13 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
     try std.testing.expectEqual(th.compressedSize, blockReader.streamReader.totalBytesRead());
 
     // Second pass: check each block's blockData (sid, rowsCount, timestamps range)
-    const blockReader2 = try BlockReader.initFromMemTable(allocator, memTable);
+    const blockReader2 = try BlockReader.initFromMemTable(allocator, table);
     defer blockReader2.deinit(allocator);
 
     var block1Sid1111 = false;
     var block2Sid2222 = false;
     var blocksWithFullData: u32 = 0;
-    while (try blockReader2.nextBlock(allocator)) {
+    while (try blockReader2.nextBlock(io, allocator)) {
         const bd = &blockReader2.blockData;
         try std.testing.expect(bd.len >= 1);
         try std.testing.expect(bd.uncompressedSizeBytes > 0);
@@ -673,7 +676,7 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
     }
 }
 
-fn testInitFromDiskTable(allocator: Allocator, io: Io) !void {
+fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
         .{ .key = "app", .value = "seq" },
@@ -699,21 +702,30 @@ fn testInitFromDiskTable(allocator: Allocator, io: Io) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", allocator);
-    defer allocator.free(rootPath);
-    const tablePath = try std.fs.path.join(allocator, &.{ rootPath, "table-1" });
-    defer allocator.free(tablePath);
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
 
-    const memTable = try MemTable.init(allocator);
-    defer memTable.deinit(allocator);
-    try memTable.addLines(io, allocator, lines[0..]);
-    try memTable.storeToDisk(io, allocator, tablePath);
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+    try memTable.addLines(io, alloc, lines[0..]);
 
-    const blockReader = try BlockReader.initFromDiskTable(io, allocator, tablePath);
-    defer blockReader.deinit(allocator);
+    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
+    memTable.storeToDisk(io, alloc, tablePath) catch |err| {
+        alloc.free(tablePath);
+        return err;
+    };
+
+    const table = Table.open(io, alloc, tablePath) catch |err| {
+        alloc.free(tablePath);
+        return err;
+    };
+    defer table.close(io);
+
+    const blockReader = try BlockReader.initFromDiskTable(io, alloc, table);
+    defer blockReader.deinit(alloc);
 
     var blocksRead: u32 = 0;
-    while (try blockReader.nextBlock(allocator)) {
+    while (try blockReader.nextBlock(io, alloc)) {
         blocksRead += 1;
     }
 

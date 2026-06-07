@@ -697,16 +697,8 @@ fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        switch (table.inner) {
-            .mem => |memTable| {
-                const reader = try BlockReader.initFromMemTable(alloc, memTable);
-                readers.appendAssumeCapacity(reader);
-            },
-            .disk => {
-                const reader = try BlockReader.initFromDiskTable(io, alloc, table.path);
-                readers.appendAssumeCapacity(reader);
-            },
-        }
+        const reader = try BlockReader.init(io, alloc, table);
+        readers.appendAssumeCapacity(reader);
     }
 
     return readers;

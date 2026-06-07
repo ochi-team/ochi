@@ -14,6 +14,7 @@ const maxValuesBlockSize = @import("BlockData.zig").maxValuesBlockSize;
 const maxBloomTokensBlockSize = @import("BlockData.zig").maxBloomTokensBlockSize;
 const Column = @import("Column.zig");
 const MemTable = @import("MemTable.zig");
+const Table = @import("../data/Table.zig");
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 const BlockHeader = @import("BlockHeader.zig");
@@ -646,7 +647,9 @@ test "writeBlock and writeData produce identical buffer output" {
 
     // Writer 1: encode via writeBlock
     const memTable1 = try MemTable.init(alloc);
-    defer memTable1.deinit(alloc);
+    const table1 = try Table.fromMem(alloc, memTable1);
+    defer table1.close(io);
+
     const writer1 = try TableWriter.initMem(alloc, memTable1);
     defer writer1.deinit(alloc);
 
@@ -666,8 +669,7 @@ test "writeBlock and writeData produce identical buffer output" {
     for (writer1.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.buffer.items);
 
     const sr = StreamReader{
-        .timestampsBuf = writer1.timestampsDst.buffer.items,
-        .indexBuf = writer1.indexDst.buffer.items,
+        .table = table1,
         .metaIndexBuf = writer1.metaindexDst.buffer.items,
         .columnsHeaderBuf = writer1.columnsHeaderDst.buffer.items,
         .columnsHeaderIndexBuf = writer1.columnsHeaderIndexDst.buffer.items,
@@ -684,7 +686,7 @@ test "writeBlock and writeData produce identical buffer output" {
     var bd = BlockData.initEmpty();
     defer bd.deinit(alloc);
     bd.sid = sid;
-    try bd.readFrom(alloc, &bh1, &sr);
+    try bd.readFrom(io, alloc, &bh1, &sr);
 
     // Writer 2: re-encode the same data via writeData
     const memTable2 = try MemTable.init(alloc);

@@ -1,5 +1,7 @@
 // TODO: find a better name
 const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 const SID = @import("../lines.zig").SID;
 const Column = @import("Column.zig");
@@ -43,12 +45,12 @@ pub const BlockData = struct {
         return .{ .columnsData = std.ArrayList(ColumnData).empty, .timestampsData = .{} };
     }
 
-    pub fn reset(self: *BlockData, allocator: std.mem.Allocator) void {
+    pub fn reset(self: *BlockData, allocator: Allocator) void {
         self.sid = .{ .tenantID = 0, .id = 0 };
         self.uncompressedSizeBytes = 0;
         self.len = 0;
 
-        self.timestampsData = .{};
+        self.timestampsData.deinit(allocator);
         self.columnsData.clearRetainingCapacity();
         self.celledColumns = null;
 
@@ -59,47 +61,52 @@ pub const BlockData = struct {
         }
     }
 
-    pub fn deinit(self: *BlockData, allocator: std.mem.Allocator) void {
-        self.columnsData.deinit(allocator);
+    pub fn deinit(self: *BlockData, alloc: Allocator) void {
+        self.columnsData.deinit(alloc);
         if (self.columnsHeader) |ch| {
-            ch.deinit(allocator);
+            ch.deinit(alloc);
         }
+        self.timestampsData.deinit(alloc);
     }
 
     // TODO: assign this API to a reader instead so we could have data as a pure data models
     pub fn readFrom(
         self: *BlockData,
-        allocator: std.mem.Allocator,
+        io: Io,
+        alloc: Allocator,
         bh: *const BlockHeader,
         sr: *const StreamReader,
     ) !void {
-        self.reset(allocator);
+        self.reset(alloc);
 
         self.sid = bh.sid;
         self.uncompressedSizeBytes = bh.size;
         self.len = bh.len;
 
-        self.timestampsData = try TimestampsData.readFrom(&bh.timestampsHeader, sr);
+        const timestampsBuf = try alloc.alloc(u8, bh.timestampsHeader.size);
+        // move immediately to timestamps to being able to deinit on error
+        self.timestampsData.data = timestampsBuf;
+        errdefer self.timestampsData.deinit(alloc);
+        self.timestampsData = try TimestampsData.readFrom(io, timestampsBuf, &bh.timestampsHeader, sr);
 
         const columnsHeaderSize = bh.columnsHeaderSize;
         std.debug.assert(columnsHeaderSize <= maxColumnsHeaderSize);
 
         const columnsHeaderBuf = sr.columnsHeaderBuf[bh.columnsHeaderOffset..][0..columnsHeaderSize];
 
-        // --- index ---
         const columnsHeaderIndexSize = bh.columnsHeaderIndexSize;
         std.debug.assert(columnsHeaderIndexSize <= maxColumnsHeaderIndexSize);
 
         const columnsHeaderIndexBuf = sr.columnsHeaderIndexBuf[bh.columnsHeaderIndexOffset..][0..columnsHeaderIndexSize];
 
         const cshIdx = try ColumnsHeaderIndex.decode(
-            allocator,
+            alloc,
             columnsHeaderIndexBuf,
         );
-        defer cshIdx.deinit(allocator);
+        defer cshIdx.deinit(alloc);
 
         self.columnsHeader = try ColumnsHeader.decode(
-            allocator,
+            alloc,
             columnsHeaderBuf,
             cshIdx,
             sr.columnIDGen,
@@ -107,7 +114,7 @@ pub const BlockData = struct {
 
         const columnsHeader = self.columnsHeader.?;
 
-        try self.columnsData.ensureTotalCapacity(allocator, columnsHeader.headers.len);
+        try self.columnsData.ensureTotalCapacity(alloc, columnsHeader.headers.len);
 
         for (columnsHeader.headers) |*ch| {
             const col = try ColumnData.readFrom(ch, sr);
@@ -120,7 +127,7 @@ pub const BlockData = struct {
 
 // TODO: move TimestampsData and ColumnData inside BlockData
 pub const TimestampsData = struct {
-    data: []const u8 = undefined,
+    data: []const u8 = "",
 
     encodingType: EncodingType = .Undefined,
 
@@ -128,18 +135,27 @@ pub const TimestampsData = struct {
     maxTimestamp: u64 = 0,
 
     pub fn readFrom(
+        io: Io,
+        buf: []u8,
         th: *const TimestampsHeader,
         sr: *const StreamReader,
     ) !TimestampsData {
-        const timestampsBlockSize = th.size;
-        std.debug.assert(timestampsBlockSize <= maxTimestampsBlockSize);
+        std.debug.assert(buf.len <= maxTimestampsBlockSize);
+
+        const n = try sr.table.readTimestamps(io, buf, th.offset);
+        std.debug.assert(n == buf.len);
 
         return .{
-            .data = sr.timestampsBuf[th.offset..][0..timestampsBlockSize],
+            .data = buf,
             .encodingType = th.encodingType,
             .minTimestamp = th.min,
             .maxTimestamp = th.max,
         };
+    }
+
+    pub fn deinit(self: *TimestampsData, alloc: Allocator) void {
+        if (self.data.len > 0) alloc.free(self.data);
+        self.* = .{};
     }
 };
 
@@ -195,6 +211,7 @@ const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 const MemTable = @import("MemTable.zig");
 const BlockReader = @import("reader.zig").BlockReader;
+const Table = @import("../data/Table.zig");
 
 test "BlockData initEmpty and deinit without header" {
     var bd = BlockData.initEmpty();
@@ -263,14 +280,15 @@ test "BlockData readFrom populates columnsData and celledColumns" {
     };
 
     const memTable = try MemTable.init(allocator);
-    defer memTable.deinit(allocator);
+    const table = try Table.fromMem(allocator, memTable);
+    defer table.close(io);
     try memTable.addLines(io, allocator, lines[0..]);
 
-    const blockReader = try BlockReader.initFromMemTable(allocator, memTable);
+    const blockReader = try BlockReader.initFromMemTable(allocator, table);
     defer blockReader.deinit(allocator);
 
     // Read first block, which should populate BlockData.
-    try std.testing.expect(try blockReader.nextBlock(allocator));
+    try std.testing.expect(try blockReader.nextBlock(io, allocator));
 
     const bd = &blockReader.blockData;
     try std.testing.expect(bd.columnsHeader != null);
@@ -288,5 +306,5 @@ test "BlockData readFrom populates columnsData and celledColumns" {
     }
 
     // Second call to nextBlock exercises BlockData reuse path (columnsHeader deinit + re-decode).
-    _ = try blockReader.nextBlock(allocator);
+    _ = try blockReader.nextBlock(io, allocator);
 }

@@ -16,6 +16,7 @@ const Field = @import("../lines.zig").Field;
 const TableWriter = @import("../inmem/TableWriter.zig");
 const BlockWriter = @import("../inmem/BlockWriter.zig");
 const MemTable = @import("../inmem/MemTable.zig");
+const Table = @import("Table.zig");
 const Block = @import("../inmem/Block.zig");
 const BlockData = @import("../inmem/BlockData.zig").BlockData;
 const BlockReader = @import("../inmem/reader.zig").BlockReader;
@@ -30,7 +31,7 @@ pub fn mergeData(
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
-    var merger = try StreamMerger.init(alloc, readers);
+    var merger = try StreamMerger.init(io, alloc, readers);
     defer merger.deinit(alloc);
 
     const blockWriter = try BlockWriter.init(alloc);
@@ -46,7 +47,7 @@ pub fn mergeData(
 
         const reader = merger.heap.peek().?;
         try merger.writeBlock(io, alloc, blockWriter, writer, &reader.blockData);
-        if (try reader.nextBlock(alloc)) {
+        if (try reader.nextBlock(io, alloc)) {
             merger.heap.fix(0);
         } else {
             const exhaustedReader = merger.heap.pop();
@@ -81,7 +82,7 @@ pub const StreamMerger = struct {
 
     /// init creates a StreamMerger instance from the readers
     /// be aware it mutates readers list inside
-    pub fn init(alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !StreamMerger {
+    pub fn init(io: Io, alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !StreamMerger {
         // TODO: collect metrics and experiment with flat array on 1-3 elements
 
         // TODO: experiment with Loser tree intead of heap:
@@ -95,7 +96,7 @@ pub const StreamMerger = struct {
         var i: usize = 0;
         while (i < readers.items.len) {
             const reader = readers.items[i];
-            const hasNext = try reader.nextBlock(alloc);
+            const hasNext = try reader.nextBlock(io, alloc);
             if (!hasNext) {
                 reader.deinit(alloc);
                 _ = readers.swapRemove(i);
@@ -439,9 +440,11 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
     const mergedMemTable = blk: {
         const leftMemTable = try MemTable.init(alloc);
-        defer leftMemTable.deinit(alloc);
+        const leftTable = try Table.fromMem(alloc, leftMemTable);
+        defer leftTable.close(io);
         const rightMemTable = try MemTable.init(alloc);
-        defer rightMemTable.deinit(alloc);
+        const rightTable = try Table.fromMem(alloc, rightMemTable);
+        defer rightTable.close(io);
 
         var leftFields1 = [_]Field{.{ .key = fieldKey, .value = "left-1" }};
         var leftFields2 = [_]Field{.{ .key = fieldKey, .value = "left-2" }};
@@ -463,8 +466,8 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
 
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftMemTable));
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightMemTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightTable));
 
         const dstMemTable = try MemTable.init(alloc);
         errdefer dstMemTable.deinit(alloc);
@@ -481,9 +484,10 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
         break :blk dstMemTable;
     };
-    defer mergedMemTable.deinit(alloc);
+    const mergedTable = try Table.fromMem(alloc, mergedMemTable);
+    defer mergedTable.close(io);
 
-    var mergedReader = try BlockReader.initFromMemTable(alloc, mergedMemTable);
+    var mergedReader = try BlockReader.initFromMemTable(alloc, mergedTable);
     defer mergedReader.deinit(alloc);
 
     const unpacker = try Unpacker.init(alloc);
@@ -492,7 +496,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     defer decoder.deinit();
 
     var expectedI: usize = 0;
-    while (try mergedReader.nextBlock(alloc)) {
+    while (try mergedReader.nextBlock(io, alloc)) {
         const block = try Block.initFromData(io, alloc, &mergedReader.blockData, unpacker, decoder);
         defer block.deinit(alloc);
 
@@ -532,11 +536,16 @@ test "mergeData multi tenant" {
     const tenantIDs = [_]u64{ 1, 2, 3, 4, 5, 6, 7, 8 };
 
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tenantIDs.len);
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, tenantIDs.len);
     defer {
         for (readers.items) |reader| {
             reader.deinit(alloc);
         }
         readers.deinit(alloc);
+        for (tables.items) |table| {
+            table.close(io);
+        }
+        tables.deinit(alloc);
     }
 
     for (tenantIDs, 0..) |tenantID, i| {
@@ -545,7 +554,6 @@ test "mergeData multi tenant" {
             "{s}/table-{d}",
             .{ rootPath, i },
         );
-        defer alloc.free(tablePath);
 
         const memTable = try MemTable.init(alloc);
         defer memTable.deinit(alloc);
@@ -563,7 +571,9 @@ test "mergeData multi tenant" {
         try memTable.addLines(io, alloc, lines[0..]);
         try memTable.storeToDisk(io, alloc, tablePath);
 
-        const reader = try BlockReader.initFromDiskTable(io, alloc, tablePath);
+        const table = try Table.open(io, alloc, tablePath);
+        try tables.append(alloc, table);
+        const reader = try BlockReader.initFromDiskTable(io, alloc, table);
         try readers.append(alloc, reader);
     }
 

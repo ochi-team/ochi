@@ -550,7 +550,7 @@ fn queryBlock(
 
     var blockData = BlockData.initEmpty();
     defer blockData.deinit(alloc);
-    try blockData.readFrom(alloc, &blockHeader, streamReader);
+    try blockData.readFrom(io, alloc, &blockHeader, streamReader);
 
     const unpacker = try Unpacker.init(alloc);
     defer unpacker.deinit(alloc);

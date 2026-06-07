@@ -9,6 +9,7 @@ const BlockData = @import("BlockData.zig").BlockData;
 const Unpacker = @import("Unpacker.zig");
 const ValuesDecoder = @import("ValuesDecoder.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
+const Table = @import("../data/Table.zig");
 
 const sizing = @import("sizing.zig");
 
@@ -431,7 +432,9 @@ test "initFromLines and initFromData produce identical blocks" {
         defer blockA.deinit(alloc);
 
         const memTable = try MemTable.init(alloc);
-        defer memTable.deinit(alloc);
+        const table = try Table.fromMem(alloc, memTable);
+        defer table.close(io);
+
         const writer = try TableWriter.initMem(alloc, memTable);
         defer writer.deinit(alloc);
 
@@ -447,8 +450,7 @@ test "initFromLines and initFromData produce identical blocks" {
         for (writer.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.buffer.items);
 
         const sr = StreamReader{
-            .timestampsBuf = writer.timestampsDst.buffer.items,
-            .indexBuf = writer.indexDst.buffer.items,
+            .table = table,
             .metaIndexBuf = writer.metaindexDst.buffer.items,
             .columnsHeaderBuf = writer.columnsHeaderDst.buffer.items,
             .columnsHeaderIndexBuf = writer.columnsHeaderIndexDst.buffer.items,
@@ -464,7 +466,7 @@ test "initFromLines and initFromData produce identical blocks" {
 
         var bd = BlockData.initEmpty();
         defer bd.deinit(alloc);
-        try bd.readFrom(alloc, &bh, &sr);
+        try bd.readFrom(io, alloc, &bh, &sr);
 
         const unpacker = try Unpacker.init(alloc);
         const decoder = try ValuesDecoder.init(alloc);
