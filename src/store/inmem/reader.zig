@@ -20,16 +20,8 @@ pub const StreamReader = struct {
     table: *const Table,
     metaIndexBuf: []const u8,
 
-    columnsHeaderBuf: []const u8,
-    columnsHeaderIndexBuf: []const u8,
-
     columnsKeysBuf: []const u8,
     columnIdxsBuf: []const u8,
-
-    messageBloomValuesBuf: []const u8,
-    messageBloomTokensBuf: []const u8,
-    bloomValuesList: std.ArrayList([]const u8),
-    bloomTokensList: std.ArrayList([]const u8),
 
     // TODO: consider making it as a value, not a pointer
     // TODO: decode manually when it comes to file reader
@@ -50,19 +42,6 @@ pub const StreamReader = struct {
 
     pub fn initFromMem(allocator: Allocator, table: *const Table) !*StreamReader {
         const memTable = table.inner.mem;
-        var bloomValuesList = try std.ArrayList([]const u8).initCapacity(
-            allocator,
-            1,
-        );
-        errdefer bloomValuesList.deinit(allocator);
-        bloomValuesList.appendAssumeCapacity(memTable.bloomValuesBuf.items);
-        var bloomTokensList = try std.ArrayList([]const u8).initCapacity(
-            allocator,
-            1,
-        );
-        errdefer bloomTokensList.deinit(allocator);
-        bloomTokensList.appendAssumeCapacity(memTable.bloomTokensBuf.items);
-
         // TODO: this could be taken from a stream writer theoretically
         const columnIDGen = if (memTable.columnKeysBuf.items.len > 0)
             try ColumnIDGen.decode(allocator, memTable.columnKeysBuf.items)
@@ -80,13 +59,6 @@ pub const StreamReader = struct {
         r.* = StreamReader{
             .table = table,
             .metaIndexBuf = memTable.metaIndexBuf.items,
-            .columnsHeaderBuf = memTable.columnsHeaderBuf.items,
-            .columnsHeaderIndexBuf = memTable.columnsHeaderIndexBuf.items,
-
-            .messageBloomValuesBuf = memTable.messageBloomValuesBuf.items,
-            .messageBloomTokensBuf = memTable.messageBloomTokensBuf.items,
-            .bloomValuesList = bloomValuesList,
-            .bloomTokensList = bloomTokensList,
 
             .columnIDGen = columnIDGen,
             .colIdx = colIdx,
@@ -103,81 +75,24 @@ pub const StreamReader = struct {
     // also benchmark against mmap since it requires only reading
     // - based on it reimplement totalBytesRead
     fn initFromDisk(io: Io, alloc: Allocator, table: *const Table) !*StreamReader {
-        var fba = std.heap.stackFallback(2048, alloc);
-        const fbaAlloc = fba.get();
+        var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
         const path = table.path;
-        const tableHeader = table.tableHeader();
-
         // TODO: open files in parallel to speed up high-latency storage.
-        const columnIdxsPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnIdxs });
-        defer fbaAlloc.free(columnIdxsPath);
-        const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
-        defer fbaAlloc.free(metaindexPath);
-        const columnsHeaderIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeaderIndex });
-        defer fbaAlloc.free(columnsHeaderIndexPath);
-        const columnsHeaderPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnsHeader });
-        defer fbaAlloc.free(columnsHeaderPath);
-        const messageBloomTokensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageTokens });
-        defer fbaAlloc.free(messageBloomTokensPath);
-        const messageBloomValuesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.messageValues });
-        defer fbaAlloc.free(messageBloomValuesPath);
-        const columnNamesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.columnKeys });
-        defer fbaAlloc.free(columnNamesPath);
-
-        const columnIdxsBuf = try fs.readAll(io, alloc, columnIdxsPath);
+        try std.fs.path.fmtJoin(&.{ path, filenames.columnIdxs }).format(&pathWriter);
+        const columnIdxsBuf = try fs.readAll(io, alloc, pathWriter.buffered());
         errdefer alloc.free(columnIdxsBuf);
-        const metaIndexBuf = try fs.readAll(io, alloc, metaindexPath);
+
+        pathWriter.end = 0;
+        try std.fs.path.fmtJoin(&.{ path, filenames.metaindex }).format(&pathWriter);
+        const metaIndexBuf = try fs.readAll(io, alloc, pathWriter.buffered());
         errdefer alloc.free(metaIndexBuf);
-        const columnsHeaderIndexBuf = try fs.readAll(io, alloc, columnsHeaderIndexPath);
-        errdefer alloc.free(columnsHeaderIndexBuf);
-        const columnsHeaderBuf = try fs.readAll(io, alloc, columnsHeaderPath);
-        errdefer alloc.free(columnsHeaderBuf);
-        const messageBloomTokensBuf = try fs.readAll(io, alloc, messageBloomTokensPath);
-        errdefer alloc.free(messageBloomTokensBuf);
-        const messageBloomValuesBuf = try fs.readAll(io, alloc, messageBloomValuesPath);
-        errdefer alloc.free(messageBloomValuesBuf);
-        const columnsKeysBuf = try fs.readAll(io, alloc, columnNamesPath);
+
+        pathWriter.end = 0;
+        try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
+        const columnsKeysBuf = try fs.readAll(io, alloc, pathWriter.buffered());
         errdefer alloc.free(columnsKeysBuf);
-
-        const shardCount: usize = @intCast(tableHeader.bloomValuesBuffersAmount);
-
-        var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, shardCount);
-        errdefer bloomValuesList.deinit(alloc);
-
-        var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, shardCount);
-        errdefer bloomTokensList.deinit(alloc);
-
-        var shardIdx: usize = 0;
-        errdefer {
-            for (bloomValuesList.items) |buf| {
-                alloc.free(buf);
-            }
-            for (bloomTokensList.items) |buf| {
-                alloc.free(buf);
-            }
-        }
-        while (shardIdx < shardCount) : (shardIdx += 1) {
-            var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
-            const bloomTokensPath = try filenames.writeBloomFilePath(
-                &pathBuf,
-                path,
-                filenames.bloomTokens,
-                @intCast(shardIdx),
-            );
-            const bloomTokensBuf = try fs.readAll(io, alloc, bloomTokensPath);
-
-            const bloomValuesPath = try filenames.writeBloomFilePath(
-                &pathBuf,
-                path,
-                filenames.bloomValues,
-                @intCast(shardIdx),
-            );
-            const bloomValuesBuf = try fs.readAll(io, alloc, bloomValuesPath);
-
-            bloomValuesList.appendAssumeCapacity(bloomValuesBuf);
-            bloomTokensList.appendAssumeCapacity(bloomTokensBuf);
-        }
 
         var columnIDGen: *ColumnIDGen = undefined;
         if (columnsKeysBuf.len > 0) {
@@ -198,12 +113,6 @@ pub const StreamReader = struct {
         streamReader.* = .{
             .table = table,
             .metaIndexBuf = metaIndexBuf,
-            .columnsHeaderBuf = columnsHeaderBuf,
-            .columnsHeaderIndexBuf = columnsHeaderIndexBuf,
-            .messageBloomValuesBuf = messageBloomValuesBuf,
-            .messageBloomTokensBuf = messageBloomTokensBuf,
-            .bloomValuesList = bloomValuesList,
-            .bloomTokensList = bloomTokensList,
             .columnIDGen = columnIDGen,
             .colIdx = colIdx,
             .columnsKeysBuf = columnsKeysBuf,
@@ -215,8 +124,6 @@ pub const StreamReader = struct {
 
     pub fn deinit(self: *StreamReader, allocator: Allocator) void {
         if (!self.ownsBuffers) {
-            self.bloomValuesList.deinit(allocator);
-            self.bloomTokensList.deinit(allocator);
             if (self.ownsMetadata) {
                 self.columnIDGen.deinit(allocator);
                 self.colIdx.deinit();
@@ -227,22 +134,6 @@ pub const StreamReader = struct {
         }
 
         allocator.free(self.metaIndexBuf);
-        allocator.free(self.columnsHeaderBuf);
-        allocator.free(self.columnsHeaderIndexBuf);
-
-        allocator.free(self.messageBloomValuesBuf);
-        allocator.free(self.messageBloomTokensBuf);
-
-        for (self.bloomValuesList.items) |buf| {
-            allocator.free(buf);
-        }
-        self.bloomValuesList.deinit(allocator);
-
-        for (self.bloomTokensList.items) |buf| {
-            allocator.free(buf);
-        }
-        self.bloomTokensList.deinit(allocator);
-
         allocator.free(self.columnsKeysBuf);
         allocator.free(self.columnIdxsBuf);
 
@@ -259,23 +150,72 @@ pub const StreamReader = struct {
         return self.table.tableHeader().compressedSize;
     }
 
-    pub fn getBloomBuffer(
-        streamReader: *const StreamReader,
+    pub fn readIndex(
+        self: *const StreamReader,
+        io: Io,
+        buf: []u8,
+        offset: u64,
+    ) !usize {
+        return self.table.readIndex(io, buf, offset);
+    }
+
+    pub fn readTimestamps(
+        self: *const StreamReader,
+        io: Io,
+        buf: []u8,
+        offset: u64,
+    ) !usize {
+        return self.table.readTimestamps(io, buf, offset);
+    }
+
+    pub fn readColumnsHeaderIndex(
+        self: *const StreamReader,
+        io: Io,
+        buf: []u8,
+        offset: u64,
+    ) !usize {
+        return self.table.readColumnsHeaderIndex(io, buf, offset);
+    }
+
+    pub fn readColumnsHeader(
+        self: *const StreamReader,
+        io: Io,
+        buf: []u8,
+        offset: u64,
+    ) !usize {
+        return self.table.readColumnsHeader(io, buf, offset);
+    }
+
+    pub fn readBloomValues(
+        self: *const StreamReader,
+        io: Io,
+        buf: []u8,
         key: []const u8,
-    ) struct { values: []const u8, tokens: []const u8 } {
+        offset: u64,
+    ) !usize {
         if (key.len == 0) {
-            return .{
-                .values = streamReader.messageBloomValuesBuf,
-                .tokens = streamReader.messageBloomTokensBuf,
-            };
+            return self.table.readMessageBloomValues(io, buf, offset);
         }
 
-        const colID = streamReader.columnIDGen.keyIDs.get(key).?;
-        const bloomBufI = streamReader.colIdx.get(colID).?;
-        return .{
-            .values = streamReader.bloomValuesList.items[bloomBufI],
-            .tokens = streamReader.bloomTokensList.items[bloomBufI],
-        };
+        const colID = self.columnIDGen.keyIDs.get(key).?;
+        const bloomBufI = self.colIdx.get(colID).?;
+        return self.table.readBloomValues(io, buf, offset, bloomBufI);
+    }
+
+    pub fn readBloomTokens(
+        self: *const StreamReader,
+        io: Io,
+        buf: []u8,
+        key: []const u8,
+        offset: u64,
+    ) !usize {
+        if (key.len == 0) {
+            return self.table.readMessageBloomTokens(io, buf, offset);
+        }
+
+        const colID = self.columnIDGen.keyIDs.get(key).?;
+        const bloomBufI = self.colIdx.get(colID).?;
+        return self.table.readBloomTokens(io, buf, offset, bloomBufI);
     }
 };
 
@@ -530,7 +470,7 @@ fn readIndexBlock(
 ) ![]u8 {
     const compressed = try allocator.alloc(u8, ih.size);
     defer allocator.free(compressed);
-    const n = try streamReader.table.readIndex(io, compressed, ih.offset);
+    const n = try streamReader.readIndex(io, compressed, ih.offset);
     std.debug.assert(n == compressed.len);
 
     const decompressedSize = try encoding.getFrameContentSize(compressed);

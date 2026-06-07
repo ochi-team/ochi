@@ -34,6 +34,10 @@ pub const BlockData = struct {
     len: u32 = 0,
 
     timestampsData: TimestampsData,
+    // holds read buffer ownership, coupled to columnsHeader lifetime
+    // TODO: this holds ownership of merge read, either document it's ownership
+    // or remove if we migrate ot file read / mmap
+    columnsHeaderBuf: []const u8 = "",
     // TODO: try making it non nullable
     columnsHeader: ?*ColumnsHeader = null,
     columnsData: std.ArrayList(ColumnData),
@@ -51,6 +55,9 @@ pub const BlockData = struct {
         self.len = 0;
 
         self.timestampsData.deinit(allocator);
+        for (self.columnsData.items) |*col| {
+            col.deinit(allocator);
+        }
         self.columnsData.clearRetainingCapacity();
         self.celledColumns = null;
 
@@ -59,12 +66,22 @@ pub const BlockData = struct {
             ch.deinit(allocator);
             self.columnsHeader = null;
         }
+        if (self.columnsHeaderBuf.len > 0) {
+            allocator.free(self.columnsHeaderBuf);
+            self.columnsHeaderBuf = "";
+        }
     }
 
     pub fn deinit(self: *BlockData, alloc: Allocator) void {
+        for (self.columnsData.items) |*col| {
+            col.deinit(alloc);
+        }
         self.columnsData.deinit(alloc);
         if (self.columnsHeader) |ch| {
             ch.deinit(alloc);
+        }
+        if (self.columnsHeaderBuf.len > 0) {
+            alloc.free(self.columnsHeaderBuf);
         }
         self.timestampsData.deinit(alloc);
     }
@@ -92,12 +109,22 @@ pub const BlockData = struct {
         const columnsHeaderSize = bh.columnsHeaderSize;
         std.debug.assert(columnsHeaderSize <= maxColumnsHeaderSize);
 
-        const columnsHeaderBuf = sr.columnsHeaderBuf[bh.columnsHeaderOffset..][0..columnsHeaderSize];
+        const columnsHeaderBuf = try alloc.alloc(u8, columnsHeaderSize);
+        self.columnsHeaderBuf = columnsHeaderBuf;
+        const columnsHeaderN = try sr.readColumnsHeader(io, columnsHeaderBuf, bh.columnsHeaderOffset);
+        std.debug.assert(columnsHeaderN == columnsHeaderBuf.len);
 
         const columnsHeaderIndexSize = bh.columnsHeaderIndexSize;
         std.debug.assert(columnsHeaderIndexSize <= maxColumnsHeaderIndexSize);
 
-        const columnsHeaderIndexBuf = sr.columnsHeaderIndexBuf[bh.columnsHeaderIndexOffset..][0..columnsHeaderIndexSize];
+        const columnsHeaderIndexBuf = try alloc.alloc(u8, columnsHeaderIndexSize);
+        defer alloc.free(columnsHeaderIndexBuf);
+        const columnsHeaderIndexN = try sr.readColumnsHeaderIndex(
+            io,
+            columnsHeaderIndexBuf,
+            bh.columnsHeaderIndexOffset,
+        );
+        std.debug.assert(columnsHeaderIndexN == columnsHeaderIndexBuf.len);
 
         const cshIdx = try ColumnsHeaderIndex.decode(
             alloc,
@@ -117,7 +144,7 @@ pub const BlockData = struct {
         try self.columnsData.ensureTotalCapacity(alloc, columnsHeader.headers.len);
 
         for (columnsHeader.headers) |*ch| {
-            const col = try ColumnData.readFrom(ch, sr);
+            const col = try ColumnData.readFrom(io, alloc, ch, sr);
             self.columnsData.appendAssumeCapacity(col);
         }
 
@@ -142,7 +169,7 @@ pub const TimestampsData = struct {
     ) !TimestampsData {
         std.debug.assert(buf.len <= maxTimestampsBlockSize);
 
-        const n = try sr.table.readTimestamps(io, buf, th.offset);
+        const n = try sr.readTimestamps(io, buf, th.offset);
         std.debug.assert(n == buf.len);
 
         return .{
@@ -171,25 +198,39 @@ pub const ColumnData = struct {
     // it's important to note writeColumnData uses *ColumnDict in order to move ownership,
     // therefore it may require passing  a ColumndData as a pointer
     dict: *ColumnDict,
+    // TODO: this holds ownership of merge read, either document it's ownership
+    // or remove if we migrate ot file read / mmap
     bloomValues: []const u8,
 
     // TODO: try making it non optional, default as an empty string
     bloomTokens: ?[]const u8,
 
     pub fn readFrom(
+        io: Io,
+        alloc: Allocator,
         ch: *ColumnHeader,
         streamReader: *const StreamReader,
     ) !ColumnData {
         const valuesSize = ch.size;
         std.debug.assert(valuesSize <= maxValuesBlockSize);
 
-        const bloom = streamReader.getBloomBuffer(ch.key);
+        const valuesData = try alloc.alloc(u8, valuesSize);
+        errdefer alloc.free(valuesData);
+        const valuesN = try streamReader.readBloomValues(io, valuesData, ch.key, ch.offset);
+        std.debug.assert(valuesN == valuesData.len);
 
-        const valuesData = bloom.values[ch.offset..][0..valuesSize];
-
-        var bloomFilterData: ?[]const u8 = null;
+        var tokensData: ?[]const u8 = null;
         if (ch.type != .dict) {
-            bloomFilterData = bloom.tokens[ch.bloomFilterOffset..][0..ch.bloomFilterSize];
+            const tokensBuf = try alloc.alloc(u8, ch.bloomFilterSize);
+            errdefer alloc.free(tokensBuf);
+            const tokensN = try streamReader.readBloomTokens(
+                io,
+                tokensBuf,
+                ch.key,
+                ch.bloomFilterOffset,
+            );
+            std.debug.assert(tokensN == tokensBuf.len);
+            tokensData = tokensBuf;
         }
 
         return .{
@@ -202,8 +243,20 @@ pub const ColumnData = struct {
             .dict = &ch.dict,
             .bloomValues = valuesData,
 
-            .bloomTokens = bloomFilterData,
+            .bloomTokens = tokensData,
         };
+    }
+
+    pub fn deinit(self: *ColumnData, alloc: Allocator) void {
+        if (self.bloomValues.len > 0) {
+            alloc.free(self.bloomValues);
+        }
+        if (self.bloomTokens) |bloomTokens| {
+            if (bloomTokens.len > 0) {
+                alloc.free(bloomTokens);
+            }
+        }
+        self.* = undefined;
     }
 };
 

@@ -441,25 +441,11 @@ test "initFromLines and initFromData produce identical blocks" {
         var bh = BlockHeader.initFromBlock(blockA, sid);
         try writer.writeBlock(io, alloc, blockA, &bh);
 
-        var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomValuesList.items.len);
-        defer bloomValuesList.deinit(alloc);
-        for (writer.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.buffer.items);
-
-        var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, writer.bloomTokensList.items.len);
-        defer bloomTokensList.deinit(alloc);
-        for (writer.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.buffer.items);
-
         const sr = StreamReader{
             .table = table,
             .metaIndexBuf = writer.metaindexDst.buffer.items,
-            .columnsHeaderBuf = writer.columnsHeaderDst.buffer.items,
-            .columnsHeaderIndexBuf = writer.columnsHeaderIndexDst.buffer.items,
             .columnsKeysBuf = writer.columnKeysDst.buffer.items,
             .columnIdxsBuf = writer.columnIdxsDst.buffer.items,
-            .messageBloomValuesBuf = writer.messageBloomValuesDst.buffer.items,
-            .messageBloomTokensBuf = writer.messageBloomTokensDst.buffer.items,
-            .bloomValuesList = bloomValuesList,
-            .bloomTokensList = bloomTokensList,
             .columnIDGen = writer.columnIDGen,
             .colIdx = &writer.colIdx,
         };

@@ -660,25 +660,11 @@ test "writeBlock and writeData produce identical buffer output" {
     try writer1.writeBlock(io, alloc, block, &bh1);
 
     // Build StreamReader from writer1's buffers to populate BlockData
-    var bloomValuesList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomValuesList.items.len);
-    defer bloomValuesList.deinit(alloc);
-    for (writer1.bloomValuesList.items) |buf| bloomValuesList.appendAssumeCapacity(buf.buffer.items);
-
-    var bloomTokensList = try std.ArrayList([]const u8).initCapacity(alloc, writer1.bloomTokensList.items.len);
-    defer bloomTokensList.deinit(alloc);
-    for (writer1.bloomTokensList.items) |buf| bloomTokensList.appendAssumeCapacity(buf.buffer.items);
-
     const sr = StreamReader{
         .table = table1,
         .metaIndexBuf = writer1.metaindexDst.buffer.items,
-        .columnsHeaderBuf = writer1.columnsHeaderDst.buffer.items,
-        .columnsHeaderIndexBuf = writer1.columnsHeaderIndexDst.buffer.items,
         .columnsKeysBuf = writer1.columnKeysDst.buffer.items,
         .columnIdxsBuf = writer1.columnIdxsDst.buffer.items,
-        .messageBloomValuesBuf = writer1.messageBloomValuesDst.buffer.items,
-        .messageBloomTokensBuf = writer1.messageBloomTokensDst.buffer.items,
-        .bloomValuesList = bloomValuesList,
-        .bloomTokensList = bloomTokensList,
         .columnIDGen = writer1.columnIDGen,
         .colIdx = &writer1.colIdx,
     };
