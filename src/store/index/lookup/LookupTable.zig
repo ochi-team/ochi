@@ -98,7 +98,7 @@ fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
 
     // check upper bound,
     // If key is greater than the block upper bound, caller must load next block.
-    if (std.mem.lessThan(u8, items[items.len - 1][keyPrefixLen..], keySuffix)) {
+    if (std.mem.lessThan(u8, block.getEntry(items[items.len - 1])[keyPrefixLen..], keySuffix)) {
         // key is in the next block
         return false;
     }
@@ -106,18 +106,18 @@ fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
     // If key may be below current position, step one item back and verify
     // the key still belongs to this block.
     if (idx > 0) idx -= 1;
-    if (std.mem.lessThan(u8, keySuffix, items[idx][keyPrefixLen..])) {
+    if (std.mem.lessThan(u8, keySuffix, block.getEntry(items[idx])[keyPrefixLen..])) {
         items = items[0..idx];
         if (items.len == 0) return false;
 
-        if (std.mem.lessThan(u8, keySuffix, items[0][keyPrefixLen..])) {
+        if (std.mem.lessThan(u8, keySuffix, block.getEntry(items[0])[keyPrefixLen..])) {
             // key is in the previous block
             return false;
         }
         idx = 0;
     }
 
-    self.memBlockIdx = idx + lowerBoundBySuffix(items[idx..], key, keyPrefixLen);
+    self.memBlockIdx = idx + lowerBoundBySuffix(block, items[idx..], key, keyPrefixLen);
     return true;
 }
 
@@ -151,7 +151,7 @@ fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) 
     }
 
     const keyPrefixLen = strings.findPrefix(self.memBlock.?.prefix, key).len;
-    self.memBlockIdx = lowerBoundBySuffix(self.memBlock.?.memEntries.items, key, keyPrefixLen);
+    self.memBlockIdx = lowerBoundBySuffix(self.memBlock.?, self.memBlock.?.memEntries.items, key, keyPrefixLen);
     if (self.memBlockIdx < self.memBlock.?.memEntries.items.len) {
         return;
     }
@@ -176,11 +176,12 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
 }
 
 const LowerBoundBySuffixComparator = struct {
+    block: *const MemBlock,
     keySuffix: []const u8,
     prefixLen: usize,
 };
-fn lowerBoundBySuffixComparatorFn(self: LowerBoundBySuffixComparator, item: []const u8) std.math.Order {
-    const itemSuffix = item[self.prefixLen..];
+fn lowerBoundBySuffixComparatorFn(self: LowerBoundBySuffixComparator, item: MemBlock.MemEntry) std.math.Order {
+    const itemSuffix = self.block.getEntry(item)[self.prefixLen..];
     const order = std.mem.order(u8, self.keySuffix, itemSuffix);
     return switch (order) {
         .gt => .gt,
@@ -191,18 +192,18 @@ fn lowerBoundBySuffixComparatorFn(self: LowerBoundBySuffixComparator, item: []co
 // returns the first index with item[prefixLen..] >= keySuffix.
 // callers may receive items.len when keySuffix is greater than all suffixes.
 // TODO: test alternative array layout
-fn lowerBoundBySuffix(items: []const []const u8, key: []const u8, prefixLen: usize) usize {
+fn lowerBoundBySuffix(block: *const MemBlock, items: []const MemBlock.MemEntry, key: []const u8, prefixLen: usize) usize {
     if (items.len == 0) return 0;
 
     const keySuffix = key[prefixLen..];
 
     // binarySearch may return any index from the `.eq` range;
     // narrow the searched prefix until we reach its first index.
-    const comp = LowerBoundBySuffixComparator{ .keySuffix = keySuffix, .prefixLen = prefixLen };
+    const comp = LowerBoundBySuffixComparator{ .block = block, .keySuffix = keySuffix, .prefixLen = prefixLen };
     var result = items.len;
     var search = items;
     while (search.len > 0) {
-        const i = std.sort.binarySearch([]const u8, search, comp, lowerBoundBySuffixComparatorFn) orelse break;
+        const i = std.sort.binarySearch(MemBlock.MemEntry, search, comp, lowerBoundBySuffixComparatorFn) orelse break;
         result = i;
         search = search[0..i];
     }
@@ -215,7 +216,7 @@ pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     if (self.isRead) return false;
 
     if (self.memBlockIdx < self.memBlock.?.memEntries.items.len) {
-        self.current = self.memBlock.?.memEntries.items[self.memBlockIdx];
+        self.current = self.memBlock.?.get(self.memBlockIdx);
         self.memBlockIdx += 1;
         return true;
     }
@@ -224,7 +225,7 @@ pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
         return false;
     }
 
-    self.current = self.memBlock.?.memEntries.items[0];
+    self.current = self.memBlock.?.get(0);
     self.memBlockIdx += 1;
     return true;
 }
@@ -400,7 +401,13 @@ test "lowerBoundBySuffix" {
     };
 
     for (cases) |case| {
-        const actual = lowerBoundBySuffix(case.items, case.key, case.prefixLen);
+        var block = try MemBlock.init(std.testing.allocator, 64);
+        defer block.deinit(std.testing.allocator);
+        for (case.items) |item| {
+            try std.testing.expect(block.add(item));
+        }
+
+        const actual = lowerBoundBySuffix(block, block.memEntries.items, case.key, case.prefixLen);
         try std.testing.expectEqual(case.expected, actual);
     }
 }

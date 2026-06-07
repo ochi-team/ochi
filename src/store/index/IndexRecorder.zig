@@ -1274,7 +1274,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
         try testing.expectEqual(1, shard.blocks.items.len);
         try testing.expectEqual(1, shard.blocks.items[0].memEntries.items.len);
-        try testing.expectEqualStrings(shortValue, shard.blocks.items[0].memEntries.items[0]);
+        try testing.expectEqualStrings(shortValue, shard.blocks.items[0].get(0));
     }
 
     try recorder.stop(io, alloc);

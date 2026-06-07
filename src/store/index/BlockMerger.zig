@@ -15,11 +15,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-const MemOrder = @import("../../stds/sort.zig").MemOrder;
-
 const Conf = @import("../../Conf.zig");
 const BlockReader = @import("BlockReader.zig");
 const MemBlock = @import("MemBlock.zig");
+const MemEntry = MemBlock.MemEntry;
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const IndexKind = @import("Index.zig").IndexKind;
@@ -108,14 +107,14 @@ pub fn merge(
             hasNextItem = true;
         }
 
-        const items = reader.block.?.memEntries.items;
+        const itemsLen = reader.block.?.memEntries.items.len;
         var compareEveryItem = true;
-        if (reader.currentI < items.len) {
-            const lastItem = items[items.len - 1];
+        if (reader.currentI < itemsLen) {
+            const lastItem = reader.block.?.last();
             compareEveryItem = hasNextItem and (std.mem.order(u8, lastItem, nextItem) == .gt);
         }
 
-        while (reader.currentI < items.len) {
+        while (reader.currentI < itemsLen) {
             const item = reader.current();
             if (compareEveryItem and (std.mem.order(u8, item, nextItem) == .gt)) {
                 break;
@@ -128,7 +127,7 @@ pub fn merge(
             reader.currentI += 1;
         }
 
-        if (reader.currentI == items.len) {
+        if (reader.currentI == itemsLen) {
             if (try reader.next(io, alloc)) {
                 self.heap.fix(0);
                 continue;
@@ -153,14 +152,13 @@ fn flush(
     writer: *BlockWriter,
     tableHeader: *TableHeader,
 ) !void {
-    const items = self.block.memEntries.items;
-    if (items.len == 0) {
+    if (self.block.memEntries.items.len == 0) {
         return;
     }
 
-    const originalFirst = try alloc.dupe(u8, items[0]);
+    const originalFirst = try alloc.dupe(u8, self.block.get(0));
     defer alloc.free(originalFirst);
-    const originalLast = try alloc.dupe(u8, items[items.len - 1]);
+    const originalLast = try alloc.dupe(u8, self.block.last());
     defer alloc.free(originalLast);
 
     try self.mergeTagsRecords(alloc);
@@ -170,16 +168,16 @@ fn flush(
         return;
     }
 
-    const blockLastEntry = self.block.memEntries.items[self.block.memEntries.items.len - 1];
+    const blockLastEntry = self.block.last();
 
     // TODO: move this validation to tests and test the block is sorted
-    std.debug.assert(std.mem.order(u8, self.block.memEntries.items[0], originalFirst) != .lt);
+    std.debug.assert(std.mem.order(u8, self.block.get(0), originalFirst) != .lt);
     std.debug.assert(std.mem.order(u8, blockLastEntry, originalLast) != .gt);
-    std.debug.assert(std.sort.isSorted([]const u8, self.block.memEntries.items, {}, MemOrder(u8).lessThanConst));
+    std.debug.assert(self.block.isSorted());
 
     tableHeader.entriesCount += self.block.memEntries.items.len;
     if (tableHeader.firstEntry.len == 0) {
-        tableHeader.firstEntry = try alloc.dupe(u8, self.block.memEntries.items[0]);
+        tableHeader.firstEntry = try alloc.dupe(u8, self.block.get(0));
     }
 
     const newLast = try alloc.dupe(u8, blockLastEntry);
@@ -200,25 +198,25 @@ fn flush(
 // 2. writeState takes 2 buffers instead of a block, it manages the entire memory ownership,
 // not just 2 buffers
 fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
-    const items = self.block.memEntries.items;
-
-    if (items.len <= 2) {
+    const itemsLen = self.block.memEntries.items.len;
+    if (itemsLen <= 2) {
         return;
     }
 
-    const firstItem = items[0];
+    const firstItem = self.block.get(0);
     if (firstItem.len > 0 and firstItem[0] > @intFromEnum(IndexKind.tagToSids)) {
         return;
     }
 
-    const lastItem = items[items.len - 1];
+    const lastItem = self.block.last();
     if (lastItem.len > 0 and lastItem[0] < @intFromEnum(IndexKind.tagToSids)) {
         // nothing to merge, there are no tags -> stream records
         return;
     }
 
     var maxMergedBytes: usize = 0;
-    for (items) |item| {
+    var iter = self.block.iterator();
+    while (iter.next()) |item| {
         maxMergedBytes += item.len;
     }
 
@@ -239,28 +237,29 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
     // Copy source bytes so merged output never aliases mutable destination memory.
     var sourceBuf = try std.ArrayList(u8).initCapacity(alloc, maxMergedBytes);
     defer sourceBuf.deinit(alloc);
-    var sourceEntries = try std.ArrayList([]const u8).initCapacity(alloc, items.len);
+    var sourceEntries = try std.ArrayList(MemEntry).initCapacity(alloc, itemsLen);
     defer sourceEntries.deinit(alloc);
 
-    for (items) |item| {
-        const start = sourceBuf.items.len;
+    iter = self.block.iterator();
+    while (iter.next()) |item| {
+        const start: u16 = @intCast(sourceBuf.items.len);
         sourceBuf.appendSliceAssumeCapacity(item);
-        sourceEntries.appendAssumeCapacity(sourceBuf.items[start .. start + item.len]);
+        sourceEntries.appendAssumeCapacity(.{ .start = start, .end = @intCast(sourceBuf.items.len) });
     }
 
     self.block.memEntries.clearRetainingCapacity();
     self.block.buf.clearRetainingCapacity();
     self.block.prefix = "";
     try self.block.buf.ensureUnusedCapacity(alloc, maxMergedBytes);
-    const stateBuf = &self.block.buf;
 
     var tagRecordsMerger: TagRecordsMerger = .{};
     defer tagRecordsMerger.deinit(alloc);
 
     for (0..sourceEntries.items.len) |i| {
-        const item = sourceEntries.items[i];
+        const itemRange = sourceEntries.items[i];
+        const item = sourceBuf.items[itemRange.start..itemRange.end];
         if (item.len == 0 or item[0] != @intFromEnum(IndexKind.tagToSids) or i == 0 or i == sourceEntries.items.len - 1) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            try tagRecordsMerger.writeState(alloc, self.block);
 
             const ok = self.block.add(item);
             std.debug.assert(ok);
@@ -269,7 +268,7 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
 
         try tagRecordsMerger.state.setup(item);
         if (tagRecordsMerger.state.streamsLen() > maxStreamsPerRecord) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            try tagRecordsMerger.writeState(alloc, self.block);
 
             const ok = self.block.add(item);
             std.debug.assert(ok);
@@ -277,26 +276,25 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         }
 
         if (!tagRecordsMerger.statesPrefixEqual()) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            try tagRecordsMerger.writeState(alloc, self.block);
         }
 
         try tagRecordsMerger.state.parseStreamIDs(alloc);
         try tagRecordsMerger.moveParsedState(alloc);
 
         if (tagRecordsMerger.streamIDs.items.len >= maxStreamsPerRecord) {
-            try tagRecordsMerger.writeState(alloc, stateBuf, &self.block.memEntries);
+            try tagRecordsMerger.writeState(alloc, self.block);
         }
     }
 
     std.debug.assert(tagRecordsMerger.streamIDs.items.len == 0);
-    const isSorted = std.sort.isSorted([]const u8, self.block.memEntries.items, {}, MemOrder(u8).lessThanConst);
-    if (!isSorted) {
+    if (!self.block.isSorted()) {
         // defend against parallel writing leaving the state unmerged,
         // fallback to the original data
         self.block.buf.clearRetainingCapacity();
         self.block.memEntries.clearRetainingCapacity();
         for (sourceEntries.items) |item| {
-            const ok = self.block.add(item);
+            const ok = self.block.add(sourceBuf.items[item.start..item.end]);
             std.debug.assert(ok);
         }
     }
@@ -823,8 +821,8 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     while (try mergedReader.next(io, alloc)) {
         blocksRead += 1;
         try testing.expect(blocksRead <= expected.len);
-        const decoded = mergedReader.block.?.memEntries.items;
-        for (decoded) |item| {
+        var iter = mergedReader.block.?.iterator();
+        while (iter.next()) |item| {
             try testing.expect(expectedI < expected.len);
             try testing.expectEqualStrings(expected[expectedI], item);
             expectedI += 1;

@@ -189,7 +189,7 @@ pub fn blockReaderLessThan(one: *BlockReader, another: *BlockReader) bool {
 }
 
 pub fn current(self: *BlockReader) []const u8 {
-    return self.block.?.memEntries.items[self.currentI];
+    return self.block.?.get(self.currentI);
 }
 
 pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
@@ -205,7 +205,7 @@ pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     if (self.blockHeaders.len == 0 or self.blockHeaderI >= self.blockHeaders.len) {
         const ok = try self.readNextBlockHeaders(io, alloc);
         if (!ok) {
-            const lastItem = self.block.?.memEntries.items[self.block.?.memEntries.items.len - 1];
+            const lastItem = self.block.?.last();
             std.debug.assert(std.mem.eql(u8, self.tableHeader.lastEntry, lastItem));
             self.isRead = true;
             return ok;
@@ -253,7 +253,7 @@ pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
 
     if (builtin.is_test and !self.firstItemChecked) {
         self.firstItemChecked = true;
-        const firstEntry = self.block.?.memEntries.items[0];
+        const firstEntry = self.block.?.get(0);
         std.debug.assert(std.mem.eql(u8, self.tableHeader.firstEntry, firstEntry));
     }
     return true;
@@ -571,9 +571,9 @@ test "BlockReader.initFromMemTable reads items" {
         if (case.useMultiBlock) {
             var expectedI: usize = 0;
             while (try reader.next(io, alloc)) {
-                const decoded = reader.block.?.memEntries.items;
-                for (decoded) |item| {
-                    try testing.expectEqualSlices(u8, case.expected[expectedI], item);
+                var iter = reader.block.?.iterator();
+                while (iter.next()) |item| {
+                    try testing.expectEqualStrings(case.expected[expectedI], item);
                     expectedI += 1;
                 }
             }
@@ -584,7 +584,9 @@ test "BlockReader.initFromMemTable reads items" {
 
             const decoded = reader.block.?.memEntries.items;
             try testing.expectEqual(case.expected.len, decoded.len);
-            try testing.expectEqualDeep(case.expected, decoded);
+            for (0..decoded.len) |i| {
+                try testing.expectEqualStrings(case.expected[i], reader.block.?.get(i));
+            }
 
             try testing.expect(!try reader.next(io, alloc));
         }
@@ -653,6 +655,8 @@ test "BlockReader.initFromDiskTable decodes blocks without null crash" {
     const hasNext = try reader.next(io, alloc);
     try testing.expect(hasNext);
     try testing.expect(reader.block != null);
-    try testing.expectEqualDeep(expected[0..], reader.block.?.memEntries.items);
+    for (0..expected.len) |i| {
+        try testing.expectEqualStrings(expected[i], reader.block.?.get(i));
+    }
     try testing.expect(!try reader.next(io, alloc));
 }

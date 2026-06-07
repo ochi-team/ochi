@@ -14,6 +14,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const TagRecordsParser = @import("TagRecordsParser.zig");
+const MemBlock = @import("MemBlock.zig");
 
 const Self = @This();
 
@@ -27,7 +28,7 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     self.prevState.deinit(alloc);
 }
 
-pub fn writeState(self: *Self, alloc: Allocator, buf: *std.ArrayList(u8), target: *std.ArrayList([]const u8)) !void {
+pub fn writeState(self: *Self, alloc: Allocator, target: *MemBlock) !void {
     if (self.streamIDs.items.len == 0) {
         return;
     }
@@ -36,28 +37,20 @@ pub fn writeState(self: *Self, alloc: Allocator, buf: *std.ArrayList(u8), target
     self.removeDuplicatedStreams();
 
     const bound = TagRecordsParser.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);
-    try buf.ensureUnusedCapacity(alloc, bound);
-    const slice = buf.unusedCapacitySlice();
+    try target.buf.ensureUnusedCapacity(alloc, bound);
+    const start: u16 = @intCast(target.buf.items.len);
+    const slice = target.buf.unusedCapacitySlice();
 
-    // TODO: this API is kinda private,
-    // block.add call does it for us, this manipulates the buffer state implicitly,
-    // e.g. we can do:
-    // ```zig
-    // const slice = ...;
-    // const ok = block.addOwned(slice, recordLen);
-    // std.debug.assert(ok);
-    // ```
-    // eventually it must to id similar to block.add API
     const recordLen = TagRecordsParser.encodeRecord(
         slice,
         self.prevState.tenantID,
         self.prevState.tag,
         self.streamIDs.items,
     );
-    buf.items.len += recordLen;
+    target.buf.items.len += recordLen;
 
     self.streamIDs.clearRetainingCapacity();
-    try target.append(alloc, slice[0..recordLen]);
+    target.addOwned(.{ .start = start, .end = @intCast(target.buf.items.len) });
 }
 
 fn removeDuplicatedStreams(self: *Self) void {
@@ -220,14 +213,12 @@ test "writeState empty" {
     var m: Self = .{};
     defer m.deinit(alloc);
 
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(alloc);
-    var target: std.ArrayList([]const u8) = .empty;
+    var target = try MemBlock.init(alloc, 64);
     defer target.deinit(alloc);
 
-    try m.writeState(alloc, &buf, &target);
+    try m.writeState(alloc, target);
 
-    try testing.expectEqual(@as(usize, 0), target.items.len);
+    try testing.expectEqual(@as(usize, 0), target.memEntries.items.len);
 }
 
 test "writeState" {
@@ -265,20 +256,18 @@ test "writeState" {
         try m.prevState.setup(record);
         try m.streamIDs.appendSlice(alloc, case.initial);
 
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(alloc);
-        var target: std.ArrayList([]const u8) = .empty;
+        var target = try MemBlock.init(alloc, 256);
         defer target.deinit(alloc);
 
-        try m.writeState(alloc, &buf, &target);
+        try m.writeState(alloc, target);
 
-        try testing.expectEqual(@as(usize, 1), target.items.len);
+        try testing.expectEqual(@as(usize, 1), target.memEntries.items.len);
         try testing.expectEqual(@as(usize, 0), m.streamIDs.items.len);
 
         var verifyState: TagRecordsParser = .{};
         defer verifyState.deinit(alloc);
 
-        try verifyState.setup(target.items[0]);
+        try verifyState.setup(target.get(0));
         try verifyState.parseStreamIDs(alloc);
 
         try testing.expectEqualSlices(u128, case.expected, verifyState.streamIDs.items);

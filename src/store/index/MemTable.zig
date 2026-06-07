@@ -115,8 +115,8 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     self.tableHeader = .{
         .entriesCount = @intCast(block.memEntries.items.len),
         .blocksCount = 1,
-        .firstEntry = block.memEntries.items[0],
-        .lastEntry = block.memEntries.items[block.memEntries.items.len - 1],
+        .firstEntry = block.get(0),
+        .lastEntry = block.last(),
     };
 
     try self.entriesBuf.appendSlice(alloc, entriesBlock.entriesBuf.items);
