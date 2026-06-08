@@ -621,7 +621,7 @@ const testing = std.testing;
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 const SID = @import("../lines.zig").SID;
-const StreamReader = @import("reader.zig").StreamReader;
+const TableReader = @import("TableReader.zig");
 
 test "writeBlock and writeData produce identical buffer output" {
     const alloc = testing.allocator;
@@ -660,7 +660,7 @@ test "writeBlock and writeData produce identical buffer output" {
     try writer1.writeBlock(io, alloc, block, &bh1);
 
     // Build StreamReader from writer1's buffers to populate BlockData
-    const sr = StreamReader{
+    const sr = TableReader{
         .table = table1,
         .metaIndexBuf = writer1.metaindexDst.buffer.items,
         .columnsKeysBuf = writer1.columnKeysDst.buffer.items,

@@ -359,7 +359,7 @@ fn canBeSavedAsCelled(lines: []const Line, index: usize) bool {
 const SID = @import("../lines.zig").SID;
 const TableWriter = @import("TableWriter.zig");
 const MemTable = @import("MemTable.zig");
-const StreamReader = @import("reader.zig").StreamReader;
+const TableReader = @import("TableReader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 
 fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
@@ -441,7 +441,7 @@ test "initFromLines and initFromData produce identical blocks" {
         var bh = BlockHeader.initFromBlock(blockA, sid);
         try writer.writeBlock(io, alloc, blockA, &bh);
 
-        const sr = StreamReader{
+        const sr = TableReader{
             .table = table,
             .metaIndexBuf = writer.metaindexDst.buffer.items,
             .columnsKeysBuf = writer.columnKeysDst.buffer.items,

@@ -19,7 +19,7 @@ const MemTable = @import("../inmem/MemTable.zig");
 const Table = @import("Table.zig");
 const Block = @import("../inmem/Block.zig");
 const BlockData = @import("../inmem/BlockData.zig").BlockData;
-const BlockReader = @import("../inmem/reader.zig").BlockReader;
+const BlockReader = @import("../inmem/BlockReader.zig");
 const Unpacker = @import("../inmem/Unpacker.zig");
 const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
 

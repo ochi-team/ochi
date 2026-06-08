@@ -15,7 +15,7 @@ const BlockWriter = @import("store/inmem/BlockWriter.zig");
 const TableWriter = @import("store/inmem/TableWriter.zig");
 const TableHeader = @import("store/inmem/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
-const BlockReader = @import("store/inmem/reader.zig").BlockReader;
+const BlockReader = @import("store/inmem/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
 const Runtime = @import("Runtime.zig");
 

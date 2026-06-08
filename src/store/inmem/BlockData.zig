@@ -13,7 +13,7 @@ const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnDict = @import("ColumnDict.zig");
 const ColumnType = ColumnHeader.ColumnType;
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
-const StreamReader = @import("reader.zig").StreamReader;
+const TableReader = @import("TableReader.zig");
 
 // TODO: make it gloabal, potentially it can be used as a global constant by others
 // TODO: perhaps we should apply equal limits to every file type and name it like maxBlockSegmentSize
@@ -92,7 +92,7 @@ pub const BlockData = struct {
         io: Io,
         alloc: Allocator,
         bh: *const BlockHeader,
-        sr: *const StreamReader,
+        sr: *const TableReader,
     ) !void {
         self.reset(alloc);
 
@@ -165,7 +165,7 @@ pub const TimestampsData = struct {
         io: Io,
         buf: []u8,
         th: *const TimestampsHeader,
-        sr: *const StreamReader,
+        sr: *const TableReader,
     ) !TimestampsData {
         std.debug.assert(buf.len <= maxTimestampsBlockSize);
 
@@ -209,21 +209,21 @@ pub const ColumnData = struct {
         io: Io,
         alloc: Allocator,
         ch: *ColumnHeader,
-        streamReader: *const StreamReader,
+        tableReader: *const TableReader,
     ) !ColumnData {
         const valuesSize = ch.size;
         std.debug.assert(valuesSize <= maxValuesBlockSize);
 
         const valuesData = try alloc.alloc(u8, valuesSize);
         errdefer alloc.free(valuesData);
-        const valuesN = try streamReader.readBloomValues(io, valuesData, ch.key, ch.offset);
+        const valuesN = try tableReader.readBloomValues(io, valuesData, ch.key, ch.offset);
         std.debug.assert(valuesN == valuesData.len);
 
         var tokensData: ?[]const u8 = null;
         if (ch.type != .dict) {
             const tokensBuf = try alloc.alloc(u8, ch.bloomFilterSize);
             errdefer alloc.free(tokensBuf);
-            const tokensN = try streamReader.readBloomTokens(
+            const tokensN = try tableReader.readBloomTokens(
                 io,
                 tokensBuf,
                 ch.key,
@@ -263,7 +263,7 @@ pub const ColumnData = struct {
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 const MemTable = @import("MemTable.zig");
-const BlockReader = @import("reader.zig").BlockReader;
+const BlockReader = @import("BlockReader.zig");
 const Table = @import("../data/Table.zig");
 
 test "BlockData initEmpty and deinit without header" {

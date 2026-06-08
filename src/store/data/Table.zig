@@ -15,7 +15,7 @@ const BlockData = @import("../inmem/BlockData.zig").BlockData;
 const Block = @import("../inmem/Block.zig");
 const Unpacker = @import("../inmem/Unpacker.zig");
 const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
-const StreamReader = @import("../inmem/reader.zig").StreamReader;
+const TableReader = @import("../inmem/TableReader.zig");
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
@@ -545,12 +545,12 @@ fn queryBlock(
         colIdx.putAssumeCapacity(colID, entry.value_ptr.*);
     }
 
-    const streamReader: *StreamReader = try .init(io, alloc, self);
-    defer streamReader.deinit(alloc);
+    const tableReader: *TableReader = try .init(io, alloc, self);
+    defer tableReader.deinit(alloc);
 
     var blockData = BlockData.initEmpty();
     defer blockData.deinit(alloc);
-    try blockData.readFrom(io, alloc, &blockHeader, streamReader);
+    try blockData.readFrom(io, alloc, &blockHeader, tableReader);
 
     const unpacker = try Unpacker.init(alloc);
     defer unpacker.deinit(alloc);
