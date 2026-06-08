@@ -3,7 +3,7 @@ const std = @import("std");
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 
-const sizing = @import("inmem/sizing.zig");
+const sizing = @import("data/sizing.zig");
 
 // TODO: if we don't use decoding of it perhaps we don't need to encode lens
 pub fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {

@@ -4,24 +4,24 @@ const Io = std.Io;
 
 const Heap = @import("../../stds/heap.zig").Heap;
 
-const sizing = @import("../inmem/sizing.zig");
+const sizing = @import("../data/sizing.zig");
 
-const TableHeader = @import("../inmem/TableHeader.zig");
+const TableHeader = @import("../data/TableHeader.zig");
 const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
 const SID = @import("../lines.zig").SID;
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 
-const TableWriter = @import("../inmem/TableWriter.zig");
-const BlockWriter = @import("../inmem/BlockWriter.zig");
-const MemTable = @import("../inmem/MemTable.zig");
+const TableWriter = @import("../data/TableWriter.zig");
+const BlockWriter = @import("../data/BlockWriter.zig");
+const MemTable = @import("../data/MemTable.zig");
 const Table = @import("Table.zig");
-const Block = @import("../inmem/Block.zig");
-const BlockData = @import("../inmem/BlockData.zig").BlockData;
-const BlockReader = @import("../inmem/BlockReader.zig");
-const Unpacker = @import("../inmem/Unpacker.zig");
-const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
+const Block = @import("../data/Block.zig");
+const BlockData = @import("../data/BlockData.zig").BlockData;
+const BlockReader = @import("../data/BlockReader.zig");
+const Unpacker = @import("../data/Unpacker.zig");
+const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 
 // TODO: rename this crap
 pub fn mergeData(

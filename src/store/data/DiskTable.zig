@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const TableHeader = @import("../inmem/TableHeader.zig");
+const TableHeader = @import("../data/TableHeader.zig");
 
 pub const DiskTable = @This();
 

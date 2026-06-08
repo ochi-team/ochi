@@ -10,12 +10,12 @@ const Line = @import("store/lines.zig").Line;
 const Query = @import("query/Query.zig");
 const SID = @import("store/lines.zig").SID;
 
-const MemTable = @import("store/inmem/MemTable.zig");
-const BlockWriter = @import("store/inmem/BlockWriter.zig");
-const TableWriter = @import("store/inmem/TableWriter.zig");
-const TableHeader = @import("store/inmem/TableHeader.zig");
+const MemTable = @import("store/data/MemTable.zig");
+const BlockWriter = @import("store/data/BlockWriter.zig");
+const TableWriter = @import("store/data/TableWriter.zig");
+const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
-const BlockReader = @import("store/inmem/BlockReader.zig");
+const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
 const Runtime = @import("Runtime.zig");
 

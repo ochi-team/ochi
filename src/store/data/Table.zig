@@ -5,17 +5,17 @@ const Dir = Io.Dir;
 
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
-const MemTable = @import("../inmem/MemTable.zig");
+const MemTable = @import("../data/MemTable.zig");
 const DiskTable = @import("DiskTable.zig");
-const IndexBlockHeader = @import("../inmem/IndexBlockHeader.zig");
-const BlockHeader = @import("../inmem/BlockHeader.zig");
-const TableHeader = @import("../inmem/TableHeader.zig");
-const ColumnIDGen = @import("../inmem/ColumnIDGen.zig");
-const BlockData = @import("../inmem/BlockData.zig").BlockData;
-const Block = @import("../inmem/Block.zig");
-const Unpacker = @import("../inmem/Unpacker.zig");
-const ValuesDecoder = @import("../inmem/ValuesDecoder.zig");
-const TableReader = @import("../inmem/TableReader.zig");
+const IndexBlockHeader = @import("../data/IndexBlockHeader.zig");
+const BlockHeader = @import("../data/BlockHeader.zig");
+const TableHeader = @import("../data/TableHeader.zig");
+const ColumnIDGen = @import("../data/ColumnIDGen.zig");
+const BlockData = @import("../data/BlockData.zig").BlockData;
+const Block = @import("../data/Block.zig");
+const Unpacker = @import("../data/Unpacker.zig");
+const ValuesDecoder = @import("../data/ValuesDecoder.zig");
+const TableReader = @import("../data/TableReader.zig");
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
