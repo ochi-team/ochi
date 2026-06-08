@@ -15,7 +15,7 @@ pub const Error = error{
 
 pub fn inspect(strict: bool, io: Io) !void {
     switch (builtin.os.tag) {
-        .linux => inspectOvercommit(),
+        .linux => {},
         else => {
             if (builtin.mode == .Debug) {
                 if (strict) return error.NotReleaseMode;
@@ -27,12 +27,12 @@ pub fn inspect(strict: bool, io: Io) !void {
         },
     }
 
-    inspectFds(strict);
-    inspectFsize(strict);
-    inspectOvercommit(strict, io);
+    try inspectFds(strict);
+    try inspectFsize(strict);
+    try inspectOvercommit(strict, io);
 }
 
-fn inspectFds(strict: bool) void {
+fn inspectFds(strict: bool) !void {
     const limits = std.posix.getrlimit(.NOFILE) catch |err| {
         std.debug.print("failed to read max open file descriptor limit: {}", .{err});
         if (strict) return err;
@@ -62,7 +62,7 @@ fn inspectFds(strict: bool) void {
     };
 }
 
-fn inspectFsize(strict: bool) void {
+fn inspectFsize(strict: bool) !void {
     const limits = std.posix.getrlimit(.FSIZE) catch |err| {
         std.debug.print("failed to read max file size limit: {}", .{err});
         if (strict) return err;
@@ -92,16 +92,16 @@ fn inspectFsize(strict: bool) void {
     };
 }
 
-fn inspectOvercommit(strict: bool, io: Io) void {
+fn inspectOvercommit(strict: bool, io: Io) !void {
     const f = std.Io.Dir.cwd().openFile(io, overcommitPath, .{ .mode = .read_only }) catch |err| {
         std.debug.print("failed to read overcommit setting from {s}: {}", .{ overcommitPath, err });
         if (strict) return err;
         return;
     };
-    defer f.close();
+    defer f.close(io);
 
     var buf: [8]u8 = undefined;
-    const n = f.readPositional(io, &buf, 0) catch |err| {
+    const n = f.readPositionalAll(io, &buf, 0) catch |err| {
         std.debug.print("failed to read overcommit setting from {s}: {}", .{ overcommitPath, err });
         if (strict) return err;
         return;
@@ -114,5 +114,5 @@ fn inspectOvercommit(strict: bool, io: Io) void {
         "overcommit setting is invalid: path={s}, current={s}, required={s}",
         .{ overcommitPath, value, requiredOvercommit },
     );
-    return error.InvalidOvercommit;
+    if (strict) return error.InvalidOvercommit;
 }
