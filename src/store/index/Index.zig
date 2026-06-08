@@ -9,6 +9,8 @@ const FilterExpression = @import("../../query/Query.zig").FilterExpression;
 const FilterPredicate = @import("../../query/Query.zig").FilterPredicate;
 const TagRecordsParser = @import("TagRecordsParser.zig");
 
+pub const tracy = @import("tracy");
+
 const Lookup = @import("lookup/Lookup.zig");
 const StreamIDsByPrefixesResult = Lookup.StreamIDsByPrefixesResult;
 
@@ -91,6 +93,12 @@ pub fn queryAllStreamIDs(
 }
 
 pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = ".Index.indexStream",
+    });
+    defer z.end();
+
     var entries = try alloc.alloc([]const u8, 2 + tags.len);
     var ei: usize = 0;
     defer {

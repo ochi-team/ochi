@@ -10,6 +10,8 @@ const Encoder = encoding.Encoder;
 const EntriesBlock = @import("EntriesBlock.zig");
 const EncodingType = @import("BlockHeader.zig").EncodingType;
 
+const tracy = @import("tracy");
+
 // TODO: tune the value, e.g. try it 128
 const maxPlainMemBlockLen = 64;
 
@@ -49,6 +51,8 @@ pub fn init(
     alloc: Allocator,
     maxMemBlockSize: u32,
 ) !*MemBlock {
+    const z = tracy.Zone.begin(.{ .src = @src(), .name = "index.MemBlock.init" });
+    defer z.end();
     std.debug.assert(maxMemBlockSize <= std.math.maxInt(u16));
 
     var data = try std.ArrayList(MemEntry).initCapacity(alloc, maxMemBlockSize / minEntrySizeHint);
