@@ -47,6 +47,7 @@ pub const MemEntry = struct {
     end: u16,
 };
 
+// TODO: meter how many blocks are acquired
 pub fn init(
     alloc: Allocator,
     maxMemBlockSize: u32,
