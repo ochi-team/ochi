@@ -31,7 +31,7 @@ jobs:
           version: 0.16.0
 
       - name: Build ReleaseSafe binary
-        run: zig build -Doptimize=ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe -Drelease=true
 
       - name: Package artifacts
         run: |

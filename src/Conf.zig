@@ -23,6 +23,10 @@ const Allocator = std.mem.Allocator;
 // max background jobs (e.g. merges)
 // configure the limits and apply them.
 
+// 50 GB
+// TODO: make it a part of the config
+pub const maxTableSize: u64 = 50 << 30;
+
 pub const AppConfig = struct {
     maxRequestSize: u32 = 4 * 1024 * 1024,
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,

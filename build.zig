@@ -1,6 +1,8 @@
 const std = @import("std");
 
 fn addOption(b: *std.Build, exe: *std.Build.Step.Compile) void {
+    const release = b.option(bool, "release", "Release");
+
     // add build options to runtime
     const options = b.addOptions();
     exe.root_module.addOptions("build", options);
@@ -9,6 +11,7 @@ fn addOption(b: *std.Build, exe: *std.Build.Step.Compile) void {
     const args = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
     const version = b.run(args);
     options.addOption([]const u8, "version", version);
+    options.addOption(bool, "release", release orelse false);
 }
 
 pub fn build(b: *std.Build) void {

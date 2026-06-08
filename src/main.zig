@@ -5,6 +5,7 @@ const zeit = @import("zeit");
 
 const build = @import("build");
 const Conf = @import("Conf.zig");
+const inspect = @import("inspect.zig");
 const server = @import("server.zig");
 
 pub const tracy_impl = @import("tracy_impl");
@@ -24,6 +25,7 @@ pub const tracy_options: tracy.Options = .{
 };
 
 pub fn main() !void {
+
     // TODO: play with madvise
     // TODO: on startup validate overcomittment is not allowed
     var debugAlloc: ?std.heap.DebugAllocator(.{}) = null;
@@ -46,6 +48,7 @@ pub fn main() !void {
     var ioImpl: std.Io.Threaded = .init(alloc, .{});
     defer ioImpl.deinit();
     const io = ioImpl.io();
+    try inspect.inspect(build.release, io);
 
     var tracyAlloc = tracy.Allocator{
         .parent = alloc,
