@@ -62,7 +62,7 @@ services:
       - --housekeeping_interval=15s
       - --store_container_labels=true
       - --disable_root_cgroup_stats=true
-      - --disable_metrics=advtcp,cpuset,cpu_topology,disk,diskIO,hugetlb,network,perf_event,percpu,pressure,process,referenced_memory,resctrl,sched,tcp,udp
+      - --disable_metrics=advtcp,cpuset,cpu_topology,disk,diskIO,hugetlb,network,perf_event,percpu,pressure,referenced_memory,resctrl,sched,tcp,udp
     profiles: ["profile"]
 
   pyroscope:
