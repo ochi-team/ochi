@@ -11,6 +11,8 @@ const ValuesDecoder = @import("ValuesDecoder.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const Table = @import("../data/Table.zig");
 
+const tracy = @import("tracy");
+
 const sizing = @import("sizing.zig");
 
 // TODO: no idea if it's a good number, must be tested with high cardinality logs,
@@ -50,6 +52,11 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
 }
 
 pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "data.Block.initFromData",
+    });
+    defer z.end();
     std.debug.assert(data.len <= maxLines);
 
     const tsEncoder = try TimestampsEncoder.init(alloc);
