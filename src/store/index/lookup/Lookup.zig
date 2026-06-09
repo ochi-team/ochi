@@ -138,11 +138,10 @@ pub fn findAllStreamIDsByPrefixes(
                 }
             }
 
-            const streamIDsCount = streamIDs.count();
-            if (streamIDsCount >= resultLimit)
+            if (streamIDs.count() >= resultLimit)
                 std.debug.print("[WARN] stream ids count reached the limit," ++
-                    " return index earlier found={d} lilmit={d}\n", .{
-                    streamIDsCount, resultLimit,
+                    " return index earlier, lilmit={d}\n", .{
+                    resultLimit,
                 });
             return .{
                 .streamIDs = streamIDs,

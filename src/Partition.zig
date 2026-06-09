@@ -210,6 +210,7 @@ pub fn queryLines(
     self: *Partition,
     io: Io,
     alloc: Allocator,
+    longAlloc: Allocator,
     tenantID: u64,
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
@@ -236,7 +237,7 @@ pub fn queryLines(
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
             const tagsExpr = query.tagsExpr orelse return Query.Error.NoTagsFilter;
-            break :sids try self.index.querySIDs(io, alloc, tenantID, tagsExpr, memBlocksCache);
+            break :sids try self.index.querySIDs(io, alloc, longAlloc, tenantID, tagsExpr, memBlocksCache);
         }
     };
     defer sidsRes.sids.deinit(alloc);
@@ -259,17 +260,11 @@ pub fn queryStreamIDs(
     self: *Partition,
     io: Io,
     alloc: Allocator,
+    longAlloc: Allocator,
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache);
-    if (res.cutOff) {
-        std.debug.print(
-            "[WARN] query stream ids is cut off by index, tenantID: {d}, partition: {s}\n",
-            .{ tenantID, self.key },
-        );
-    }
-
+    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache, longAlloc);
     return res.streamIDs;
 }
 

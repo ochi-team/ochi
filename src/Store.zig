@@ -358,6 +358,7 @@ pub fn queryLines(
     self: *Store,
     io: Io,
     alloc: Allocator,
+    longAlloc: Allocator,
     tenantID: u64,
     query: Query,
 ) !std.ArrayList(Line) {
@@ -389,7 +390,7 @@ pub fn queryLines(
 
     var results = std.ArrayList(Line).empty;
     for (parts.items) |part| {
-        var partResults = try part.queryLines(io, alloc, tenantID, query, self.memBlocksCache);
+        var partResults = try part.queryLines(io, alloc, longAlloc, tenantID, query, self.memBlocksCache);
         defer partResults.deinit(alloc);
 
         try results.appendSlice(alloc, partResults.items);
@@ -402,6 +403,7 @@ pub fn queryStreamIDs(
     self: *Store,
     io: Io,
     alloc: Allocator,
+    longAlloc: Allocator,
     tenantID: u64,
     from: u64,
     to: u64,
@@ -432,7 +434,7 @@ pub fn queryStreamIDs(
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
 
     for (parts.items) |part| {
-        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.memBlocksCache);
+        var partStreamIDs = try part.queryStreamIDs(io, alloc, longAlloc, tenantID, self.memBlocksCache);
         defer partStreamIDs.deinit(alloc);
 
         for (partStreamIDs.keys()) |sid| {
