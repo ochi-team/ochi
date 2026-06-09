@@ -30,6 +30,7 @@ metaIndexRecords: []MetaIndex,
 
 isRead: bool,
 
+// TODO: find out at what point it's null and document it or make non nullable
 memBlock: ?*MemBlock,
 memBlockIdx: usize,
 
@@ -237,11 +238,17 @@ fn nextBlock(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     }
 
     const blockHeader = self.blockHeaders[0];
-    const newMemBlock = try self.getMemBlock(io, alloc, blockHeader);
+    if (self.memBlock) |memBlock| memBlock.reset() else {
+        self.memBlock = try MemBlock.init(alloc, self.maxMemBlockSize);
+    }
+    try self.setMemBlock(
+        io,
+        alloc,
+        blockHeader,
+        self.memBlock.?,
+    );
 
     // Each block decode allocates a new MemBlock; free previous one first.
-    if (self.memBlock) |memBlock| memBlock.deinit(alloc);
-    self.memBlock = newMemBlock;
     self.blockHeaders = self.blockHeaders[1..];
     self.memBlockIdx = 0;
 
@@ -291,12 +298,12 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
 }
 
-fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
+fn setMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
     // TODO: potentially we can cache a block
-    return self.readMemBlock(io, alloc, blockHeader);
+    return self.readMemBlock(io, alloc, blockHeader, memBlock);
 }
 
-fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
+fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
     self.entriesBlock.reset();
 
     // copy exact encoded slices for this block and decode them into a fresh MemBlock.
@@ -313,8 +320,6 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
 
     self.entriesBlock.lensBuf.items.len = blockHeader.lensBlockSize;
 
-    var memBlock = try MemBlock.init(alloc, self.maxMemBlockSize);
-    errdefer memBlock.deinit(alloc);
     try memBlock.decode(
         alloc,
         &self.entriesBlock,
@@ -323,8 +328,6 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
         blockHeader.entriesCount,
         blockHeader.encodingType,
     );
-
-    return memBlock;
 }
 
 test "lowerBoundBySuffix" {
