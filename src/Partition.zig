@@ -264,7 +264,7 @@ pub fn queryStreamIDs(
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache, longAlloc);
+    const res = try self.index.queryAllStreamIDs(io, alloc, longAlloc, tenantID, memBlocksCache);
     return res.streamIDs;
 }
 

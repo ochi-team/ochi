@@ -32,7 +32,7 @@ seekedIsCurrent: bool,
 // 1. reuse a last item query buffer
 // 2. reuse tables and its  lookup list capacity
 /// Initializes lookup cursors for all currently visible recorder tables.
-pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
+pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
     var tables = try recorder.getTables(io, alloc);
     errdefer {
         for (tables.items) |t| t.release(io);
@@ -42,7 +42,7 @@ pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*M
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
-        const lt = LookupTable.init(t, recorder.maxMemBlockSize, cache);
+        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache);
         lookupTables.appendAssumeCapacity(lt);
     }
 
@@ -138,15 +138,16 @@ pub fn findAllStreamIDsByPrefixes(
                 }
             }
 
-            if (streamIDs.count() >= resultLimit)
+            if (streamIDs.count() >= resultLimit) {
                 std.debug.print("[WARN] stream ids count reached the limit," ++
                     " return index earlier, lilmit={d}\n", .{
                     resultLimit,
                 });
-            return .{
-                .streamIDs = streamIDs,
-                .cutOff = true,
-            };
+                return .{
+                    .streamIDs = streamIDs,
+                    .cutOff = true,
+                };
+            }
         }
     }
 
@@ -306,7 +307,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -337,7 +338,9 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     recorder.stopped.store(true, .release);
     try recorder.g.await(io);
 
-    var lookup = try Lookup.init(io, alloc, recorder);
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -422,7 +425,9 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
         .{ .prefix = "zzzz", .expected = null },
     };
 
-    var lookup = try Lookup.init(io, alloc, recorder);
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -547,7 +552,9 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
         },
     };
 
-    var lookup = try Lookup.init(io, alloc, recorder);
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -600,7 +607,9 @@ test "Lookup.deinit after scan across multiple table blocks" {
         try recorder.memTables.append(alloc, table);
     }
 
-    var lookup = try Lookup.init(io, alloc, recorder);
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     try lookup.seek(io, alloc, "key:");
@@ -653,7 +662,9 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
         try recorder.memTables.append(alloc, table);
     }
 
-    var lookup = try Lookup.init(io, alloc, recorder);
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, &[_][]const u8{keyValue});

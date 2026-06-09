@@ -36,7 +36,7 @@ pub fn streamIDsHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Respons
     const request = parseRequest(res.arena, body) catch return ApiError.FailedToParse;
     const timeRange = resolveTimeRange(ctx.io, request) catch return ApiError.InvalidBody;
 
-    var streamIDs = ctx.store.queryStreamIDs(ctx.io, res.arena, ctx.tenantID, timeRange.from, timeRange.to) catch {
+    var streamIDs = ctx.store.queryStreamIDs(ctx.io, res.arena, ctx.allocator, ctx.tenantID, timeRange.from, timeRange.to) catch {
         return ApiError.FailedToProccess;
     };
     defer streamIDs.deinit(res.arena);

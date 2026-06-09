@@ -24,6 +24,7 @@ fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
 
 table: *Table,
 memBlocksCache: *Cache(*MemBlock),
+longAllocator: Allocator,
 maxMemBlockSize: u32,
 // blockHeadersOwned always keeps the base allocation we must free.
 blockHeadersOwned: []BlockHeader,
@@ -46,10 +47,11 @@ memBlock: ?*MemBlock,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock)) LookupTable {
+pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock)) LookupTable {
     return .{
         .table = table,
         .memBlocksCache = cache,
+        .longAllocator = longAlloc,
         .maxMemBlockSize = maxMemBlockSize,
 
         .current = "",
@@ -64,7 +66,7 @@ pub fn init(table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock)) Looku
 }
 
 pub fn deinit(self: *LookupTable, alloc: Allocator) void {
-    if (self.memBlock) |memBlock| memBlock.deinit(alloc);
+    // mem blocks ownership belong to cache, don't deinit it
     self.memBlock = null;
     if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
 
@@ -179,7 +181,7 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
     self.blockHeadersOwned = &.{};
     self.indexBuf.clearRetainingCapacity();
 
-    if (self.memBlock) |memBlock| memBlock.reset();
+    self.memBlock = null;
     self.memBlockIdx = 0;
     self.entriesBlock.reset();
 
@@ -254,17 +256,8 @@ fn nextBlock(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     }
 
     const blockHeader = self.blockHeaders[0];
-    if (self.memBlock) |memBlock| memBlock.reset() else {
-        self.memBlock = try MemBlock.init(alloc, self.maxMemBlockSize);
-    }
-    try self.setMemBlock(
-        io,
-        alloc,
-        blockHeader,
-        self.memBlock.?,
-    );
+    self.memBlock = try self.getMemBlock(io, alloc, blockHeader);
 
-    // Each block decode allocates a new MemBlock; free previous one first.
     self.blockHeaders = self.blockHeaders[1..];
     self.memBlockIdx = 0;
 
@@ -314,18 +307,20 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
 }
 
-fn setMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
+fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
     var keyBuf: [16]u8 = undefined;
     memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
 
     const cachedMemBlock = self.memBlocksCache.get(io, keyBuf[0..]);
     if (cachedMemBlock) |cached| {
-        memBlock.* = cached.*;
-        return;
+        return cached;
     }
 
+    const memBlock = try MemBlock.init(self.longAllocator, self.maxMemBlockSize);
+    errdefer memBlock.deinit(self.longAllocator);
     try self.readMemBlock(io, alloc, blockHeader, memBlock);
     try self.memBlocksCache.set(io, keyBuf[0..], memBlock);
+    return memBlock;
 }
 
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
@@ -443,5 +438,7 @@ test "lowerBoundBySuffix" {
 test "memBlocksCacheKeyBuf" {
     var buf: [16]u8 = undefined;
     memBlocksCacheKeyBuf(&buf, .{ .tableAddr = 42, .offset = 53 });
-    try std.testing.expectEqualStrings("", buf[0..]);
+
+    const expected: [16]u8 = .{ 42, 0, 0, 0, 0, 0, 0, 0, 53, 0, 0, 0, 0, 0, 0, 0 };
+    try std.testing.expectEqualStrings(&expected, &buf);
 }

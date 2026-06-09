@@ -26,9 +26,10 @@ pub fn Cache(comptime V: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            var it = self.map.keyIterator();
-            while (it.next()) |key| {
-                self.alloc.free(key.*);
+            var it = self.map.iterator();
+            while (it.next()) |e| {
+                self.alloc.free(e.key_ptr.*);
+                if (V != void) e.value_ptr.*.deinit(self.alloc);
             }
             self.map.deinit();
             self.alloc.destroy(self);
