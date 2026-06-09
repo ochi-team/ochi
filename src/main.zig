@@ -44,7 +44,7 @@ pub fn main() !void {
         if (debugAlloc) |*da| _ = da.deinit();
     }
 
-    // TODO replace IO API to evented/zio
+    // TODO: replace IO API to evented/zio
     var ioImpl: std.Io.Threaded = .init(alloc, .{});
     defer ioImpl.deinit();
     const io = ioImpl.io();

@@ -4,7 +4,9 @@ const Io = std.Io;
 
 const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
+const Cache = @import("../../stds/Cache.zig").Cache;
 const IndexRecorder = @import("IndexRecorder.zig");
+const MemBlock = @import("MemBlock.zig");
 const FilterExpression = @import("../../query/Query.zig").FilterExpression;
 const FilterPredicate = @import("../../query/Query.zig").FilterPredicate;
 const TagRecordsParser = @import("TagRecordsParser.zig");
@@ -52,8 +54,8 @@ pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID) !bool {
-    var lookup = try Lookup.init(io, alloc, self.recorder);
+pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID, blocksCache: *Cache(*MemBlock)) !bool {
+    var lookup = try Lookup.init(io, alloc, self.recorder, blocksCache);
     defer lookup.deinit(io, alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
@@ -75,8 +77,9 @@ pub fn queryAllStreamIDs(
     io: Io,
     alloc: Allocator,
     tenantID: u64,
+    memBlocksCache: *Cache(*MemBlock),
 ) !StreamIDsByPrefixesResult {
-    var lookup = try Lookup.init(io, alloc, self.recorder);
+    var lookup = try Lookup.init(io, alloc, self.recorder, memBlocksCache);
     defer lookup.deinit(io, alloc);
 
     const suffixLen: usize = 1 + @sizeOf(u64);
@@ -155,9 +158,10 @@ pub fn querySIDs(
     alloc: Allocator,
     tenantID: u64,
     tags: *const FilterExpression,
+    memBlocksCache: *Cache(*MemBlock),
 ) !QuerySIDsResult {
     // TODO: cache query => stream
-    var lookup = try Lookup.init(io, alloc, self.recorder);
+    var lookup = try Lookup.init(io, alloc, self.recorder, memBlocksCache);
     defer lookup.deinit(io, alloc);
 
     var result = try querySIDsFromExpr(io, alloc, &lookup, tenantID, tags);

@@ -32,7 +32,7 @@ seekedIsCurrent: bool,
 // 1. reuse a last item query buffer
 // 2. reuse tables and its  lookup list capacity
 /// Initializes lookup cursors for all currently visible recorder tables.
-pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: Cache(*MemBlock)) !Lookup {
+pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
     var tables = try recorder.getTables(io, alloc);
     errdefer {
         for (tables.items) |t| t.release(io);
@@ -114,7 +114,7 @@ pub fn findAllStreamIDsByPrefixes(
     var state: TagRecordsParser = .{};
     defer state.deinit(alloc);
 
-    // TODO optimize so we dont iterate over next entries multiple times,
+    // TODO: optimize so we dont iterate over next entries multiple times,
     // the isuue is seek resets the state and for every key we must restart the seek
     // we can pass a sorted list of prefixes and:
     // 1. split them into groups so we know if they share the same block/prefix
@@ -138,12 +138,16 @@ pub fn findAllStreamIDsByPrefixes(
                 }
             }
 
-            if (streamIDs.count() >= resultLimit)
-                // TODO log warning
-                return .{
-                    .streamIDs = streamIDs,
-                    .cutOff = true,
-                };
+            const streamIDsCount = streamIDs.count();
+            if (streamIDsCount >= resultLimit)
+                std.debug.print("[WARN] stream ids count reached the limit," ++
+                    " return index earlier found={d} lilmit={d}\n", .{
+                    streamIDsCount, resultLimit,
+                });
+            return .{
+                .streamIDs = streamIDs,
+                .cutOff = true,
+            };
         }
     }
 
@@ -301,7 +305,9 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     recorder.stopped.store(true, .release);
     try recorder.g.await(io);
 
-    var lookup = try Lookup.init(io, alloc, recorder);
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{

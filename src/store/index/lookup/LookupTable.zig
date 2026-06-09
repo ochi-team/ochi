@@ -18,12 +18,12 @@ fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
     var subKey: [8]u8 = undefined;
     subKey = @bitCast(key.tableAddr);
     @memcpy(buf[0..8], subKey[0..]);
-    subKey = @bitCast(key.offst);
+    subKey = @bitCast(key.offset);
     @memcpy(buf[8..16], subKey[0..]);
 }
 
 table: *Table,
-memBlocksCache: Cache(*MemBlock),
+memBlocksCache: *Cache(*MemBlock),
 maxMemBlockSize: u32,
 // blockHeadersOwned always keeps the base allocation we must free.
 blockHeadersOwned: []BlockHeader,
@@ -46,7 +46,7 @@ memBlock: ?*MemBlock,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(table: *Table, maxMemBlockSize: u32, cache: Cache(*MemBlock)) LookupTable {
+pub fn init(table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock)) LookupTable {
     return .{
         .table = table,
         .memBlocksCache = cache,
@@ -315,16 +315,17 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
 }
 
 fn setMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
-    const cachedMemBlock = self.memBlocksCache.contains(io);
+    var keyBuf: [16]u8 = undefined;
+    memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
+
+    const cachedMemBlock = self.memBlocksCache.get(io, keyBuf[0..]);
     if (cachedMemBlock) |cached| {
         memBlock.* = cached.*;
         return;
     }
 
-    self.readMemBlock(io, alloc, blockHeader, memBlock);
-    var keyBuf: [16]u8 = undefined;
-    memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
-    self.memBlocksCache.set(io, keyBuf[0..]);
+    try self.readMemBlock(io, alloc, blockHeader, memBlock);
+    try self.memBlocksCache.set(io, keyBuf[0..], memBlock);
 }
 
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {

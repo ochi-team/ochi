@@ -5,8 +5,6 @@ const Thread = std.Thread;
 const builtin = @import("builtin");
 const Mutex = std.Io.Mutex;
 
-pub const StreamCache = Cache(void);
-
 // TODO: it's complete fake,
 // we must implemented LRU or something
 pub fn Cache(comptime V: type) type {
@@ -14,7 +12,6 @@ pub fn Cache(comptime V: type) type {
         const Self = @This();
         // cache data itself
         map: std.StringHashMap(V),
-        // allocator for keys ownership
         alloc: Allocator,
         mx: Mutex = .init,
 
@@ -74,7 +71,7 @@ test "StreamCache handles concurrent set and contains" {
     const io = testing.io;
 
     const Worker = struct {
-        fn run(cache: *StreamCache, workerId: usize) !void {
+        fn run(cache: *Cache(void), workerId: usize) !void {
             var keyBuf: [64]u8 = undefined;
 
             var i: usize = 0;
@@ -87,7 +84,7 @@ test "StreamCache handles concurrent set and contains" {
         }
     };
 
-    const cache = try StreamCache.init(testing.allocator);
+    const cache = try Cache(void).init(testing.allocator);
     defer cache.deinit();
 
     var threads: [4]Thread = undefined;

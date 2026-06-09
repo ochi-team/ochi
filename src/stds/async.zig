@@ -9,7 +9,7 @@ pub fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void
     var remaining = ns;
 
     while (remaining > 0) {
-        // TODO this is an anti-pattern in concurrent programming.
+        // TODO: this is an anti-pattern in concurrent programming.
         // a thread shouldn't waste cycles spinning. instead
         // it should sleep, and be signalled when to wake up
         // and do work. Using std.Io.Condition, or even better

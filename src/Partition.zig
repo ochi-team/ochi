@@ -8,8 +8,9 @@ const QuerySIDsResult = @import("store/index/Index.zig").QuerySIDsResult;
 const DataRecorder = @import("DataRecorder.zig");
 const IndexRecorder = @import("store/index/IndexRecorder.zig");
 const Index = @import("store/index/Index.zig");
+const MemBlock = @import("store/index/MemBlock.zig");
 
-const Cache = @import("stds/Cache.zig");
+const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
@@ -39,7 +40,7 @@ data: *DataRecorder,
 
 /// stream cache for ingestion, shared across all partitions,
 /// so the partition doesn't own it
-streamCache: *Cache.StreamCache,
+streamCache: *Cache(void),
 
 refCounter: std.atomic.Value(u32) = .init(1),
 
@@ -54,7 +55,7 @@ pub fn open(
     indexPath: []const u8,
     dataPath: []const u8,
     day: u32,
-    streamCache: *Cache.StreamCache,
+    streamCache: *Cache(void),
     runtime: *Runtime,
 ) !*Partition {
     std.debug.assert(std.fs.path.isAbsolute(path));
@@ -148,7 +149,6 @@ pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []co
     try fs.syncPathAndParentDir(io, path);
 }
 
-// TODO: meter how much it takes usually
 const bufSize = 1024;
 pub fn addLines(
     self: *Partition,
@@ -157,6 +157,7 @@ pub fn addLines(
     lines: std.ArrayList(Line),
     tags: []Field,
     encodedTags: []const u8,
+    blocksCache: *Cache(*MemBlock),
 ) !void {
     var fallbackFba = std.heap.stackFallback(bufSize, allocator);
     const fba = fallbackFba.get();
@@ -196,7 +197,7 @@ pub fn addLines(
 
         if (self.isCached(io, lines.items[i].sid)) continue;
 
-        if (!try self.index.hasStream(io, allocator, sid)) {
+        if (!try self.index.hasStream(io, allocator, sid, blocksCache)) {
             try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
         try self.cache(io, sid);
@@ -205,7 +206,14 @@ pub fn addLines(
     try self.data.addLines(io, allocator, lines.items);
 }
 
-pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: u64, query: Query) !std.ArrayList(Line) {
+pub fn queryLines(
+    self: *Partition,
+    io: Io,
+    alloc: Allocator,
+    tenantID: u64,
+    query: Query,
+    memBlocksCache: *Cache(*MemBlock),
+) !std.ArrayList(Line) {
     // TODO: query cancelation
 
     var sidsRes: QuerySIDsResult = sids: {
@@ -228,7 +236,7 @@ pub fn queryLines(self: *Partition, io: Io, alloc: Allocator, tenantID: u64, que
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
             const tagsExpr = query.tagsExpr orelse return Query.Error.NoTagsFilter;
-            break :sids try self.index.querySIDs(io, alloc, tenantID, tagsExpr);
+            break :sids try self.index.querySIDs(io, alloc, tenantID, tagsExpr, memBlocksCache);
         }
     };
     defer sidsRes.sids.deinit(alloc);
@@ -252,8 +260,9 @@ pub fn queryStreamIDs(
     io: Io,
     alloc: Allocator,
     tenantID: u64,
+    memBlocksCache: *Cache(*MemBlock),
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID);
+    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache);
     if (res.cutOff) {
         std.debug.print(
             "[WARN] query stream ids is cut off by index, tenantID: {d}, partition: {s}\n",

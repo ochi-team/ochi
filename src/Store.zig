@@ -10,12 +10,13 @@ const fs = @import("fs.zig");
 const sleepOrStop = @import("stds/async.zig").sleepOrStop;
 
 const StoreMeter = @import("observe/StoreMeter.zig");
-const Cache = @import("stds/Cache.zig");
+const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
 const Query = @import("query/Query.zig");
 
 const Partition = @import("Partition.zig");
+const MemBlock = @import("store/index/MemBlock.zig");
 const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
 const Runtime = @import("Runtime.zig");
@@ -34,7 +35,8 @@ lruPartition: ?*Partition = null,
 
 /// streamCache is a stream id cache for ingestion,
 /// shared across all partitions, injected from a store to them
-streamCache: *Cache.StreamCache,
+streamCache: *Cache(void),
+memBlocksCache: *Cache(*MemBlock),
 
 meter: StoreMeter,
 
@@ -67,7 +69,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Stor
     const file = try createLockFile(io, path);
     errdefer file.close(io);
 
-    var streamCache = try Cache.StreamCache.init(alloc);
+    var streamCache = try Cache(void).init(alloc);
     errdefer streamCache.deinit();
 
     // 30 is a default retention
@@ -79,6 +81,9 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Stor
         partitions.deinit(alloc);
     }
 
+    const memBlocksCache = try Cache(*MemBlock).init(alloc);
+    errdefer memBlocksCache.deinit();
+
     const meter = StoreMeter.init();
 
     var store: Store = .{
@@ -86,6 +91,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Stor
         .lockFile = file,
         .partitions = partitions,
         .streamCache = streamCache,
+        .memBlocksCache = memBlocksCache,
         .meter = meter,
         .runtime = runtime,
         .conf = conf,
@@ -140,7 +146,9 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
         allocator.free(path);
     }
     self.pathsBuf.deinit(allocator);
+
     self.streamCache.deinit();
+    self.memBlocksCache.deinit();
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -294,7 +302,7 @@ pub fn addLines(
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
-        try partition.addLines(io, allocator, list, tags, encodedTags);
+        try partition.addLines(io, allocator, list, tags, encodedTags, self.memBlocksCache);
 
         // Return early since all lines are added to the same Partition
         if (list.items.len == lines.len) return;
@@ -342,7 +350,7 @@ pub fn addLines(
         };
         defer partition.release(io);
 
-        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags);
+        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, self.memBlocksCache);
     }
 }
 
@@ -381,7 +389,7 @@ pub fn queryLines(
 
     var results = std.ArrayList(Line).empty;
     for (parts.items) |part| {
-        var partResults = try part.queryLines(io, alloc, tenantID, query);
+        var partResults = try part.queryLines(io, alloc, tenantID, query, self.memBlocksCache);
         defer partResults.deinit(alloc);
 
         try results.appendSlice(alloc, partResults.items);
@@ -424,7 +432,7 @@ pub fn queryStreamIDs(
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
 
     for (parts.items) |part| {
-        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID);
+        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.memBlocksCache);
         defer partStreamIDs.deinit(alloc);
 
         for (partStreamIDs.keys()) |sid| {

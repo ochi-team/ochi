@@ -80,7 +80,7 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !D
     var metaindexFileReader = metaindexFile.reader(io, &.{});
     const metaindexCompressed = try metaindexFileReader.interface.allocRemaining(fbaAlloc, .unlimited);
     defer fbaAlloc.free(metaindexCompressed);
-    // TODO why does .limited(metaindexStat.size) not work above?
+    // TODO: why does .limited(metaindexStat.size) not work above?
     std.debug.assert(metaindexStat.size == metaindexCompressed.len);
 
     const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);
