@@ -57,6 +57,13 @@ pub fn Cache(comptime V: type) type {
 
             return self.map.contains(key);
         }
+
+        pub fn get(self: *Self, io: Io, key: []const u8) ?V {
+            self.mx.lockUncancelable(io);
+            defer self.mx.unlock(io);
+
+            return self.map.get(key);
+        }
     };
 }
 

@@ -4,6 +4,7 @@ const Io = std.Io;
 
 const Heap = @import("../../../stds/heap.zig").Heap;
 const Runtime = @import("../../../Runtime.zig");
+const Cache = @import("../../../stds/Cache.zig").Cache;
 
 const IndexRecorder = @import("../IndexRecorder.zig");
 const MemBlock = @import("../MemBlock.zig");
@@ -31,7 +32,7 @@ seekedIsCurrent: bool,
 // 1. reuse a last item query buffer
 // 2. reuse tables and its  lookup list capacity
 /// Initializes lookup cursors for all currently visible recorder tables.
-pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder) !Lookup {
+pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: Cache(*MemBlock)) !Lookup {
     var tables = try recorder.getTables(io, alloc);
     errdefer {
         for (tables.items) |t| t.release(io);
@@ -41,7 +42,7 @@ pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder) !Lookup {
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
-        const lt = LookupTable.init(t, recorder.maxMemBlockSize);
+        const lt = LookupTable.init(t, recorder.maxMemBlockSize, cache);
         lookupTables.appendAssumeCapacity(lt);
     }
 

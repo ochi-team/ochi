@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const encoding = @import("encoding");
 
+const Cache = @import("../../../stds/Cache.zig").Cache;
 const MemBlock = @import("../MemBlock.zig");
 const Table = @import("../Table.zig");
 const BlockHeader = @import("../BlockHeader.zig");
@@ -12,7 +13,17 @@ const strings = @import("../../../stds/strings.zig");
 
 const LookupTable = @This();
 
+const memBlocksCacheKey = struct { tableAddr: usize, offset: u64 };
+fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
+    var subKey: [8]u8 = undefined;
+    subKey = @bitCast(key.tableAddr);
+    @memcpy(buf[0..8], subKey[0..]);
+    subKey = @bitCast(key.offst);
+    @memcpy(buf[8..16], subKey[0..]);
+}
+
 table: *Table,
+memBlocksCache: Cache(*MemBlock),
 maxMemBlockSize: u32,
 // blockHeadersOwned always keeps the base allocation we must free.
 blockHeadersOwned: []BlockHeader,
@@ -35,9 +46,10 @@ memBlock: ?*MemBlock,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(table: *Table, maxMemBlockSize: u32) LookupTable {
+pub fn init(table: *Table, maxMemBlockSize: u32, cache: Cache(*MemBlock)) LookupTable {
     return .{
         .table = table,
+        .memBlocksCache = cache,
         .maxMemBlockSize = maxMemBlockSize,
 
         .current = "",
@@ -192,7 +204,12 @@ fn lowerBoundBySuffixComparatorFn(self: LowerBoundBySuffixComparator, item: MemB
 // returns the first index with item[prefixLen..] >= keySuffix.
 // callers may receive items.len when keySuffix is greater than all suffixes.
 // TODO: test alternative array layout
-fn lowerBoundBySuffix(block: *const MemBlock, items: []const MemBlock.MemEntry, key: []const u8, prefixLen: usize) usize {
+fn lowerBoundBySuffix(
+    block: *const MemBlock,
+    items: []const MemBlock.MemEntry,
+    key: []const u8,
+    prefixLen: usize,
+) usize {
     if (items.len == 0) return 0;
 
     const keySuffix = key[prefixLen..];
@@ -298,8 +315,16 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
 }
 
 fn setMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
-    // TODO: potentially we can cache a block
-    return self.readMemBlock(io, alloc, blockHeader, memBlock);
+    const cachedMemBlock = self.memBlocksCache.contains(io);
+    if (cachedMemBlock) |cached| {
+        memBlock.* = cached.*;
+        return;
+    }
+
+    self.readMemBlock(io, alloc, blockHeader, memBlock);
+    var keyBuf: [16]u8 = undefined;
+    memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
+    self.memBlocksCache.set(io, keyBuf[0..]);
 }
 
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
@@ -412,4 +437,10 @@ test "lowerBoundBySuffix" {
         const actual = lowerBoundBySuffix(block, block.memEntries.items, case.key, case.prefixLen);
         try std.testing.expectEqual(case.expected, actual);
     }
+}
+
+test "memBlocksCacheKeyBuf" {
+    var buf: [16]u8 = undefined;
+    memBlocksCacheKeyBuf(&buf, .{ .tableAddr = 42, .offset = 53 });
+    try std.testing.expectEqualStrings("", buf[0..]);
 }

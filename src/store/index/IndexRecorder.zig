@@ -6,6 +6,7 @@ const fs = @import("../../fs.zig");
 
 const cap = @import("../table/cap.zig");
 
+const Cache = @import("../../stds/Cache.zig").Cache;
 const Entries = @import("Entries.zig");
 const MemBlock = @import("MemBlock.zig");
 const Table = @import("Table.zig");
@@ -1288,7 +1289,9 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     }
     const flushedTable = tables.items[0];
 
-    var lookup = LookupTable.init(flushedTable, Conf.getConf().app.maxIndexMemBlockSize);
+    const cache = Cache(*MemBlock).init(alloc);
+    defer cache.deinit(alloc);
+    var lookup = LookupTable.init(flushedTable, Conf.getConf().app.maxIndexMemBlockSize, cache);
     defer lookup.deinit(alloc);
 
     try lookup.seek(io, alloc, shortValue);
