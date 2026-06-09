@@ -362,11 +362,13 @@ pub fn decode(
 
     self.reset();
 
+    // temporary borrow prefix, later in decoding we copy it from owned buffer
     self.prefix = prefix;
 
     switch (encodingType) {
         .plain => {
             try self.decodePlain(alloc, entriesBlock, firstItem, itemsCount);
+            self.prefix = self.buf.items[0..prefix.len];
             self.assertIsSorted();
             return;
         },
@@ -448,6 +450,7 @@ pub fn decode(
 
     std.debug.assert(decompressedItemsSlice.len == 0);
     std.debug.assert(self.buf.items.len == dataLen);
+    self.prefix = self.buf.items[0..prefix.len];
     if (builtin.mode == .Debug) {
         self.assertIsSorted();
     }

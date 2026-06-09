@@ -571,6 +571,78 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     try recorder.flushForce(io, alloc);
 }
 
+test "Lookup cached disk mem block keeps prefix alive across lookups" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    defer recorder.deinit(io, alloc);
+    recorder.stopped.store(true, .release);
+    try recorder.g.await(io);
+
+    const tableDiskItems = [_][]const u8{
+        "tenant-a-stream-0001",
+        "tenant-a-stream-0002",
+        "tenant-a-stream-0003",
+    };
+    {
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-cache-disk-table", &tableDiskItems);
+        errdefer table.close(io);
+        try recorder.diskTables.append(alloc, table);
+    }
+
+    const cache = try Cache(*MemBlock).init(alloc);
+    defer cache.deinit();
+
+    {
+        var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+        defer lookup.deinit(io, alloc);
+
+        const actual = try lookup.findFirstByPrefix(io, alloc, "tenant-a-stream-0002");
+        try testing.expectEqualStrings("tenant-a-stream-0002", actual.?);
+    }
+
+    var it = cache.map.iterator();
+    while (it.next()) |entry| {
+        const block = entry.value_ptr.*;
+        const prefix = block.prefix;
+        const bufStart = @intFromPtr(block.buf.items.ptr);
+        const bufEnd = bufStart + block.buf.items.len;
+        const prefixStart = @intFromPtr(prefix.ptr);
+        const prefixEnd = prefixStart + prefix.len;
+
+        try testing.expect(prefix.len == 0 or
+            (prefixStart >= bufStart and prefixEnd <= bufEnd));
+    }
+
+    const Case = struct {
+        prefix: []const u8,
+        expected: []const u8,
+    };
+    const cases = [_]Case{
+        .{ .prefix = "tenant-a-stream-0001", .expected = "tenant-a-stream-0001" },
+        .{ .prefix = "tenant-a-stream-0002", .expected = "tenant-a-stream-0002" },
+        .{ .prefix = "tenant-a-stream-", .expected = "tenant-a-stream-0001" },
+    };
+
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    defer lookup.deinit(io, alloc);
+    for (cases) |case| {
+        const actual = try lookup.findFirstByPrefix(io, alloc, case.prefix);
+        try testing.expectEqualStrings(case.expected, actual.?);
+    }
+
+    try recorder.flushForce(io, alloc);
+}
+
 test "Lookup.deinit after scan across multiple table blocks" {
     const alloc = testing.allocator;
     const io = testing.io;
