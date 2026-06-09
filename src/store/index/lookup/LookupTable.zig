@@ -167,8 +167,7 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
     self.blockHeadersOwned = &.{};
     self.indexBuf.clearRetainingCapacity();
 
-    if (self.memBlock) |memBlock| memBlock.deinit(alloc);
-    self.memBlock = null;
+    if (self.memBlock) |memBlock| memBlock.reset();
     self.memBlockIdx = 0;
     self.entriesBlock.reset();
 

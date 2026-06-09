@@ -19,13 +19,13 @@ const filenames = @import("../../filenames.zig");
 // TODO: move to a better place, it's used in the merger (disk table)
 pub const maxBlockSize = 2 * 1024 * 1024;
 
-const tsBufferSize = 2 * 1024;
-const indexBufferSize = 2 * 1024;
-const metaIndexBufferSize = 2 * 1024;
-const columnsHeaderBufferSize = 2 * 1024;
-const columnsHeaderIndexBufferSize = 2 * 1024;
-const bloomValuesSize = 2 * 1024;
-const bloomTokensSize = 2 * 1024;
+const tsBufferSize = 1024;
+const indexBufferSize = 1024;
+const metaIndexBufferSize = 1024;
+const columnsHeaderBufferSize = 1024;
+const columnsHeaderIndexBufferSize = 1024;
+const bloomValuesSize = 1024;
+const bloomTokensSize = 1024;
 const columnKeysBufferSize = 512;
 const columnIndexesBufferSize = 128;
 
