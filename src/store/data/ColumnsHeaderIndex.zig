@@ -5,57 +5,52 @@ const Decoder = @import("encoding").Decoder;
 
 const ColumnsHeaderIndex = @This();
 
-pub const ColumnDesc = struct {
-    columndID: u16,
-    offset: usize,
-};
+columnsIDs: std.ArrayList(u16),
+columnOffsets: std.ArrayList(u32),
+celledColumnsIDs: std.ArrayList(u16),
+celledColumnOffsets: std.ArrayList(u32),
 
-// TODO: store them in multi array list,
-// currently u16 makes it as 8 byte, therefore 2k columns become as 64kb,
-// if we make it multi array and store columns in a single array and make fields as
-// computed property with a separator it reduces the memory to  20kb (x3 diff)
-columns: std.ArrayList(ColumnDesc) = .empty,
-celledColumns: std.ArrayList(ColumnDesc) = .empty,
+pub fn initBuffer(bufferIDs: []u16, bufferOffsets: []u32, i: usize) ColumnsHeaderIndex {
+    std.debug.assert(bufferIDs.len == bufferOffsets.len);
+    std.debug.assert(i <= bufferIDs.len);
 
-pub fn initBuffer(columnsBuffer: []ColumnDesc, celledColumnsBuffer: []ColumnDesc) ColumnsHeaderIndex {
     return .{
-        .columns = std.ArrayList(ColumnDesc).initBuffer(columnsBuffer),
-        .celledColumns = std.ArrayList(ColumnDesc).initBuffer(celledColumnsBuffer),
+        .columnsIDs = .initBuffer(bufferIDs[0..i]),
+        .columnOffsets = .initBuffer(bufferOffsets[0..i]),
+        .celledColumnsIDs = .initBuffer(bufferIDs[i..]),
+        .celledColumnOffsets = .initBuffer(bufferOffsets[i..]),
     };
 }
 
-pub fn deinit(self: *ColumnsHeaderIndex, allocator: std.mem.Allocator) void {
-    self.columns.deinit(allocator);
-    self.celledColumns.deinit(allocator);
-}
-
 pub fn encodeBound(self: *ColumnsHeaderIndex) usize {
-    var res = Encoder.varIntBound(self.columns.items.len);
-    for (self.columns.items) |desc| {
-        res += Encoder.varIntBound(desc.columndID);
-        res += Encoder.varIntBound(desc.offset);
+    var res = Encoder.varIntBound(self.columnsIDs.items.len);
+    for (0..self.columnsIDs.items.len) |i| {
+        res += Encoder.varIntBound(self.columnsIDs.items[i]);
+        res += Encoder.varIntBound(self.columnOffsets.items[i]);
     }
 
-    res += Encoder.varIntBound(self.celledColumns.items.len);
-    for (self.celledColumns.items) |desc| {
-        res += Encoder.varIntBound(desc.columndID);
-        res += Encoder.varIntBound(desc.offset);
+    res += Encoder.varIntBound(self.celledColumnsIDs.items.len);
+    for (0..self.celledColumnsIDs.items.len) |i| {
+        res += Encoder.varIntBound(self.celledColumnsIDs.items[i]);
+        res += Encoder.varIntBound(self.celledColumnOffsets.items[i]);
     }
     return res;
 }
 
 pub fn encode(self: *ColumnsHeaderIndex, dst: []u8) usize {
     var enc = Encoder.init(dst);
-    encodeColumnDescs(&enc, self.columns);
-    encodeColumnDescs(&enc, self.celledColumns);
+    encodeColumnDescs(&enc, self.columnsIDs, self.columnOffsets);
+    encodeColumnDescs(&enc, self.celledColumnsIDs, self.celledColumnOffsets);
     return enc.offset;
 }
 
-fn encodeColumnDescs(enc: *Encoder, descs: std.ArrayList(ColumnDesc)) void {
-    enc.writeVarInt(descs.items.len);
-    for (descs.items) |desc| {
-        enc.writeVarInt(desc.columndID);
-        enc.writeVarInt(desc.offset);
+fn encodeColumnDescs(enc: *Encoder, ids: std.ArrayList(u16), offsets: std.ArrayList(u32)) void {
+    std.debug.assert(ids.items.len == offsets.items.len);
+
+    enc.writeVarInt(ids.items.len);
+    for (0..ids.items.len) |i| {
+        enc.writeVarInt(ids.items[i]);
+        enc.writeVarInt(offsets.items[i]);
     }
 }
 
@@ -65,24 +60,17 @@ pub fn decode(
 ) void {
     var dec = Decoder.init(src);
 
-    decodeColumnDescs(&dec, &self.columns);
-    decodeColumnDescs(&dec, &self.celledColumns);
+    decodeColumnDescs(&dec, &self.columnsIDs, &self.columnOffsets);
+    decodeColumnDescs(&dec, &self.celledColumnsIDs, &self.celledColumnOffsets);
 }
 
-fn decodeColumnDescs(
-    dec: *Decoder,
-    descs: *std.ArrayList(ColumnDesc),
-) void {
+fn decodeColumnDescs(dec: *Decoder, ids: *std.ArrayList(u16), offsets: *std.ArrayList(u32)) void {
     const len = dec.readVarInt();
-
     for (0..len) |_| {
         const columndID: u16 = @intCast(dec.readVarInt());
         const offset = dec.readVarInt();
-
-        descs.appendAssumeCapacity(.{
-            .columndID = columndID,
-            .offset = offset,
-        });
+        ids.appendAssumeCapacity(columndID);
+        offsets.appendAssumeCapacity(@intCast(offset));
     }
 }
 
@@ -91,9 +79,9 @@ test "encode columns and celledColumns" {
 }
 
 fn testEncode(allocator: std.mem.Allocator) !void {
-    var columnDescs: [2]ColumnsHeaderIndex.ColumnDesc = undefined;
-    var celledColumnDescs: [2]ColumnsHeaderIndex.ColumnDesc = undefined;
-    var s = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
+    var columnIDs: [4]u16 = undefined;
+    var columnOffsets: [4]u32 = undefined;
+    var s = ColumnsHeaderIndex.initBuffer(&columnIDs, &columnOffsets, 2);
 
     try s.columns.append(allocator, .{ .columndID = 1, .offset = 10 });
     try s.columns.append(allocator, .{ .columndID = 2, .offset = 20 });
