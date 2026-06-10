@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 
 const SID = @import("../lines.zig").SID;
 const Column = @import("Column.zig");
+const Block = @import("Block.zig");
 const BlockHeader = @import("BlockHeader.zig");
 const TimestampsHeader = BlockHeader.TimestampsHeader;
 const ColumnHeader = @import("ColumnHeader.zig");
@@ -126,16 +127,15 @@ pub const BlockData = struct {
         );
         std.debug.assert(columnsHeaderIndexN == columnsHeaderIndexBuf.len);
 
-        const cshIdx = try ColumnsHeaderIndex.decode(
-            alloc,
-            columnsHeaderIndexBuf,
-        );
-        defer cshIdx.deinit(alloc);
+        var columnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
+        var celledColumnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
+        var cshIdx = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
+        cshIdx.decode(columnsHeaderIndexBuf);
 
         self.columnsHeader = try ColumnsHeader.decode(
             alloc,
             columnsHeaderBuf,
-            cshIdx,
+            &cshIdx,
             sr.columnIDGen,
         );
 

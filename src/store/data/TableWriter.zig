@@ -586,8 +586,11 @@ fn writeColumnsHeader(
     csh: *ColumnsHeader,
     bh: *BlockHeader,
 ) !void {
-    var cshIdx = try ColumnsHeaderIndex.init(allocator);
-    defer cshIdx.deinit(allocator);
+    std.debug.assert(csh.headers.len + csh.celledColumns.len <= Block.maxColumns);
+
+    var columnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
+    var celledColumnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
+    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
 
     for (csh.headers) |header| {
         try self.ensureColumnKeyOwned(allocator, header.key);
@@ -596,25 +599,24 @@ fn writeColumnsHeader(
         try self.ensureColumnKeyOwned(allocator, column.key);
     }
 
-    try cshIdx.columns.ensureUnusedCapacity(allocator, csh.headers.len);
-    try cshIdx.celledColumns.ensureUnusedCapacity(allocator, csh.celledColumns.len);
     try self.columnIDGen.keyIDs.ensureUnusedCapacity(allocator, csh.celledColumns.len);
 
     const dstSize = csh.encodeBound();
-    const dstIdxSize = cshIdx.encodeBound();
-    const dst = try allocator.alloc(u8, dstSize + dstIdxSize);
-    defer allocator.free(dst);
+    const dst = try self.columnsHeaderDst.allocSlice(allocator, dstSize);
 
-    const cshOffset = csh.encode(dst, cshIdx, self.columnIDGen);
-    const cshIdxOffset = cshIdx.encode(dst[cshOffset..]);
+    const cshOffset = csh.encode(dst, &cshIdx, self.columnIDGen);
 
     bh.columnsHeaderOffset = self.columnsHeaderDst.len();
     bh.columnsHeaderSize = cshOffset;
-    try self.columnsHeaderDst.appendSlice(io, allocator, dst[0..cshOffset]);
+    try self.columnsHeaderDst.appendAllocated(io, dst, cshOffset);
+
+    const dstIdxSize = cshIdx.encodeBound();
+    const dstIdx = try self.columnsHeaderIndexDst.allocSlice(allocator, dstIdxSize);
+    const cshIdxOffset = cshIdx.encode(dstIdx);
 
     bh.columnsHeaderIndexOffset = self.columnsHeaderIndexDst.len();
     bh.columnsHeaderIndexSize = cshIdxOffset;
-    try self.columnsHeaderIndexDst.appendSlice(io, allocator, dst[cshOffset .. cshOffset + cshIdxOffset]);
+    try self.columnsHeaderIndexDst.appendAllocated(io, dstIdx, cshIdxOffset);
 }
 
 const testing = std.testing;

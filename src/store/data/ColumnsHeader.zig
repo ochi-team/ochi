@@ -260,23 +260,22 @@ test "ColumnsHeaderEncode" {
     };
 
     // Create ColumnsHeaderIndex
-    const cshIdx = try ColumnsHeaderIndex.init(alloc);
-    defer cshIdx.deinit(alloc);
-    try cshIdx.columns.ensureTotalCapacity(alloc, 3);
-    try cshIdx.celledColumns.ensureTotalCapacity(alloc, 2);
+    var columnDescs: [3]ColumnsHeaderIndex.ColumnDesc = undefined;
+    var celledColumnDescs: [3]ColumnsHeaderIndex.ColumnDesc = undefined;
+    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
 
     // Encode
     const encodeBoundSize = columnsHeader.encodeBound();
     const encodeBuf = try alloc.alloc(u8, encodeBoundSize);
     defer alloc.free(encodeBuf);
 
-    const encodedSize = columnsHeader.encode(encodeBuf, cshIdx, columnIDGen);
+    const encodedSize = columnsHeader.encode(encodeBuf, &cshIdx, columnIDGen);
 
     // Decode
     const decodedHeader = try ColumnsHeader.decode(
         alloc,
         encodeBuf[0..encodedSize],
-        cshIdx,
+        &cshIdx,
         columnIDGen,
     );
     defer decodedHeader.deinit(alloc);
