@@ -102,10 +102,7 @@ pub fn encode(
     for (self.headers) |*header| {
         const colID = columnIDGen.genIDAssumeCapacity(header.key);
         header.encode(&enc);
-        cshIdx.columns.appendAssumeCapacity(.{
-            .columndID = colID,
-            .offset = offset,
-        });
+        cshIdx.appendColumnAssumeCapacity(.{ .id = colID, .offset = @intCast(offset) });
         offset = enc.offset;
     }
 
@@ -115,10 +112,7 @@ pub fn encode(
     for (self.celledColumns) |*celledCol| {
         const colID = columnIDGen.genIDAssumeCapacity(celledCol.key);
         celledCol.encodeAsCelled(&enc, false);
-        cshIdx.celledColumns.appendAssumeCapacity(.{
-            .columndID = colID,
-            .offset = offset,
-        });
+        cshIdx.appendCelledColumnAssumeCapacity(.{ .id = colID, .offset = @intCast(offset) });
         offset = enc.offset;
     }
 
@@ -142,7 +136,7 @@ pub fn decode(
     }
 
     for (0..headersLen) |i| {
-        const colID = cshIdx.columns.items[i].columndID;
+        const colID = cshIdx.columnID(i);
         const key = columnIDGen.keyIDs.keys()[colID];
         headers[i] = try ColumnHeader.decode(&dec, key, allocator);
         headersDecoded += 1;
@@ -157,7 +151,7 @@ pub fn decode(
     }
 
     for (0..celledLen) |i| {
-        const colID = cshIdx.celledColumns.items[i].columndID;
+        const colID = cshIdx.celledColumnID(i);
         celledColumns[i] = try Column.decodeAsCelled(&dec, allocator, false);
         celledColumns[i].key = columnIDGen.keyIDs.keys()[colID];
         celledDecoded = i + 1;
@@ -260,9 +254,9 @@ test "ColumnsHeaderEncode" {
     };
 
     // Create ColumnsHeaderIndex
-    var columnDescs: [3]ColumnsHeaderIndex.ColumnDesc = undefined;
-    var celledColumnDescs: [3]ColumnsHeaderIndex.ColumnDesc = undefined;
-    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
+    var columnIDs: [5]u16 = undefined;
+    var columnOffsets: [5]u32 = undefined;
+    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnIDs, &columnOffsets, headers.len);
 
     // Encode
     const encodeBoundSize = columnsHeader.encodeBound();

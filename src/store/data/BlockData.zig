@@ -127,9 +127,9 @@ pub const BlockData = struct {
         );
         std.debug.assert(columnsHeaderIndexN == columnsHeaderIndexBuf.len);
 
-        var columnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
-        var celledColumnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
-        var cshIdx = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
+        var columnIDs: [Block.maxColumns]u16 = undefined;
+        var columnOffsets: [Block.maxColumns]u32 = undefined;
+        var cshIdx = ColumnsHeaderIndex.initBuffer(&columnIDs, &columnOffsets);
         cshIdx.decode(columnsHeaderIndexBuf);
 
         self.columnsHeader = try ColumnsHeader.decode(

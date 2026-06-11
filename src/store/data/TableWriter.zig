@@ -588,9 +588,9 @@ fn writeColumnsHeader(
 ) !void {
     std.debug.assert(csh.headers.len + csh.celledColumns.len <= Block.maxColumns);
 
-    var columnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
-    var celledColumnDescs: [Block.maxColumns]ColumnsHeaderIndex.ColumnDesc = undefined;
-    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnDescs, &celledColumnDescs);
+    var columnIDs: [Block.maxColumns]u16 = undefined;
+    var columnOffsets: [Block.maxColumns]u32 = undefined;
+    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnIDs, &columnOffsets);
 
     for (csh.headers) |header| {
         try self.ensureColumnKeyOwned(allocator, header.key);
