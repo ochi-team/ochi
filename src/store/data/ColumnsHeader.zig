@@ -254,9 +254,9 @@ test "ColumnsHeaderEncode" {
     };
 
     // Create ColumnsHeaderIndex
-    var columnIDs: [5]u16 = undefined;
-    var columnOffsets: [5]u32 = undefined;
-    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnIDs, &columnOffsets, headers.len);
+    var columnIDs: [6]u16 = undefined;
+    var columnOffsets: [6]u32 = undefined;
+    var cshIdx = ColumnsHeaderIndex.initBufferKnown(&columnIDs, &columnOffsets, 3);
 
     // Encode
     const encodeBoundSize = columnsHeader.encodeBound();

@@ -85,7 +85,7 @@ pub fn writeLines(
     allocator: Allocator,
     sid: SID,
     lines: []Line,
-    streamWriter: *TableWriter,
+    tableWriter: *TableWriter,
 ) !void {
     const block = try Block.initFromLines(allocator, lines);
     defer block.deinit(allocator);
@@ -95,7 +95,7 @@ pub fn writeLines(
     }
 
     const c = Content{ .block = block };
-    try self.writeBlock(io, allocator, c, sid, streamWriter);
+    try self.writeBlock(io, allocator, c, sid, tableWriter);
 }
 
 pub fn writeData(
@@ -103,10 +103,10 @@ pub fn writeData(
     io: Io,
     allocator: Allocator,
     data: *BlockData,
-    streamWriter: *TableWriter,
+    tableWriter: *TableWriter,
 ) !void {
     const c = Content{ .data = data };
-    try self.writeBlock(io, allocator, c, data.sid, streamWriter);
+    try self.writeBlock(io, allocator, c, data.sid, tableWriter);
 }
 
 fn writeBlock(
@@ -116,7 +116,7 @@ fn writeBlock(
     // block: *Block,
     content: Content,
     sid: SID,
-    streamWriter: *TableWriter,
+    tableWriter: *TableWriter,
 ) !void {
     var isSeenSid = false;
     if (self.sidLast) |sidLast| {
@@ -129,7 +129,7 @@ fn writeBlock(
         self.sid = sid;
     }
 
-    const blockHeader = try writeContent(io, alloc, content, sid, streamWriter);
+    const blockHeader = try writeContent(io, alloc, content, sid, tableWriter);
 
     if (self.len == 0 or blockHeader.timestampsHeader.min < self.tableMinTimestamp) {
         self.tableMinTimestamp = blockHeader.timestampsHeader.min;
@@ -159,44 +159,44 @@ fn writeBlock(
     const offset = blockHeader.encode(slice);
     self.indexBlockBuf.items.len += offset;
     if (self.indexBlockBuf.items.len > indexBlockFlushThreshold) {
-        try self.flushIndexBlock(io, alloc, streamWriter);
+        try self.flushIndexBlock(io, alloc, tableWriter);
     }
 }
 
-fn writeContent(io: Io, alloc: Allocator, content: Content, sid: SID, streamWriter: *TableWriter) !BlockHeader {
+fn writeContent(io: Io, alloc: Allocator, content: Content, sid: SID, tableWriter: *TableWriter) !BlockHeader {
     switch (content) {
         .block => |block| {
             var blockHeader = BlockHeader.initFromBlock(block, sid);
-            try streamWriter.writeBlock(io, alloc, block, &blockHeader);
+            try tableWriter.writeBlock(io, alloc, block, &blockHeader);
             return blockHeader;
         },
         .data => |data| {
             var blockHeader = BlockHeader.initFromData(data, sid);
-            try streamWriter.writeData(io, alloc, &blockHeader, data);
+            try tableWriter.writeData(io, alloc, &blockHeader, data);
             return blockHeader;
         },
     }
 }
 
-pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *TableWriter, th: *TableHeader) !void {
+pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter, th: *TableHeader) !void {
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
     th.minTimestamp = self.tableMinTimestamp;
     th.maxTimestamp = self.tableMaxTimestamp;
-    th.bloomValuesBuffersAmount = @intCast(streamWriter.bloomValuesList.items.len);
+    th.bloomValuesBuffersAmount = @intCast(tableWriter.bloomValuesList.items.len);
 
-    try self.flushIndexBlock(io, allocator, streamWriter);
+    try self.flushIndexBlock(io, allocator, tableWriter);
 
-    try streamWriter.writeColumnKeys(io, allocator);
-    try streamWriter.writeColumnIndexes(io, allocator);
+    try tableWriter.writeColumnKeys(io, allocator);
+    try tableWriter.writeColumnIndexes(io, allocator);
 
-    try self.writeIndexBlockHeaders(io, allocator, streamWriter);
+    try self.writeIndexBlockHeaders(io, allocator, tableWriter);
 
-    th.compressedSize = streamWriter.size();
+    th.compressedSize = tableWriter.size();
 }
 
-fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *TableWriter) !void {
+fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter) !void {
     defer self.indexBlockBuf.clearRetainingCapacity();
     if (self.indexBlockBuf.items.len > 0) {
         try self.indexBlockHeader.writeIndexBlock(
@@ -206,7 +206,7 @@ fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, streamWrite
             self.sid.?,
             self.blockMinTimestamp,
             self.blockMaxTimestamp,
-            streamWriter,
+            tableWriter,
         );
 
         try self.metaIndexBuf.ensureUnusedCapacity(allocator, IndexBlockHeader.encodeExpectedSize);
@@ -220,10 +220,10 @@ fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, streamWrite
     self.blockMaxTimestamp = 0;
 }
 
-fn writeIndexBlockHeaders(self: *BlockWriter, io: Io, allocator: Allocator, streamWriter: *TableWriter) !void {
+fn writeIndexBlockHeaders(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
-    const slice = try streamWriter.metaindexDst.allocSlice(allocator, bound);
+    const slice = try tableWriter.metaindexDst.allocSlice(allocator, bound);
     const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
 
-    try streamWriter.metaindexDst.appendAllocated(io, slice, offset);
+    try tableWriter.metaindexDst.appendAllocated(io, slice, offset);
 }

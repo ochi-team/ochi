@@ -16,7 +16,19 @@ columnOffsets: std.ArrayList(u32),
 celledColumnsIDs: std.ArrayList(u16),
 celledColumnOffsets: std.ArrayList(u32),
 
-pub fn initBuffer(bufferIDs: []u16, bufferOffsets: []u32) ColumnsHeaderIndex {
+pub fn initBufferKnown(bufferIDs: []u16, bufferOffsets: []u32, i: usize) ColumnsHeaderIndex {
+    std.debug.assert(bufferIDs.len == bufferOffsets.len);
+
+    return .{
+        .columnsIDs = .initBuffer(bufferIDs[0..i]),
+        .columnOffsets = .initBuffer(bufferOffsets[0..i]),
+        .celledColumnsIDs = .initBuffer(bufferIDs[i..]),
+        .celledColumnOffsets = .initBuffer(bufferOffsets[i..]),
+    };
+}
+// unknown means we allocate all the space for columns and
+// when the decoding is done we move the rest of the space to celled
+pub fn initBufferUnknown(bufferIDs: []u16, bufferOffsets: []u32) ColumnsHeaderIndex {
     std.debug.assert(bufferIDs.len == bufferOffsets.len);
 
     return .{
@@ -71,9 +83,6 @@ pub fn encodeBound(self: *ColumnsHeaderIndex) usize {
 pub fn encode(self: *ColumnsHeaderIndex, dst: []u8) usize {
     var enc = Encoder.init(dst);
     encodeColumnDescs(&enc, self.columnsIDs, self.columnOffsets);
-    // move the rest of the buffer to celled columns
-    self.celledColumnsIDs = .initBuffer(self.columnsIDs.allocatedSlice()[self.columnsIDs.items.len..]);
-    self.celledColumnOffsets = .initBuffer(self.columnOffsets.allocatedSlice()[self.columnOffsets.items.len..]);
     encodeColumnDescs(&enc, self.celledColumnsIDs, self.celledColumnOffsets);
     return enc.offset;
 }
@@ -154,11 +163,12 @@ fn testEncode(allocator: std.mem.Allocator) !void {
     };
 
     for (cases) |case| {
-        var columnIDs: [4]u16 = undefined;
-        var columnOffsets: [4]u32 = undefined;
-        var s = ColumnsHeaderIndex.initBuffer(
+        var columnIDs: [6]u16 = undefined;
+        var columnOffsets: [6]u32 = undefined;
+        var s = ColumnsHeaderIndex.initBufferKnown(
             &columnIDs,
             &columnOffsets,
+            3,
         );
 
         for (case.columns) |entry| {
@@ -179,7 +189,7 @@ fn testEncode(allocator: std.mem.Allocator) !void {
 
         var decColumnIDs: [4]u16 = undefined;
         var decColumnOffsets: [4]u32 = undefined;
-        var decoded = ColumnsHeaderIndex.initBuffer(&decColumnIDs, &decColumnOffsets);
+        var decoded = ColumnsHeaderIndex.initBufferUnknown(&decColumnIDs, &decColumnOffsets);
         const written = s.encode(buf);
 
         decoded.decode(buf[0..written]);

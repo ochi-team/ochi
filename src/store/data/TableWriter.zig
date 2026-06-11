@@ -590,7 +590,7 @@ fn writeColumnsHeader(
 
     var columnIDs: [Block.maxColumns]u16 = undefined;
     var columnOffsets: [Block.maxColumns]u32 = undefined;
-    var cshIdx = ColumnsHeaderIndex.initBuffer(&columnIDs, &columnOffsets);
+    var cshIdx = ColumnsHeaderIndex.initBufferKnown(&columnIDs, &columnOffsets, csh.headers.len);
 
     for (csh.headers) |header| {
         try self.ensureColumnKeyOwned(allocator, header.key);
