@@ -31,7 +31,7 @@ pub fn main() !void {
     var debugAlloc: ?std.heap.DebugAllocator(.{}) = null;
 
     var alloc: std.mem.Allocator = blk: {
-        if (builtin.mode == .Debug) {
+        if (!build.release) {
             debugAlloc = .init;
             break :blk debugAlloc.?.allocator();
         } else {
@@ -45,7 +45,10 @@ pub fn main() !void {
     }
 
     // TODO: replace IO API to evented/zio
-    var ioImpl: std.Io.Threaded = .init(alloc, .{});
+    var ioImpl: std.Io.Threaded = .init(alloc, .{
+        // TODO: change to a real number of cpus
+        .concurrent_limit = .limited(16),
+    });
     defer ioImpl.deinit();
     const io = ioImpl.io();
     try inspect.inspect(build.release, io);
