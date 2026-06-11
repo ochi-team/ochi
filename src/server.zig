@@ -59,7 +59,14 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
 
     var dispatcher = try Dispatcher.init(io, allocator, &conf.app, &store);
     defer dispatcher.deinit();
-    var server = try httpz.Server(*Dispatcher).init(io, allocator, .{ .address = .all(conf.server.port) }, &dispatcher);
+    var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
+        .address = .all(conf.server.port),
+        .thread_pool = .{
+            // TODO: set to amount of cpus
+            .count = 8,
+            .buffer_size = 32 * 1024,
+        },
+    }, &dispatcher);
     registerSigtermHandler();
     defer server.deinit();
 
