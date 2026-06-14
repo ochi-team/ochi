@@ -62,9 +62,10 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
         .address = .all(conf.server.port),
         .thread_pool = .{
-            // TODO: set to amount of cpus
-            .count = 8,
+            // TODO: set to amount of clients limit
+            .count = 2,
             .buffer_size = 32 * 1024,
+            .backlog = 64,
         },
     }, &dispatcher);
     registerSigtermHandler();
