@@ -19,7 +19,8 @@ const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
 const Runtime = @import("Runtime.zig");
 
-const sleepOrStop = @import("stds/async.zig").sleepOrStop;
+const async = @import("stds/async.zig");
+const WorkerEvent = async.WorkerEvent;
 
 const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
@@ -111,6 +112,7 @@ memMergeSem: Io.Semaphore,
 memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
+maintenanceEvent: WorkerEvent = .{},
 g: Io.Group = .init,
 // TODO: migrate to io cancelation
 // TODO: implement atomic value that change it's value depending on how many times it's read,
@@ -180,12 +182,8 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 
     errdefer self.stopped.store(true, .release);
 
-    for (0..self.concurrency) |_| {
-        try self.startDiskTablesMerge(io, alloc);
-    }
-
-    try self.startMemTablesFlusher(io, alloc);
-    try self.startDataShardsFlusher(io, alloc);
+    try self.startMaintenanceWorker(io, alloc);
+    try self.startDiskTablesMerge(io, alloc);
 }
 
 // TODO: find an approach to make it never fail,
@@ -198,6 +196,7 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.store(true, .release);
     defer self.deinit(io, alloc);
+    self.maintenanceEvent.notify(io);
 
     // we ignore canceled erorr, we stop anyway
     // TODO: make sure it's not possible to run a job after we await,
@@ -245,57 +244,44 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-fn startMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+fn startMaintenanceWorker(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    if (self.stopped.load(.acquire)) return;
+
     errdefer self.g.cancel(io);
 
-    try self.g.concurrent(io, runMemTablesFlusher, .{ self, io, alloc });
-}
-
-fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runDataShardsFlusher, .{ self, io, alloc });
+    try self.g.concurrent(io, runMaintenanceWorker, .{ self, io, alloc });
 }
 
 fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
-    while (!self.stopped.load(.acquire)) {
-        // TODO: setup a diagnostic pattern to inject more context about the error and log messages
-        self.flushMemTables(io, alloc, false) catch |err| {
-            if (err == error.Stopped) return;
-
-            self.stopped.store(true, .release);
-            std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
-            return;
-        };
-
-        sleepOrStop(io, &self.stopped, std.time.ns_per_s);
-    }
-}
-
-fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
-    // half a sec
-    // TODO: test it with 1 sec
-    const flushInterval = std.time.ns_per_s / 2;
-
-    while (!self.stopped.load(.acquire)) {
-        self.flushDataShards(io, alloc, false) catch |err| {
-            if (err == error.Stopped) return;
-
-            self.stopped.store(true, .release);
-            std.debug.print("failed to run data shards flusher: {s}\n", .{@errorName(err)});
-            return;
-        };
-
-        sleepOrStop(io, &self.stopped, flushInterval);
-    }
-
-    self.flushDataShards(io, alloc, true) catch |err| {
+    // TODO: setup a diagnostic pattern to inject more context about the error and log messages
+    self.flushMemTables(io, alloc, false) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
-        std.debug.print("failed to run force data shards flusher: {s}\n", .{@errorName(err)});
+        std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
         return;
     };
+}
+
+fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
+    self.flushDataShards(io, alloc, false) catch |err| {
+        if (err == error.Stopped) return;
+
+        self.stopped.store(true, .release);
+        std.debug.print("failed to run data shards flusher: {s}\n", .{@errorName(err)});
+        return;
+    };
+}
+
+fn runMaintenanceWorker(self: *DataRecorder, io: Io, alloc: Allocator) void {
+    while (!self.stopped.load(.acquire)) {
+        runDataShardsFlusher(self, io, alloc);
+        runMemTablesFlusher(self, io, alloc);
+        runMemTableMerger(self, io, alloc);
+        runDiskTablesMerger(self, io, alloc);
+
+        _ = self.maintenanceEvent.waitOrTimeout(io, &self.stopped, std.time.ns_per_s);
+    }
 }
 
 fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool) !void {
@@ -384,24 +370,23 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
         shard.flushAtUs = null;
         shard.size = 0;
 
+        self.maintenanceEvent.notify(io);
         try self.startMemTablesMerge(io, alloc);
     }
 }
 
 pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    _ = alloc;
     if (self.stopped.load(.acquire)) return;
 
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runDiskTablesMerger, .{ self, io, alloc });
+    self.maintenanceEvent.notify(io);
 }
 
 pub fn startMemTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    _ = alloc;
     if (self.stopped.load(.acquire)) return;
 
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runMemTableMerger, .{ self, io, alloc });
+    self.maintenanceEvent.notify(io);
 }
 
 fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
@@ -638,6 +623,7 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
         try self.flushShard(io, alloc, shard);
     } else if (shard.flushAtUs == null) {
         shard.flushAtUs = setFlushTime(io);
+        self.maintenanceEvent.notify(io);
     }
 }
 

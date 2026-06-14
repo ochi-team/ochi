@@ -1,6 +1,56 @@
 const std = @import("std");
 const Io = std.Io;
 
+pub const WorkerEvent = struct {
+    event: Io.Event = .unset,
+    pending: std.atomic.Value(bool) = .init(false),
+
+    pub fn notify(self: *WorkerEvent, io: Io) void {
+        self.pending.store(true, .release);
+        self.event.set(io);
+    }
+
+    pub fn wait(self: *WorkerEvent, io: Io, stopped: *const std.atomic.Value(bool)) bool {
+        if (stopped.load(.acquire)) return false;
+        if (self.pending.swap(false, .acq_rel)) return !stopped.load(.acquire);
+
+        self.event.reset();
+        if (self.pending.swap(false, .acq_rel)) return !stopped.load(.acquire);
+
+        self.event.waitUncancelable(io);
+        self.event.reset();
+        _ = self.pending.swap(false, .acq_rel);
+        return !stopped.load(.acquire);
+    }
+
+    pub fn waitOrTimeout(
+        self: *WorkerEvent,
+        io: Io,
+        stopped: *const std.atomic.Value(bool),
+        ns: u64,
+    ) bool {
+        if (stopped.load(.acquire)) return false;
+        if (self.pending.swap(false, .acq_rel)) return !stopped.load(.acquire);
+
+        self.event.reset();
+        if (self.pending.swap(false, .acq_rel)) return !stopped.load(.acquire);
+
+        self.event.waitTimeout(io, .{
+            .duration = .{
+                .raw = .fromNanoseconds(@intCast(ns)),
+                .clock = .real,
+            },
+        }) catch |err| switch (err) {
+            error.Timeout => {},
+            error.Canceled => return false,
+        };
+        self.event.reset();
+        _ = self.pending.swap(false, .acq_rel);
+
+        return !stopped.load(.acquire);
+    }
+};
+
 pub fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
     // TODO: make this interval configurable,
     // it must be shorter for tests and longer for production
