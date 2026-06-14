@@ -6,7 +6,7 @@ export const options = {
     default: {
       executor: "per-vu-iterations",
       vus: 4,
-      iterations: 200,
+      iterations: 50,
     },
   },
 };

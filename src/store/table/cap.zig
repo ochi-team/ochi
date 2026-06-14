@@ -1,6 +1,6 @@
 // TODO: pass amount of reserved memory from the caller for the ongoing merges,
 // perform reservation once again on merging, after filtering
-// FIXME: define a failure path when there is no enough space on the disk
+// TODO: define a failure path when there is no enough space on the disk
 // When there is no enough space on the disk we must remove the oldest partition
 // and continue the flushing process
 // For that matter configuration options must be introduced:

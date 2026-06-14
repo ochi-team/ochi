@@ -324,13 +324,35 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(container_memory_working_set_bytes{id=~\".*ochi.*\"})",
-          "legendFormat": "Memory",
+          "expr": "sum(container_memory_rss{id=~\".*ochi.*\"})",
+          "legendFormat": "RSS",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(container_memory_usage_bytes{id=~\".*ochi.*\"})",
+          "legendFormat": "Usage",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(container_memory_working_set_bytes{id=~\".*ochi.*\"})",
+          "legendFormat": "Working Set",
+          "range": true,
+          "refId": "C"
         }
       ],
-      "title": "Ochi Container Memory Usage (Bytes)",
+      "title": "Ochi Container Memory",
       "type": "timeseries"
     },
     {
@@ -458,6 +480,69 @@
         }
       ],
       "title": "Ochi Open File Descriptors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(container_memory_cache{id=~\".*ochi.*\"})",
+          "legendFormat": "Cache",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Ochi Container Memory Cache",
       "type": "timeseries"
     },
     {

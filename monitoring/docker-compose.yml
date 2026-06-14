@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile
       args:
         OPTIMIZE: ReleaseSafe
-        TRACY: true
+        TRACY: false
     command: ["/usr/local/bin/ochi"]
     cgroup_parent: ochi.slice
     profiles: ["profile"]

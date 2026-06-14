@@ -4,9 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils c
 ARG ZIG_VERSION=0.16.0
 # x86_64 or aarch64
 ARG TARGETARCH=aarch64
-ARG OPTIMIZE=ReleaseSafe
-ARG TRACY=false
-RUN --mount=type=cache,target=/tmp/zig-cache \
+RUN --mount=type=cache,id=ochi-zig-tarballs,target=/tmp/zig-cache \
     zig_dir="/usr/local/zig-${TARGETARCH}-linux-${ZIG_VERSION}" && \
     zig_tar="/tmp/zig-cache/zig-${TARGETARCH}.tar.xz" && \
     if [ ! -f "${zig_tar}" ]; then \
@@ -18,13 +16,15 @@ RUN --mount=type=cache,target=/tmp/zig-cache \
 WORKDIR /app
 
 COPY build.zig build.zig.zon ./
-RUN --mount=type=cache,target=/root/.cache/zig \
-    --mount=type=cache,target=/app/.zig-cache \
+RUN --mount=type=cache,id=ochi-zig-global,target=/root/.cache/zig \
+    --mount=type=cache,id=ochi-zig-local,target=/app/.zig-cache \
     /usr/local/bin/zig build --fetch
 
 COPY src/ src/
-RUN --mount=type=cache,target=/root/.cache/zig \
-    --mount=type=cache,target=/app/.zig-cache \
+ARG OPTIMIZE=ReleaseSafe
+ARG TRACY=false
+RUN --mount=type=cache,id=ochi-zig-global,target=/root/.cache/zig \
+    --mount=type=cache,id=ochi-zig-local,target=/app/.zig-cache \
     /usr/local/bin/zig build -Doptimize=${OPTIMIZE} -Dtracy=${TRACY}
 
 FROM ubuntu:24.04 AS runtime
