@@ -42,9 +42,10 @@ pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
 
     const params = Params{ .tenantID = ctx.tenantID };
 
-    // TODO: it's too early to pass page allocator,
-    // we might be able to use arena a bit more
-    process(ctx.io, res.arena, ctx.allocator, ctx, uncompressed, params) catch
+    var parseArena = std.heap.ArenaAllocator.init(ctx.allocator);
+    defer parseArena.deinit();
+
+    process(ctx.io, parseArena.allocator(), ctx.allocator, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
 
     res.status = 200;
@@ -65,125 +66,246 @@ fn process(
     data: []const u8,
     params: Params,
 ) !void {
-    // TODO: implement a zero allocation parsing
+    var parser = LokiJsonParser.init(ingestAlloc, parseAlloc, data);
+    defer parser.deinit();
 
-    const root = try std.json.parseFromSliceLeaky(std.json.Value, parseAlloc, data, .{
-        .allocate = .alloc_if_needed,
-    });
-
-    // Get "streams" array
-    const streams = root.object.get("streams") orelse return error.MissingStreams;
-    if (streams != .array) return error.StreamsNotArray;
-
-    // pre allocate labels list
     var tags: std.ArrayList(Field) = .empty;
     defer tags.deinit(parseAlloc);
-
-    if (streams.array.items.len > 0 and streams.array.items[0] == .object) {
-        const stream = streams.array.items[0].object;
-        // Parse "stream" object (labels) - preallocate for typical label count
-        var labelSize: u16 = 1; // 1 is for _msg
-        if (stream.get("stream")) |streamObj| {
-            if (streamObj == .object) {
-                labelSize += @intCast(streamObj.object.count());
-            }
-        }
-        if (stream.get("values")) |valuesObj| {
-            if (valuesObj == .array and valuesObj.array.items.len > 0) {
-                const firstLine = valuesObj.array.items[0];
-                if (firstLine == .array and firstLine.array.items.len == 3 and firstLine.array.items[2] == .object) {
-                    labelSize += @intCast(firstLine.array.items[2].object.count());
-                }
-            }
-        }
-        tags = try std.ArrayList(Field).initCapacity(parseAlloc, labelSize);
-    }
 
     var processor = Processor.empty(ctx.store);
     defer processor.deinit(ingestAlloc);
 
-    // Iterate through each stream
-    for (streams.array.items) |stream| {
-        if (stream != .object) return error.StreamNotObject;
+    try parser.parse(io, ingestAlloc, parseAlloc, &processor, &tags, params);
+}
 
-        if (stream.object.get("stream")) |streamObj| {
-            if (streamObj != .object) return error.StreamFieldNotObject;
+const LokiJsonParser = struct {
+    scanner: std.json.Scanner,
+    stringAlloc: std.mem.Allocator,
+    maxValueLen: usize,
 
-            var it = streamObj.object.iterator();
-            while (it.next()) |entry| {
-                const valueStr = switch (entry.value_ptr.*) {
-                    .string => |s| s,
-                    else => return error.LabelValueNotString,
-                };
-                try tags.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = valueStr });
+    fn init(stackAlloc: std.mem.Allocator, stringAlloc: std.mem.Allocator, data: []const u8) LokiJsonParser {
+        return .{
+            .scanner = std.json.Scanner.initCompleteInput(stackAlloc, data),
+            .stringAlloc = stringAlloc,
+            .maxValueLen = data.len,
+        };
+    }
+
+    fn deinit(self: *LokiJsonParser) void {
+        self.scanner.deinit();
+    }
+
+    fn parse(
+        self: *LokiJsonParser,
+        io: Io,
+        ingestAlloc: std.mem.Allocator,
+        parseAlloc: std.mem.Allocator,
+        processor: *Processor,
+        tags: *std.ArrayList(Field),
+        params: Params,
+    ) !void {
+        try self.expect(.object_begin, error.RootNotObject);
+
+        var seenStreams = false;
+        while (true) {
+            const token = try self.next();
+            switch (token) {
+                .object_end => break,
+                .string, .allocated_string => |key| {
+                    if (std.mem.eql(u8, key, "streams")) {
+                        seenStreams = true;
+                        try self.parseStreams(io, ingestAlloc, parseAlloc, processor, tags, params);
+                    } else {
+                        try self.scanner.skipValue();
+                    }
+                },
+                else => return error.SyntaxError,
             }
         }
+
+        if (!seenStreams) return error.MissingStreams;
+        try self.expect(.end_of_document, error.SyntaxError);
+    }
+
+    fn parseStreams(
+        self: *LokiJsonParser,
+        io: Io,
+        ingestAlloc: std.mem.Allocator,
+        parseAlloc: std.mem.Allocator,
+        processor: *Processor,
+        tags: *std.ArrayList(Field),
+        params: Params,
+    ) !void {
+        try self.expect(.array_begin, error.StreamsNotArray);
+
+        while (true) {
+            const token = try self.next();
+            switch (token) {
+                .array_end => break,
+                .object_begin => try self.parseStream(io, ingestAlloc, parseAlloc, processor, tags, params),
+                else => return error.StreamNotObject,
+            }
+        }
+    }
+
+    fn parseStream(
+        self: *LokiJsonParser,
+        io: Io,
+        ingestAlloc: std.mem.Allocator,
+        parseAlloc: std.mem.Allocator,
+        processor: *Processor,
+        tags: *std.ArrayList(Field),
+        params: Params,
+    ) !void {
+        var seenStream = false;
+        var seenValues = false;
+
+        while (true) {
+            const token = try self.next();
+            switch (token) {
+                .object_end => break,
+                .string, .allocated_string => |key| {
+                    if (std.mem.eql(u8, key, "stream")) {
+                        try self.parseLabels(parseAlloc, tags);
+                        seenStream = true;
+                    } else if (std.mem.eql(u8, key, "values")) {
+                        if (!seenStream) return error.MissingStream;
+                        seenValues = true;
+                        try self.parseValues(io, ingestAlloc, parseAlloc, processor, tags, params);
+                    } else {
+                        try self.scanner.skipValue();
+                    }
+                },
+                else => return error.SyntaxError,
+            }
+        }
+
+        if (!seenValues) return error.MissingValues;
+        tags.clearRetainingCapacity();
+    }
+
+    fn parseLabels(
+        self: *LokiJsonParser,
+        parseAlloc: std.mem.Allocator,
+        tags: *std.ArrayList(Field),
+    ) !void {
+        try self.expect(.object_begin, error.StreamFieldNotObject);
+
+        while (true) {
+            const token = try self.next();
+            switch (token) {
+                .object_end => break,
+                .string, .allocated_string => |key| {
+                    const valueStr = try self.expectString(error.LabelValueNotString);
+                    try tags.append(parseAlloc, .{ .key = key, .value = valueStr });
+                },
+                else => return error.SyntaxError,
+            }
+        }
+    }
+
+    fn parseValues(
+        self: *LokiJsonParser,
+        io: Io,
+        ingestAlloc: std.mem.Allocator,
+        parseAlloc: std.mem.Allocator,
+        processor: *Processor,
+        tags: *std.ArrayList(Field),
+        params: Params,
+    ) !void {
+        try self.expect(.array_begin, error.ValuesNotArray);
 
         const tagsLen = tags.items.len;
         const streamTags = tags.items[0..tagsLen];
-
         try processor.reinit(ingestAlloc, streamTags, params.tenantID);
 
-        // Parse "values" array
-        const values = stream.object.get("values") orelse return error.MissingValues;
-        if (values != .array) return error.ValuesNotArray;
-
-        for (values.array.items) |line| {
-            if (line != .array) return error.LineNotArray;
-
-            const lineArray = line.array.items;
-            if (lineArray.len < 2 or lineArray.len > 3) {
-                return error.InvalidLineArrayLength;
+        while (true) {
+            const token = try self.next();
+            switch (token) {
+                .array_end => break,
+                .array_begin => try self.parseLine(io, ingestAlloc, parseAlloc, processor, tags, tagsLen),
+                else => return error.LineNotArray,
             }
-
-            // Parse timestamp
-            const timestampStr = switch (lineArray[0]) {
-                .string => |s| s,
-                else => return error.TimestampNotString,
-            };
-            const tsNs = try std.fmt.parseInt(u64, timestampStr, 10);
-
-            // Parse structured metadata (if present)
-            if (lineArray.len > 2) {
-                if (lineArray[2] != .object) return error.StructuredMetadataNotObject;
-
-                var metadata_it = lineArray[2].object.iterator();
-                while (metadata_it.next()) |entry| {
-                    const value_str = switch (entry.value_ptr.*) {
-                        .string => |s| s,
-                        else => return error.MetadataValueNotString,
-                    };
-                    try tags.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = value_str });
-                }
-            }
-
-            // Parse log message
-            const msg = switch (lineArray[1]) {
-                .string => |s| s,
-                else => return error.MessageNotString,
-            };
-            // TODO: support a flag to parse msg as json
-            // it requires 2 more options: parseJsonMsg and msgField,
-            // first defines whether the parins is required,
-            // second is optional and defines what field in the given json is read as a _msg field
-            try tags.append(parseAlloc, .{ .key = "", .value = msg });
-
-            // TODO: we push every line with all the labels including the tags,
-            // as a result we duplicated a lot of data,
-            // we have to think how to hold the tags separately in the block
-            // or even store them only in a stream index
-            try processor.pushLine(io, ingestAlloc, tsNs, tags.items);
-
-            // clean value labels, but retain stream labels
-            tags.items.len = tagsLen;
         }
 
+        processor.tags = tags.items[0..tagsLen];
         try processor.flush(io, ingestAlloc);
-
-        // clean len of the labels len, but retain allocated memory
-        tags.clearRetainingCapacity();
     }
-}
+
+    fn parseLine(
+        self: *LokiJsonParser,
+        io: Io,
+        ingestAlloc: std.mem.Allocator,
+        parseAlloc: std.mem.Allocator,
+        processor: *Processor,
+        tags: *std.ArrayList(Field),
+        tagsLen: usize,
+    ) !void {
+        const timestampStr = try self.expectString(error.TimestampNotString);
+        const tsNs = try std.fmt.parseInt(u64, timestampStr, 10);
+        const msg = try self.expectString(error.MessageNotString);
+
+        const token = try self.next();
+        switch (token) {
+            .array_end => {},
+            .object_begin => {
+                try self.parseMetadata(parseAlloc, tags);
+                try self.expect(.array_end, error.InvalidLineArrayLength);
+            },
+            else => return error.InvalidLineArrayLength,
+        }
+
+        // TODO: support a flag to parse msg as json
+        // it requires 2 more options: parseJsonMsg and msgField,
+        // first defines whether the parins is required,
+        // second is optional and defines what field in the given json is read as a _msg field
+        try tags.append(parseAlloc, .{ .key = "", .value = msg });
+
+        // TODO: we push every line with all the labels including the tags,
+        // as a result we duplicated a lot of data,
+        // we have to think how to hold the tags separately in the block
+        // or even store them only in a stream index
+        processor.tags = tags.items[0..tagsLen];
+        try processor.pushLine(io, ingestAlloc, tsNs, tags.items);
+
+        tags.items.len = tagsLen;
+    }
+
+    fn parseMetadata(
+        self: *LokiJsonParser,
+        parseAlloc: std.mem.Allocator,
+        tags: *std.ArrayList(Field),
+    ) !void {
+        while (true) {
+            const token = try self.next();
+            switch (token) {
+                .object_end => break,
+                .string, .allocated_string => |key| {
+                    const valueStr = try self.expectString(error.MetadataValueNotString);
+                    try tags.append(parseAlloc, .{ .key = key, .value = valueStr });
+                },
+                else => return error.SyntaxError,
+            }
+        }
+    }
+
+    fn next(self: *LokiJsonParser) !std.json.Scanner.Token {
+        return self.scanner.nextAllocMax(self.stringAlloc, .alloc_if_needed, self.maxValueLen);
+    }
+
+    fn expectString(self: *LokiJsonParser, err: anyerror) ![]const u8 {
+        const token = try self.next();
+        return switch (token) {
+            .string, .allocated_string => |s| s,
+            else => err,
+        };
+    }
+
+    fn expect(self: *LokiJsonParser, comptime expected: std.meta.Tag(std.json.Scanner.Token), err: anyerror) !void {
+        const token = try self.next();
+        if (std.meta.activeTag(token) != expected) return err;
+    }
+};
 
 const testing = std.testing;
 
