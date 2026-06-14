@@ -9,6 +9,7 @@ const DataRecorder = @import("DataRecorder.zig");
 const IndexRecorder = @import("store/index/IndexRecorder.zig");
 const Index = @import("store/index/Index.zig");
 const MemBlock = @import("store/index/MemBlock.zig");
+const CachedBlockHeaders = Index.CachedBlockHeaders;
 
 const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
@@ -157,7 +158,8 @@ pub fn addLines(
     lines: std.ArrayList(Line),
     tags: []Field,
     encodedTags: []const u8,
-    blocksCache: *Cache(*MemBlock),
+    memBlocksCache: *Cache(*MemBlock),
+    indexBlockHeadersCache: *Cache(CachedBlockHeaders),
 ) !void {
     var fallbackFba = std.heap.stackFallback(bufSize, allocator);
     const fba = fallbackFba.get();
@@ -197,7 +199,7 @@ pub fn addLines(
 
         if (self.isCached(io, lines.items[i].sid)) continue;
 
-        if (!try self.index.hasStream(io, allocator, sid, blocksCache)) {
+        if (!try self.index.hasStream(io, allocator, sid, memBlocksCache, indexBlockHeadersCache)) {
             try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
         try self.cache(io, sid);
@@ -214,6 +216,7 @@ pub fn queryLines(
     tenantID: u64,
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
+    indexBlockHeadersCache: *Cache(CachedBlockHeaders),
 ) !std.ArrayList(Line) {
     // TODO: query cancelation
 
@@ -237,7 +240,15 @@ pub fn queryLines(
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
             const tagsExpr = query.tagsExpr orelse return Query.Error.NoTagsFilter;
-            break :sids try self.index.querySIDs(io, alloc, longAlloc, tenantID, tagsExpr, memBlocksCache);
+            break :sids try self.index.querySIDs(
+                io,
+                alloc,
+                longAlloc,
+                tenantID,
+                tagsExpr,
+                memBlocksCache,
+                indexBlockHeadersCache,
+            );
         }
     };
     defer sidsRes.sids.deinit(alloc);
@@ -263,8 +274,9 @@ pub fn queryStreamIDs(
     longAlloc: Allocator,
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
+    indexBlockHeadersCache: *Cache(CachedBlockHeaders),
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    const res = try self.index.queryAllStreamIDs(io, alloc, longAlloc, tenantID, memBlocksCache);
+    const res = try self.index.queryAllStreamIDs(io, alloc, longAlloc, tenantID, memBlocksCache, indexBlockHeadersCache);
     return res.streamIDs;
 }
 
