@@ -7,6 +7,9 @@ const Mutex = std.Io.Mutex;
 
 // TODO: it's complete fake,
 // we must implemented LRU or something
+// TODO: make it support comptime meter misses/total
+// TODO: define several comptime buckets up to cpus count to reduce lock contention
+// TODO: make a mechanic to remove cache content on closing a table/partition
 pub fn Cache(comptime V: type) type {
     return struct {
         const Self = @This();
@@ -55,6 +58,35 @@ pub fn Cache(comptime V: type) type {
             }
             gop.value_ptr.* = value;
             return value;
+        }
+
+        pub fn getOrElse(
+            self: *Self,
+            io: Io,
+            key: []const u8,
+            ctx: anytype,
+            comptime action: *const fn (@TypeOf(ctx)) anyerror!V,
+        ) !GetOrElseRes {
+            self.mx.lockUncancelable(io);
+            defer self.mx.unlock(io);
+
+            if (self.map.get(key)) |value| {
+                return .{
+                    .value = value,
+                    .elseHit = false,
+                };
+            }
+
+            const k = try self.alloc.dupe(u8, key);
+            errdefer self.alloc.free(k);
+
+            const value = try action(ctx);
+            try self.map.put(k, value);
+
+            return .{
+                .value = value,
+                .elseHit = true,
+            };
         }
 
         pub fn contains(self: *Self, io: Io, key: []const u8) bool {
@@ -139,4 +171,57 @@ test "Cache.set keeps first non-void value on duplicate insert" {
     try testing.expect(cache.contains(io, "same-key"));
     try testing.expectEqual(first, storedVal);
     try testing.expectEqual(1, storedVal.val);
+}
+
+test "Cache.getOrElse creates non-void value only on miss" {
+    const Value = struct {
+        val: u8,
+
+        fn init(alloc: Allocator, val: u8) !*@This() {
+            const self = try alloc.create(@This());
+            self.* = .{ .val = val };
+            return self;
+        }
+
+        fn deinit(self: *@This(), alloc: Allocator) void {
+            alloc.destroy(self);
+        }
+    };
+
+    const CreateCtx = struct {
+        alloc: Allocator,
+        val: u8,
+        calls: *usize,
+
+        fn run(ctx: @This()) !*Value {
+            ctx.calls.* += 1;
+            return Value.init(ctx.alloc, ctx.val);
+        }
+    };
+
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const ValueCache = Cache(*Value);
+    const cache = try ValueCache.init(alloc);
+    defer cache.deinit();
+
+    var calls: usize = 0;
+    const first = try cache.getOrElse(io, "same-key", CreateCtx{
+        .alloc = alloc,
+        .val = 1,
+        .calls = &calls,
+    }, CreateCtx.run);
+
+    // the vaue already there, so val 2 is ignored
+    const second = try cache.getOrElse(io, "same-key", CreateCtx{
+        .alloc = alloc,
+        .val = 2,
+        .calls = &calls,
+    }, CreateCtx.run);
+
+    try testing.expectEqualDeep(ValueCache.GetOrElseRes{ .value = first.value, .elseHit = true }, first);
+    try testing.expectEqualDeep(ValueCache.GetOrElseRes{ .value = first.value, .elseHit = false }, second);
+    try testing.expectEqual(@as(usize, 1), calls);
+    try testing.expectEqual(@as(u8, 1), second.value.val);
 }

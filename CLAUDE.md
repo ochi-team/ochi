@@ -90,6 +90,14 @@ try std.testing.expectEqual(case.header.minTs, h.minTs);
 try std.testing.expectEqual(case.header.maxTs, h.maxTs);
 ```
 
+Assertions infer types implicitly:
+```zig
+// GOOD
+try testing.expectEqual(1, calls);
+// BAD
+try testing.expectEqual(@as(usize, 1), calls);
+```
+
 To log debug output use the following formatting:
 - {d} for number
 - {s} for string

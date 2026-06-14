@@ -312,15 +312,31 @@ fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockH
     var keyBuf: [16]u8 = undefined;
     memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
 
-    const cachedMemBlock = self.memBlocksCache.get(io, keyBuf[0..]);
-    if (cachedMemBlock) |cached| {
-        return cached;
-    }
+    const LoadMemBlockCtx = struct {
+        lookupTable: *LookupTable,
+        io: Io,
+        alloc: Allocator,
+        blockHeader: BlockHeader,
 
-    const memBlock = try MemBlock.init(self.longAllocator, self.maxMemBlockSize);
-    errdefer memBlock.deinit(self.longAllocator);
-    try self.readMemBlock(io, alloc, blockHeader, memBlock);
-    return self.memBlocksCache.put(io, keyBuf[0..], memBlock);
+        // it must get a block transactionally,
+        // otherwise 2 threads create the same block and then one of them removes a duplicate
+        // TODO: instrument locking and measure contention
+        fn run(ctx: @This()) !*MemBlock {
+            const memBlock = try MemBlock.init(ctx.lookupTable.longAllocator, ctx.lookupTable.maxMemBlockSize);
+            errdefer memBlock.deinit(ctx.lookupTable.longAllocator);
+
+            try ctx.lookupTable.readMemBlock(ctx.io, ctx.alloc, ctx.blockHeader, memBlock);
+            return memBlock;
+        }
+    };
+
+    const res = try self.memBlocksCache.getOrElse(io, keyBuf[0..], LoadMemBlockCtx{
+        .lookupTable = self,
+        .io = io,
+        .alloc = alloc,
+        .blockHeader = blockHeader,
+    }, LoadMemBlockCtx.run);
+    return res.value;
 }
 
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {
