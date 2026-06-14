@@ -14,6 +14,8 @@ pub const DecompressError = compress.DecompressError;
 pub const getFrameContentSize = compress.getFrameContentSize;
 pub const decompress = compress.decompress;
 
+pub const setupIo = compress.setupIo;
+
 // decode
 
 pub const Decoder = @import("Decoder.zig");

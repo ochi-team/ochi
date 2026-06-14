@@ -53,6 +53,8 @@ pub fn main() !void {
     const io = ioImpl.io();
     try inspect.inspect(build.release, io);
 
+    @import("encoding").setupIo(io);
+
     var tracyAlloc = tracy.Allocator{
         .parent = alloc,
     };
