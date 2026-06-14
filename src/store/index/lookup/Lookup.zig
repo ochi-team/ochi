@@ -623,6 +623,27 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
             (prefixStart >= bufStart and prefixEnd <= bufEnd));
     }
 
+    const cachedKey = blk: {
+        var keyIt = cache.map.iterator();
+        const entry = keyIt.next().?;
+        break :blk try alloc.dupe(u8, entry.key_ptr.*);
+    };
+    defer alloc.free(cachedKey);
+
+    const canonicalBlock = cache.get(io, cachedKey).?;
+    var duplicateBlock = try MemBlock.init(alloc, 128);
+    errdefer duplicateBlock.deinit(alloc);
+    for (tableDiskItems) |item| {
+        try testing.expect(duplicateBlock.add(item));
+    }
+
+    const duplicateResult = try cache.putIfAbsent(io, cachedKey, duplicateBlock);
+    try testing.expectEqualDeep(Cache(*MemBlock).PutIfAbsentResult{
+        .value = canonicalBlock,
+        .inserted = false,
+    }, duplicateResult);
+    duplicateBlock.deinit(alloc);
+
     const Case = struct {
         prefix: []const u8,
         expected: []const u8,

@@ -15,6 +15,11 @@ pub fn Cache(comptime V: type) type {
         alloc: Allocator,
         mx: Mutex = .init,
 
+        pub const PutIfAbsentResult = struct {
+            value: V,
+            inserted: bool,
+        };
+
         pub fn init(alloc: Allocator) !*Self {
             const map = std.StringHashMap(V).init(alloc);
             const c = try alloc.create(Self);
@@ -45,8 +50,32 @@ pub fn Cache(comptime V: type) type {
             const gop = try self.map.getOrPut(k);
             if (gop.found_existing) {
                 self.alloc.free(k);
+                if (V != void) gop.value_ptr.*.deinit(self.alloc);
             }
             gop.value_ptr.* = value;
+        }
+
+        pub fn putIfAbsent(self: *Self, io: Io, key: []const u8, value: V) !PutIfAbsentResult {
+            self.mx.lockUncancelable(io);
+            defer self.mx.unlock(io);
+
+            const k = try self.alloc.dupe(u8, key);
+            errdefer self.alloc.free(k);
+
+            const gop = try self.map.getOrPut(k);
+            if (gop.found_existing) {
+                self.alloc.free(k);
+                return .{
+                    .value = gop.value_ptr.*,
+                    .inserted = false,
+                };
+            }
+
+            gop.value_ptr.* = value;
+            return .{
+                .value = value,
+                .inserted = true,
+            };
         }
 
         pub fn contains(self: *Self, io: Io, key: []const u8) bool {
@@ -97,4 +126,41 @@ test "StreamCache handles concurrent set and contains" {
     }
 
     try testing.expect(cache.contains(io, "tenant-42-stream-1-worker-1"));
+}
+
+test "Cache.putIfAbsent keeps first non-void value on duplicate insert" {
+    const Value = struct {
+        buf: []u8,
+
+        fn init(alloc: Allocator) !*@This() {
+            const self = try alloc.create(@This());
+            errdefer alloc.destroy(self);
+
+            self.* = .{ .buf = try alloc.alloc(u8, 8) };
+            return self;
+        }
+
+        fn deinit(self: *@This(), alloc: Allocator) void {
+            alloc.free(self.buf);
+            alloc.destroy(self);
+        }
+    };
+
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const ValueCache = Cache(*Value);
+    const cache = try ValueCache.init(alloc);
+    defer cache.deinit();
+
+    const first = try Value.init(alloc);
+    const firstResult = try cache.putIfAbsent(io, "same-key", first);
+    try testing.expectEqualDeep(ValueCache.PutIfAbsentResult{ .value = first, .inserted = true }, firstResult);
+
+    const second = try Value.init(alloc);
+    const secondResult = try cache.putIfAbsent(io, "same-key", second);
+    try testing.expectEqualDeep(ValueCache.PutIfAbsentResult{ .value = first, .inserted = false }, secondResult);
+    second.deinit(alloc);
+
+    try testing.expect(cache.contains(io, "same-key"));
 }
