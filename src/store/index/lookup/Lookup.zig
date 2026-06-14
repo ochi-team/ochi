@@ -630,20 +630,13 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     };
     defer alloc.free(cachedKey);
 
-    const canonicalBlock = cache.get(io, cachedKey).?;
-    var duplicateBlock = try MemBlock.init(alloc, 128);
-    errdefer duplicateBlock.deinit(alloc);
+    var block = try MemBlock.init(alloc, 128);
+    errdefer block.deinit(alloc);
     for (tableDiskItems) |item| {
-        try testing.expect(duplicateBlock.add(item));
+        try testing.expect(block.add(item));
     }
 
-    const duplicateResult = try cache.putIfAbsent(io, cachedKey, duplicateBlock);
-    try testing.expectEqualDeep(Cache(*MemBlock).PutIfAbsentResult{
-        .value = canonicalBlock,
-        .inserted = false,
-    }, duplicateResult);
-    duplicateBlock.deinit(alloc);
-
+    _ = try cache.put(io, cachedKey, block);
     const Case = struct {
         prefix: []const u8,
         expected: []const u8,

@@ -320,8 +320,7 @@ fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockH
     const memBlock = try MemBlock.init(self.longAllocator, self.maxMemBlockSize);
     errdefer memBlock.deinit(self.longAllocator);
     try self.readMemBlock(io, alloc, blockHeader, memBlock);
-    try self.memBlocksCache.set(io, keyBuf[0..], memBlock);
-    return memBlock;
+    return self.memBlocksCache.put(io, keyBuf[0..], memBlock);
 }
 
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {

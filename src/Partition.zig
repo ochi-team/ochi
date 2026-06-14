@@ -288,7 +288,7 @@ fn cache(self: *Partition, io: Io, sid: SID) !void {
     sid.encode(&enc);
     @memcpy(cacheKey[SID.encodeBound..], self.key);
 
-    try self.streamCache.set(io, &cacheKey, {});
+    try self.streamCache.put(io, &cacheKey, {});
 }
 
 pub fn lessThan(_: void, one: *Partition, another: *Partition) bool {

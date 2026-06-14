@@ -15,9 +15,9 @@ pub fn Cache(comptime V: type) type {
         alloc: Allocator,
         mx: Mutex = .init,
 
-        pub const PutIfAbsentResult = struct {
+        pub const GetOrElseRes = struct {
             value: V,
-            inserted: bool,
+            elseHit: bool,
         };
 
         pub fn init(alloc: Allocator) !*Self {
@@ -40,7 +40,7 @@ pub fn Cache(comptime V: type) type {
             self.alloc.destroy(self);
         }
 
-        pub fn set(self: *Self, io: Io, key: []const u8, value: V) !void {
+        pub fn put(self: *Self, io: Io, key: []const u8, value: V) !V {
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 
@@ -50,32 +50,11 @@ pub fn Cache(comptime V: type) type {
             const gop = try self.map.getOrPut(k);
             if (gop.found_existing) {
                 self.alloc.free(k);
-                if (V != void) gop.value_ptr.*.deinit(self.alloc);
+                if (V != void) value.deinit(self.alloc);
+                return gop.value_ptr.*;
             }
             gop.value_ptr.* = value;
-        }
-
-        pub fn putIfAbsent(self: *Self, io: Io, key: []const u8, value: V) !PutIfAbsentResult {
-            self.mx.lockUncancelable(io);
-            defer self.mx.unlock(io);
-
-            const k = try self.alloc.dupe(u8, key);
-            errdefer self.alloc.free(k);
-
-            const gop = try self.map.getOrPut(k);
-            if (gop.found_existing) {
-                self.alloc.free(k);
-                return .{
-                    .value = gop.value_ptr.*,
-                    .inserted = false,
-                };
-            }
-
-            gop.value_ptr.* = value;
-            return .{
-                .value = value,
-                .inserted = true,
-            };
+            return value;
         }
 
         pub fn contains(self: *Self, io: Io, key: []const u8) bool {
@@ -108,7 +87,7 @@ test "StreamCache handles concurrent set and contains" {
             while (i < 1000) : (i += 1) {
                 const key = try std.fmt.bufPrint(&keyBuf, "tenant-42-stream-{d}-worker-{d}", .{ i % 64, workerId % 2 });
 
-                try cache.set(io, key, {});
+                try cache.put(io, key, {});
                 _ = cache.contains(io, key);
             }
         }
@@ -128,20 +107,17 @@ test "StreamCache handles concurrent set and contains" {
     try testing.expect(cache.contains(io, "tenant-42-stream-1-worker-1"));
 }
 
-test "Cache.putIfAbsent keeps first non-void value on duplicate insert" {
+test "Cache.set keeps first non-void value on duplicate insert" {
     const Value = struct {
-        buf: []u8,
+        val: u8,
 
-        fn init(alloc: Allocator) !*@This() {
+        fn init(alloc: Allocator, val: u8) !*@This() {
             const self = try alloc.create(@This());
-            errdefer alloc.destroy(self);
-
-            self.* = .{ .buf = try alloc.alloc(u8, 8) };
+            self.* = .{ .val = val };
             return self;
         }
 
         fn deinit(self: *@This(), alloc: Allocator) void {
-            alloc.free(self.buf);
             alloc.destroy(self);
         }
     };
@@ -153,14 +129,14 @@ test "Cache.putIfAbsent keeps first non-void value on duplicate insert" {
     const cache = try ValueCache.init(alloc);
     defer cache.deinit();
 
-    const first = try Value.init(alloc);
-    const firstResult = try cache.putIfAbsent(io, "same-key", first);
-    try testing.expectEqualDeep(ValueCache.PutIfAbsentResult{ .value = first, .inserted = true }, firstResult);
+    const first = try Value.init(alloc, 1);
+    _ = try cache.put(io, "same-key", first);
 
-    const second = try Value.init(alloc);
-    const secondResult = try cache.putIfAbsent(io, "same-key", second);
-    try testing.expectEqualDeep(ValueCache.PutIfAbsentResult{ .value = first, .inserted = false }, secondResult);
-    second.deinit(alloc);
+    const second = try Value.init(alloc, 2);
+    _ = try cache.put(io, "same-key", second);
 
+    const storedVal = cache.get(io, "same-key").?;
     try testing.expect(cache.contains(io, "same-key"));
+    try testing.expectEqual(first, storedVal);
+    try testing.expectEqual(1, storedVal.val);
 }
