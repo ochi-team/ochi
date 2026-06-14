@@ -14,6 +14,7 @@ const LookupTable = @import("LookupTable.zig");
 const TagRecordsParser = @import("../TagRecordsParser.zig");
 
 const Lookup = @This();
+pub const CachedBlockHeaders = LookupTable.CachedBlockHeaders;
 
 recorder: *IndexRecorder,
 
@@ -32,7 +33,14 @@ seekedIsCurrent: bool,
 // 1. reuse a last item query buffer
 // 2. reuse tables and its  lookup list capacity
 /// Initializes lookup cursors for all currently visible recorder tables.
-pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
+pub fn init(
+    io: Io,
+    alloc: Allocator,
+    longAlloc: Allocator,
+    recorder: *IndexRecorder,
+    memBlocksCache: *Cache(*MemBlock),
+    indexBlockHeadersCache: *Cache(CachedBlockHeaders),
+) !Lookup {
     var tables = try recorder.getTables(io, alloc);
     errdefer {
         for (tables.items) |t| t.release(io);
@@ -42,7 +50,7 @@ pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexReco
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
-        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache);
+        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, memBlocksCache, indexBlockHeadersCache);
         lookupTables.appendAssumeCapacity(lt);
     }
 
@@ -307,7 +315,9 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -340,7 +350,9 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -427,7 +439,9 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -554,7 +568,9 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -601,9 +617,11 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
 
     {
-        var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+        var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
         defer lookup.deinit(io, alloc);
 
         const actual = try lookup.findFirstByPrefix(io, alloc, "tenant-a-stream-0002");
@@ -633,7 +651,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         .{ .prefix = "tenant-a-stream-", .expected = "tenant-a-stream-0001" },
     };
 
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
     for (cases) |case| {
         const actual = try lookup.findFirstByPrefix(io, alloc, case.prefix);
@@ -681,7 +699,9 @@ test "Lookup.deinit after scan across multiple table blocks" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
 
     try lookup.seek(io, alloc, "key:");
@@ -736,7 +756,9 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    const indexBlockHeadersCache = try Cache(CachedBlockHeaders).init(alloc);
+    defer indexBlockHeadersCache.deinit();
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache, indexBlockHeadersCache);
     defer lookup.deinit(io, alloc);
 
     var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, &[_][]const u8{keyValue});

@@ -14,7 +14,7 @@ const strings = @import("../../../stds/strings.zig");
 const LookupTable = @This();
 
 const memBlocksCacheKey = struct { tableAddr: usize, offset: u64 };
-fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
+fn cacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
     var subKey: [8]u8 = undefined;
     subKey = @bitCast(key.tableAddr);
     @memcpy(buf[0..8], subKey[0..]);
@@ -22,12 +22,21 @@ fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
     @memcpy(buf[8..16], subKey[0..]);
 }
 
+pub const CachedBlockHeaders = struct {
+    indexBuf: []u8,
+    headers: []BlockHeader,
+
+    pub fn deinit(self: CachedBlockHeaders, alloc: Allocator) void {
+        alloc.free(self.headers);
+        alloc.free(self.indexBuf);
+    }
+};
+
 table: *Table,
 memBlocksCache: *Cache(*MemBlock),
+indexBlockHeadersCache: *Cache(CachedBlockHeaders),
 longAllocator: Allocator,
 maxMemBlockSize: u32,
-// blockHeadersOwned always keeps the base allocation we must free.
-blockHeadersOwned: []BlockHeader,
 
 // state
 
@@ -47,17 +56,23 @@ memBlock: ?*MemBlock,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock)) LookupTable {
+pub fn init(
+    longAlloc: Allocator,
+    table: *Table,
+    maxMemBlockSize: u32,
+    memBlocksCache: *Cache(*MemBlock),
+    indexBlockHeadersCache: *Cache(CachedBlockHeaders),
+) LookupTable {
     return .{
         .table = table,
-        .memBlocksCache = cache,
+        .memBlocksCache = memBlocksCache,
+        .indexBlockHeadersCache = indexBlockHeadersCache,
         .longAllocator = longAlloc,
         .maxMemBlockSize = maxMemBlockSize,
 
         .current = "",
         .isRead = false,
         .blockHeaders = &.{},
-        .blockHeadersOwned = &.{},
         .entriesBlock = .{},
         .metaIndexRecords = &.{},
         .memBlock = null,
@@ -66,9 +81,8 @@ pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *C
 }
 
 pub fn deinit(self: *LookupTable, alloc: Allocator) void {
-    // mem blocks ownership belong to cache, don't deinit it
+    // cached mem blocks and block headers are owned by their caches
     self.memBlock = null;
-    if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
 
     self.indexBuf.deinit(alloc);
     self.compressedIndexBuf.deinit(alloc);
@@ -175,10 +189,9 @@ fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) 
 }
 
 fn resetState(self: *LookupTable, alloc: Allocator) void {
+    _ = alloc;
     self.current = "";
     self.blockHeaders = &.{};
-    if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
-    self.blockHeadersOwned = &.{};
     self.indexBuf.clearRetainingCapacity();
 
     self.memBlock = null;
@@ -273,25 +286,36 @@ fn nextBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     const metaIndex = self.metaIndexRecords[0];
     self.metaIndexRecords = self.metaIndexRecords[1..];
 
-    // TODO: cache block headers
-
-    const blockHeadersOwned = try self.readBlockHeaders(io, alloc, metaIndex);
-
-    // always free the previous decode batch before loading the next one,
-    // only after readBlockHeaders went successful
-    if (self.blockHeadersOwned.len > 0) {
-        alloc.free(self.blockHeadersOwned);
-        self.blockHeadersOwned = &.{};
-        self.blockHeaders = &.{};
-    }
-    self.blockHeadersOwned = blockHeadersOwned;
-    self.blockHeaders = self.blockHeadersOwned;
+    const cached = try self.getBlockHeaders(io, alloc, metaIndex);
+    self.blockHeaders = cached.headers;
     return true;
 }
 
-fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: MetaIndex) ![]BlockHeader {
+fn getBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: MetaIndex) !CachedBlockHeaders {
+    var keyBuf: [16]u8 = undefined;
+    cacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = metaIndex.indexBlockOffset });
+
+    const cachedBlockHeaders = self.indexBlockHeadersCache.get(io, keyBuf[0..]);
+    if (cachedBlockHeaders) |cached| {
+        return cached;
+    }
+
+    const cacheAlloc = self.indexBlockHeadersCache.alloc;
+    const blockHeaders = try self.readBlockHeaders(alloc, cacheAlloc, io, metaIndex);
+    errdefer blockHeaders.deinit(cacheAlloc);
+    try self.indexBlockHeadersCache.set(io, keyBuf[0..], blockHeaders);
+    return blockHeaders;
+}
+
+fn readBlockHeaders(
+    self: *LookupTable,
+    scratchAlloc: Allocator,
+    cacheAlloc: Allocator,
+    io: Io,
+    metaIndex: MetaIndex,
+) !CachedBlockHeaders {
     self.compressedIndexBuf.clearRetainingCapacity();
-    try self.compressedIndexBuf.ensureUnusedCapacity(alloc, metaIndex.indexBlockSize);
+    try self.compressedIndexBuf.ensureUnusedCapacity(scratchAlloc, metaIndex.indexBlockSize);
 
     const compressedIndex = self.compressedIndexBuf.unusedCapacitySlice()[0..metaIndex.indexBlockSize];
     const compressedLen = try self.table.readIndex(io, compressedIndex, metaIndex.indexBlockOffset);
@@ -300,16 +324,19 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
 
     self.indexBuf.clearRetainingCapacity();
     const indexSize = try encoding.getFrameContentSize(self.compressedIndexBuf.items);
-    try self.indexBuf.ensureUnusedCapacity(alloc, indexSize);
+    try self.indexBuf.ensureUnusedCapacity(scratchAlloc, indexSize);
     const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), self.compressedIndexBuf.items);
     self.indexBuf.items.len = n;
 
-    return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
+    const indexBuf = try cacheAlloc.dupe(u8, self.indexBuf.items);
+    errdefer cacheAlloc.free(indexBuf);
+    const headers = try BlockHeader.decodeMany(cacheAlloc, indexBuf, metaIndex.blockHeadersCount);
+    return .{ .indexBuf = indexBuf, .headers = headers };
 }
 
 fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
     var keyBuf: [16]u8 = undefined;
-    memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
+    cacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
 
     const cachedMemBlock = self.memBlocksCache.get(io, keyBuf[0..]);
     if (cachedMemBlock) |cached| {
@@ -435,9 +462,9 @@ test "lowerBoundBySuffix" {
     }
 }
 
-test "memBlocksCacheKeyBuf" {
+test "cacheKeyBuf" {
     var buf: [16]u8 = undefined;
-    memBlocksCacheKeyBuf(&buf, .{ .tableAddr = 42, .offset = 53 });
+    cacheKeyBuf(&buf, .{ .tableAddr = 42, .offset = 53 });
 
     const expected: [16]u8 = .{ 42, 0, 0, 0, 0, 0, 0, 0, 53, 0, 0, 0, 0, 0, 0, 0 };
     try std.testing.expectEqualStrings(&expected, &buf);
