@@ -17,6 +17,7 @@ const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
+const maxBlockSize = @import("store/data/merge.zig").maxBlockSize;
 const Runtime = @import("Runtime.zig");
 
 const sleepOrStop = @import("stds/async.zig").sleepOrStop;
@@ -62,7 +63,7 @@ pub const DataShard = struct {
     }
 
     // threshold as 90% of a max block size
-    const flushSizeThreshold = 9 * (MemTable.maxBlockSize / 10);
+    const flushSizeThreshold = 9 * (maxBlockSize / 10);
     // TODO: make size limit configurable
     // TODO: this threshold is used in processor too,
     // make it configurable and extract from both

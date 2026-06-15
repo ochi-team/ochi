@@ -23,6 +23,8 @@ const BlockReader = @import("../data/BlockReader.zig");
 const Unpacker = @import("../data/Unpacker.zig");
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 
+pub const maxBlockSize = 2 * 1024 * 1024;
+
 // TODO: rename this crap
 pub fn mergeData(
     io: Io,
@@ -150,7 +152,7 @@ pub const StreamMerger = struct {
             try self.flushStream(io, alloc, blockWriter, writer);
             self.sid = blockData.sid;
 
-            if (blockData.uncompressedSizeBytes >= MemTable.maxBlockSize) {
+            if (blockData.uncompressedSizeBytes >= maxBlockSize) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
                 try self.decodeLines(io, alloc, blockData);
@@ -165,7 +167,7 @@ pub const StreamMerger = struct {
                 try self.decodeLines(io, alloc, blockData);
                 self.totalKeys = totalKeys;
             }
-        } else if (self.size >= MemTable.maxBlockSize) {
+        } else if (self.size >= maxBlockSize) {
             try self.flushStream(io, alloc, blockWriter, writer);
             try blockWriter.writeData(io, alloc, blockData, writer);
         } else {
@@ -202,7 +204,7 @@ pub const StreamMerger = struct {
         mergeLines(&self.mergeBufferLines, self.lines.items[0..len], self.lines.items[len..]);
         std.mem.swap(std.ArrayList(Line), &self.mergeBufferLines, &self.lines);
 
-        if (self.size >= MemTable.maxBlockSize) {
+        if (self.size >= maxBlockSize) {
             try self.flushStream(io, alloc, blockWriter, writer);
         }
     }

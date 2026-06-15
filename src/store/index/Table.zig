@@ -98,10 +98,6 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
 }
 
 pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
-    // TODO: no point using allocator, just join them to a buffer
-    var fba = std.heap.stackFallback(512, alloc);
-    const fbaAlloc = fba.get();
-
     var parsedTableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer parsedTableHeader.deinit(alloc);
 
@@ -109,24 +105,26 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
-    defer fbaAlloc.free(indexPath);
-    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.entries });
-    defer fbaAlloc.free(entriesPath);
-    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
-    defer fbaAlloc.free(lensPath);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
-    var indexFile = try Dir.openFileAbsolute(io, indexPath, .{});
+    try std.fs.path.fmtJoin(&.{ path, filenames.index }).format(&pathWriter);
+    var indexFile = try Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
     errdefer indexFile.close(io);
     const indexSize = (try indexFile.stat(io)).size;
+    pathWriter.end = 0;
 
-    var entriesFile = try Dir.openFileAbsolute(io, entriesPath, .{});
+    try std.fs.path.fmtJoin(&.{ path, filenames.entries }).format(&pathWriter);
+    var entriesFile = try Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
     errdefer entriesFile.close(io);
     const entriesSize = (try entriesFile.stat(io)).size;
+    pathWriter.end = 0;
 
-    var lensFile = try Dir.openFileAbsolute(io, lensPath, .{});
+    try std.fs.path.fmtJoin(&.{ path, filenames.lens }).format(&pathWriter);
+    var lensFile = try Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
     errdefer lensFile.close(io);
     const lensSize = (try lensFile.stat(io)).size;
+
     const disk = try alloc.create(DiskTable);
     errdefer alloc.destroy(disk);
     disk.* = .{
