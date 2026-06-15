@@ -6,20 +6,11 @@ const builtin = @import("builtin");
 const Mutex = std.Io.Mutex;
 
 // TODO: make it support comptime meter misses/total
+// TODO: redesign the cache, it feels Node is too large to hold especially for small key
+// as 64 bytes it's doubling the size
 // TODO: try a simple TTL cache if it consumes much less memory and gives enough miss/total ratio
 // TODO: define several comptime buckets up to cpus count to reduce lock contention
 // TODO: make a mechanic to clean on closing a table/partition
-//
-// 1. DONE make Ref as a value
-// 2. remove fields from Node: key, list, prev
-// 3. make next as u16
-// 4. remove getOrElse
-// 5. remove valueOwned
-// 6. make prependActive only move the node to head, prepend head to the next of the Node
-// 7. make put return void
-// 8. skip alloc.destroy(node), instead allocate a buffer of nodes and use them
-// 9. DONE remove Iterator
-// 10. remove tail from node and cache
 pub fn Cache(comptime V: type) type {
     return struct {
         const Self = @This();
@@ -135,49 +126,6 @@ pub fn Cache(comptime V: type) type {
             gop.value_ptr.* = node;
             self.prependActive(node);
             return value;
-        }
-
-        pub fn getOrElse(
-            self: *Self,
-            io: Io,
-            key: []const u8,
-            ctx: anytype,
-            comptime action: *const fn (@TypeOf(ctx)) anyerror!V,
-        ) !GetOrElseRes {
-            self.mx.lockUncancelable(io);
-            defer self.mx.unlock(io);
-
-            if (self.map.get(key)) |node| {
-                self.promote(node);
-                return .{
-                    .value = node.value,
-                    .elseHit = false,
-                };
-            }
-
-            const k = try self.alloc.dupe(u8, key);
-            errdefer self.alloc.free(k);
-
-            const value = try action(ctx);
-            var valueOwned = true;
-            errdefer if (valueOwned and V != void) value.deinit(self.alloc);
-
-            const node = try self.alloc.create(Node);
-            node.* = .{
-                .key = k,
-                .value = value,
-                .list = .active,
-            };
-            valueOwned = false;
-            errdefer node.release(self.alloc);
-
-            try self.map.put(k, node);
-            self.prependActive(node);
-
-            return .{
-                .value = value,
-                .elseHit = true,
-            };
         }
 
         pub fn getOrElsePinned(
@@ -423,23 +371,25 @@ test "Cache.getOrElse creates non-void value only on miss" {
     defer cache.deinit();
 
     var calls: usize = 0;
-    const first = try cache.getOrElse(io, "same-key", CreateCtx{
+    const first = try cache.getOrElsePinned(io, "same-key", CreateCtx{
         .alloc = alloc,
         .val = 1,
         .calls = &calls,
     }, CreateCtx.run);
+    defer first.pinned.release();
 
     // the vaue already there, so val 2 is ignored
-    const second = try cache.getOrElse(io, "same-key", CreateCtx{
+    const second = try cache.getOrElsePinned(io, "same-key", CreateCtx{
         .alloc = alloc,
         .val = 2,
         .calls = &calls,
     }, CreateCtx.run);
+    defer second.pinned.release();
 
-    try testing.expectEqualDeep(ValueCache.GetOrElseRes{ .value = first.value, .elseHit = true }, first);
-    try testing.expectEqualDeep(ValueCache.GetOrElseRes{ .value = first.value, .elseHit = false }, second);
+    try testing.expectEqualDeep(ValueCache.GetOrElsePinnedRes{ .pinned = first.pinned, .elseHit = true }, first);
+    try testing.expectEqualDeep(ValueCache.GetOrElsePinnedRes{ .pinned = first.pinned, .elseHit = false }, second);
     try testing.expectEqual(1, calls);
-    try testing.expectEqual(1, second.value.val);
+    try testing.expectEqual(1, second.pinned.value().val);
 }
 
 test "Cache.clean evicts shadow entries and keeps recently used entries" {
@@ -457,29 +407,19 @@ test "Cache.clean evicts shadow entries and keeps recently used entries" {
     }.promote;
     const p2 = struct {
         fn promote(c: *Cache(void)) anyerror!bool {
-            const res = try c.getOrElse(io, "a", {}, C.fakeElse);
-            // means the value was discovered
-            return res.elseHit == false;
-        }
-    }.promote;
-    const p3 = struct {
-        fn promote(c: *Cache(void)) anyerror!bool {
             var res = try c.getOrElsePinned(io, "a", {}, C.fakeElse);
             // means the value was discovered
             res.pinned.release();
             return res.elseHit == false;
         }
     }.promote;
-    const p4 = struct {
+    const p3 = struct {
         fn promote(c: *Cache(void)) anyerror!bool {
             const res = c.get(io, "a");
             return res != null;
         }
     }.promote;
-    const promoters = [_]*const fn (*Cache(void)) anyerror!bool{ p1, p2, p3, p4 };
-
-    const len = 4;
-    try testing.expectEqual(len, promoters.len);
+    const promoters = [_]*const fn (*Cache(void)) anyerror!bool{ p1, p2, p3 };
 
     for (promoters) |promote| {
         const cache = try Cache(void).init(alloc);
