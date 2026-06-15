@@ -33,6 +33,8 @@ pub fn mergeData(
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
+    defer writer.close(io);
+
     var merger = try StreamMerger.init(io, alloc, readers);
     defer merger.deinit(alloc);
 

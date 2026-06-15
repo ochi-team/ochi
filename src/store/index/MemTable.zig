@@ -195,13 +195,14 @@ pub fn mergeBlocks(
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
+    defer writer.close(io, alloc) catch |err| {
+        std.debug.print("failed to close index block writer: {s}", .{@errorName(err)});
+    };
+
     var merger = try BlockMerger.init(io, alloc, readers);
     defer merger.deinit(alloc);
 
     const tableHeader = try merger.merge(io, alloc, writer, stopped);
-    // TODO: test it closes files on failures and doesn't leak descriptors
-    try writer.close(io, alloc);
-
     return tableHeader;
 }
 
