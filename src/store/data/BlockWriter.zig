@@ -194,6 +194,9 @@ pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *Ta
     try self.writeIndexBlockHeaders(io, allocator, tableWriter);
 
     th.compressedSize = tableWriter.size();
+
+    // TODO: test it closes files on failures and doesn't leak descriptors
+    self.close();
 }
 
 fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter) !void {

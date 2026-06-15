@@ -473,7 +473,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         errdefer dstMemTable.deinit(alloc);
         const stopped: ?*std.atomic.Value(bool) = null;
         const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
-        defer streamWriter.deinit(alloc);
+        defer streamWriter.deinit(io, alloc);
         dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
 
         try std.testing.expect(dstMemTable.indexBuf.items.len > 0);
@@ -582,7 +582,7 @@ test "mergeData multi tenant" {
 
     const stopped: ?*std.atomic.Value(bool) = null;
     const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
-    defer streamWriter.deinit(alloc);
+    defer streamWriter.deinit(io, alloc);
     dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
 
     try std.testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);

@@ -33,8 +33,7 @@ pub const StreamDestination = union(Tag) {
         return .{ .file = .{ .file = file, .len = initialLen, .buf = buf } };
     }
 
-    pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
-        _ = allocator;
+    pub fn deinit(self: *Self, io: Io) void {
         switch (self.*) {
             .buffer => {},
             .file => |*f| {
@@ -117,7 +116,7 @@ test "StreamDestination buffer destination" {
     var buf = try std.ArrayList(u8).initCapacity(alloc, 8);
     defer buf.deinit(alloc);
     var dst = StreamDestination.initBuffer(&buf);
-    defer dst.deinit(io, alloc);
+    defer dst.deinit(io);
 
     try dst.appendSlice(io, alloc, "abc");
     try dst.appendSlice(io, alloc, "1234");
@@ -145,7 +144,7 @@ test "StreamDestination file destination" {
     var buf = std.ArrayList(u8).empty;
     defer buf.deinit(alloc);
     var dst = try StreamDestination.initFile(io, file, &buf);
-    defer dst.deinit(io, alloc);
+    defer dst.deinit(io);
 
     const res = "hello-world";
     try dst.appendSlice(io, alloc, "hello");

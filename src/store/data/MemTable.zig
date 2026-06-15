@@ -145,7 +145,7 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
     var blockWriter = try BlockWriter.init(allocator);
     defer blockWriter.deinit(allocator);
     const streamWriter = try TableWriter.initMem(allocator, self);
-    defer streamWriter.deinit(allocator);
+    defer streamWriter.deinit(io, allocator);
 
     var streamI: usize = 0;
     var blockSize: u32 = 0;

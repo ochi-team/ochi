@@ -190,6 +190,7 @@ pub fn mergeBlocks(
     defer merger.deinit(alloc);
 
     const tableHeader = try merger.merge(io, alloc, writer, stopped);
+    // TODO: test it closes files on failures and doesn't leak descriptors
     try writer.close(io, alloc);
 
     return tableHeader;

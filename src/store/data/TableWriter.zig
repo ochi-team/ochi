@@ -239,7 +239,7 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     return w;
 }
 
-pub fn deinit(self: *TableWriter, allocator: Allocator) void {
+pub fn deinit(self: *TableWriter, io: Io, allocator: Allocator) void {
     self.bloomValuesList.deinit(allocator);
     self.bloomTokensList.deinit(allocator);
 
@@ -258,6 +258,28 @@ pub fn deinit(self: *TableWriter, allocator: Allocator) void {
     self.timestampsEncoder.deinit(allocator);
 
     allocator.destroy(self);
+}
+
+pub fn close(self: *TableWriter, io: Io) void {
+    self.timestampsDst.deinit(io);
+    self.indexDst.deinit(io);
+    self.metaindexDst.deinit(io);
+
+    self.columnsHeaderDst.deinit(io);
+    self.columnsHeaderIndexDst.deinit(io);
+
+    self.columnKeysDst.deinit(io);
+    self.columnIdxsDst.deinit(io);
+
+    self.messageBloomValuesDst.deinit(io);
+    self.messageBloomTokensDst.deinit(io);
+
+    for (self.bloomValuesList.items) |*dst| {
+        dst.deinit(io);
+    }
+    for (self.bloomTokensList.items) |*dst| {
+        dst.deinit(io);
+    }
 }
 
 /// size gives the amount of all the buffers bytes,
@@ -541,9 +563,9 @@ fn getBloomBufferIndex(self: *TableWriter, io: Io, alloc: Allocator, key: []cons
             .buffer => std.debug.panic("buffer blooms must have been pre-created in advance", .{}),
         };
         var valuesDst = try createBloomValuesFile(io, &pathBuf, self.path, scratchBuf, colI);
-        errdefer valuesDst.deinit(io, alloc);
+        errdefer valuesDst.deinit(io);
         const tokensDst = try createBloomTokensValues(io, &pathBuf, self.path, scratchBuf, colI);
-        errdefer tokensDst.deinit(io, alloc);
+        errdefer tokensDst.deinit(io);
         self.bloomValuesList.appendAssumeCapacity(valuesDst);
         self.bloomTokensList.appendAssumeCapacity(tokensDst);
     }
@@ -627,6 +649,7 @@ const TableReader = @import("TableReader.zig");
 
 test "writeBlock and writeData produce identical buffer output" {
     const alloc = testing.allocator;
+    // TODO: intrument custom io to catch resource leaks, e.g. not closed files
     const io = std.testing.io;
 
     var fields1 = [_]Field{
@@ -653,7 +676,7 @@ test "writeBlock and writeData produce identical buffer output" {
     defer table1.close(io);
 
     const writer1 = try TableWriter.initMem(alloc, memTable1);
-    defer writer1.deinit(alloc);
+    defer writer1.deinit(io, alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);
@@ -680,7 +703,7 @@ test "writeBlock and writeData produce identical buffer output" {
     const memTable2 = try MemTable.init(alloc);
     defer memTable2.deinit(alloc);
     const writer2 = try TableWriter.initMem(alloc, memTable2);
-    defer writer2.deinit(alloc);
+    defer writer2.deinit(io, alloc);
 
     var bh2 = BlockHeader.initFromData(&bd, sid);
     try writer2.writeData(io, alloc, &bh2, &bd);
@@ -735,7 +758,7 @@ test "writeBlock with many columns does not overflow columns header index buffer
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
     const writer = try TableWriter.initMem(alloc, memTable);
-    defer writer.deinit(alloc);
+    defer writer.deinit(io, alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);

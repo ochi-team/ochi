@@ -84,6 +84,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache
 
     try fs.createDirAssert(io, path);
 
+    // TODO: remove fba here, it's useless
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
 
