@@ -331,11 +331,7 @@ fn createTestReaders(
     }
     for (blocksData) |blockData| {
         const block = try createTestMemBlock(alloc, blockData, maxIndexBlockSize);
-        const reader = BlockReader.initFromMemBlock(alloc, block) catch |err| {
-            block.deinit(alloc);
-            return err;
-        };
-        reader.ownsBlock = true;
+        const reader = try BlockReader.initFromMovedMemBlock(alloc, block);
         errdefer reader.deinit(alloc);
         try readers.append(alloc, reader);
     }
@@ -767,11 +763,9 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     const rightItems = [_][]const u8{ "b1", "d1", "f1" };
     const expected = [_][]const u8{ "a1", "b1", "c1", "d1", "e1", "f1" };
 
-    var leftBlock = try createTestMemBlock(alloc, &leftItems, maxIndexBlockSize);
-    defer leftBlock.deinit(alloc);
+    const leftBlock = try createTestMemBlock(alloc, &leftItems, maxIndexBlockSize);
 
-    var rightBlock = try createTestMemBlock(alloc, &rightItems, maxIndexBlockSize);
-    defer rightBlock.deinit(alloc);
+    const rightBlock = try createTestMemBlock(alloc, &rightItems, maxIndexBlockSize);
 
     // memTable is defined out of the block to ensure the source blocks are gone
     const memTable = blk: {

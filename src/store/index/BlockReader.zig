@@ -5,9 +5,6 @@ const builtin = @import("builtin");
 
 const encoding = @import("encoding");
 
-const filenames = @import("../../filenames.zig");
-const fs = @import("../../fs.zig");
-
 const MemBlock = @import("MemBlock.zig");
 const Table = @import("Table.zig");
 const MemTable = @import("MemTable.zig");
@@ -19,9 +16,6 @@ const BlockHeader = @import("BlockHeader.zig");
 const BlockReader = @This();
 
 block: *MemBlock,
-// TODO: this is not ok, we must make a better ownership model,
-// it must take it from outside
-ownsBlock: bool = false,
 // TODO: no idea yet how to avoid it
 ownsStorage: bool = false,
 tableHeader: TableHeader,
@@ -58,9 +52,11 @@ blocksRead: usize = 0,
 // number of items read
 itemsRead: usize = 0,
 
-firstItemChecked: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
+firstItemChecked: bool = false,
 
-pub fn initFromMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
+/// Takes ownership of block.
+pub fn initFromMovedMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
+    errdefer block.deinit(alloc);
     std.debug.assert(block.memEntries.items.len > 0);
     block.sortData();
 
@@ -73,7 +69,6 @@ pub fn initFromMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
     const r = try alloc.create(BlockReader);
     r.* = .{
         .block = block,
-        .ownsBlock = false,
         .ownsStorage = false,
         .tableHeader = .{},
         .currentI = 0,
@@ -109,7 +104,6 @@ pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
     const r = try alloc.create(BlockReader);
     r.* = .{
         .block = block,
-        .ownsBlock = true,
         .ownsStorage = false,
         .metaIndexRecords = metaIndexRecords.records,
         .tableHeader = memTable.tableHeader,
@@ -152,7 +146,6 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockR
     errdefer alloc.destroy(r);
     r.* = .{
         .block = block,
-        .ownsBlock = true,
         .ownsStorage = true,
         .metaIndexRecords = metaIndex.records,
         .tableHeader = tableHeader,
@@ -167,9 +160,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockR
 }
 
 pub fn deinit(self: *BlockReader, alloc: Allocator) void {
-    if (self.ownsBlock) {
-        self.block.deinit(alloc);
-    }
+    self.block.deinit(alloc);
 
     if (self.ownsStorage) self.tableHeader.deinit(alloc);
 
@@ -397,15 +388,12 @@ test "BlockReader.blockReaderLessThan compares items correctly" {
     const items2 = [_][]const u8{ "apricot", "blueberry", "date" };
 
     const block1 = try createTestMemBlock(alloc, &items1);
-    defer block1.deinit(alloc);
-
     const block2 = try createTestMemBlock(alloc, &items2);
-    defer block2.deinit(alloc);
 
-    var reader1 = try BlockReader.initFromMemBlock(alloc, block1);
+    var reader1 = try BlockReader.initFromMovedMemBlock(alloc, block1);
     defer reader1.deinit(alloc);
 
-    var reader2 = try BlockReader.initFromMemBlock(alloc, block2);
+    var reader2 = try BlockReader.initFromMovedMemBlock(alloc, block2);
     defer reader2.deinit(alloc);
 
     // After sorting, "apple" < "apricot"
@@ -421,9 +409,8 @@ test "BlockReader.current returns correct item at currentI" {
     const items = [_][]const u8{ "first", "second", "third" };
 
     const block = try createTestMemBlock(alloc, &items);
-    defer block.deinit(alloc);
 
-    var reader = try BlockReader.initFromMemBlock(alloc, block);
+    var reader = try BlockReader.initFromMovedMemBlock(alloc, block);
     defer reader.deinit(alloc);
 
     // After sorting, test that current() returns the item at currentI
@@ -552,13 +539,11 @@ test "BlockReader.initFromMemTable reads items" {
     for (cases) |case| {
         const block1_items_for_case = if (case.useMultiBlock) block1_items else case.items;
         const block1 = try createTestMemBlockWithMax(alloc, block1_items_for_case, case.maxMemBlockSize);
-        defer block1.deinit(alloc);
 
         const memTable: *MemTable = blk: {
             var block2: ?*MemBlock = null;
             if (case.useMultiBlock) {
                 block2 = try createTestMemBlockWithMax(alloc, block2_items, itemsTotalSize(block2_items) + 16);
-                defer block2.?.deinit(alloc);
                 var blocks = [_]*MemBlock{ block1, block2.? };
                 break :blk try MemTable.init(io, alloc, blocks[0..]);
             } else {
@@ -607,7 +592,6 @@ test "BlockReader.next returns InvalidIndexBlockRange on empty index buffer with
     };
 
     const block = try createTestMemBlock(alloc, &items);
-    defer block.deinit(alloc);
 
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(io, alloc, &blocks);
@@ -641,7 +625,6 @@ test "BlockReader.initFromDiskTable decodes blocks without null crash" {
     const expected = [_][]const u8{ "alpha", "beta", "delta" };
 
     const block = try createTestMemBlock(alloc, &items);
-    defer block.deinit(alloc);
 
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(io, alloc, &blocks);

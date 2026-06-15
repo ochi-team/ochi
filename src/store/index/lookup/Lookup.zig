@@ -224,7 +224,6 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
         .maxMemBlockSize = total + 16,
         .blocksCountHint = items.len,
     });
-    defer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
         try testing.expect(ok);
@@ -271,8 +270,10 @@ fn createMemTableFromItemsInBlocks(
         i = end;
     }
 
-    const memTable = try MemTable.init(io, alloc, blocks.items);
+    const movedBlocks = blocks.items;
+    const memTable = try MemTable.init(io, alloc, movedBlocks);
     errdefer memTable.deinit(alloc);
+    blocks.items.len = 0;
 
     return Table.fromMem(alloc, memTable);
 }

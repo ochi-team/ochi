@@ -356,7 +356,6 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
         .maxMemBlockSize = total + 16,
         .blocksCountHint = items.len,
     });
-    defer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
         try testing.expect(ok);

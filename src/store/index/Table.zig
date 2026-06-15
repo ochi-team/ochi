@@ -406,8 +406,7 @@ test "fromMem creates proper table from mem table with populated data" {
     const io = testing.io;
 
     const items = [_][]const u8{ "item-c", "item-a", "item-b" };
-    var block = try createTestMemBlock(alloc, &items);
-    defer block.deinit(alloc);
+    const block = try createTestMemBlock(alloc, &items);
 
     var blocks = [_]*MemBlock{block};
     const memTable = try MemTable.init(io, alloc, blocks[0..]);

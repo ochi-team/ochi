@@ -43,6 +43,11 @@ pub fn empty(alloc: Allocator) !*MemTable {
 
 // TODO: log mem tables buffers size on init
 pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
+    var movedBlocks: usize = 0;
+    errdefer {
+        for (blocks[movedBlocks..]) |block| block.deinit(alloc);
+    }
+
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocks.len);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
@@ -54,6 +59,9 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     if (blocks.len == 1) {
         // nothing to merge
         const b = blocks[0];
+        movedBlocks = 1;
+        // we don't move it's ownership, so deinit the block here
+        defer b.deinit(alloc);
 
         const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         try t.setup(alloc, b, flushAtUs);
@@ -62,7 +70,8 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
     }
 
     for (0..blocks.len) |i| {
-        const reader = try BlockReader.initFromMemBlock(alloc, blocks[i]);
+        movedBlocks = i + 1;
+        const reader = try BlockReader.initFromMovedMemBlock(alloc, blocks[i]);
         readers.appendAssumeCapacity(reader);
     }
 

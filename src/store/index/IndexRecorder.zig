@@ -263,7 +263,8 @@ fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlo
 
 fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
     std.debug.assert(blocks.len > 0);
-    defer for (blocks) |block| block.deinit(alloc);
+    var tail = blocks[0..];
+    errdefer for (tail) |block| block.deinit(alloc);
 
     // enough for 256 tables, which a way beyond the expected amount
     var fba = std.heap.stackFallback(2048, alloc);
@@ -276,7 +277,6 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
         for (memTables.items) |memTable| memTable.close(io);
     }
 
-    var tail = blocks[0..];
     // TODO: benchmark parallel mem table creation
     while (tail.len > 0) {
         const offset = @min(blocksInMemTable, tail.len);
@@ -834,7 +834,6 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
         .maxMemBlockSize = total + 16,
         .blocksCountHint = items.len,
     });
-    defer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
         try testing.expect(ok);
