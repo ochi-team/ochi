@@ -33,9 +33,6 @@ pub const AppConfig = struct {
     /// must be cache friendly, depending on used CPU model must be changed according its L1 cache size
     /// TODO: add a max clients connections
     maxIndexMemBlockSize: u32 = 32 * 1024,
-    // time interval in microseconds to flush mem tables to disk
-    // TODO: make different intervals for index and data
-    flushIntervalUs: i64 = 5 * std.time.us_per_s,
     // max portion of RAM to use for caching, between 0 and 1
     maxCachePortion: f64 = 0.5,
 
@@ -65,7 +62,6 @@ pub fn getConf() Conf {
 
 pub fn default(_: Allocator) Conf {
     conf = .{};
-    std.debug.assert(conf.app.flushIntervalUs >= std.time.us_per_s);
     return conf;
 }
 

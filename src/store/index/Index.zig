@@ -30,7 +30,7 @@ pub const IndexKind = enum(u8) {
 
 comptime {
     if (@typeInfo(IndexKind).@"enum".fields.len != 3) {
-        @compileError("fix IndexKind usage in IndexTable.mergeTagsRecords");
+        @compileError("fix IndexKind usage in IndexTable.mergeTagsRecords if you update the enum");
     }
 }
 

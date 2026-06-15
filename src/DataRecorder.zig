@@ -27,14 +27,14 @@ const merge = @import("store/table/merge.zig");
 const cap = @import("store/table/cap.zig");
 const swap = @import("store/table/swap.zig");
 
+const Consts = @import("Consts.zig");
+
 const maxMemTables = 24;
 const merger = merge.Merger(*Table, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
 
-// TODO: move flush interval to config
-fn setFlushTime(io: Io) i64 {
-    // now + 1s
-    return Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
+fn getFlushTime(io: Io) i64 {
+    return Io.Timestamp.now(io, .real).toMicroseconds() + Consts.dataFlushIntervalNs;
 }
 
 pub const DataRecorder = @This();
@@ -91,7 +91,7 @@ pub const DataShard = struct {
 
         sem.post(io);
 
-        memTable.flushAtUs = setFlushTime(io);
+        memTable.flushAtUs = getFlushTime(io);
         return Table.fromMem(alloc, memTable);
     }
 };
@@ -117,7 +117,6 @@ g: Io.Group = .init,
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
 stopped: std.atomic.Value(bool) = .init(true),
-// TODO: make mergeIdx and tmp file number as thread local
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
@@ -638,7 +637,7 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
     if (shard.mustFlush()) {
         try self.flushShard(io, alloc, shard);
     } else if (shard.flushAtUs == null) {
-        shard.flushAtUs = setFlushTime(io);
+        shard.flushAtUs = getFlushTime(io);
     }
 }
 
