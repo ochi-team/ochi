@@ -610,9 +610,9 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         try testing.expectEqualStrings("tenant-a-stream-0002", actual.?);
     }
 
-    var it = cache.map.iterator();
+    var it = cache.iterator();
     while (it.next()) |entry| {
-        const block = entry.value_ptr.*;
+        const block = entry.value;
         const prefix = block.prefix;
         const bufStart = @intFromPtr(block.buf.items.ptr);
         const bufEnd = bufStart + block.buf.items.len;
@@ -624,9 +624,9 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     }
 
     const cachedKey = blk: {
-        var keyIt = cache.map.iterator();
+        var keyIt = cache.iterator();
         const entry = keyIt.next().?;
-        break :blk try alloc.dupe(u8, entry.key_ptr.*);
+        break :blk try alloc.dupe(u8, entry.key);
     };
     defer alloc.free(cachedKey);
 

@@ -5,26 +5,101 @@ const Thread = std.Thread;
 const builtin = @import("builtin");
 const Mutex = std.Io.Mutex;
 
-// TODO: it's complete fake,
-// we must implemented LRU or something
 // TODO: make it support comptime meter misses/total
 // TODO: define several comptime buckets up to cpus count to reduce lock contention
-// TODO: make a mechanic to remove cache content on closing a table/partition
+// TODO: make a mechanic to clean on closing a table/partition
+//
+// 1. make Ref as a value
+// 2. remove fields from Node: key, list, prev
+// 3. make next as u16
+// 4. remove getOrElse
+// 5. remove valueOwned
+// 6. make prependActive only move the node to head, prepend head to the next of the Node
+// 7. make put return void
+// 8. skip alloc.destroy(node), instead allocate a buffer of nodes and use them
+// 9. remove Iterator
+// 10. remove tail from node and cache
 pub fn Cache(comptime V: type) type {
     return struct {
         const Self = @This();
-        // cache data itself
-        map: std.StringHashMap(V),
+
+        const ListKind = enum { active, shadow };
+
+        const Ref = struct {
+            value: V,
+            refCounter: std.atomic.Value(u32) = .init(1),
+
+            fn init(alloc: Allocator, value: V) !*@This() {
+                const ref = try alloc.create(@This());
+                ref.* = .{ .value = value };
+                return ref;
+            }
+
+            fn retain(self: *@This()) void {
+                _ = self.refCounter.fetchAdd(1, .acquire);
+            }
+
+            fn release(self: *@This(), alloc: Allocator) void {
+                const prev = self.refCounter.fetchSub(1, .acq_rel);
+                std.debug.assert(prev > 0);
+
+                if (prev != 1) return;
+
+                if (V != void) self.value.deinit(alloc);
+                alloc.destroy(self);
+            }
+        };
+
+        const Node = struct {
+            key: []const u8,
+            ref: *Ref,
+            list: ListKind,
+            prev: ?*@This() = null,
+            next: ?*@This() = null,
+        };
+
+        pub const Pinned = struct {
+            ref: *Ref,
+            alloc: Allocator,
+
+            pub fn release(self: *@This()) void {
+                self.ref.release(self.alloc);
+                self.* = undefined;
+            }
+        };
+
+        map: std.StringHashMap(*Node),
         alloc: Allocator,
         mx: Mutex = .init,
+        activeHead: ?*Node = null,
+        activeTail: ?*Node = null,
+        shadowHead: ?*Node = null,
+        shadowTail: ?*Node = null,
 
         pub const GetOrElseRes = struct {
             value: V,
             elseHit: bool,
         };
+        pub const GetOrElsePinnedRes = struct {
+            pinned: Pinned,
+            elseHit: bool,
+        };
+        pub const Entry = struct {
+            key: []const u8,
+            value: V,
+        };
+        pub const Iterator = struct {
+            inner: std.StringHashMap(*Node).Iterator,
+
+            pub fn next(self: *@This()) ?Entry {
+                const entry = self.inner.next() orelse return null;
+                const node = entry.value_ptr.*;
+                return .{ .key = node.key, .value = node.ref.value };
+            }
+        };
 
         pub fn init(alloc: Allocator) !*Self {
-            const map = std.StringHashMap(V).init(alloc);
+            const map = std.StringHashMap(*Node).init(alloc);
             const c = try alloc.create(Self);
             c.* = .{
                 .map = map,
@@ -36,8 +111,10 @@ pub fn Cache(comptime V: type) type {
         pub fn deinit(self: *Self) void {
             var it = self.map.iterator();
             while (it.next()) |e| {
-                self.alloc.free(e.key_ptr.*);
-                if (V != void) e.value_ptr.*.deinit(self.alloc);
+                const node = e.value_ptr.*;
+                self.alloc.free(node.key);
+                node.ref.release(self.alloc);
+                self.alloc.destroy(node);
             }
             self.map.deinit();
             self.alloc.destroy(self);
@@ -54,9 +131,28 @@ pub fn Cache(comptime V: type) type {
             if (gop.found_existing) {
                 self.alloc.free(k);
                 if (V != void) value.deinit(self.alloc);
-                return gop.value_ptr.*;
+                self.promote(gop.value_ptr.*);
+                return gop.value_ptr.*.ref.value;
             }
-            gop.value_ptr.* = value;
+            errdefer _ = self.map.remove(k);
+
+            var valueOwned = true;
+            errdefer if (valueOwned and V != void) value.deinit(self.alloc);
+
+            const ref = try Ref.init(self.alloc, value);
+            valueOwned = false;
+            errdefer ref.release(self.alloc);
+
+            const node = try self.alloc.create(Node);
+            errdefer self.alloc.destroy(node);
+            node.* = .{
+                .key = k,
+                .ref = ref,
+                .list = .active,
+            };
+
+            gop.value_ptr.* = node;
+            self.prependActive(node);
             return value;
         }
 
@@ -70,9 +166,10 @@ pub fn Cache(comptime V: type) type {
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 
-            if (self.map.get(key)) |value| {
+            if (self.map.get(key)) |node| {
+                self.promote(node);
                 return .{
-                    .value = value,
+                    .value = node.ref.value,
                     .elseHit = false,
                 };
             }
@@ -81,10 +178,74 @@ pub fn Cache(comptime V: type) type {
             errdefer self.alloc.free(k);
 
             const value = try action(ctx);
-            try self.map.put(k, value);
+            var valueOwned = true;
+            errdefer if (valueOwned and V != void) value.deinit(self.alloc);
+
+            const ref = try Ref.init(self.alloc, value);
+            valueOwned = false;
+            errdefer ref.release(self.alloc);
+
+            const node = try self.alloc.create(Node);
+            errdefer self.alloc.destroy(node);
+            node.* = .{
+                .key = k,
+                .ref = ref,
+                .list = .active,
+            };
+
+            try self.map.put(k, node);
+            self.prependActive(node);
 
             return .{
                 .value = value,
+                .elseHit = true,
+            };
+        }
+
+        pub fn getOrElsePinned(
+            self: *Self,
+            io: Io,
+            key: []const u8,
+            ctx: anytype,
+            comptime action: *const fn (@TypeOf(ctx)) anyerror!V,
+        ) !GetOrElsePinnedRes {
+            self.mx.lockUncancelable(io);
+            defer self.mx.unlock(io);
+
+            if (self.map.get(key)) |node| {
+                self.promote(node);
+                node.ref.retain();
+                return .{
+                    .pinned = .{ .ref = node.ref, .alloc = self.alloc },
+                    .elseHit = false,
+                };
+            }
+
+            const k = try self.alloc.dupe(u8, key);
+            errdefer self.alloc.free(k);
+
+            const value = try action(ctx);
+            var valueOwned = true;
+            errdefer if (valueOwned and V != void) value.deinit(self.alloc);
+
+            const ref = try Ref.init(self.alloc, value);
+            valueOwned = false;
+            errdefer ref.release(self.alloc);
+
+            const node = try self.alloc.create(Node);
+            errdefer self.alloc.destroy(node);
+            node.* = .{
+                .key = k,
+                .ref = ref,
+                .list = .active,
+            };
+
+            try self.map.put(k, node);
+            self.prependActive(node);
+
+            ref.retain();
+            return .{
+                .pinned = .{ .ref = ref, .alloc = self.alloc },
                 .elseHit = true,
             };
         }
@@ -93,14 +254,99 @@ pub fn Cache(comptime V: type) type {
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 
-            return self.map.contains(key);
+            if (self.map.get(key)) |node| {
+                self.promote(node);
+                return true;
+            }
+            return false;
         }
 
         pub fn get(self: *Self, io: Io, key: []const u8) ?V {
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 
-            return self.map.get(key);
+            if (self.map.get(key)) |node| {
+                self.promote(node);
+                return node.ref.value;
+            }
+            return null;
+        }
+
+        pub fn iterator(self: *Self) Iterator {
+            return .{ .inner = self.map.iterator() };
+        }
+
+        pub fn clean(self: *Self, io: Io) void {
+            self.mx.lockUncancelable(io);
+            defer self.mx.unlock(io);
+
+            while (self.shadowTail) |node| {
+                self.evictNode(node);
+            }
+
+            self.shadowHead = self.activeHead;
+            self.shadowTail = self.activeTail;
+            self.activeHead = null;
+            self.activeTail = null;
+
+            var node = self.shadowHead;
+            while (node) |n| : (node = n.next) {
+                n.list = .shadow;
+            }
+        }
+
+        fn evictNode(self: *Self, node: *Node) void {
+            self.unlink(node);
+            _ = self.map.remove(node.key);
+            self.alloc.free(node.key);
+            node.ref.release(self.alloc);
+            self.alloc.destroy(node);
+        }
+
+        fn promote(self: *Self, node: *Node) void {
+            self.unlink(node);
+            node.list = .active;
+            self.prependActive(node);
+        }
+
+        fn prependActive(self: *Self, node: *Node) void {
+            std.debug.assert(node.prev == null);
+            std.debug.assert(node.next == null);
+
+            node.list = .active;
+            node.next = self.activeHead;
+            if (self.activeHead) |head| {
+                head.prev = node;
+            } else {
+                self.activeTail = node;
+            }
+            self.activeHead = node;
+        }
+
+        fn unlink(self: *Self, node: *Node) void {
+            const head = switch (node.list) {
+                .active => &self.activeHead,
+                .shadow => &self.shadowHead,
+            };
+            const tail = switch (node.list) {
+                .active => &self.activeTail,
+                .shadow => &self.shadowTail,
+            };
+
+            if (node.prev) |prev| {
+                prev.next = node.next;
+            } else {
+                head.* = node.next;
+            }
+
+            if (node.next) |next| {
+                next.prev = node.prev;
+            } else {
+                tail.* = node.prev;
+            }
+
+            node.prev = null;
+            node.next = null;
         }
     };
 }
@@ -222,6 +468,114 @@ test "Cache.getOrElse creates non-void value only on miss" {
 
     try testing.expectEqualDeep(ValueCache.GetOrElseRes{ .value = first.value, .elseHit = true }, first);
     try testing.expectEqualDeep(ValueCache.GetOrElseRes{ .value = first.value, .elseHit = false }, second);
-    try testing.expectEqual(@as(usize, 1), calls);
-    try testing.expectEqual(@as(u8, 1), second.value.val);
+    try testing.expectEqual(1, calls);
+    try testing.expectEqual(1, second.value.val);
+}
+
+test "Cache.clean evicts shadow entries and keeps recently used entries" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const C = struct {
+        fn fakeElse(_: void) !void {}
+    };
+
+    const p1 = struct {
+        fn promote(c: *Cache(void)) anyerror!bool {
+            return c.contains(io, "a");
+        }
+    }.promote;
+    const p2 = struct {
+        fn promote(c: *Cache(void)) anyerror!bool {
+            const res = try c.getOrElse(io, "a", {}, C.fakeElse);
+            // means the value was discovered
+            return res.elseHit == false;
+        }
+    }.promote;
+    const p3 = struct {
+        fn promote(c: *Cache(void)) anyerror!bool {
+            var res = try c.getOrElsePinned(io, "a", {}, C.fakeElse);
+            // means the value was discovered
+            res.pinned.release();
+            return res.elseHit == false;
+        }
+    }.promote;
+    const p4 = struct {
+        fn promote(c: *Cache(void)) anyerror!bool {
+            const res = c.get(io, "a");
+            return res != null;
+        }
+    }.promote;
+    const promoters = [_]*const fn (*Cache(void)) anyerror!bool{ p1, p2, p3, p4 };
+
+    const len = 4;
+    try testing.expectEqual(len, promoters.len);
+
+    for (promoters) |promote| {
+        const cache = try Cache(void).init(alloc);
+        defer cache.deinit();
+
+        try cache.put(io, "a", {});
+        try cache.put(io, "b", {});
+
+        // moves both to shadow list
+        cache.clean(io);
+        // promotes "a"
+        try testing.expect(try promote(cache));
+
+        cache.clean(io);
+        // "a" persist because it was promoted from shadow to active
+        try testing.expect(cache.contains(io, "a"));
+        try testing.expect(!cache.contains(io, "b"));
+    }
+}
+
+test "Cache pinned value survives eviction until released" {
+    const Value = struct {
+        val: u8,
+        deinits: *usize,
+
+        fn init(alloc: Allocator, val: u8, deinits: *usize) !*@This() {
+            const self = try alloc.create(@This());
+            self.* = .{ .val = val, .deinits = deinits };
+            return self;
+        }
+
+        fn deinit(self: *@This(), alloc: Allocator) void {
+            self.deinits.* += 1;
+            alloc.destroy(self);
+        }
+    };
+
+    const CreateCtx = struct {
+        alloc: Allocator,
+        deinits: *usize,
+
+        fn run(ctx: @This()) !*Value {
+            return Value.init(ctx.alloc, 1, ctx.deinits);
+        }
+    };
+
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const ValueCache = Cache(*Value);
+    const cache = try ValueCache.init(alloc);
+    defer cache.deinit();
+
+    var deinits: usize = 0;
+    var pinned = (try cache.getOrElsePinned(io, "a", CreateCtx{
+        .alloc = alloc,
+        .deinits = &deinits,
+    }, CreateCtx.run)).pinned;
+
+    cache.clean(io);
+    cache.clean(io);
+
+    try testing.expect(!cache.contains(io, "a"));
+    try testing.expectEqual(0, deinits);
+    try testing.expectEqual(1, pinned.ref.value.val);
+
+    pinned.release();
+    try testing.expectEqual(1, deinits);
 }

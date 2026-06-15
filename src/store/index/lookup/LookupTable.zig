@@ -44,7 +44,7 @@ metaIndexRecords: []MetaIndex,
 isRead: bool,
 
 // TODO: find out at what point it's null and document it or make non nullable
-memBlock: ?*MemBlock,
+memBlockPin: ?Cache(*MemBlock).Pinned,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
@@ -61,14 +61,14 @@ pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *C
         .blockHeadersOwned = &.{},
         .entriesBlock = .{},
         .metaIndexRecords = &.{},
-        .memBlock = null,
+        .memBlockPin = null,
         .memBlockIdx = 0,
     };
 }
 
 pub fn deinit(self: *LookupTable, alloc: Allocator) void {
-    // mem blocks ownership belong to cache, don't deinit it
-    self.memBlock = null;
+    if (self.memBlockPin) |*pinned| pinned.release();
+    self.memBlockPin = null;
     if (self.blockHeadersOwned.len > 0) alloc.free(self.blockHeadersOwned);
 
     self.indexBuf.deinit(alloc);
@@ -100,7 +100,8 @@ pub fn seek(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) !void
 
 // TODO: utilize understanding of the next block direction
 fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
-    const block = self.memBlock orelse return false;
+    const blockRef = self.memBlockPin orelse return false;
+    const block = blockRef.ref.value;
 
     var items = block.memEntries.items;
     var idx = self.memBlockIdx;
@@ -166,9 +167,9 @@ fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) 
         return;
     }
 
-    const keyPrefixLen = strings.findPrefix(self.memBlock.?.prefix, key).len;
-    self.memBlockIdx = lowerBoundBySuffix(self.memBlock.?, self.memBlock.?.memEntries.items, key, keyPrefixLen);
-    if (self.memBlockIdx < self.memBlock.?.memEntries.items.len) {
+    const keyPrefixLen = strings.findPrefix(self.memBlockPin.?.ref.value.prefix, key).len;
+    self.memBlockIdx = lowerBoundBySuffix(self.memBlockPin.?.ref.value, self.memBlockPin.?.ref.value.memEntries.items, key, keyPrefixLen);
+    if (self.memBlockIdx < self.memBlockPin.?.ref.value.memEntries.items.len) {
         return;
     }
 
@@ -182,7 +183,8 @@ fn resetState(self: *LookupTable, alloc: Allocator) void {
     self.blockHeadersOwned = &.{};
     self.indexBuf.clearRetainingCapacity();
 
-    self.memBlock = null;
+    if (self.memBlockPin) |*pinned| pinned.release();
+    self.memBlockPin = null;
     self.memBlockIdx = 0;
     self.entriesBlock.reset();
 
@@ -235,8 +237,8 @@ fn lowerBoundBySuffix(
 pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     if (self.isRead) return false;
 
-    if (self.memBlockIdx < self.memBlock.?.memEntries.items.len) {
-        self.current = self.memBlock.?.get(self.memBlockIdx);
+    if (self.memBlockIdx < self.memBlockPin.?.ref.value.memEntries.items.len) {
+        self.current = self.memBlockPin.?.ref.value.get(self.memBlockIdx);
         self.memBlockIdx += 1;
         return true;
     }
@@ -245,7 +247,7 @@ pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
         return false;
     }
 
-    self.current = self.memBlock.?.get(0);
+    self.current = self.memBlockPin.?.ref.value.get(0);
     self.memBlockIdx += 1;
     return true;
 }
@@ -257,7 +259,9 @@ fn nextBlock(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     }
 
     const blockHeader = self.blockHeaders[0];
-    self.memBlock = try self.getMemBlock(io, alloc, blockHeader);
+    const pinned = try self.getMemBlock(io, alloc, blockHeader);
+    if (self.memBlockPin) |*existing| existing.release();
+    self.memBlockPin = pinned;
 
     self.blockHeaders = self.blockHeaders[1..];
     self.memBlockIdx = 0;
@@ -308,7 +312,7 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
 }
 
-fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !*MemBlock {
+fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader) !Cache(*MemBlock).Pinned {
     var keyBuf: [16]u8 = undefined;
     memBlocksCacheKeyBuf(&keyBuf, .{ .tableAddr = @intFromPtr(self.table), .offset = blockHeader.entriesBlockOffset });
 
@@ -330,13 +334,13 @@ fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockH
         }
     };
 
-    const res = try self.memBlocksCache.getOrElse(io, keyBuf[0..], LoadMemBlockCtx{
+    const res = try self.memBlocksCache.getOrElsePinned(io, keyBuf[0..], LoadMemBlockCtx{
         .lookupTable = self,
         .io = io,
         .alloc = alloc,
         .blockHeader = blockHeader,
     }, LoadMemBlockCtx.run);
-    return res.value;
+    return res.pinned;
 }
 
 fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockHeader, memBlock: *MemBlock) !void {

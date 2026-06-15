@@ -129,6 +129,7 @@ pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
     errdefer self.stopped.store(true, .release);
 
     try self.startDiskUsageSampler(io, alloc);
+    try self.startCacheEvicter(io);
 }
 
 pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
@@ -176,6 +177,25 @@ fn runDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) void {
     while (!self.stopped.load(.acquire)) {
         self.observeDiskUsage(io, alloc);
         sleepOrStop(io, &self.stopped, sampleIntervalNs);
+    }
+}
+
+fn startCacheEvicter(self: *Store, io: Io) !void {
+    if (self.stopped.load(.acquire)) return;
+
+    errdefer self.g.cancel(io);
+    try self.g.concurrent(io, runCacheEvicter, .{ self, io });
+}
+
+fn runCacheEvicter(self: *Store, io: Io) void {
+    const cleanIntervalNs = 10 * std.time.ns_per_s;
+
+    while (!self.stopped.load(.acquire)) {
+        sleepOrStop(io, &self.stopped, cleanIntervalNs);
+        if (self.stopped.load(.acquire)) break;
+
+        self.streamCache.clean(io);
+        self.memBlocksCache.clean(io);
     }
 }
 

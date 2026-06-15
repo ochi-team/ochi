@@ -206,6 +206,10 @@ pub fn addLines(
     try self.data.addLines(io, allocator, lines.items);
 }
 
+// TODO: experiment with scan sharing,
+// we could hash the query for a very short time (3s)
+// and if the query hash matches we could bypass index lookup and data blocks discovery,
+// but it has to come after table cache eviction implementation
 pub fn queryLines(
     self: *Partition,
     io: Io,
