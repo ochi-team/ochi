@@ -105,10 +105,10 @@ pub fn merge(
             hasNextItem = true;
         }
 
-        const itemsLen = reader.block.?.memEntries.items.len;
+        const itemsLen = reader.block.memEntries.items.len;
         var compareEveryItem = true;
         if (reader.currentI < itemsLen) {
-            const lastItem = reader.block.?.last();
+            const lastItem = reader.block.last();
             compareEveryItem = hasNextItem and (std.mem.order(u8, lastItem, nextItem) == .gt);
         }
 
@@ -822,7 +822,7 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     while (try mergedReader.next(io, alloc)) {
         blocksRead += 1;
         try testing.expect(blocksRead <= expected.len);
-        var iter = mergedReader.block.?.iterator();
+        var iter = mergedReader.block.iterator();
         while (iter.next()) |item| {
             try testing.expect(expectedI < expected.len);
             try testing.expectEqualStrings(expected[expectedI], item);

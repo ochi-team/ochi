@@ -13,7 +13,8 @@ const strings = @import("../../../stds/strings.zig");
 
 const LookupTable = @This();
 
-// TODO: the cache key is unreliable, if the table address is reused we are cooked
+// TODO: the cache key is unreliable, if the table address is reused we are cooked,
+// handling cache eviction on closing table works too
 const memBlocksCacheKey = struct { tableAddr: usize, offset: u64 };
 fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
     var subKey: [8]u8 = undefined;

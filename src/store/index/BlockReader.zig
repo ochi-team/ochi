@@ -18,11 +18,8 @@ const BlockHeader = @import("BlockHeader.zig");
 
 const BlockReader = @This();
 
-// TODO: make it non optional, it was historically optional
-// to show mem block is not owned on decoding it from mem table,
-// but apparently it's owning
-block: ?*MemBlock,
-// TODO: this is not ok, we must a better ownership model,
+block: *MemBlock,
+// TODO: this is not ok, we must make a better ownership model,
 // it must take it from outside
 ownsBlock: bool = false,
 // TODO: no idea yet how to avoid it
@@ -171,7 +168,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockR
 
 pub fn deinit(self: *BlockReader, alloc: Allocator) void {
     if (self.ownsBlock) {
-        if (self.block) |block| block.deinit(alloc);
+        self.block.deinit(alloc);
     }
 
     if (self.ownsStorage) self.tableHeader.deinit(alloc);
@@ -193,7 +190,7 @@ pub fn blockReaderLessThan(one: *BlockReader, another: *BlockReader) bool {
 }
 
 pub fn current(self: *BlockReader) []const u8 {
-    return self.block.?.get(self.currentI);
+    return self.block.get(self.currentI);
 }
 
 pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
@@ -209,7 +206,7 @@ pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     if (self.blockHeaders.len == 0 or self.blockHeaderI >= self.blockHeaders.len) {
         const ok = try self.readNextBlockHeaders(io, alloc);
         if (!ok) {
-            const lastItem = self.block.?.last();
+            const lastItem = self.block.last();
             std.debug.assert(std.mem.eql(u8, self.tableHeader.lastEntry, lastItem));
             self.isRead = true;
             return ok;
@@ -241,7 +238,7 @@ pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     }
     self.entriesBlock.lensBuf.items.len = self.blockHeader.lensBlockSize;
 
-    try self.block.?.decode(
+    try self.block.decode(
         alloc,
         &self.entriesBlock,
         self.blockHeader.firstEntry,
@@ -252,12 +249,12 @@ pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     self.blocksRead += 1;
     std.debug.assert(self.blocksRead <= self.tableHeader.blocksCount);
     self.currentI = 0;
-    self.itemsRead += self.block.?.memEntries.items.len;
+    self.itemsRead += self.block.memEntries.items.len;
     std.debug.assert(self.itemsRead <= self.tableHeader.entriesCount);
 
     if (builtin.is_test and !self.firstItemChecked) {
         self.firstItemChecked = true;
-        const firstEntry = self.block.?.get(0);
+        const firstEntry = self.block.get(0);
         std.debug.assert(std.mem.eql(u8, self.tableHeader.firstEntry, firstEntry));
     }
     return true;
@@ -578,7 +575,7 @@ test "BlockReader.initFromMemTable reads items" {
         if (case.useMultiBlock) {
             var expectedI: usize = 0;
             while (try reader.next(io, alloc)) {
-                var iter = reader.block.?.iterator();
+                var iter = reader.block.iterator();
                 while (iter.next()) |item| {
                     try testing.expectEqualStrings(case.expected[expectedI], item);
                     expectedI += 1;
@@ -587,12 +584,11 @@ test "BlockReader.initFromMemTable reads items" {
             try testing.expectEqual(case.expected.len, expectedI);
         } else {
             try testing.expect(try reader.next(io, alloc));
-            try testing.expect(reader.block != null);
 
-            const decoded = reader.block.?.memEntries.items;
+            const decoded = reader.block.memEntries.items;
             try testing.expectEqual(case.expected.len, decoded.len);
             for (0..decoded.len) |i| {
-                try testing.expectEqualStrings(case.expected[i], reader.block.?.get(i));
+                try testing.expectEqualStrings(case.expected[i], reader.block.get(i));
             }
 
             try testing.expect(!try reader.next(io, alloc));
@@ -661,9 +657,8 @@ test "BlockReader.initFromDiskTable decodes blocks without null crash" {
 
     const hasNext = try reader.next(io, alloc);
     try testing.expect(hasNext);
-    try testing.expect(reader.block != null);
     for (0..expected.len) |i| {
-        try testing.expectEqualStrings(expected[i], reader.block.?.get(i));
+        try testing.expectEqualStrings(expected[i], reader.block.get(i));
     }
     try testing.expect(!try reader.next(io, alloc));
 }
