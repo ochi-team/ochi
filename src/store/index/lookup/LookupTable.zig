@@ -101,7 +101,7 @@ pub fn seek(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) !void
 // TODO: utilize understanding of the next block direction
 fn seekInMemBlock(self: *LookupTable, key: []const u8) bool {
     const blockRef = self.memBlockPin orelse return false;
-    const block = blockRef.ref.value;
+    const block = blockRef.value();
 
     var items = block.memEntries.items;
     var idx = self.memBlockIdx;
@@ -167,9 +167,10 @@ fn seekFromStart(self: *LookupTable, io: Io, alloc: Allocator, key: []const u8) 
         return;
     }
 
-    const keyPrefixLen = strings.findPrefix(self.memBlockPin.?.ref.value.prefix, key).len;
-    self.memBlockIdx = lowerBoundBySuffix(self.memBlockPin.?.ref.value, self.memBlockPin.?.ref.value.memEntries.items, key, keyPrefixLen);
-    if (self.memBlockIdx < self.memBlockPin.?.ref.value.memEntries.items.len) {
+    const memBlock = self.memBlockPin.?.value();
+    const keyPrefixLen = strings.findPrefix(memBlock.prefix, key).len;
+    self.memBlockIdx = lowerBoundBySuffix(memBlock, memBlock.memEntries.items, key, keyPrefixLen);
+    if (self.memBlockIdx < memBlock.memEntries.items.len) {
         return;
     }
 
@@ -237,8 +238,9 @@ fn lowerBoundBySuffix(
 pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
     if (self.isRead) return false;
 
-    if (self.memBlockIdx < self.memBlockPin.?.ref.value.memEntries.items.len) {
-        self.current = self.memBlockPin.?.ref.value.get(self.memBlockIdx);
+    const memBlock = self.memBlockPin.?.value();
+    if (self.memBlockIdx < memBlock.memEntries.items.len) {
+        self.current = memBlock.get(self.memBlockIdx);
         self.memBlockIdx += 1;
         return true;
     }
@@ -247,7 +249,7 @@ pub fn next(self: *LookupTable, io: Io, alloc: Allocator) !bool {
         return false;
     }
 
-    self.current = self.memBlockPin.?.ref.value.get(0);
+    self.current = self.memBlockPin.?.value().get(0);
     self.memBlockIdx += 1;
     return true;
 }

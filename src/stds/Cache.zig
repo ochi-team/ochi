@@ -6,10 +6,11 @@ const builtin = @import("builtin");
 const Mutex = std.Io.Mutex;
 
 // TODO: make it support comptime meter misses/total
+// TODO: try a simple TTL cache if it consumes much less memory and gives enough miss/total ratio
 // TODO: define several comptime buckets up to cpus count to reduce lock contention
 // TODO: make a mechanic to clean on closing a table/partition
 //
-// 1. make Ref as a value
+// 1. DONE make Ref as a value
 // 2. remove fields from Node: key, list, prev
 // 3. make next as u16
 // 4. remove getOrElse
@@ -17,7 +18,7 @@ const Mutex = std.Io.Mutex;
 // 6. make prependActive only move the node to head, prepend head to the next of the Node
 // 7. make put return void
 // 8. skip alloc.destroy(node), instead allocate a buffer of nodes and use them
-// 9. remove Iterator
+// 9. DONE remove Iterator
 // 10. remove tail from node and cache
 pub fn Cache(comptime V: type) type {
     return struct {
@@ -25,15 +26,13 @@ pub fn Cache(comptime V: type) type {
 
         const ListKind = enum { active, shadow };
 
-        const Ref = struct {
+        const Node = struct {
+            key: []const u8,
             value: V,
             refCounter: std.atomic.Value(u32) = .init(1),
-
-            fn init(alloc: Allocator, value: V) !*@This() {
-                const ref = try alloc.create(@This());
-                ref.* = .{ .value = value };
-                return ref;
-            }
+            list: ListKind,
+            prev: ?*@This() = null,
+            next: ?*@This() = null,
 
             fn retain(self: *@This()) void {
                 _ = self.refCounter.fetchAdd(1, .acquire);
@@ -50,21 +49,16 @@ pub fn Cache(comptime V: type) type {
             }
         };
 
-        const Node = struct {
-            key: []const u8,
-            ref: *Ref,
-            list: ListKind,
-            prev: ?*@This() = null,
-            next: ?*@This() = null,
-        };
-
         pub const Pinned = struct {
-            ref: *Ref,
+            node: *Node,
             alloc: Allocator,
 
-            pub fn release(self: *@This()) void {
-                self.ref.release(self.alloc);
-                self.* = undefined;
+            pub fn release(self: *const Pinned) void {
+                self.node.release(self.alloc);
+            }
+
+            pub fn value(self: *const Pinned) V {
+                return self.node.value;
             }
         };
 
@@ -88,15 +82,6 @@ pub fn Cache(comptime V: type) type {
             key: []const u8,
             value: V,
         };
-        pub const Iterator = struct {
-            inner: std.StringHashMap(*Node).Iterator,
-
-            pub fn next(self: *@This()) ?Entry {
-                const entry = self.inner.next() orelse return null;
-                const node = entry.value_ptr.*;
-                return .{ .key = node.key, .value = node.ref.value };
-            }
-        };
 
         pub fn init(alloc: Allocator) !*Self {
             const map = std.StringHashMap(*Node).init(alloc);
@@ -113,8 +98,7 @@ pub fn Cache(comptime V: type) type {
             while (it.next()) |e| {
                 const node = e.value_ptr.*;
                 self.alloc.free(node.key);
-                node.ref.release(self.alloc);
-                self.alloc.destroy(node);
+                node.release(self.alloc);
             }
             self.map.deinit();
             self.alloc.destroy(self);
@@ -132,24 +116,21 @@ pub fn Cache(comptime V: type) type {
                 self.alloc.free(k);
                 if (V != void) value.deinit(self.alloc);
                 self.promote(gop.value_ptr.*);
-                return gop.value_ptr.*.ref.value;
+                return gop.value_ptr.*.value;
             }
             errdefer _ = self.map.remove(k);
 
             var valueOwned = true;
             errdefer if (valueOwned and V != void) value.deinit(self.alloc);
 
-            const ref = try Ref.init(self.alloc, value);
-            valueOwned = false;
-            errdefer ref.release(self.alloc);
-
             const node = try self.alloc.create(Node);
-            errdefer self.alloc.destroy(node);
             node.* = .{
                 .key = k,
-                .ref = ref,
+                .value = value,
                 .list = .active,
             };
+            valueOwned = false;
+            errdefer node.release(self.alloc);
 
             gop.value_ptr.* = node;
             self.prependActive(node);
@@ -169,7 +150,7 @@ pub fn Cache(comptime V: type) type {
             if (self.map.get(key)) |node| {
                 self.promote(node);
                 return .{
-                    .value = node.ref.value,
+                    .value = node.value,
                     .elseHit = false,
                 };
             }
@@ -181,17 +162,14 @@ pub fn Cache(comptime V: type) type {
             var valueOwned = true;
             errdefer if (valueOwned and V != void) value.deinit(self.alloc);
 
-            const ref = try Ref.init(self.alloc, value);
-            valueOwned = false;
-            errdefer ref.release(self.alloc);
-
             const node = try self.alloc.create(Node);
-            errdefer self.alloc.destroy(node);
             node.* = .{
                 .key = k,
-                .ref = ref,
+                .value = value,
                 .list = .active,
             };
+            valueOwned = false;
+            errdefer node.release(self.alloc);
 
             try self.map.put(k, node);
             self.prependActive(node);
@@ -214,9 +192,9 @@ pub fn Cache(comptime V: type) type {
 
             if (self.map.get(key)) |node| {
                 self.promote(node);
-                node.ref.retain();
+                node.retain();
                 return .{
-                    .pinned = .{ .ref = node.ref, .alloc = self.alloc },
+                    .pinned = .{ .node = node, .alloc = self.alloc },
                     .elseHit = false,
                 };
             }
@@ -228,24 +206,21 @@ pub fn Cache(comptime V: type) type {
             var valueOwned = true;
             errdefer if (valueOwned and V != void) value.deinit(self.alloc);
 
-            const ref = try Ref.init(self.alloc, value);
-            valueOwned = false;
-            errdefer ref.release(self.alloc);
-
             const node = try self.alloc.create(Node);
-            errdefer self.alloc.destroy(node);
             node.* = .{
                 .key = k,
-                .ref = ref,
+                .value = value,
                 .list = .active,
             };
+            valueOwned = false;
+            errdefer node.release(self.alloc);
 
             try self.map.put(k, node);
             self.prependActive(node);
 
-            ref.retain();
+            node.retain();
             return .{
-                .pinned = .{ .ref = ref, .alloc = self.alloc },
+                .pinned = .{ .node = node, .alloc = self.alloc },
                 .elseHit = true,
             };
         }
@@ -267,13 +242,9 @@ pub fn Cache(comptime V: type) type {
 
             if (self.map.get(key)) |node| {
                 self.promote(node);
-                return node.ref.value;
+                return node.value;
             }
             return null;
-        }
-
-        pub fn iterator(self: *Self) Iterator {
-            return .{ .inner = self.map.iterator() };
         }
 
         pub fn clean(self: *Self, io: Io) void {
@@ -299,8 +270,7 @@ pub fn Cache(comptime V: type) type {
             self.unlink(node);
             _ = self.map.remove(node.key);
             self.alloc.free(node.key);
-            node.ref.release(self.alloc);
-            self.alloc.destroy(node);
+            node.release(self.alloc);
         }
 
         fn promote(self: *Self, node: *Node) void {
@@ -574,7 +544,7 @@ test "Cache pinned value survives eviction until released" {
 
     try testing.expect(!cache.contains(io, "a"));
     try testing.expectEqual(0, deinits);
-    try testing.expectEqual(1, pinned.ref.value.val);
+    try testing.expectEqual(1, pinned.value().val);
 
     pinned.release();
     try testing.expectEqual(1, deinits);
