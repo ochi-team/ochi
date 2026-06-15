@@ -352,7 +352,10 @@ fn createDiskTableFromItems(io: Io, alloc: Allocator, tablePath: []const u8, ite
 fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) !*Table {
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
-    var block = try MemBlock.init(alloc, total + 16);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = total + 16,
+        .blocksCountHint = items.len,
+    });
     defer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);

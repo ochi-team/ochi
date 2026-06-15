@@ -60,12 +60,10 @@ pub fn init(io: Io, alloc: Allocator, readers: *std.ArrayList(*BlockReader)) !Bl
     var heap = Heap(*BlockReader, BlockReader.blockReaderLessThan).init(alloc, readers);
     heap.heapify();
 
-    const maxIndexMemBlockSize = Conf.default(alloc).app.maxIndexMemBlockSize;
-
     return .{
         .heap = heap,
         .exhaustedReaders = exhaustedReaders,
-        .block = try MemBlock.init(alloc, maxIndexMemBlockSize),
+        .block = try MemBlock.init(alloc, .{}),
     };
 }
 
@@ -308,7 +306,10 @@ const Encoder = @import("encoding").Encoder;
 // Helper functions for tests
 
 fn createTestMemBlock(alloc: Allocator, entries: []const []const u8, maxIndexBlockSize: u32) !*MemBlock {
-    const block = try MemBlock.init(alloc, maxIndexBlockSize);
+    const block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = maxIndexBlockSize,
+        .blocksCountHint = entries.len,
+    });
     errdefer block.deinit(alloc);
     for (entries) |entry| {
         _ = block.add(entry);

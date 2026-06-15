@@ -539,7 +539,7 @@ fn mergeTables(
             break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
         }
     };
-    defer streamWriter.deinit(io, alloc);
+    defer streamWriter.deinit(alloc);
 
     const tableHeader = mergeData(io, alloc, streamWriter, &readers, stopped) catch |err| {
         switch (err) {

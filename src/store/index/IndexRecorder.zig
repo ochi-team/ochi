@@ -830,7 +830,10 @@ const testing = std.testing;
 fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) !*Table {
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
-    var block = try MemBlock.init(alloc, total + 16);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = total + 16,
+        .blocksCountHint = items.len,
+    });
     defer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
@@ -876,7 +879,10 @@ test "flushMemEntries non-force respects flush deadline" {
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
 
-    var block = try MemBlock.init(alloc, 64);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = 64,
+        .blocksCountHint = 1,
+    });
     errdefer block.deinit(alloc);
     const ok = block.add("alpha");
     try testing.expect(ok);

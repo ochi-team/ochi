@@ -239,7 +239,7 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !
     return w;
 }
 
-pub fn deinit(self: *TableWriter, io: Io, allocator: Allocator) void {
+pub fn deinit(self: *TableWriter, allocator: Allocator) void {
     self.bloomValuesList.deinit(allocator);
     self.bloomTokensList.deinit(allocator);
 
@@ -676,7 +676,7 @@ test "writeBlock and writeData produce identical buffer output" {
     defer table1.close(io);
 
     const writer1 = try TableWriter.initMem(alloc, memTable1);
-    defer writer1.deinit(io, alloc);
+    defer writer1.deinit(alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);
@@ -703,7 +703,7 @@ test "writeBlock and writeData produce identical buffer output" {
     const memTable2 = try MemTable.init(alloc);
     defer memTable2.deinit(alloc);
     const writer2 = try TableWriter.initMem(alloc, memTable2);
-    defer writer2.deinit(io, alloc);
+    defer writer2.deinit(alloc);
 
     var bh2 = BlockHeader.initFromData(&bd, sid);
     try writer2.writeData(io, alloc, &bh2, &bd);
@@ -758,7 +758,7 @@ test "writeBlock with many columns does not overflow columns header index buffer
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
     const writer = try TableWriter.initMem(alloc, memTable);
-    defer writer.deinit(io, alloc);
+    defer writer.deinit(alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);

@@ -65,13 +65,15 @@ pub fn init(
 
     var maxMemBlockSize = opts.maxMemBlockSize;
     if (maxMemBlockSize == 0) maxMemBlockSize = Conf.getConf().app.maxIndexMemBlockSize;
+    std.debug.assert(maxMemBlockSize <= std.math.maxInt(u16));
+
     var entriesSize = opts.blocksCountHint;
-    if (entriesSize == 0) entriesSize = opts.maxMemBlockSize / minEntrySizeHint;
+    if (entriesSize == 0) entriesSize = maxMemBlockSize / minEntrySizeHint;
 
     var data = try std.ArrayList(MemEntry).initCapacity(alloc, entriesSize);
     errdefer data.deinit(alloc);
 
-    var buf = try std.ArrayList(u8).initCapacity(alloc, opts.maxMemBlockSize);
+    var buf = try std.ArrayList(u8).initCapacity(alloc, maxMemBlockSize);
     errdefer buf.deinit(alloc);
 
     const b = try alloc.create(MemBlock);
@@ -506,7 +508,10 @@ const testing = std.testing;
 fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
-    var block = try MemBlock.init(alloc, total + 16);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = total + 16,
+        .blocksCountHint = items.len,
+    });
     errdefer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
@@ -526,7 +531,10 @@ fn allocFilled(alloc: Allocator, fill: u8, len: usize) ![]u8 {
 test "MemBlock.add respects max size and reset clears state" {
     const alloc = testing.allocator;
 
-    var block = try MemBlock.init(alloc, 6);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = 6,
+        .blocksCountHint = 3,
+    });
     defer block.deinit(alloc);
 
     try testing.expect(block.add("abc"));
@@ -544,7 +552,7 @@ test "MemBlock.add respects max size and reset clears state" {
 test "MemBlock.add returns false when memEntries capacity is exhausted first" {
     const alloc = testing.allocator;
 
-    var block = try MemBlock.init(alloc, 99);
+    var block = try MemBlock.init(alloc, .{ .maxMemBlockSize = 99 });
     defer block.deinit(alloc);
 
     // Reproduce production-like shape where entry pointer capacity can be smaller
@@ -618,7 +626,10 @@ test "MemBlock.encode/decode plain and zstd cases" {
         const encoded = try block.encode(alloc, &entriesBlock);
         try testing.expectEqualDeep(case.expectedEncodedBlock, encoded);
 
-        var decoded = try MemBlock.init(alloc, 16);
+        var decoded = try MemBlock.init(alloc, .{
+            .maxMemBlockSize = 16,
+            .blocksCountHint = case.items.len,
+        });
         defer decoded.deinit(alloc);
         try decoded.decode(alloc, &entriesBlock, encoded.firstEntry, encoded.prefix, encoded.itemsCount, encoded.encodingType);
 
@@ -673,7 +684,10 @@ test "MemBlock.decodePlain handles min and max lens values" {
         enc.writeVarInt(@intCast(case.secondLen));
         entriesBlock.lensBuf.items.len = enc.offset;
 
-        var block = try MemBlock.init(alloc, 2);
+        var block = try MemBlock.init(alloc, .{
+            .maxMemBlockSize = @intCast(1 + case.secondLen),
+            .blocksCountHint = 2,
+        });
         defer block.deinit(alloc);
         // Use an empty prefix so decodePlain must copy bytes directly from itemsData
         // (no prefix reconstruction or prefix lens logic involved).
@@ -695,7 +709,10 @@ test "MemBlock.encodePlain breaks on 3-byte varint len" {
     var second: [16384]u8 = undefined;
     @memset(&second, 'b');
 
-    var block = try MemBlock.init(alloc, @intCast(1 + second.len + 16));
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = @intCast(1 + second.len + 16),
+        .blocksCountHint = 2,
+    });
     defer block.deinit(alloc);
     try testing.expect(block.add("a"));
     try testing.expect(block.add(second[0..]));

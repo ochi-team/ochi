@@ -328,7 +328,10 @@ fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockH
         // otherwise 2 threads create the same block and then one of them removes a duplicate
         // TODO: instrument locking and measure contention
         fn run(ctx: @This()) !*MemBlock {
-            const memBlock = try MemBlock.init(ctx.lookupTable.longAllocator, ctx.lookupTable.maxMemBlockSize);
+            const memBlock = try MemBlock.init(ctx.lookupTable.longAllocator, .{
+                .maxMemBlockSize = ctx.lookupTable.maxMemBlockSize,
+                .blocksCountHint = @intCast(ctx.blockHeader.entriesCount),
+            });
             errdefer memBlock.deinit(ctx.lookupTable.longAllocator);
 
             try ctx.lookupTable.readMemBlock(ctx.io, ctx.alloc, ctx.blockHeader, memBlock);
@@ -446,7 +449,10 @@ test "lowerBoundBySuffix" {
     };
 
     for (cases) |case| {
-        var block = try MemBlock.init(std.testing.allocator, 64);
+        var block = try MemBlock.init(std.testing.allocator, .{
+            .maxMemBlockSize = 64,
+            .blocksCountHint = case.items.len,
+        });
         defer block.deinit(std.testing.allocator);
         for (case.items) |item| {
             try std.testing.expect(block.add(item));

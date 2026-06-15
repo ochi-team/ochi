@@ -443,7 +443,7 @@ test "initFromLines and initFromData produce identical blocks" {
         defer table.close(io);
 
         const writer = try TableWriter.initMem(alloc, memTable);
-        defer writer.deinit(io, alloc);
+        defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
         try writer.writeBlock(io, alloc, blockA, &bh);

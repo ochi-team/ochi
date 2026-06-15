@@ -66,7 +66,7 @@ const EntriesShard = struct {
             // but it's a dangling block does nothing
             validBlockI = firstValid;
             try self.blocks.ensureUnusedCapacity(alloc, 1);
-            const b = try MemBlock.init(alloc, maxMemBlockSize);
+            const b = try MemBlock.init(alloc, .{ .maxMemBlockSize = maxMemBlockSize });
             self.blocks.appendAssumeCapacity(b);
             self.flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
         }
@@ -100,7 +100,7 @@ const EntriesShard = struct {
             try self.blocks.ensureUnusedCapacity(alloc, 1);
 
             // if it didn't skip the block means the previous one has not enough space
-            block = try MemBlock.init(alloc, maxMemBlockSize);
+            block = try MemBlock.init(alloc, .{ .maxMemBlockSize = maxMemBlockSize });
             self.blocks.appendAssumeCapacity(block);
 
             gatheredEntriesCount += 1;
@@ -300,7 +300,10 @@ test "EntriesShard.add" {
         // Setup blocks if specified
         if (case.setup_blocks_count > 0) {
             for (0..case.setup_blocks_count) |_| {
-                const b = try MemBlock.init(alloc, maxIndexMemBlockSize);
+                const b = try MemBlock.init(alloc, .{
+                    .maxMemBlockSize = maxIndexMemBlockSize,
+                    .blocksCountHint = 2,
+                });
                 try shard.blocks.append(alloc, b);
             }
         }

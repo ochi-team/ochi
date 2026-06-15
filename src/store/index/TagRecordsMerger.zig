@@ -213,7 +213,10 @@ test "writeState empty" {
     var m: Self = .{};
     defer m.deinit(alloc);
 
-    var target = try MemBlock.init(alloc, 64);
+    var target = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = 64,
+        .blocksCountHint = 1,
+    });
     defer target.deinit(alloc);
 
     try m.writeState(alloc, target);
@@ -256,7 +259,10 @@ test "writeState" {
         try m.prevState.setup(record);
         try m.streamIDs.appendSlice(alloc, case.initial);
 
-        var target = try MemBlock.init(alloc, 256);
+        var target = try MemBlock.init(alloc, .{
+            .maxMemBlockSize = 256,
+            .blocksCountHint = 1,
+        });
         defer target.deinit(alloc);
 
         try m.writeState(alloc, target);

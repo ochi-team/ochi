@@ -310,7 +310,10 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
 
-    var block = try MemBlock.init(alloc, total + 16);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = total + 16,
+        .blocksCountHint = items.len,
+    });
     errdefer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);

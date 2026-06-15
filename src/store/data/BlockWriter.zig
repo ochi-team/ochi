@@ -196,7 +196,7 @@ pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *Ta
     th.compressedSize = tableWriter.size();
 
     // TODO: test it closes files on failures and doesn't leak descriptors
-    self.close();
+    tableWriter.close(io);
 }
 
 fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter) !void {

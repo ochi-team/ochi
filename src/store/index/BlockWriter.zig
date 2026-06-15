@@ -262,7 +262,10 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
 
-    var block = try MemBlock.init(alloc, total + 16);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = total + 16,
+        .blocksCountHint = items.len,
+    });
     errdefer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
@@ -402,7 +405,10 @@ test "BlockWriter preserves first metaindex item when reusing source block" {
     var writer = BlockWriter.initFromMemTable(table);
     defer writer.deinit(alloc);
 
-    var block = try MemBlock.init(alloc, 128);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = 128,
+        .blocksCountHint = 2,
+    });
     defer block.deinit(alloc);
 
     try testing.expect(block.add("alpha-001"));

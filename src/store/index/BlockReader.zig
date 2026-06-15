@@ -104,7 +104,9 @@ pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
         },
     );
 
-    const block = try MemBlock.init(alloc, @intCast(memTable.tableHeader.entriesCount));
+    const block = try MemBlock.init(alloc, .{
+        .blocksCountHint = @intCast(memTable.tableHeader.entriesCount),
+    });
     errdefer block.deinit(alloc);
 
     const r = try alloc.create(BlockReader);
@@ -144,7 +146,9 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockR
         },
     );
 
-    const block = try MemBlock.init(alloc, @intCast(tableHeader.entriesCount));
+    const block = try MemBlock.init(alloc, .{
+        .blocksCountHint = @intCast(tableHeader.entriesCount),
+    });
     errdefer block.deinit(alloc);
 
     const r = try alloc.create(BlockReader);
@@ -361,7 +365,10 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
 }
 
 fn createTestMemBlockWithMax(alloc: Allocator, items: []const []const u8, maxMemBlockSize: u32) !*MemBlock {
-    var block = try MemBlock.init(alloc, maxMemBlockSize);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = maxMemBlockSize,
+        .blocksCountHint = items.len,
+    });
     errdefer block.deinit(alloc);
 
     for (items) |item| {

@@ -220,7 +220,10 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
 
-    var block = try MemBlock.init(alloc, total + 16);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = total + 16,
+        .blocksCountHint = items.len,
+    });
     defer block.deinit(alloc);
     for (items) |item| {
         const ok = block.add(item);
@@ -254,7 +257,10 @@ fn createMemTableFromItemsInBlocks(
         var total: u32 = 0;
         for (items[i..end]) |item| total += @intCast(item.len);
 
-        var block = try MemBlock.init(alloc, total + 16);
+        var block = try MemBlock.init(alloc, .{
+            .maxMemBlockSize = total + 16,
+            .blocksCountHint = end - i,
+        });
         errdefer block.deinit(alloc);
         for (items[i..end]) |item| {
             const ok = block.add(item);
@@ -630,7 +636,10 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     };
     defer alloc.free(cachedKey);
 
-    var block = try MemBlock.init(alloc, 128);
+    var block = try MemBlock.init(alloc, .{
+        .maxMemBlockSize = 128,
+        .blocksCountHint = tableDiskItems.len,
+    });
     errdefer block.deinit(alloc);
     for (tableDiskItems) |item| {
         try testing.expect(block.add(item));
