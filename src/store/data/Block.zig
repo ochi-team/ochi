@@ -190,10 +190,9 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
     @memset(columns, .{ .key = "", .values = &[_][]const u8{} });
 
     // TODO: Compare with bitset instead of bool array?
-    // TODO: Use fixed buffer allocator (1-2kb)
     // First pass: identify which columns are invariant
-    var invariantMask = try allocator.alloc(bool, firstLine.fields.len);
-    defer allocator.free(invariantMask);
+    var invariantMaskBuffer: [maxColumns]bool = undefined;
+    var invariantMask = invariantMaskBuffer[0..firstLine.fields.len];
 
     var invariantCount: usize = 0;
     for (0..firstLine.fields.len) |fieldIdx| {
