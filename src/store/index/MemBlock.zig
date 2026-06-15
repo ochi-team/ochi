@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
+const Conf = @import("../../Conf.zig");
 const MemOrder = @import("../../stds/sort.zig").MemOrder;
 const strings = @import("../../stds/strings.zig");
 const encoding = @import("encoding");
@@ -37,10 +38,16 @@ prefix: []const u8 = "",
 // 2. it requires storing max mem block size
 buf: std.ArrayList(u8) = .empty,
 
-// the smallest production index entry is sid: [kind:1][tenant:8][stream:16] = 25 bytes,
+// the smallest index entry is sid: [kind:1][tenant:8][stream:16] = 25 bytes,
 // use this for initial memEntries capacity so tiny entries don't exhaust pointer slots
-// TODO: make it configurable for tests
-const minEntrySizeHint = if (!builtin.is_test) 64 else 1;
+// TODO: tune the value on practice
+const minEntrySizeHint = 64;
+
+pub const MemBlockOpts = struct {
+    maxMemBlockSize: u32 = 0,
+    // blocks count only for testing purpose when the entries are 1 byte size
+    blocksCountHint: usize = 0,
+};
 
 pub const MemEntry = struct {
     start: u16,
@@ -50,16 +57,21 @@ pub const MemEntry = struct {
 // TODO: meter how many blocks are acquired
 pub fn init(
     alloc: Allocator,
-    maxMemBlockSize: u32,
+    opts: MemBlockOpts,
 ) !*MemBlock {
     const z = tracy.Zone.begin(.{ .src = @src(), .name = "index.MemBlock.init" });
     defer z.end();
-    std.debug.assert(maxMemBlockSize <= std.math.maxInt(u16));
+    std.debug.assert(opts.maxMemBlockSize <= std.math.maxInt(u16));
 
-    var data = try std.ArrayList(MemEntry).initCapacity(alloc, maxMemBlockSize / minEntrySizeHint);
+    var maxMemBlockSize = opts.maxMemBlockSize;
+    if (maxMemBlockSize == 0) maxMemBlockSize = Conf.getConf().app.maxIndexMemBlockSize;
+    var entriesSize = opts.blocksCountHint;
+    if (entriesSize == 0) entriesSize = opts.maxMemBlockSize / minEntrySizeHint;
+
+    var data = try std.ArrayList(MemEntry).initCapacity(alloc, entriesSize);
     errdefer data.deinit(alloc);
 
-    var buf = try std.ArrayList(u8).initCapacity(alloc, maxMemBlockSize);
+    var buf = try std.ArrayList(u8).initCapacity(alloc, opts.maxMemBlockSize);
     errdefer buf.deinit(alloc);
 
     const b = try alloc.create(MemBlock);
