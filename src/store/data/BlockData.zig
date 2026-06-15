@@ -44,7 +44,7 @@ pub const BlockData = struct {
     columnsData: std.ArrayList(ColumnData),
     // TODO: consider making it as a Field,
     // it might make ingestion more copies, but reading is lighter
-    celledColumns: ?[]Column = null,
+    invariantColumns: ?[]Column = null,
 
     pub fn initEmpty() BlockData {
         return .{ .columnsData = std.ArrayList(ColumnData).empty, .timestampsData = .{} };
@@ -60,7 +60,7 @@ pub const BlockData = struct {
             col.deinit(allocator);
         }
         self.columnsData.clearRetainingCapacity();
-        self.celledColumns = null;
+        self.invariantColumns = null;
 
         if (self.columnsHeader) |ch| {
             // TODO: make it reset instead
@@ -148,7 +148,7 @@ pub const BlockData = struct {
             self.columnsData.appendAssumeCapacity(col);
         }
 
-        self.celledColumns = columnsHeader.celledColumns;
+        self.invariantColumns = columnsHeader.invariantColumns;
     }
 };
 
@@ -269,7 +269,7 @@ const Table = @import("../data/Table.zig");
 test "BlockData initEmpty and deinit without header" {
     var bd = BlockData.initEmpty();
     try std.testing.expectEqual(@as(?*ColumnsHeader, null), bd.columnsHeader);
-    try std.testing.expectEqual(@as(?[]Column, null), bd.celledColumns);
+    try std.testing.expectEqual(@as(?[]Column, null), bd.invariantColumns);
 
     // Should not crash when deinit is called with no decoded data.
     bd.deinit(std.testing.allocator);
@@ -314,7 +314,7 @@ fn populateSampleLines(sample: *SampleLines) void {
     };
 }
 
-test "BlockData readFrom populates columnsData and celledColumns" {
+test "BlockData readFrom populates columnsData and invariantColumns" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 

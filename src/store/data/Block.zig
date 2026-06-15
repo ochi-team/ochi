@@ -31,7 +31,7 @@ fn columnLessThan(_: void, one: Column, another: Column) bool {
 
 const Block = @This();
 
-firstCelled: u32,
+firstInvariant: u32,
 columns: []Column,
 timestamps: []u64,
 
@@ -40,7 +40,7 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     errdefer allocator.destroy(b);
 
     b.* = .{
-        .firstCelled = undefined,
+        .firstInvariant = undefined,
         .columns = undefined,
         .timestamps = undefined,
     };
@@ -66,9 +66,9 @@ pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpac
     errdefer alloc.free(tss);
     try tsEncoder.decode(tss, data.timestampsData.data);
 
-    const firstCelled: u32 = @intCast(data.columnsData.items.len);
-    const celledColsLen = if (data.celledColumns) |cells| cells.len else 0;
-    const columns = try alloc.alloc(Column, data.columnsData.items.len + celledColsLen);
+    const firstInvariant: u32 = @intCast(data.columnsData.items.len);
+    const invariantColsLen = if (data.invariantColumns) |invariants| invariants.len else 0;
+    const columns = try alloc.alloc(Column, data.columnsData.items.len + invariantColsLen);
 
     for (0..data.columnsData.items.len) |i| {
         const colData = &data.columnsData.items[i];
@@ -78,19 +78,19 @@ pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpac
         try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
     }
 
-    if (data.celledColumns) |cells| {
-        for (cells, 0..) |*cell, i| {
-            columns[firstCelled + i].key = cell.key;
+    if (data.invariantColumns) |invariants| {
+        for (invariants, 0..) |*invariant, i| {
+            columns[firstInvariant + i].key = invariant.key;
             // move the values to the block instead of copying them
-            columns[firstCelled + i].values = &[_][]const u8{};
-            std.mem.swap([][]const u8, &columns[firstCelled + i].values, &cell.values);
+            columns[firstInvariant + i].values = &[_][]const u8{};
+            std.mem.swap([][]const u8, &columns[firstInvariant + i].values, &invariant.values);
         }
     }
 
     const b = try alloc.create(Block);
 
     b.* = .{
-        .firstCelled = firstCelled,
+        .firstInvariant = firstInvariant,
         .columns = columns,
         .timestamps = tss,
     };
@@ -99,7 +99,7 @@ pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpac
 
 pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(Line)) !void {
     const cols = self.getColumns();
-    const cells = self.getCelledColumns();
+    const invariants = self.getInvariantColumns();
 
     try lines.ensureUnusedCapacity(alloc, self.timestamps.len);
 
@@ -111,7 +111,7 @@ pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(L
     }
 
     for (self.timestamps, 0..) |ts, i| {
-        var fieldCount: usize = cells.len;
+        var fieldCount: usize = invariants.len;
         for (cols) |col| {
             if (col.values[i].len > 0) fieldCount += 1;
         }
@@ -120,8 +120,8 @@ pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(L
         errdefer alloc.free(fields);
         var fi: usize = 0;
 
-        for (cells) |cell| {
-            fields[fi] = .{ .key = cell.key, .value = cell.values[0] };
+        for (invariants) |invariant| {
+            fields[fi] = .{ .key = invariant.key, .value = invariant.values[0] };
             fi += 1;
         }
         for (cols) |col| {
@@ -150,11 +150,11 @@ pub fn deinit(self: *Block, allocator: Allocator) void {
 }
 
 pub fn getColumns(self: *const Block) []Column {
-    return self.columns[0..self.firstCelled];
+    return self.columns[0..self.firstInvariant];
 }
-// celledColumns hold columns with a single value
-pub fn getCelledColumns(self: *const Block) []Column {
-    return self.columns[self.firstCelled..];
+// getInvariantColumns gives columns with a single value
+pub fn getInvariantColumns(self: *const Block) []Column {
+    return self.columns[self.firstInvariant..];
 }
 
 pub fn len(self: *Block) usize {
@@ -191,23 +191,23 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
 
     // TODO: Compare with bitset instead of bool array?
     // TODO: Use fixed buffer allocator (1-2kb)
-    // First pass: identify which columns are celled
-    var celledMask = try allocator.alloc(bool, firstLine.fields.len);
-    defer allocator.free(celledMask);
+    // First pass: identify which columns are invariant
+    var invariantMask = try allocator.alloc(bool, firstLine.fields.len);
+    defer allocator.free(invariantMask);
 
-    var celledCount: usize = 0;
+    var invariantCount: usize = 0;
     for (0..firstLine.fields.len) |fieldIdx| {
-        if (canBeSavedAsCelled(lines, fieldIdx)) {
-            celledMask[fieldIdx] = true;
-            celledCount += 1;
+        if (canBeSavedAsInvariant(lines, fieldIdx)) {
+            invariantMask[fieldIdx] = true;
+            invariantCount += 1;
         } else {
-            celledMask[fieldIdx] = false;
+            invariantMask[fieldIdx] = false;
         }
     }
 
-    // Second pass: populate columns with regular columns first, then celled
+    // Second pass: populate columns with regular columns first, then invariant
     var regularIdx: usize = 0;
-    var celledIdx: usize = firstLine.fields.len - celledCount;
+    var invariantIdx: usize = firstLine.fields.len - invariantCount;
 
     errdefer {
         for (columns) |col| {
@@ -217,15 +217,15 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
         }
     }
     for (firstLine.fields, 0..) |field, fieldIdx| {
-        const isFieldCelled = celledMask[fieldIdx];
-        const targetIdx = if (isFieldCelled) celledIdx else regularIdx;
+        const isFieldInvariant = invariantMask[fieldIdx];
+        const targetIdx = if (isFieldInvariant) invariantIdx else regularIdx;
         var col = &columns[targetIdx];
         col.key = field.key;
 
-        if (isFieldCelled) {
+        if (isFieldInvariant) {
             col.values = try allocator.alloc([]const u8, 1);
             col.values[0] = field.value;
-            celledIdx += 1;
+            invariantIdx += 1;
         } else {
             col.values = try allocator.alloc([]const u8, lines.len);
             for (lines, 0..) |line, lineIdx| {
@@ -235,7 +235,7 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
         }
     }
 
-    self.firstCelled = @intCast(firstLine.fields.len - celledCount);
+    self.firstInvariant = @intCast(firstLine.fields.len - invariantCount);
 
     self.columns = columns;
 }
@@ -299,12 +299,12 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
         }
     }
 
-    self.firstCelled = @intCast(columns.len);
+    self.firstInvariant = @intCast(columns.len);
     var i: usize = 0;
-    while (i < self.firstCelled) {
-        if (columns[i].isCelled()) {
-            self.firstCelled -= 1;
-            std.mem.swap(Column, &columns[i], &columns[self.firstCelled]);
+    while (i < self.firstInvariant) {
+        if (columns[i].isInvariant()) {
+            self.firstInvariant -= 1;
+            std.mem.swap(Column, &columns[i], &columns[self.firstInvariant]);
         } else {
             i += 1;
         }
@@ -315,7 +315,7 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
 
 fn sort(self: *Block) void {
     std.mem.sortUnstable(Column, self.getColumns(), {}, columnLessThan);
-    std.mem.sortUnstable(Column, self.getCelledColumns(), {}, columnLessThan);
+    std.mem.sortUnstable(Column, self.getInvariantColumns(), {}, columnLessThan);
 }
 
 // TODO: Investigate if we need to check for unique/duplicated fields keys as well.
@@ -340,7 +340,7 @@ fn areSameFields(lines: []const Line) bool {
     return true;
 }
 
-fn canBeSavedAsCelled(lines: []const Line, index: usize) bool {
+fn canBeSavedAsInvariant(lines: []const Line, index: usize) bool {
     // If len is zero, then there's nothing to do.
     if (lines.len == 0) {
         return true;
@@ -348,9 +348,9 @@ fn canBeSavedAsCelled(lines: []const Line, index: usize) bool {
 
     const value = lines[0].fields[index].value;
 
-    // If value is too large, then we consider it not celled.
+    // If value is too large, then we consider it not invariant.
     // Not sure if this would work though?
-    if (value.len > Column.maxCelledColumnValueSize) {
+    if (value.len > Column.maxInvariantColumnValueSize) {
         return false;
     }
 
@@ -371,7 +371,7 @@ const BlockHeader = @import("BlockHeader.zig");
 
 fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
     try std.testing.expectEqualSlices(u64, a.timestamps, b.timestamps);
-    try std.testing.expectEqual(a.firstCelled, b.firstCelled);
+    try std.testing.expectEqual(a.firstInvariant, b.firstInvariant);
 
     const colsA = a.getColumns();
     const colsB = b.getColumns();
@@ -384,10 +384,10 @@ fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
         }
     }
 
-    const cellsA = a.getCelledColumns();
-    const cellsB = b.getCelledColumns();
-    try std.testing.expectEqual(cellsA.len, cellsB.len);
-    for (cellsA, cellsB) |ca, cb| {
+    const invariantA = a.getInvariantColumns();
+    const invariantB = b.getInvariantColumns();
+    try std.testing.expectEqual(invariantA.len, invariantB.len);
+    for (invariantA, invariantB) |ca, cb| {
         try std.testing.expectEqualStrings(ca.key, cb.key);
         try std.testing.expectEqual(ca.values.len, 1);
         try std.testing.expectEqual(cb.values.len, 1);
@@ -561,8 +561,8 @@ test "areSameValuesWithinColumn: happy path" {
         },
     };
 
-    try std.testing.expectEqual(true, canBeSavedAsCelled(&lines, 0));
-    try std.testing.expectEqual(true, canBeSavedAsCelled(&lines, 1));
+    try std.testing.expectEqual(true, canBeSavedAsInvariant(&lines, 0));
+    try std.testing.expectEqual(true, canBeSavedAsInvariant(&lines, 1));
 }
 
 test "areSameValuesWithinColumn: unhappy path" {
@@ -587,8 +587,8 @@ test "areSameValuesWithinColumn: unhappy path" {
         },
     };
 
-    try std.testing.expectEqual(false, canBeSavedAsCelled(&lines, 0));
-    try std.testing.expectEqual(true, canBeSavedAsCelled(&lines, 1));
+    try std.testing.expectEqual(false, canBeSavedAsInvariant(&lines, 0));
+    try std.testing.expectEqual(true, canBeSavedAsInvariant(&lines, 1));
 }
 
 test "SelfInitMaxColumns" {
@@ -661,17 +661,17 @@ test "Self.put" {
         lines: []Line,
         expectedTimestamps: []const u64,
         expectedCols: []const Column,
-        expectedCells: []const Column,
+        expectedInvariants: []const Column,
     };
 
-    const expectedCells1 = blk: {
+    const expectedInvariants1 = blk: {
         var appVal = [_][]const u8{"seq"};
         var levelVal = [_][]const u8{"info"};
-        var cells = [_]Column{
+        var invariants = [_]Column{
             .{ .key = "app", .values = appVal[0..] },
             .{ .key = "level", .values = levelVal[0..] },
         };
-        break :blk &cells;
+        break :blk &invariants;
     };
     const linesArray = blk: {
         var fields1 = [_]Field{
@@ -700,14 +700,14 @@ test "Self.put" {
         };
         break :blk &cols;
     };
-    const expectedCells2 = blk: {
+    const expectedInvariants2 = blk: {
         var appVal = [_][]const u8{"seq"};
         var levelVal = [_][]const u8{"server1"};
-        var cells = [_]Column{
+        var invariants = [_]Column{
             .{ .key = "app", .values = appVal[0..] },
             .{ .key = "host", .values = levelVal[0..] },
         };
-        break :blk &cells;
+        break :blk &invariants;
     };
     const linesArray2 = blk: {
         var fields1 = [_]Field{
@@ -829,7 +829,7 @@ test "Self.put" {
         break :blk &cols;
     };
     const linesArray5 = blk: {
-        // a large value that exceeds maxCelledColumnValueSize
+        // a large value that exceeds maxInvariantColumnValueSize
         // TODO: audit undefined usage if it's possible to avoid them on empty buffers
         var largeValue: [300]u8 = undefined;
         @memset(&largeValue, 'x');
@@ -863,12 +863,12 @@ test "Self.put" {
         };
         break :blk &cols;
     };
-    const expectedCells5 = blk: {
+    const expectedInvariants5 = blk: {
         var levelVal = [_][]const u8{"info"};
-        var cells = [_]Column{
+        var invariants = [_]Column{
             .{ .key = "level", .values = levelVal[0..] },
         };
-        break :blk &cells;
+        break :blk &invariants;
     };
 
     const cases = [_]Case{
@@ -876,31 +876,31 @@ test "Self.put" {
             .lines = linesArray,
             .expectedTimestamps = &[_]u64{ 100, 200 },
             .expectedCols = &[_]Column{},
-            .expectedCells = expectedCells1,
+            .expectedInvariants = expectedInvariants1,
         },
         .{
             .lines = linesArray2,
             .expectedTimestamps = &[_]u64{ 100, 200, 300 },
             .expectedCols = expectedCols2,
-            .expectedCells = expectedCells2,
+            .expectedInvariants = expectedInvariants2,
         },
         .{
             .lines = linesArray3,
             .expectedTimestamps = &[_]u64{ 100, 200 },
             .expectedCols = expectedCols3,
-            .expectedCells = &[_]Column{},
+            .expectedInvariants = &[_]Column{},
         },
         .{
             .lines = linesArray4,
             .expectedTimestamps = &[_]u64{ 100, 200, 300 },
             .expectedCols = expectedCols4,
-            .expectedCells = &[_]Column{},
+            .expectedInvariants = &[_]Column{},
         },
         .{
             .lines = linesArray5,
             .expectedTimestamps = &[_]u64{ 100, 200 },
             .expectedCols = expectedCols5,
-            .expectedCells = expectedCells5,
+            .expectedInvariants = expectedInvariants5,
         },
     };
 
@@ -922,13 +922,13 @@ test "Self.put" {
             }
         }
 
-        const actualCells = block.getCelledColumns();
-        try std.testing.expectEqual(case.expectedCells.len, actualCells.len);
-        for (case.expectedCells, 0..) |expectedCell, i| {
-            try std.testing.expectEqualStrings(expectedCell.key, actualCells[i].key);
-            try std.testing.expectEqual(expectedCell.values.len, actualCells[i].values.len);
-            for (expectedCell.values, 0..) |expectedVal, j| {
-                try std.testing.expectEqualStrings(expectedVal, actualCells[i].values[j]);
+        const actualInvariants = block.getInvariantColumns();
+        try std.testing.expectEqual(case.expectedInvariants.len, actualInvariants.len);
+        for (case.expectedInvariants, 0..) |expectedInvariant, i| {
+            try std.testing.expectEqualStrings(expectedInvariant.key, actualInvariants[i].key);
+            try std.testing.expectEqual(expectedInvariant.values.len, actualInvariants[i].values.len);
+            for (expectedInvariant.values, 0..) |expectedVal, j| {
+                try std.testing.expectEqualStrings(expectedVal, actualInvariants[i].values[j]);
             }
         }
     }

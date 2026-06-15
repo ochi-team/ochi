@@ -4,27 +4,16 @@ const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
 
-// makes no sense to keep large values in celled columns,
+// makes no sense to keep large values in invariant columns,
 // it won't help to improve performance
-pub const maxCelledColumnValueSize = 256;
+pub const maxInvariantColumnValueSize = 256;
 
 const Self = @This();
 
 key: []const u8,
 values: [][]const u8,
 
-// TODO: rename this crap, to "uniform" I guess
-// 1. uniform ⭐ - Clear, descriptive, commonly used in data contexts
-// 2. constant ⭐ - Mathematically precise, well-understood
-// 3. invariant - Emphasizes that the value doesn't vary
-// 4. homogeneous - Academic but precise
-// 5. singular - Has a single unique value
-// 6. static - Doesn't change across rows
-// 7. repeated - Same value repeated
-// 8. monolithic - Single-valued
-// 9. fixed - Fixed across all rows
-// 10. scalar - Single scalar value for the column
-pub fn isCelled(self: *Self) bool {
+pub fn isInvariant(self: *Self) bool {
     if (self.values.len == 0) {
         return true;
     }
@@ -38,14 +27,14 @@ pub fn isCelled(self: *Self) bool {
     return true;
 }
 
-pub fn encodeAsCelled(self: *Self, enc: *Encoder, comptime encodeKey: bool) void {
+pub fn encodeAsInvariant(self: *Self, enc: *Encoder, comptime encodeKey: bool) void {
     if (encodeKey) {
         enc.writeString(self.key);
     }
     enc.writeString(self.values[0]);
 }
 
-pub fn celledBound(self: *const Self, comptime encodeKey: bool) usize {
+pub fn invariantBound(self: *const Self, comptime encodeKey: bool) usize {
     var size: usize = 0;
     if (encodeKey) {
         size += Encoder.varIntBound(self.key.len) + self.key.len;
@@ -54,7 +43,7 @@ pub fn celledBound(self: *const Self, comptime encodeKey: bool) usize {
     return size;
 }
 
-pub fn decodeAsCelled(dec: *Decoder, allocator: std.mem.Allocator, comptime decodeKey: bool) !Self {
+pub fn decodeAsInvariant(dec: *Decoder, allocator: std.mem.Allocator, comptime decodeKey: bool) !Self {
     var key: []const u8 = undefined;
     if (decodeKey) {
         key = dec.readString();
@@ -68,7 +57,7 @@ pub fn decodeAsCelled(dec: *Decoder, allocator: std.mem.Allocator, comptime deco
     };
 }
 
-test "Self.encodeAsCelled" {
+test "Self.encodeAsInvariant" {
     const alloc = std.testing.allocator;
 
     const Case = struct {
@@ -96,16 +85,16 @@ test "Self.encodeAsCelled" {
             };
 
             // Encode without key
-            const bufSize = column.celledBound(toEncodeKey);
+            const bufSize = column.invariantBound(toEncodeKey);
             const buf = try alloc.alloc(u8, bufSize);
             defer alloc.free(buf);
 
             var enc = Encoder.init(buf);
-            column.encodeAsCelled(&enc, toEncodeKey);
+            column.encodeAsInvariant(&enc, toEncodeKey);
 
             // Decode
             var dec = Decoder.init(buf[0..enc.offset]);
-            const decoded = try Self.decodeAsCelled(&dec, alloc, toEncodeKey);
+            const decoded = try Self.decodeAsInvariant(&dec, alloc, toEncodeKey);
             defer alloc.free(decoded.values);
 
             // Verify

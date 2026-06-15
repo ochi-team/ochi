@@ -143,7 +143,7 @@ pub const StreamMerger = struct {
     ) !void {
         // TODO: assert the data and merger state
 
-        const totalKeys = blockData.columnsData.items.len + if (blockData.celledColumns) |celled| celled.len else 0;
+        const totalKeys = blockData.columnsData.items.len + if (blockData.invariantColumns) |invariantCol| invariantCol.len else 0;
 
         if (!blockData.sid.eql(&self.sid)) {
             // it means next stream begins, we have to flush the data

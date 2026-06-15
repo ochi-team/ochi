@@ -7,22 +7,22 @@ const Width = struct {
     max: u64,
     size: usize,
     block: u8,
-    blockCell: u8,
+    blockInvariant: u8,
 };
 pub const uintBlockType8: u8 = 0;
 pub const uintBlockType16: u8 = 1;
 pub const uintBlockType32: u8 = 2;
 pub const uintBlockType64: u8 = 3;
-pub const uintBlockTypeCell8: u8 = 4;
-pub const uintBlockTypeCell16: u8 = 5;
-pub const uintBlockTypeCell32: u8 = 6;
-pub const uintBlockTypeCell64: u8 = 7;
+pub const uintBlockTypeInvariant8: u8 = 4;
+pub const uintBlockTypeInvariant16: u8 = 5;
+pub const uintBlockTypeInvariant32: u8 = 6;
+pub const uintBlockTypeInvariant64: u8 = 7;
 
 const widths = [_]Width{
-    .{ .max = (1 << 8), .block = uintBlockType8, .blockCell = uintBlockTypeCell8, .size = @sizeOf(u8) },
-    .{ .max = (1 << 16), .block = uintBlockType16, .blockCell = uintBlockTypeCell16, .size = @sizeOf(u16) },
-    .{ .max = (1 << 32), .block = uintBlockType32, .blockCell = uintBlockTypeCell32, .size = @sizeOf(u32) },
-    .{ .max = ~@as(u64, 0), .block = uintBlockType64, .blockCell = uintBlockTypeCell64, .size = @sizeOf(u64) },
+    .{ .max = (1 << 8), .block = uintBlockType8, .blockInvariant = uintBlockTypeInvariant8, .size = @sizeOf(u8) },
+    .{ .max = (1 << 16), .block = uintBlockType16, .blockInvariant = uintBlockTypeInvariant16, .size = @sizeOf(u16) },
+    .{ .max = (1 << 32), .block = uintBlockType32, .blockInvariant = uintBlockTypeInvariant32, .size = @sizeOf(u32) },
+    .{ .max = ~@as(u64, 0), .block = uintBlockType64, .blockInvariant = uintBlockTypeInvariant64, .size = @sizeOf(u64) },
 };
 fn pickWidth(maxLen: u64) Width {
     for (widths) |w| {
@@ -75,12 +75,12 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
     defer {
         if (interBuf.len > 0) fba.free(interBuf);
     }
-    const areCells = (self.lengths.items.len >= 2) and areNumbersSame(self.lengths.items[0..]);
+    const areInvariants = (self.lengths.items.len >= 2) and areNumbersSame(self.lengths.items[0..]);
     const w = pickWidth(maxLen);
-    if (areCells) {
+    if (areInvariants) {
         interBuf = try fba.alloc(u8, 1 + w.size);
         var enc = Encoder.init(interBuf);
-        enc.writeInt(u8, w.blockCell);
+        enc.writeInt(u8, w.blockInvariant);
         enc.writeIntBytes(w.size, self.lengths.items[0]);
     } else {
         interBuf = try fba.alloc(u8, 1 + w.size * self.lengths.items.len);

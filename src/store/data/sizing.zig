@@ -21,7 +21,7 @@ pub fn blockJsonSize(self: *const Block) u32 {
 
     var res: u32 = @intCast(lineTsSize * self.timestamps.len);
 
-    for (self.getCelledColumns()) |col| {
+    for (self.getInvariantColumns()) |col| {
         if (col.values.len == 1) {
             res += @intCast(keyValSize(col.key, col.values[0]) * self.timestamps.len);
         } else {

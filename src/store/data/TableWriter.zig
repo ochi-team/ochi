@@ -608,7 +608,7 @@ fn writeColumnsHeader(
     csh: *ColumnsHeader,
     bh: *BlockHeader,
 ) !void {
-    std.debug.assert(csh.headers.len + csh.celledColumns.len <= Block.maxColumns);
+    std.debug.assert(csh.headers.len + csh.invariantColumns.len <= Block.maxColumns);
 
     var columnIDs: [Block.maxColumns]u16 = undefined;
     var columnOffsets: [Block.maxColumns]u32 = undefined;
@@ -617,11 +617,11 @@ fn writeColumnsHeader(
     for (csh.headers) |header| {
         try self.ensureColumnKeyOwned(allocator, header.key);
     }
-    for (csh.celledColumns) |column| {
+    for (csh.invariantColumns) |column| {
         try self.ensureColumnKeyOwned(allocator, column.key);
     }
 
-    try self.columnIDGen.keyIDs.ensureUnusedCapacity(allocator, csh.celledColumns.len);
+    try self.columnIDGen.keyIDs.ensureUnusedCapacity(allocator, csh.invariantColumns.len);
 
     const dstSize = csh.encodeBound();
     const dst = try self.columnsHeaderDst.allocSlice(allocator, dstSize);

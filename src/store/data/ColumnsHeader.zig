@@ -15,20 +15,20 @@ const ColumnIDGen = @import("ColumnIDGen.zig");
 
 pub const ColumnsHeader = @This();
 headers: []ColumnHeader,
-celledColumns: []Column,
-/// When true, deinit owns and frees celledColumns and each column's values (decode path).
+invariantColumns: []Column,
+/// When true, deinit owns and frees invariantColumns and each column's values (decode path).
 /// TODO: find a workaround for clear ownership instead of a flag
-owns_celled_columns: bool = false,
+ownsInvariantColumns: bool = false,
 
 pub fn initFromBlock(alloc: Allocator, block: *Block) !*ColumnsHeader {
-    return init(alloc, block.getColumns().len, block.getCelledColumns());
+    return init(alloc, block.getColumns().len, block.getInvariantColumns());
 }
 
 pub fn initFromData(alloc: Allocator, data: *BlockData) !*ColumnsHeader {
-    return init(alloc, data.columnsData.items.len, data.celledColumns orelse &[_]Column{});
+    return init(alloc, data.columnsData.items.len, data.invariantColumns orelse &[_]Column{});
 }
 
-fn init(alloc: Allocator, colsLen: usize, cells: []Column) !*ColumnsHeader {
+fn init(alloc: Allocator, colsLen: usize, invariants: []Column) !*ColumnsHeader {
     const headers = try alloc.alloc(ColumnHeader, colsLen);
     errdefer alloc.free(headers);
     var inited: u16 = 0;
@@ -47,7 +47,7 @@ fn init(alloc: Allocator, colsLen: usize, cells: []Column) !*ColumnsHeader {
     const ch = try alloc.create(ColumnsHeader);
     ch.* = .{
         .headers = headers,
-        .celledColumns = cells,
+        .invariantColumns = invariants,
     };
 
     return ch;
@@ -58,9 +58,9 @@ pub fn deinit(self: *ColumnsHeader, allocator: Allocator) void {
         self.headers[i].dict.deinit(allocator);
     }
     allocator.free(self.headers);
-    if (self.owns_celled_columns) {
-        for (self.celledColumns) |*column| allocator.free(column.values);
-        allocator.free(self.celledColumns);
+    if (self.ownsInvariantColumns) {
+        for (self.invariantColumns) |*column| allocator.free(column.values);
+        allocator.free(self.invariantColumns);
     }
     allocator.destroy(self);
 }
@@ -78,14 +78,14 @@ pub fn encodeBound(self: *const ColumnsHeader) usize {
     // Sum of all header bounds
     size += headersSize;
 
-    var celledsize: usize = 0;
-    for (self.celledColumns) |*col| {
-        celledsize += col.celledBound(false);
+    var invariantSize: usize = 0;
+    for (self.invariantColumns) |*col| {
+        invariantSize += col.invariantBound(false);
     }
-    // Celled columns length varint
-    size += Encoder.varIntBound(celledsize);
-    // Sum of all celled column bounds
-    size += celledsize;
+    // invariant columns length varint
+    size += Encoder.varIntBound(invariantSize);
+    // Sum of all invariant column bounds
+    size += invariantSize;
 
     return size;
 }
@@ -106,13 +106,13 @@ pub fn encode(
         offset = enc.offset;
     }
 
-    enc.writeVarInt(self.celledColumns.len);
+    enc.writeVarInt(self.invariantColumns.len);
     offset = enc.offset;
 
-    for (self.celledColumns) |*celledCol| {
-        const colID = columnIDGen.genIDAssumeCapacity(celledCol.key);
-        celledCol.encodeAsCelled(&enc, false);
-        cshIdx.appendCelledColumnAssumeCapacity(.{ .id = colID, .offset = @intCast(offset) });
+    for (self.invariantColumns) |*invariantCol| {
+        const colID = columnIDGen.genIDAssumeCapacity(invariantCol.key);
+        invariantCol.encodeAsInvariant(&enc, false);
+        cshIdx.appendInvariantColumnAssumeCapacity(.{ .id = colID, .offset = @intCast(offset) });
         offset = enc.offset;
     }
 
@@ -142,26 +142,26 @@ pub fn decode(
         headersDecoded += 1;
     }
 
-    const celledLen = dec.readVarInt();
-    const celledColumns = try allocator.alloc(Column, celledLen);
-    var celledDecoded: usize = 0;
+    const invariantLen = dec.readVarInt();
+    const invariantColumns = try allocator.alloc(Column, invariantLen);
+    var invariantDecoded: usize = 0;
     errdefer {
-        for (celledColumns[0..celledDecoded]) |*column| allocator.free(column.values);
-        allocator.free(celledColumns);
+        for (invariantColumns[0..invariantDecoded]) |*column| allocator.free(column.values);
+        allocator.free(invariantColumns);
     }
 
-    for (0..celledLen) |i| {
-        const colID = cshIdx.celledColumnID(i);
-        celledColumns[i] = try Column.decodeAsCelled(&dec, allocator, false);
-        celledColumns[i].key = columnIDGen.keyIDs.keys()[colID];
-        celledDecoded = i + 1;
+    for (0..invariantLen) |i| {
+        const colID = cshIdx.invariantColumnID(i);
+        invariantColumns[i] = try Column.decodeAsInvariant(&dec, allocator, false);
+        invariantColumns[i].key = columnIDGen.keyIDs.keys()[colID];
+        invariantDecoded = i + 1;
     }
 
     const ch = try allocator.create(ColumnsHeader);
     ch.* = .{
         .headers = headers,
-        .celledColumns = celledColumns,
-        .owns_celled_columns = true,
+        .invariantColumns = invariantColumns,
+        .ownsInvariantColumns = true,
     };
 
     return ch;
@@ -177,8 +177,8 @@ test "ColumnsHeaderEncode" {
     _ = columnIDGen.genIDAssumeCapacity("col_string");
     _ = columnIDGen.genIDAssumeCapacity("col_dict");
     _ = columnIDGen.genIDAssumeCapacity("col_uint32");
-    _ = columnIDGen.genIDAssumeCapacity("celled_col1");
-    _ = columnIDGen.genIDAssumeCapacity("celled_col2");
+    _ = columnIDGen.genIDAssumeCapacity("invariant_col1");
+    _ = columnIDGen.genIDAssumeCapacity("invariant_col2");
 
     // Create test ColumnsHeader
     const headers = try alloc.alloc(ColumnHeader, 3);
@@ -226,31 +226,31 @@ test "ColumnsHeaderEncode" {
         .bloomFilterOffset = 2100,
     };
 
-    // Create test celled columns
-    const celledColumns = try alloc.alloc(Column, 2);
-    defer alloc.free(celledColumns);
+    // Create test invariant columns
+    const invariantColumns = try alloc.alloc(Column, 2);
+    defer alloc.free(invariantColumns);
 
-    const celledValues1 = try alloc.alloc([]const u8, 1);
-    celledValues1[0] = "constant_value_1";
-    defer alloc.free(celledValues1);
+    const invariantValues1 = try alloc.alloc([]const u8, 1);
+    invariantValues1[0] = "invariant_value_1";
+    defer alloc.free(invariantValues1);
 
-    const celledValues2 = try alloc.alloc([]const u8, 1);
-    celledValues2[0] = "constant_value_2";
-    defer alloc.free(celledValues2);
+    const invariantValues2 = try alloc.alloc([]const u8, 1);
+    invariantValues2[0] = "invariant_value_2";
+    defer alloc.free(invariantValues2);
 
-    celledColumns[0] = .{
-        .key = "celled_col1",
-        .values = celledValues1,
+    invariantColumns[0] = .{
+        .key = "invariant_col1",
+        .values = invariantValues1,
     };
 
-    celledColumns[1] = .{
-        .key = "celled_col2",
-        .values = celledValues2,
+    invariantColumns[1] = .{
+        .key = "invariant_col2",
+        .values = invariantValues2,
     };
 
     var columnsHeader = ColumnsHeader{
         .headers = headers,
-        .celledColumns = celledColumns,
+        .invariantColumns = invariantColumns,
     };
 
     // Create ColumnsHeaderIndex
@@ -280,8 +280,8 @@ test "ColumnsHeaderEncode" {
         try std.testing.expectEqualDeep(orig, decoded);
     }
 
-    try std.testing.expectEqual(celledColumns.len, decodedHeader.celledColumns.len);
-    for (celledColumns, decodedHeader.celledColumns) |orig, decoded| {
+    try std.testing.expectEqual(invariantColumns.len, decodedHeader.invariantColumns.len);
+    for (invariantColumns, decodedHeader.invariantColumns) |orig, decoded| {
         try std.testing.expectEqualDeep(orig, decoded);
     }
 }

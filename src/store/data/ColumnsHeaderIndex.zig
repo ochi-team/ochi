@@ -13,8 +13,8 @@ const ColumnDesc = struct {
 
 columnsIDs: std.ArrayList(u16),
 columnOffsets: std.ArrayList(u32),
-celledColumnsIDs: std.ArrayList(u16),
-celledColumnOffsets: std.ArrayList(u32),
+invariantColumnsIDs: std.ArrayList(u16),
+invariantColumnOffsets: std.ArrayList(u32),
 
 pub fn initBufferKnown(bufferIDs: []u16, bufferOffsets: []u32, i: usize) ColumnsHeaderIndex {
     std.debug.assert(bufferIDs.len == bufferOffsets.len);
@@ -22,20 +22,20 @@ pub fn initBufferKnown(bufferIDs: []u16, bufferOffsets: []u32, i: usize) Columns
     return .{
         .columnsIDs = .initBuffer(bufferIDs[0..i]),
         .columnOffsets = .initBuffer(bufferOffsets[0..i]),
-        .celledColumnsIDs = .initBuffer(bufferIDs[i..]),
-        .celledColumnOffsets = .initBuffer(bufferOffsets[i..]),
+        .invariantColumnsIDs = .initBuffer(bufferIDs[i..]),
+        .invariantColumnOffsets = .initBuffer(bufferOffsets[i..]),
     };
 }
 // unknown means we allocate all the space for columns and
-// when the decoding is done we move the rest of the space to celled
+// when the decoding is done we move the rest of the space to invariant
 pub fn initBufferUnknown(bufferIDs: []u16, bufferOffsets: []u32) ColumnsHeaderIndex {
     std.debug.assert(bufferIDs.len == bufferOffsets.len);
 
     return .{
         .columnsIDs = .initBuffer(bufferIDs),
         .columnOffsets = .initBuffer(bufferOffsets),
-        .celledColumnsIDs = .empty,
-        .celledColumnOffsets = .empty,
+        .invariantColumnsIDs = .empty,
+        .invariantColumnOffsets = .empty,
     };
 }
 
@@ -44,9 +44,9 @@ pub fn appendColumnAssumeCapacity(self: *ColumnsHeaderIndex, col: ColumnDesc) vo
     self.columnOffsets.appendAssumeCapacity(col.offset);
 }
 
-pub fn appendCelledColumnAssumeCapacity(self: *ColumnsHeaderIndex, col: ColumnDesc) void {
-    self.celledColumnsIDs.appendAssumeCapacity(col.id);
-    self.celledColumnOffsets.appendAssumeCapacity(col.offset);
+pub fn appendInvariantColumnAssumeCapacity(self: *ColumnsHeaderIndex, col: ColumnDesc) void {
+    self.invariantColumnsIDs.appendAssumeCapacity(col.id);
+    self.invariantColumnOffsets.appendAssumeCapacity(col.offset);
 }
 
 pub fn columnID(self: *const ColumnsHeaderIndex, i: usize) u16 {
@@ -57,12 +57,12 @@ pub fn columnOffset(self: *const ColumnsHeaderIndex, i: usize) u32 {
     return self.columnOffsets.items[i];
 }
 
-pub fn celledColumnID(self: *const ColumnsHeaderIndex, i: usize) u16 {
-    return self.celledColumnsIDs.items[i];
+pub fn invariantColumnID(self: *const ColumnsHeaderIndex, i: usize) u16 {
+    return self.invariantColumnsIDs.items[i];
 }
 
-pub fn celledColumnOffset(self: *const ColumnsHeaderIndex, i: usize) u32 {
-    return self.celledColumnOffsets.items[i];
+pub fn invariantColumnOffset(self: *const ColumnsHeaderIndex, i: usize) u32 {
+    return self.invariantColumnOffsets.items[i];
 }
 
 pub fn encodeBound(self: *ColumnsHeaderIndex) usize {
@@ -72,10 +72,10 @@ pub fn encodeBound(self: *ColumnsHeaderIndex) usize {
         res += Encoder.varIntBound(self.columnOffsets.items[i]);
     }
 
-    res += Encoder.varIntBound(self.celledColumnsIDs.items.len);
-    for (0..self.celledColumnsIDs.items.len) |i| {
-        res += Encoder.varIntBound(self.celledColumnsIDs.items[i]);
-        res += Encoder.varIntBound(self.celledColumnOffsets.items[i]);
+    res += Encoder.varIntBound(self.invariantColumnsIDs.items.len);
+    for (0..self.invariantColumnsIDs.items.len) |i| {
+        res += Encoder.varIntBound(self.invariantColumnsIDs.items[i]);
+        res += Encoder.varIntBound(self.invariantColumnOffsets.items[i]);
     }
     return res;
 }
@@ -83,7 +83,7 @@ pub fn encodeBound(self: *ColumnsHeaderIndex) usize {
 pub fn encode(self: *ColumnsHeaderIndex, dst: []u8) usize {
     var enc = Encoder.init(dst);
     encodeColumnDescs(&enc, self.columnsIDs, self.columnOffsets);
-    encodeColumnDescs(&enc, self.celledColumnsIDs, self.celledColumnOffsets);
+    encodeColumnDescs(&enc, self.invariantColumnsIDs, self.invariantColumnOffsets);
     return enc.offset;
 }
 
@@ -104,10 +104,10 @@ pub fn decode(
     var dec = Decoder.init(src);
 
     decodeColumnDescs(&dec, &self.columnsIDs, &self.columnOffsets);
-    // move the rest of the buffer to celled columns
-    self.celledColumnsIDs = .initBuffer(self.columnsIDs.allocatedSlice()[self.columnsIDs.items.len..]);
-    self.celledColumnOffsets = .initBuffer(self.columnOffsets.allocatedSlice()[self.columnOffsets.items.len..]);
-    decodeColumnDescs(&dec, &self.celledColumnsIDs, &self.celledColumnOffsets);
+    // move the rest of the buffer to invariant columns
+    self.invariantColumnsIDs = .initBuffer(self.columnsIDs.allocatedSlice()[self.columnsIDs.items.len..]);
+    self.invariantColumnOffsets = .initBuffer(self.columnOffsets.allocatedSlice()[self.columnOffsets.items.len..]);
+    decodeColumnDescs(&dec, &self.invariantColumnsIDs, &self.invariantColumnOffsets);
 }
 
 fn decodeColumnDescs(dec: *Decoder, ids: *std.ArrayList(u16), offsets: *std.ArrayList(u32)) void {
@@ -120,7 +120,7 @@ fn decodeColumnDescs(dec: *Decoder, ids: *std.ArrayList(u16), offsets: *std.Arra
     }
 }
 
-test "encode columns and celledColumns" {
+test "encode columns and invariantColumns" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testEncode, .{});
 }
 
@@ -131,7 +131,7 @@ fn testEncode(allocator: std.mem.Allocator) !void {
     };
     const Case = struct {
         columns: []const Entry,
-        celledColumns: []const Entry,
+        invariantColumns: []const Entry,
     };
 
     const cases = [_]Case{
@@ -140,7 +140,7 @@ fn testEncode(allocator: std.mem.Allocator) !void {
                 .{ .id = 1, .offset = 10 },
                 .{ .id = 2, .offset = 20 },
             },
-            .celledColumns = &.{
+            .invariantColumns = &.{
                 .{ .id = 3, .offset = 30 },
                 .{ .id = 4, .offset = 40 },
             },
@@ -151,11 +151,11 @@ fn testEncode(allocator: std.mem.Allocator) !void {
                 .{ .id = 6, .offset = 60 },
                 .{ .id = 7, .offset = 70 },
             },
-            .celledColumns = &.{},
+            .invariantColumns = &.{},
         },
         .{
             .columns = &.{},
-            .celledColumns = &.{
+            .invariantColumns = &.{
                 .{ .id = 8, .offset = 80 },
                 .{ .id = 9, .offset = 90 },
             },
@@ -177,8 +177,8 @@ fn testEncode(allocator: std.mem.Allocator) !void {
                 .offset = entry.offset,
             });
         }
-        for (case.celledColumns) |entry| {
-            s.appendCelledColumnAssumeCapacity(.{
+        for (case.invariantColumns) |entry| {
+            s.appendInvariantColumnAssumeCapacity(.{
                 .id = entry.id,
                 .offset = entry.offset,
             });
@@ -195,15 +195,15 @@ fn testEncode(allocator: std.mem.Allocator) !void {
         decoded.decode(buf[0..written]);
 
         try std.testing.expectEqual(case.columns.len, decoded.columnsIDs.items.len);
-        try std.testing.expectEqual(case.celledColumns.len, decoded.celledColumnsIDs.items.len);
+        try std.testing.expectEqual(case.invariantColumns.len, decoded.invariantColumnsIDs.items.len);
 
         for (case.columns, 0..) |entry, i| {
             try std.testing.expectEqual(entry.id, decoded.columnID(i));
             try std.testing.expectEqual(entry.offset, decoded.columnOffset(i));
         }
-        for (case.celledColumns, 0..) |entry, i| {
-            try std.testing.expectEqual(entry.id, decoded.celledColumnID(i));
-            try std.testing.expectEqual(entry.offset, decoded.celledColumnOffset(i));
+        for (case.invariantColumns, 0..) |entry, i| {
+            try std.testing.expectEqual(entry.id, decoded.invariantColumnID(i));
+            try std.testing.expectEqual(entry.offset, decoded.invariantColumnOffset(i));
         }
     }
 }

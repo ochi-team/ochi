@@ -74,7 +74,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
     var res = try allocator.alloc(u64, count);
 
     switch (vType) {
-        Packer.uintBlockTypeCell8 => {
+        Packer.uintBlockTypeInvariant8 => {
             if (data[1..].len != 1) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -82,7 +82,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(data[1]);
             }
         },
-        Packer.uintBlockTypeCell16 => {
+        Packer.uintBlockTypeInvariant16 => {
             if (data[1..].len != 2) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -92,7 +92,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        Packer.uintBlockTypeCell32 => {
+        Packer.uintBlockTypeInvariant32 => {
             if (data[1..].len != 4) {
                 return UnpackError.InsufficientDataLen;
             }
@@ -102,7 +102,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
                 res[i] = @intCast(v);
             }
         },
-        Packer.uintBlockTypeCell64 => {
+        Packer.uintBlockTypeInvariant64 => {
             if (data[1..].len != 8) {
                 return UnpackError.InsufficientDataLen;
             }
