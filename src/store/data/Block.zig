@@ -362,6 +362,15 @@ fn canBeSavedAsInvariant(lines: []const Line, index: usize) bool {
     return true;
 }
 
+pub fn assert(self: *const Block) void {
+    const timestampsAreSorted = std.sort.isSorted(u64, self.timestamps, {}, std.sort.asc(u64));
+    std.debug.assert(timestampsAreSorted);
+
+    for (self.getColumns()) |col| {
+        std.debug.assert(col.values.len == self.timestamps.len);
+    }
+}
+
 const SID = @import("../lines.zig").SID;
 const TableWriter = @import("TableWriter.zig");
 const MemTable = @import("MemTable.zig");

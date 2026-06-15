@@ -339,7 +339,7 @@ pub fn writeBlock(
     block: *Block,
     blockHeader: *BlockHeader,
 ) !void {
-    // TODO: assert block
+    block.assert();
     try self.writeTimestamps(io, allocator, &blockHeader.timestampsHeader, block.timestamps);
 
     const columnsHeader = try ColumnsHeader.initFromBlock(allocator, block);
