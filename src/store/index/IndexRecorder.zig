@@ -731,7 +731,7 @@ pub fn mergeTables(
             }
             // TODO: test if we can record compressed size and make caching more reliable
             const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable(self.runtime.maxMem, self.runtime.cacheSize);
-            break :blk try BlockWriter.initFromDiskTable(io, alloc, destinationTablePath, fitsInCache);
+            break :blk try BlockWriter.initFromDiskTable(io, destinationTablePath, fitsInCache);
         }
     };
     defer blockWriter.deinit(alloc);

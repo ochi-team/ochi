@@ -78,33 +78,34 @@ pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
     };
 }
 
-pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !BlockWriter {
+pub fn initFromDiskTable(io: Io, path: []const u8, fitsInCache: bool) !BlockWriter {
     // TODO: apply fitsInCache to create a component to write into a file taking OS cache into account
+    // if we open separate files for merging
     _ = fitsInCache;
 
     try fs.createDirAssert(io, path);
 
-    // TODO: remove fba here, it's useless
-    var fba = std.heap.stackFallback(512, alloc);
-    const fbaAlloc = fba.get();
-
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
-    defer fbaAlloc.free(indexPath);
-    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.entries });
-    defer fbaAlloc.free(entriesPath);
-    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
-    defer fbaAlloc.free(lensPath);
-    const metaIndexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
-    defer fbaAlloc.free(metaIndexPath);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
-    var indexFile = try Dir.createFileAbsolute(io, indexPath, .{ .truncate = true });
+    try std.fs.path.fmtJoin(&.{ path, filenames.index }).format(&pathWriter);
+    var indexFile = try Dir.createFileAbsolute(io, pathWriter.buffered(), .{ .truncate = true });
     errdefer indexFile.close(io);
-    var entriesFile = try Dir.createFileAbsolute(io, entriesPath, .{ .truncate = true });
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.entries }).format(&pathWriter);
+    var entriesFile = try Dir.createFileAbsolute(io, pathWriter.buffered(), .{ .truncate = true });
     errdefer entriesFile.close(io);
-    var lensFile = try Dir.createFileAbsolute(io, lensPath, .{ .truncate = true });
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.lens }).format(&pathWriter);
+    var lensFile = try Dir.createFileAbsolute(io, pathWriter.buffered(), .{ .truncate = true });
     errdefer lensFile.close(io);
-    var metaindexFile = try Dir.createFileAbsolute(io, metaIndexPath, .{ .truncate = true });
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.metaindex }).format(&pathWriter);
+    var metaindexFile = try Dir.createFileAbsolute(io, pathWriter.buffered(), .{ .truncate = true });
     errdefer metaindexFile.close(io);
 
     return .{
@@ -316,7 +317,7 @@ test "BlockWriter disk output matches mem output" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
     defer alloc.free(tablePath);
 
-    var diskWriter = try BlockWriter.initFromDiskTable(io, alloc, tablePath, true);
+    var diskWriter = try BlockWriter.initFromDiskTable(io, tablePath, true);
     defer diskWriter.deinit(alloc);
     try diskWriter.writeBlock(io, alloc, blockOne);
     try diskWriter.writeBlock(io, alloc, blockTwo);
