@@ -35,7 +35,7 @@ day: u32,
 /// it's also used as a folder name for both index and data tables,
 /// it's derived from the day
 key: []const u8,
-index: *Index,
+index: Index,
 data: *DataRecorder,
 
 /// stream cache for ingestion, shared across all partitions,
@@ -80,21 +80,16 @@ pub fn open(
     }
 
     const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
-    errdefer indexRecorder.deinit(io, alloc);
-
-    const index = try Index.init(alloc, indexRecorder);
-    // index stops recorder too
-    // TODO: this makes reading more complicated than it should be,
-    // ideally it's inits data and defer stops it, same as the data recorder,
-    // the pattern repeats it in the partition everywhere
-    errdefer index.deinit(io, alloc);
-    try index.recorder.start(io, alloc);
+    errdefer indexRecorder.stop(io, alloc) catch |err| {
+        std.debug.print("failed to stop index recorder in partition opening: {s}", .{@errorName(err)});
+    };
+    try indexRecorder.start(io, alloc);
+    const index = Index.init(indexRecorder);
 
     const data = try DataRecorder.init(io, alloc, dataPath, runtime);
     errdefer data.stop(io, alloc) catch |err| {
         std.debug.print("failed to stop data recorder in partition opening: {s}", .{@errorName(err)});
     };
-
     try data.start(io, alloc);
 
     const partition = try alloc.create(Partition);
@@ -133,7 +128,9 @@ pub fn close(
     self: *Partition,
     io: Io,
 ) void {
-    self.index.deinit(io, self.alloc);
+    self.index.recorder.stop(io, self.alloc) catch |err| {
+        std.debug.panic("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
+    };
     self.data.stop(io, self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };

@@ -38,20 +38,10 @@ const Self = @This();
 
 recorder: *IndexRecorder,
 
-pub fn init(allocator: std.mem.Allocator, recorder: *IndexRecorder) !*Self {
-    const i = try allocator.create(Self);
-    i.* = .{
+pub fn init(recorder: *IndexRecorder) Self {
+    return .{
         .recorder = recorder,
     };
-    return i;
-}
-
-pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
-    self.recorder.stop(io, allocator) catch |err| {
-        std.debug.print("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
-    };
-
-    allocator.destroy(self);
 }
 
 pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID, blocksCache: *Cache(*MemBlock)) !bool {
