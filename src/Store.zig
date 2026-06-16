@@ -23,7 +23,6 @@ const Runtime = @import("Runtime.zig");
 
 pub const Store = @This();
 
-path: []const u8,
 /// lockFile is used to ensure only one instance is running
 /// in order to prevent data corruption
 lockFile: Io.File,
@@ -51,22 +50,18 @@ runtime: *Runtime,
 conf: *const Conf,
 
 // TODO: start partitions retention watcher
-pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Store {
-    std.debug.assert(std.fs.path.isAbsolute(path));
-    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
-
-    const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
-    errdefer runtime.deinit(alloc);
+pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime) !Store {
+    std.debug.assert(std.fs.path.isAbsolute(runtime.path));
 
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const partitionsPath = try std.fmt.bufPrint(
         &buf,
         "{s}{c}{s}",
-        .{ path, std.fs.path.sep, filenames.partitions },
+        .{ runtime.path, std.fs.path.sep, filenames.partitions },
     );
-    const partitionsDir = try createStoreDirIfNotExists(io, path, partitionsPath);
+    const partitionsDir = try createStoreDirIfNotExists(io, runtime.path, partitionsPath);
 
-    const file = try createLockFile(io, path);
+    const file = try createLockFile(io, runtime.path);
     errdefer file.close(io);
 
     var streamCache = try Cache(void).init(alloc);
@@ -87,7 +82,6 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, conf: *const Conf) !Stor
     const meter = StoreMeter.init();
 
     var store: Store = .{
-        .path = path,
         .lockFile = file,
         .partitions = partitions,
         .streamCache = streamCache,
@@ -217,7 +211,7 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
 // because the existing partitions size never change and either the tables size,
 // instead we must collect size stats from the partitions directly on opening the tables
 fn readStoreUsage(self: *Store, io: Io, alloc: Allocator) !u64 {
-    return readDirUsage(io, alloc, self.path);
+    return readDirUsage(io, alloc, self.runtime.path);
 }
 
 fn readDirUsage(io: Io, alloc: Allocator, path: []const u8) !u64 {
@@ -536,7 +530,7 @@ fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     const partitionKeySlice = try partitionKeyBuf(io, &partitionKey, day);
     std.debug.assert(std.mem.eql(u8, partitionKeySlice, partitionKey[0..]));
 
-    const partitionPath = try std.fs.path.join(alloc, &.{ self.path, filenames.partitions, partitionKeySlice });
+    const partitionPath = try std.fs.path.join(alloc, &.{ self.runtime.path, filenames.partitions, partitionKeySlice });
     errdefer alloc.free(partitionPath);
 
     // TODO: don't allocate those paths, make it as computed properties,
@@ -789,7 +783,9 @@ test "init opens existing partitions, sorts them and sets lru" {
         try Dir.createDirAbsolute(io, dataPath, .default_dir);
     }
 
-    var store = try Store.init(io, alloc, storePath, &Conf.getConf());
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, storePath, conf.app.maxCachePortion);
+    var store = try Store.init(io, alloc, &conf, runtime);
     defer store.deinit(io, alloc);
 
     try testing.expectEqual(keys.len, store.partitions.items.len);
@@ -946,7 +942,9 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     defer alloc.free(partitionsRoot);
     try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
 
-    var store = try Store.init(io, alloc, rootPath, &Conf.getConf());
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
+    var store = try Store.init(io, alloc, &conf, runtime);
     defer store.deinit(io, alloc);
 
     const dayOne: u64 = 10;

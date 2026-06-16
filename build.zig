@@ -47,6 +47,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const logz = b.dependency("logz", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const tracy = b.dependency("tracy", .{
         .target = target,
         .optimize = optimize,
@@ -84,6 +88,7 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "snappy", .module = snappy.module("snappy") },
         std.Build.Module.Import{ .name = "zint", .module = zint.module("zint") },
         std.Build.Module.Import{ .name = "metrics", .module = metrics.module("metrics") },
+        std.Build.Module.Import{ .name = "logz", .module = logz.module("logz") },
         std.Build.Module.Import{ .name = "tracy", .module = tracy.module("tracy") },
         std.Build.Module.Import{ .name = "tracy_impl", .module = tracy.module(tracyImpl) },
         std.Build.Module.Import{ .name = "c", .module = cModule },

@@ -2,9 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const zeit = @import("zeit");
+const logz = @import("logz");
+const Logger = @import("observe/Logger.zig");
 
 const build = @import("build");
 const Conf = @import("Conf.zig");
+const Runtime = @import("Runtime.zig");
 const inspect = @import("inspect.zig");
 const server = @import("server.zig");
 
@@ -61,17 +64,36 @@ pub fn main() !void {
         std.debug.print("Tracy profiler enabled\n", .{});
     }
 
-    std.debug.print("Ochi version {s}", .{build.version});
+    const conf = Conf.default(alloc);
+    var cwdBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &cwdBuf);
+    const runtime = try Runtime.init(io, alloc, cwdBuf[0..n], conf.app.maxCachePortion);
+    errdefer runtime.deinit(alloc);
 
-    const config = Conf.default(alloc);
-    const now = try zeit.instant(io, .{ .source = .now });
-    var nowBuf: [32]u8 = undefined;
-    const nowStr = try now.time().bufPrint(&nowBuf, .rfc3339);
+    // initialize a logging pool
+    const level: logz.Level = l: {
+        if (builtin.is_test) break :l .None;
+        if (builtin.mode == .Debug) break :l .Debug;
+        break :l .Info;
+    };
+    try logz.setup(io, alloc, .{
+        .level = level,
+        .pool_size = 16 * runtime.cpus,
+        .buffer_size = 4096,
+        .large_buffer_count = @max(2, runtime.cpus),
+        .large_buffer_size = 1 << 15, // 32 kb
+        .output = .stdout,
+        .encoding = .logfmt,
+    });
+    defer logz.deinit();
 
-    // TODO: introduce structured logger
-    std.debug.print("Ochi in mono mode starting at port={d}, time={s}\n", .{ config.server.port, nowStr });
+    Logger.log(
+        .info,
+        "Ochi in mono mode starting",
+        .{ .port = conf.server.port, .version = build.version },
+    );
 
-    try server.startServer(io, alloc, config);
+    try server.startServer(io, alloc, conf, runtime);
 }
 
 test {

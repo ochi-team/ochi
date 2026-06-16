@@ -4,6 +4,7 @@ const Io = std.Io;
 const httpz = @import("httpz");
 
 const Conf = @import("Conf.zig");
+const Runtime = @import("Runtime.zig");
 const Dispatcher = @import("dispatch.zig").Dispatcher;
 const AppContext = @import("dispatch.zig").AppContext;
 const Store = @import("Store.zig").Store;
@@ -43,17 +44,13 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     }
 }
 
-// TODO: validate on startup ulimit -n is larger than 4k for a running process and log an error
-// OR fail in release model with a recommendation 1 << 16 or unlimited
-pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf) !void {
+pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *Runtime) !void {
     std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
-    var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &storePathBuf);
 
-    var store = try Store.init(io, allocator, storePathBuf[0..n], &conf);
+    var store = try Store.init(io, allocator, &conf, runtime);
     defer store.deinit(io, allocator);
     try store.start(io, allocator);
 
@@ -110,16 +107,24 @@ test "serverWithSIGTERM" {
     const io = std.testing.io;
 
     const conf = Conf.default(allocator);
+    std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    var runtimePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const runtimePathLen = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &runtimePathBuf);
+    const runtime = try Runtime.init(io, allocator, runtimePathBuf[0..runtimePathLen], conf.app.maxCachePortion);
+
     // Start the server in a separate thread
     const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            startServer(io, threadAllocator, threadConf) catch |err| {
+        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf, threadRuntime: *Runtime) void {
+            startServer(io, threadAllocator, threadConf, threadRuntime) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }
     };
 
-    var future = try io.concurrent(ServerThread.run, .{ allocator, conf });
+    var future = try io.concurrent(ServerThread.run, .{ allocator, conf, runtime });
     defer future.await(io);
 
     // Give the server time to start

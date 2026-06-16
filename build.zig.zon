@@ -32,6 +32,10 @@
             .url = "git+https://codeberg.org/Games-by-Mason/tracy_zig.git#64d3caa521e44b1ebce438c0958bd5537e250193",
             .hash = "tracy-1.0.0+0.13.1-R7l8BUhQAQCLinsSpkKfLYpdgnI8aVTJG3v0XLBkJE5T",
         },
+        .logz = .{
+            .url = "git+https://github.com/karlseguin/log.zig?ref=master#7fa8de39ad4d4adc54fce4d9bb0b6bc6c0076592",
+            .hash = "logz-0.0.0-O9YWXsllAgBq-S0z6q8AInWjei8h7polkVVRzJIGE-jW",
+        },
     },
     .paths = .{
         "build.zig",

@@ -10,6 +10,7 @@ const Field = @import("../store/lines.zig").Field;
 const SID = @import("../store/lines.zig").SID;
 const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
 const MemOrder = @import("../stds/sort.zig").MemOrder;
+const Runtime = @import("../Runtime.zig");
 
 fn makeSID(alloc: Allocator, tenantID: u64, tags: std.json.Value) !u128 {
     if (tags != .object) return error.TagsMustBeObject;
@@ -303,15 +304,20 @@ test "serverEndToEndViaHTTP" {
     try std.Io.Threaded.chdir(tmpPath);
 
     const conf = Conf.default(alloc);
+    try Dir.cwd().createDir(io, conf.app.storePath, .default_dir);
+    var runtimePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const runtimePathLen = try Dir.cwd().realPathFile(io, conf.app.storePath, &runtimePathBuf);
+    const runtime = try Runtime.init(io, alloc, runtimePathBuf[0..runtimePathLen], conf.app.maxCachePortion);
+
     const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf) void {
-            server.startServer(io, threadAllocator, threadConf) catch |err| {
+        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf, threadRuntime: *Runtime) void {
+            server.startServer(io, threadAllocator, threadConf, threadRuntime) catch |err| {
                 std.debug.print("Server error: {}\n", .{err});
             };
         }
     };
 
-    var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.testing.allocator, conf });
+    var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.testing.allocator, conf, runtime });
     defer serverFuture.await(io);
     defer std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
 

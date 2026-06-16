@@ -32,6 +32,8 @@ httpThreads: u16,
 workerThreads: u16,
 
 pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtime {
+    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+
     // TODO: create a designated testing runtime and restrict this init to use inside tests
     const cpus = getCpuCount();
     // 4 is a minimum amount of threads for workers
