@@ -12,6 +12,7 @@ const MemTable = @import("../MemTable.zig");
 const Table = @import("../Table.zig");
 const LookupTable = @import("LookupTable.zig");
 const TagRecordsParser = @import("../TagRecordsParser.zig");
+const Logger = @import("logging");
 
 const Lookup = @This();
 
@@ -139,10 +140,7 @@ pub fn findAllStreamIDsByPrefixes(
             }
 
             if (streamIDs.count() >= resultLimit) {
-                std.debug.print("[WARN] stream ids count reached the limit," ++
-                    " return index earlier, lilmit={d}\n", .{
-                    resultLimit,
-                });
+                Logger.log(.warn, "stream ids count reached the limit, return index earlier", .{ .limit = resultLimit });
                 return .{
                     .streamIDs = streamIDs,
                     .cutOff = true,

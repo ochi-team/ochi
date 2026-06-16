@@ -10,6 +10,7 @@ const Unpacker = @import("Unpacker.zig");
 const ValuesDecoder = @import("ValuesDecoder.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const Table = @import("../data/Table.zig");
+const Logger = @import("logging");
 
 const tracy = @import("tracy");
 
@@ -247,10 +248,10 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
     for (lines, 0..) |line, i| {
         const uniqueKeysCount = columnI.count() + line.fields.len;
         if (uniqueKeysCount > maxColumns) {
-            std.debug.print(
-                "skipping log line, exceeded max allowed unique keys: max={d},given={d}\n",
-                .{ maxColumns, uniqueKeysCount },
-            );
+            Logger.log(.warn, "skipping log line, exceeded max allowed unique keys", .{
+                .max = maxColumns,
+                .given = uniqueKeysCount,
+            });
             linesProcessed = lines[0..i];
             break;
         }

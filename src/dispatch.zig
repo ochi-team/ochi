@@ -5,6 +5,7 @@ const Io = std.Io;
 const httpz = @import("httpz");
 const DispatchMeter = @import("observe/DispatchMeter.zig");
 const StoreMeter = @import("observe/StoreMeter.zig");
+const Logger = @import("logging");
 const AppConfig = @import("Conf.zig").AppConfig;
 
 const Store = @import("Store.zig").Store;
@@ -80,7 +81,7 @@ pub const Dispatcher = struct {
         };
 
         action(&ctx, req, res) catch |err| {
-            std.debug.print("[ERROR] failed to handle request: {s}\n", .{@errorName(err)});
+            Logger.log(.err, "failed to handle request", .{ .err = err });
 
             switch (err) {
                 ApiError.EmptyBody => {
@@ -131,13 +132,13 @@ pub const Dispatcher = struct {
         const labels: DispatchMeter.Labels = .{ .status = status, .path = req.url.path };
 
         self.meter.requests.incr(labels) catch |err| {
-            std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
+            Logger.log(.err, "failed to observe request count", .{ .err = err });
         };
         self.meter.throughput.incrBy(labels, size) catch |err| {
-            std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
+            Logger.log(.err, "failed to observe request throughput", .{ .err = err });
         };
         self.meter.latencyMs.observe(labels, latencyMs) catch |err| {
-            std.debug.print("[ERROR] failed to observe request: {}\n", .{err});
+            Logger.log(.err, "failed to observe request latency", .{ .err = err });
         };
     }
 };

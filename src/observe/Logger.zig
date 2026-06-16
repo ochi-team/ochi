@@ -4,6 +4,15 @@ const logz = @import("logz");
 
 pub const msgField = "msg";
 pub const timestampField = "timestamp";
+pub const Level = logz.Level;
+
+pub fn setup(io: std.Io, allocator: std.mem.Allocator, config: logz.Config) !void {
+    try logz.setup(io, allocator, config);
+}
+
+pub fn deinit() void {
+    logz.deinit();
+}
 
 pub fn log(comptime level: std.log.Level, comptime msg: []const u8, args: anytype) void {
     var e = switch (level) {
@@ -27,6 +36,7 @@ fn logField(e: logz.Logger, comptime key: []const u8, value: anytype) logz.Logge
         .int, .comptime_int => return e.int(key, value),
         .float, .comptime_float => return e.float(key, value),
         .bool => return e.boolean(key, value),
+        .error_set => return e.errK(key, value),
         .pointer => |ptr| switch (ptr.size) {
             .slice => if (ptr.child == u8) {
                 return e.string(key, value);

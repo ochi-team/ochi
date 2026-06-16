@@ -12,6 +12,7 @@ const MetaIndex = @import("MetaIndex.zig");
 const EntriesBlock = @import("EntriesBlock.zig");
 const TableHeader = @import("TableHeader.zig");
 const BlockHeader = @import("BlockHeader.zig");
+const Logger = @import("logging");
 
 const BlockReader = @This();
 
@@ -60,12 +61,7 @@ pub fn initFromMovedMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
     std.debug.assert(block.memEntries.items.len > 0);
     block.sortData();
 
-    std.debug.print(
-        "index.BlockReader: open mem block, prefix={s}\n",
-        .{
-            block.prefix,
-        },
-    );
+    Logger.log(.debug, "index.BlockReader: open mem block", .{ .prefix = block.prefix });
     const r = try alloc.create(BlockReader);
     r.* = .{
         .block = block,
@@ -88,13 +84,10 @@ pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
     );
     errdefer alloc.free(metaIndexRecords.records);
 
-    std.debug.print(
-        "index.BlockReader: open mem table, metaIndexRecordsLen={d}, metaIndexRecordsSize={d}\n",
-        .{
-            metaIndexRecords.records.len,
-            metaIndexRecords.compressedSize,
-        },
-    );
+    Logger.log(.debug, "index.BlockReader: open mem table", .{
+        .metaIndexRecordsLen = metaIndexRecords.records.len,
+        .metaIndexRecordsSize = metaIndexRecords.compressedSize,
+    });
 
     const block = try MemBlock.init(alloc, .{
         .blocksCountHint = @intCast(memTable.tableHeader.entriesCount),
@@ -130,12 +123,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockR
         alloc.free(metaIndex.records);
     }
 
-    std.debug.print(
-        "index.BlockReader: open disk table path={s}\n",
-        .{
-            table.path,
-        },
-    );
+    Logger.log(.debug, "index.BlockReader: open disk table", .{ .path = table.path });
 
     const block = try MemBlock.init(alloc, .{
         .blocksCountHint = @intCast(tableHeader.entriesCount),
@@ -308,35 +296,35 @@ fn logInvalidIndexRange(
     actualSize: usize,
     stage: []const u8,
 ) void {
-    std.debug.print(
-        "InvalidIndexBlockRange stage={s} metaindexI={d} indexOffset={d}" ++
-            " expectedSize={d} actualSize={d} tableBlocks={d} tableEntries={d} miBlockHeaders={d}\n",
-        .{
-            stage,
-            metaIndexI,
-            mi.indexBlockOffset,
-            expectedSize,
-            actualSize,
-            self.tableHeader.blocksCount,
-            self.tableHeader.entriesCount,
-            mi.blockHeadersCount,
-        },
-    );
+    Logger.log(.err, "invalid index block range", .{
+        .stage = stage,
+        .metaindexI = metaIndexI,
+        .indexOffset = mi.indexBlockOffset,
+        .expectedSize = expectedSize,
+        .actualSize = actualSize,
+        .tableBlocks = self.tableHeader.blocksCount,
+        .tableEntries = self.tableHeader.entriesCount,
+        .miBlockHeaders = mi.blockHeadersCount,
+    });
 
     if (metaIndexI > 0) {
         const prev = self.metaIndexRecords[metaIndexI - 1];
-        std.debug.print(
-            "prevMetaindexI={d} prevOffset={d} prevSize={d} prevHeaders={d}\n",
-            .{ metaIndexI - 1, prev.indexBlockOffset, prev.indexBlockSize, prev.blockHeadersCount },
-        );
+        Logger.log(.err, "invalid index block previous metaindex", .{
+            .metaindexI = metaIndexI - 1,
+            .offset = prev.indexBlockOffset,
+            .size = prev.indexBlockSize,
+            .headers = prev.blockHeadersCount,
+        });
     }
 
     if (metaIndexI + 1 < self.metaIndexRecords.len) {
         const nextMi = self.metaIndexRecords[metaIndexI + 1];
-        std.debug.print(
-            "hint: nextMetaindexI={d} nextOffset={d} nextSize={d} nextHeaders={d}\n",
-            .{ metaIndexI + 1, nextMi.indexBlockOffset, nextMi.indexBlockSize, nextMi.blockHeadersCount },
-        );
+        Logger.log(.err, "invalid index block next metaindex", .{
+            .metaindexI = metaIndexI + 1,
+            .offset = nextMi.indexBlockOffset,
+            .size = nextMi.indexBlockSize,
+            .headers = nextMi.blockHeadersCount,
+        });
     }
 }
 

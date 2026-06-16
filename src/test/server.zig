@@ -11,6 +11,7 @@ const SID = @import("../store/lines.zig").SID;
 const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
 const MemOrder = @import("../stds/sort.zig").MemOrder;
 const Runtime = @import("../Runtime.zig");
+const Logger = @import("logging");
 
 fn makeSID(alloc: Allocator, tenantID: u64, tags: std.json.Value) !u128 {
     if (tags != .object) return error.TagsMustBeObject;
@@ -121,7 +122,7 @@ pub const OchiClient = struct {
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
             var resp = client.request(alloc, .GET, "/ingest/loki/ready", "", 0, "application/json", null) catch |err| {
-                std.debug.print("Server not ready yet, error: {}\n", .{err});
+                Logger.log(.debug, "server not ready yet", .{ .err = err });
                 try Io.sleep(io, .fromMilliseconds(50), .real);
                 continue;
             };
@@ -130,7 +131,7 @@ pub const OchiClient = struct {
             if (resp.statusCode == 200) {
                 return;
             }
-            std.debug.print("Server not ready yet, status code: {d}\n", .{resp.statusCode});
+            Logger.log(.debug, "server not ready yet", .{ .status = resp.statusCode });
             try Io.sleep(io, .fromMilliseconds(50), .real);
         }
 
@@ -286,7 +287,7 @@ test "serverEndToEndViaHTTP" {
     const oldCwd = try std.process.currentPathAlloc(io, alloc);
     defer {
         std.Io.Threaded.chdir(oldCwd) catch |err| {
-            std.debug.print("Cannot chdir error: {}\n", .{err});
+            Logger.log(.err, "cannot chdir", .{ .err = err });
         };
         alloc.free(oldCwd);
     }
@@ -312,7 +313,7 @@ test "serverEndToEndViaHTTP" {
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf, threadRuntime: *Runtime) void {
             server.startServer(io, threadAllocator, threadConf, threadRuntime) catch |err| {
-                std.debug.print("Server error: {}\n", .{err});
+                Logger.log(.err, "server error", .{ .err = err });
             };
         }
     };
@@ -432,7 +433,7 @@ fn expectStreamIDsByBody(
     std.testing.expectEqual(200, resp.statusCode) catch |err| {
         // TODO: implement a client and move all the error loging to it,
         // it must be comptime configurable
-        std.debug.print("stream_ids request failed, response body: {s}\n", .{resp.body});
+        Logger.log(.err, "stream_ids request failed", .{ .body = resp.body });
         return err;
     };
 
@@ -490,7 +491,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
     defer resp.deinit(alloc);
 
     std.testing.expectEqual(200, resp.statusCode) catch |err| {
-        std.debug.print("Query-by-sids request failed, response body: {s}\n", .{resp.body});
+        Logger.log(.err, "query-by-sids request failed", .{ .body = resp.body });
         return err;
     };
 
@@ -534,7 +535,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // ingest
     {
         const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);
-        std.debug.print("Ingest body: {s}\n", .{ingestBody});
+        Logger.log(.debug, "ingest body", .{ .body = ingestBody });
         defer alloc.free(ingestBody);
         const maxCompressedLen = snappy.maxCompressedLength(ingestBody.len);
         const compressed = try alloc.alloc(u8, maxCompressedLen);
@@ -552,7 +553,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
         );
         defer resp.deinit(alloc);
         std.testing.expectEqual(200, resp.statusCode) catch |err| {
-            std.debug.print("Ingest request failed, reponse body: {s}\n", .{resp.body});
+            Logger.log(.err, "ingest request failed", .{ .body = resp.body });
             return err;
         };
     }
@@ -569,7 +570,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
         var resp = try client.request(alloc, .POST, "/query", query.query, query.tenant, "application/loql", null);
         defer resp.deinit(alloc);
         std.testing.expectEqual(200, resp.statusCode) catch |err| {
-            std.debug.print("Query request failed, reponse body: {s}\n", .{resp.body});
+            Logger.log(.err, "query request failed", .{ .body = resp.body });
             return err;
         };
 

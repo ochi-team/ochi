@@ -98,17 +98,6 @@ try testing.expectEqual(1, calls);
 try testing.expectEqual(@as(usize, 1), calls);
 ```
 
-To log debug output use the following formatting:
-- {d} for number
-- {s} for string
-- {any} or {} for objects
-
-e.g.:
-```zig
-const name = "Alice";
-std.debug.print("Hello, {s}!\n", .{name});
-```
-
 Use zigdoc to validate the API of the used Zig version, e.g.:
 - zigdoc std.ArrayList
 - zigdoc std.mem.Allocator

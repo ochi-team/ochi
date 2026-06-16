@@ -13,6 +13,7 @@ const ErrorReporter = @import("../query/ErrorReporter.zig");
 
 const AppContext = @import("../dispatch.zig").AppContext;
 const ApiError = @import("../server/error.zig").ApiError;
+const Logger = @import("logging");
 
 /// queryHandler does a query fetch according to a passed Query in the body
 pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
@@ -109,7 +110,7 @@ fn validateStreamIDs(value: std.json.Value) !void {
             else => return error.UnexpectedToken,
         };
         if (!std.json.isNumberFormattedLikeAnInteger(sid)) {
-            std.debug.print("invalid streamID format: {s}\n", .{sid});
+            Logger.log(.warn, "invalid streamID format", .{ .sid = sid });
             return error.InvalidNumber;
         }
         _ = try std.fmt.parseInt(u128, sid, 10);

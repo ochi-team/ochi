@@ -18,6 +18,7 @@ const Query = @import("query/Query.zig");
 
 const Runtime = @import("Runtime.zig");
 const fs = @import("fs.zig");
+const Logger = @import("logging");
 
 fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
     return lines.items[i].sid.lessThan(&lines.items[j].sid);
@@ -73,22 +74,21 @@ pub fn open(
                 "data is corrupted, path: {s}", .{path});
         }
 
-        std.debug.print("partition doesn't exist due to recent crash or a data loss," ++
-            " creating missing partition, path: {s}\n", .{path});
+        Logger.log(.warn, "partition does not exist, creating missing partition", .{ .path = path });
         try IndexRecorder.createDir(io, indexPath);
         try DataRecorder.createDir(io, dataPath);
     }
 
     const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
     errdefer indexRecorder.stop(io, alloc) catch |err| {
-        std.debug.print("failed to stop index recorder in partition opening: {s}", .{@errorName(err)});
+        Logger.log(.err, "failed to stop index recorder in partition opening", .{ .err = err });
     };
     try indexRecorder.start(io, alloc);
     const index = Index.init(indexRecorder);
 
     const data = try DataRecorder.init(io, alloc, dataPath, runtime);
     errdefer data.stop(io, alloc) catch |err| {
-        std.debug.print("failed to stop data recorder in partition opening: {s}", .{@errorName(err)});
+        Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };
     try data.start(io, alloc);
 
@@ -248,10 +248,11 @@ pub fn queryLines(
         // so a user could narrow a query
         var tagsBuf: [128]u8 = undefined;
         const tagsN = if (query.tagsExpr) |tagsExpr| tagsExpr.stringifyLimited(&tagsBuf) else 0;
-        std.debug.print(
-            "[WARN] query is cut off by index, tenantID: {d}, partition: {s}, query: {s}\n",
-            .{ tenantID, self.key, tagsBuf[0..tagsN] },
-        );
+        Logger.log(.warn, "query is cut off by index", .{
+            .tenantID = tenantID,
+            .partition = self.key,
+            .query = tagsBuf[0..tagsN],
+        });
     }
 
     return self.data.queryLines(io, alloc, sidsRes.sids.items, query);

@@ -22,6 +22,7 @@ const swap = @import("../table/swap.zig");
 const Conf = @import("../../Conf.zig");
 const sleepOrStop = @import("../../stds/async.zig").sleepOrStop;
 const Runtime = @import("../../Runtime.zig");
+const Logger = @import("logging");
 
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
@@ -447,7 +448,7 @@ fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
-        std.debug.print("failed to run disk tables merger: {s}\n", .{@errorName(err)});
+        Logger.log(.err, "failed to run disk tables merger", .{ .err = err });
     };
 }
 
@@ -466,7 +467,7 @@ fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
         self.flushMemTables(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 
-            std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
+            Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
             self.stopped.store(true, .release);
             return;
         };
@@ -482,7 +483,7 @@ fn startMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 
 fn runMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     var blocksDestination = std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush) catch {
-        std.debug.print("failed to start mem blocks flusher, OOM", .{});
+        Logger.log(.err, "failed to start mem blocks flusher, OOM", .{});
         self.stopped.store(true, .release);
         return;
     };
@@ -497,7 +498,7 @@ fn runMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
             if (err == error.Stopped) return;
 
             self.stopped.store(true, .release);
-            std.debug.print("unexpected error on running mem blocks flusher, {s}", .{@errorName(err)});
+            Logger.log(.err, "unexpected error on running mem blocks flusher", .{ .err = err });
             return;
         };
         blocksDestination.clearRetainingCapacity();
@@ -549,7 +550,7 @@ fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
-        std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
+        Logger.log(.err, "failed to merge mem tables", .{ .err = err });
     };
 }
 
@@ -748,16 +749,13 @@ pub fn mergeTables(
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
                     fs.deleteTreeAbsolute(io, destinationTablePath) catch |deleteErr| {
-                        std.debug.print(
-                            "failed to delete half way merged index table after stopped: {s}\n",
-                            .{@errorName(deleteErr)},
-                        );
+                        Logger.log(.err, "failed to delete half way merged index table after stopped", .{ .err = deleteErr });
                     };
                 }
                 return err;
             },
             else => {
-                std.debug.print("failed to merge tables: {s}\n", .{@errorName(err)});
+                Logger.log(.err, "failed to merge tables", .{ .err = err });
                 return err;
             },
         }
@@ -989,7 +987,7 @@ fn addWorker(ctx: *AddWorkerCtx) void {
         }
 
         ctx.recorder.add(ctx.io, ctx.alloc, batch[0..]) catch |err| {
-            std.debug.print("failed to add batch in worker {d}: {s}\n", .{ ctx.workerID, @errorName(err) });
+            Logger.log(.err, "failed to add batch in worker", .{ .workerID = ctx.workerID, .err = err });
             return;
         };
     }
@@ -1027,7 +1025,7 @@ fn addWorkerWithItems(ctx: *WorkerCtxWithItems) void {
         }
 
         ctx.recorder.add(ctx.io, ctx.alloc, batch[0..]) catch |err| {
-            std.debug.print("failed to add batch in worker {d}: {s}\n", .{ ctx.workerID, @errorName(err) });
+            Logger.log(.err, "failed to add batch in worker", .{ .workerID = ctx.workerID, .err = err });
             return;
         };
     }

@@ -5,6 +5,7 @@ const Io = std.Io;
 const builtin = @import("builtin");
 
 const C = @import("c").C;
+const Logger = @import("logging");
 
 const DiskSpace = struct {
     total: u64,
@@ -128,7 +129,7 @@ fn getDiskSpace(path: []const u8, nowMs: u64) DiskSpace {
 
 fn getCpuCount() usize {
     const cpus = std.Thread.getCpuCount() catch |err| {
-        std.debug.print("[WARN] failed to get CPU count, defaulting to 4 threads: {s}", .{@errorName(err)});
+        Logger.log(.warn, "failed to get CPU count, defaulting to 4 threads", .{ .err = err });
         return 4;
     };
     // TODO: investigate how to spawn it on a machine with 1 cpu

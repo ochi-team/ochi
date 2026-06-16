@@ -12,6 +12,7 @@ const TableHeader = @import("TableHeader.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const MemBlock = @import("MemBlock.zig");
 const BlockReader = @import("BlockReader.zig");
+const Logger = @import("logging");
 const EntriesBlock = @import("EntriesBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockMerger = @import("BlockMerger.zig");
@@ -196,7 +197,7 @@ pub fn mergeBlocks(
     stopped: ?*const std.atomic.Value(bool),
 ) !TableHeader {
     defer writer.close(io, alloc) catch |err| {
-        std.debug.print("failed to close index block writer: {s}", .{@errorName(err)});
+        Logger.log(.err, "failed to close index block writer", .{ .err = err });
     };
 
     var merger = try BlockMerger.init(io, alloc, readers);

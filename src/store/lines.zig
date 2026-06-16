@@ -303,6 +303,8 @@ pub const Line = struct {
     sid: SID,
     // field.key can be empty meaning it's a message field (_msg by fefault in the API)
     // can't be const because we reorder fields
+    // TODO: deifne maxLines and assert it, also follow maxColumns and assert maxLines * 2 == maxColumns,
+    // it makes log fields calculation easy enough and adds a good limit
     fields: []Field,
 
     pub fn rawSize(self: Line) u32 {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const C = @import("c").C;
+const Logger = @import("logging");
 pub const CompressError = error{
     Unknown,
 };
@@ -68,7 +69,7 @@ pub fn decompress(dst: []u8, src: []const u8) DecompressError!usize {
     if (C.ZSTD_isError(res) == 1) {
         const errCode = C.ZSTD_getErrorCode(res);
         const msg = C.ZSTD_getErrorName(res);
-        std.debug.print("decompress error: {d}, msg={s}\n", .{ errCode, msg });
+        Logger.log(.err, "decompress error", .{ .code = errCode, .zstd_msg = std.mem.span(msg) });
         // TODO: log an error to understand the exact error code
         return handleErrCode(errCode);
     }

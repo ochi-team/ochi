@@ -19,6 +19,7 @@ const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
 const maxBlockSize = @import("store/data/merge.zig").maxBlockSize;
 const Runtime = @import("Runtime.zig");
+const Logger = @import("logging");
 
 const sleepOrStop = @import("stds/async.zig").sleepOrStop;
 
@@ -264,7 +265,7 @@ fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
             if (err == error.Stopped) return;
 
             self.stopped.store(true, .release);
-            std.debug.print("failed to run mem tables flusher: {s}\n", .{@errorName(err)});
+            Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
             return;
         };
 
@@ -282,7 +283,7 @@ fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
             if (err == error.Stopped) return;
 
             self.stopped.store(true, .release);
-            std.debug.print("failed to run data shards flusher: {s}\n", .{@errorName(err)});
+            Logger.log(.err, "failed to run data shards flusher", .{ .err = err });
             return;
         };
 
@@ -293,7 +294,7 @@ fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
-        std.debug.print("failed to run force data shards flusher: {s}\n", .{@errorName(err)});
+        Logger.log(.err, "failed to run force data shards flusher", .{ .err = err });
         return;
     };
 }
@@ -352,7 +353,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
                 defer shard.mx.unlock(io);
                 try self.flushShard(io, allocator, shard);
             } else {
-                std.debug.print("[DEBUG] skipping shard flush because it's locked\n", .{});
+                Logger.log(.debug, "skipping shard flush because it is locked", .{});
             }
         }
         return;
@@ -369,7 +370,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
                 }
             }
         } else {
-            std.debug.print("[DEBUG] skipping shard flush because it's locked\n", .{});
+            Logger.log(.debug, "skipping shard flush because it is locked", .{});
         }
     }
 }
@@ -409,7 +410,7 @@ fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
-        std.debug.print("failed to merge disk tables: {s}\n", .{@errorName(err)});
+        Logger.log(.err, "failed to merge disk tables", .{ .err = err });
     };
 }
 
@@ -418,7 +419,7 @@ fn runMemTableMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
         if (err == error.Stopped) return;
 
         self.stopped.store(true, .release);
-        std.debug.print("failed to merge mem tables: {s}\n", .{@errorName(err)});
+        Logger.log(.err, "failed to merge mem tables", .{ .err = err });
     };
 }
 
@@ -546,16 +547,13 @@ fn mergeTables(
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
                     fs.deleteTreeAbsolute(io, destinationTablePath) catch |deleteErr| {
-                        std.debug.print(
-                            "failed to delete half way merged data table after stopped: {s}\n",
-                            .{@errorName(deleteErr)},
-                        );
+                        Logger.log(.err, "failed to delete half way merged data table after stopped", .{ .err = deleteErr });
                     };
                 }
                 return err;
             },
             else => {
-                std.debug.print("failed to merge tables: {s}\n", .{@errorName(err)});
+                Logger.log(.err, "failed to merge tables", .{ .err = err });
                 return err;
             },
         }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 const builtin = @import("builtin");
+const Logger = @import("logging");
 
 const maxTableSize = @import("Conf.zig").maxTableSize;
 const minOpenFileDescriptors = 1 << 16;
@@ -22,7 +23,7 @@ pub fn inspect(strict: bool, io: Io) !void {
                 return;
             }
 
-            std.debug.print("Ochi must run only on Linux", .{});
+            Logger.log(.err, "Ochi must run only on Linux", .{});
             if (strict) return error.NotLinux;
         },
     }
@@ -34,17 +35,17 @@ pub fn inspect(strict: bool, io: Io) !void {
 
 fn inspectFds(strict: bool) !void {
     const limits = std.posix.getrlimit(.NOFILE) catch |err| {
-        std.debug.print("failed to read max open file descriptor limit: {}", .{err});
+        Logger.log(.err, "failed to read max open file descriptor limit", .{ .err = err });
         if (strict) return err;
         return;
     };
 
     if (limits.cur >= minOpenFileDescriptors) return;
 
-    std.debug.print(
-        "max open file descriptor limit is too low: current={d}, required={d}",
-        .{ limits.cur, minOpenFileDescriptors },
-    );
+    Logger.log(.warn, "max open file descriptor limit is too low", .{
+        .current = limits.cur,
+        .required = minOpenFileDescriptors,
+    });
 
     const minLimit: std.posix.rlim_t = minOpenFileDescriptors;
     const nextLimits: std.posix.rlimit = .{
@@ -53,10 +54,12 @@ fn inspectFds(strict: bool) !void {
     };
 
     std.posix.setrlimit(.NOFILE, nextLimits) catch |err| {
-        std.debug.print(
-            "failed to raise max open file descriptor limit: current={d}, hard={d}, required={d}, err={}",
-            .{ limits.cur, limits.max, minOpenFileDescriptors, err },
-        );
+        Logger.log(.err, "failed to raise max open file descriptor limit", .{
+            .current = limits.cur,
+            .hard = limits.max,
+            .required = minOpenFileDescriptors,
+            .err = err,
+        });
         if (strict) return err;
         return;
     };
@@ -64,7 +67,7 @@ fn inspectFds(strict: bool) !void {
 
 fn inspectFsize(strict: bool) !void {
     const limits = std.posix.getrlimit(.FSIZE) catch |err| {
-        std.debug.print("failed to read max file size limit: {}", .{err});
+        Logger.log(.err, "failed to read max file size limit", .{ .err = err });
         if (strict) return err;
         return;
     };
@@ -72,10 +75,10 @@ fn inspectFsize(strict: bool) !void {
     const minLimit: std.posix.rlim_t = maxTableSize;
     if (limits.cur == std.posix.RLIM.INFINITY or limits.cur >= minLimit) return;
 
-    std.debug.print(
-        "max file size limit is too low: current={d}, required={d}",
-        .{ limits.cur, maxTableSize },
-    );
+    Logger.log(.warn, "max file size limit is too low", .{
+        .current = limits.cur,
+        .required = maxTableSize,
+    });
 
     const nextLimits: std.posix.rlimit = .{
         .cur = minLimit,
@@ -83,10 +86,12 @@ fn inspectFsize(strict: bool) !void {
     };
 
     std.posix.setrlimit(.FSIZE, nextLimits) catch |err| {
-        std.debug.print(
-            "failed to raise max file size limit: current={d}, hard={d}, required={d}, err={}",
-            .{ limits.cur, limits.max, maxTableSize, err },
-        );
+        Logger.log(.err, "failed to raise max file size limit", .{
+            .current = limits.cur,
+            .hard = limits.max,
+            .required = maxTableSize,
+            .err = err,
+        });
         if (strict) return err;
         return;
     };
@@ -94,7 +99,7 @@ fn inspectFsize(strict: bool) !void {
 
 fn inspectOvercommit(strict: bool, io: Io) !void {
     const f = std.Io.Dir.cwd().openFile(io, overcommitPath, .{ .mode = .read_only }) catch |err| {
-        std.debug.print("failed to read overcommit setting from {s}: {}", .{ overcommitPath, err });
+        Logger.log(.err, "failed to read overcommit setting", .{ .path = overcommitPath, .err = err });
         if (strict) return err;
         return;
     };
@@ -102,7 +107,7 @@ fn inspectOvercommit(strict: bool, io: Io) !void {
 
     var buf: [8]u8 = undefined;
     const n = f.readPositionalAll(io, &buf, 0) catch |err| {
-        std.debug.print("failed to read overcommit setting from {s}: {}", .{ overcommitPath, err });
+        Logger.log(.err, "failed to read overcommit setting", .{ .path = overcommitPath, .err = err });
         if (strict) return err;
         return;
     };
@@ -110,9 +115,10 @@ fn inspectOvercommit(strict: bool, io: Io) !void {
     const value = std.mem.trim(u8, buf[0..n], &std.ascii.whitespace);
     if (std.mem.eql(u8, value, requiredOvercommit)) return;
 
-    std.debug.print(
-        "overcommit setting is invalid: path={s}, current={s}, required={s}",
-        .{ overcommitPath, value, requiredOvercommit },
-    );
+    Logger.log(.err, "overcommit setting is invalid", .{
+        .path = overcommitPath,
+        .current = value,
+        .required = requiredOvercommit,
+    });
     if (strict) return error.InvalidOvercommit;
 }

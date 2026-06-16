@@ -71,12 +71,21 @@ pub fn build(b: *std.Build) void {
     cModule.linkLibrary(zstd_dependency.artifact("zstd"));
 
     // inner modules
+    const loggerModule = b.createModule(.{
+        .root_source_file = b.path("src/observe/Logger.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "logz", .module = logz.module("logz") },
+        },
+    });
     const encodeModule = b.createModule(.{
         .root_source_file = b.path("src/lib/encoding/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "c", .module = cModule },
+            .{ .name = "logging", .module = loggerModule },
         },
     });
 
@@ -89,6 +98,7 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "zint", .module = zint.module("zint") },
         std.Build.Module.Import{ .name = "metrics", .module = metrics.module("metrics") },
         std.Build.Module.Import{ .name = "logz", .module = logz.module("logz") },
+        std.Build.Module.Import{ .name = "logging", .module = loggerModule },
         std.Build.Module.Import{ .name = "tracy", .module = tracy.module("tracy") },
         std.Build.Module.Import{ .name = "tracy_impl", .module = tracy.module(tracyImpl) },
         std.Build.Module.Import{ .name = "c", .module = cModule },
@@ -137,6 +147,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "c", .module = cModule },
+                .{ .name = "logging", .module = loggerModule },
             },
         }),
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},

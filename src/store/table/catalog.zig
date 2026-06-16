@@ -5,6 +5,7 @@ const Dir = Io.Dir;
 
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
+const Logger = @import("logging");
 const strings = @import("../../stds/strings.zig");
 
 // nothing specific, we simply don't expected a small json file to be larger than that
@@ -65,7 +66,7 @@ pub fn readNames(
             const f = try Dir.createFileAbsolute(io, tablesFilePath, .{});
             defer f.close(io);
             try f.writeStreamingAll(io, "[]");
-            std.debug.print("write initial state to '{s}'\n", .{tablesFilePath});
+            Logger.log(.info, "write initial table catalog state", .{ .path = tablesFilePath });
             return .empty;
         },
         else => return err,
@@ -97,7 +98,7 @@ pub fn removeUnusedTables(io: Io, alloc: Allocator, path: []const u8, tableNames
 
         const pathToDelete = try std.fs.path.join(fbaAlloc, &.{ path, entry.name });
         defer fbaAlloc.free(pathToDelete);
-        std.debug.print("removing '{s}' file, sycning table dirs\n", .{pathToDelete});
+        Logger.log(.info, "removing unused table path", .{ .path = pathToDelete });
         try fs.deleteTreeAbsolute(io, pathToDelete);
     }
 }

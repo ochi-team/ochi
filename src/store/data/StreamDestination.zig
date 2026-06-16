@@ -1,4 +1,5 @@
 const std = @import("std");
+const Logger = @import("logging");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
@@ -91,7 +92,7 @@ pub const StreamDestination = union(Tag) {
             .file => |*f| {
                 f.buf.clearRetainingCapacity();
                 try f.buf.ensureUnusedCapacity(alloc, cap);
-                std.debug.print("[DEBUG] allocating a data stream destination buffer, len={d}\n", .{cap});
+                Logger.log(.debug, "allocating a data stream destination buffer", .{ .len = cap });
                 return f.buf.unusedCapacitySlice()[0..cap];
             },
         };

@@ -2,8 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const zeit = @import("zeit");
-const logz = @import("logz");
-const Logger = @import("observe/Logger.zig");
+const Logger = @import("logging");
 
 const build = @import("build");
 const Conf = @import("Conf.zig");
@@ -28,9 +27,6 @@ pub const tracy_options: tracy.Options = .{
 };
 
 pub fn main() !void {
-
-    // TODO: play with madvise
-    // TODO: on startup validate overcomittment is not allowed
     var debugAlloc: ?std.heap.DebugAllocator(.{}) = null;
 
     var alloc: std.mem.Allocator = blk: {
@@ -54,6 +50,21 @@ pub fn main() !void {
     });
     defer ioImpl.deinit();
     const io = ioImpl.io();
+    const level: Logger.Level = l: {
+        if (builtin.is_test) break :l .None;
+        if (builtin.mode == .Debug) break :l .Debug;
+        break :l .Info;
+    };
+    try Logger.setup(io, alloc, .{
+        .level = level,
+        .pool_size = 1,
+        .buffer_size = 4096,
+        .large_buffer_count = 1,
+        .large_buffer_size = 1 << 15, // 32 kb
+        .output = .stdout,
+        .encoding = .logfmt,
+    });
+    defer Logger.deinit();
     try inspect.inspect(build.release, io);
 
     var tracyAlloc = tracy.Allocator{
@@ -61,7 +72,7 @@ pub fn main() !void {
     };
     alloc = tracyAlloc.allocator();
     if (tracy.enabled) {
-        std.debug.print("Tracy profiler enabled\n", .{});
+        Logger.log(.info, "Tracy profiler enabled", .{});
     }
 
     const conf = Conf.default(alloc);
@@ -71,12 +82,7 @@ pub fn main() !void {
     errdefer runtime.deinit(alloc);
 
     // initialize a logging pool
-    const level: logz.Level = l: {
-        if (builtin.is_test) break :l .None;
-        if (builtin.mode == .Debug) break :l .Debug;
-        break :l .Info;
-    };
-    try logz.setup(io, alloc, .{
+    try Logger.setup(io, alloc, .{
         .level = level,
         .pool_size = 16 * runtime.cpus,
         .buffer_size = 4096,
@@ -85,7 +91,6 @@ pub fn main() !void {
         .output = .stdout,
         .encoding = .logfmt,
     });
-    defer logz.deinit();
 
     Logger.log(
         .info,
@@ -97,6 +102,18 @@ pub fn main() !void {
 }
 
 test {
+    var debugAlloc: std.heap.DebugAllocator(.{}) = .init;
+    const alloc = debugAlloc.allocator();
+    try Logger.setup(std.testing.io, alloc, .{
+        .level = .None,
+        .pool_size = 16,
+        .buffer_size = 4096,
+        .large_buffer_count = 2,
+        .large_buffer_size = 1 << 15, // 32 kb
+        .output = .stdout,
+        .encoding = .logfmt,
+    });
+
     _ = @import("tidy.zig");
     _ = @import("test/server.zig");
     std.testing.refAllDecls(server);

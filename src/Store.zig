@@ -10,6 +10,7 @@ const fs = @import("fs.zig");
 const sleepOrStop = @import("stds/async.zig").sleepOrStop;
 
 const StoreMeter = @import("observe/StoreMeter.zig");
+const Logger = @import("logging");
 const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
@@ -197,10 +198,7 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
     const usage = self.readStoreUsage(io, alloc) catch |err| switch (err) {
         error.FileNotFound => 0,
         else => {
-            std.debug.print(
-                "[ERROR] failed to read store disk usage, error: {s}\n",
-                .{@errorName(err)},
-            );
+            Logger.log(.err, "failed to read store disk usage", .{ .err = err });
             return;
         },
     };
@@ -329,17 +327,19 @@ pub fn addLines(
     while (idx < lines.len) : (idx += 1) {
         const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
         if (day < minDay) {
-            std.debug.print(
-                "[WARN] incoming log is out of the retentation range: lower range={d}, given={d}\n",
-                .{ nowNs - self.conf.app.storeRetention, lines[idx].timestampNs },
-            );
+            Logger.log(.warn, "incoming log is out of the retention range", .{
+                .range = "lower",
+                .limit = nowNs - self.conf.app.storeRetention,
+                .given = lines[idx].timestampNs,
+            });
             continue;
         }
         if (day > maxDay) {
-            std.debug.print(
-                "[WARN] incoming log is out of the retentation range: upper range={d}, given={d}\n",
-                .{ nowNs + std.time.ns_per_day, lines[idx].timestampNs },
-            );
+            Logger.log(.warn, "incoming log is out of the retention range", .{
+                .range = "upper",
+                .limit = nowNs + std.time.ns_per_day,
+                .given = lines[idx].timestampNs,
+            });
             continue;
         }
 

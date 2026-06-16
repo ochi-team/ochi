@@ -5,6 +5,7 @@ const Io = std.Io;
 const builtin = @import("builtin");
 
 const MemBlock = @import("MemBlock.zig");
+const Logger = @import("logging");
 
 const EntriesShardAddResult = struct {
     blocksToFlush: std.ArrayList(*MemBlock),
@@ -52,10 +53,10 @@ const EntriesShard = struct {
             }
 
             if (firstValid == entries.len) {
-                std.debug.print(
-                    "[DEBUG] skip adding items to index block, items={d}, maxSize={d}\n",
-                    .{ entries.len, maxMemBlockSize },
-                );
+                Logger.log(.debug, "skip adding items to index block", .{
+                    .items = entries.len,
+                    .maxSize = maxMemBlockSize,
+                });
                 return null;
             }
 
@@ -81,10 +82,11 @@ const EntriesShard = struct {
                 if (logPrefix.len > 32) {
                     logPrefix = logPrefix[0..32];
                 }
-                std.debug.print(
-                    "skip adding item to index, must not exceed {d} bytes, given={d}, value={s}\n",
-                    .{ maxMemBlockSize, entry.len, logPrefix },
-                );
+                Logger.log(.warn, "skip adding item to index, item is too large", .{
+                    .maxSize = maxMemBlockSize,
+                    .given = entry.len,
+                    .value = logPrefix,
+                });
                 continue;
             }
 

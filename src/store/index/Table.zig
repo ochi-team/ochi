@@ -5,6 +5,7 @@ const Io = std.Io;
 const Dir = Io.Dir;
 
 const filenames = @import("../../filenames.zig");
+const Logger = @import("logging");
 const fs = @import("../../fs.zig");
 const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
@@ -136,19 +137,14 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
 
     const table = try alloc.create(Table);
 
-    std.debug.print(
-        "index.Table: open disk table path={s}" ++
-            " metaindexRecordsSize={d} metaindexRecordsLen={d}" ++
-            " indexStatsSize={d} entriesStatsSize={d} lensStatsSize={d}\n",
-        .{
-            path,
-            decodedMetaindex.compressedSize,
-            decodedMetaindex.records.len,
-            indexSize,
-            entriesSize,
-            lensSize,
-        },
-    );
+    Logger.log(.debug, "index.Table: open disk table", .{
+        .path = path,
+        .metaindexRecordsSize = decodedMetaindex.compressedSize,
+        .metaindexRecordsLen = decodedMetaindex.records.len,
+        .indexStatsSize = indexSize,
+        .entriesStatsSize = entriesSize,
+        .lensStatsSize = lensSize,
+    });
 
     table.* = .{
         .inner = .{ .disk = disk },

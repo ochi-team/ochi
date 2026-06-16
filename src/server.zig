@@ -12,6 +12,7 @@ const insert = @import("handlers/insert.zig");
 const query = @import("handlers/query.zig");
 const flush = @import("handlers/flush.zig");
 const stream_ids = @import("handlers/stream_ids.zig");
+const Logger = @import("logging");
 
 var global_server: ?*httpz.Server(*Dispatcher) = null;
 
@@ -92,11 +93,11 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *R
     // - file descriptors (too many open files)
     server.listen() catch |err| switch (err) {
         error.AddressInUse => {
-            std.debug.print("can't start server, port={d} is in use\n", .{conf.server.port});
+            Logger.log(.err, "can't start server, port is in use", .{ .port = conf.server.port });
             return err;
         },
         else => {
-            std.debug.print("can't start server, unexpected error {any}\n", .{err});
+            Logger.log(.err, "can't start server, unexpected error", .{ .err = err });
             return err;
         },
     };
@@ -119,7 +120,7 @@ test "serverWithSIGTERM" {
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator, threadConf: Conf, threadRuntime: *Runtime) void {
             startServer(io, threadAllocator, threadConf, threadRuntime) catch |err| {
-                std.debug.print("Server error: {}\n", .{err});
+                Logger.log(.err, "server error", .{ .err = err });
             };
         }
     };

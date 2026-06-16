@@ -1,5 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
+const Logger = @import("logging");
 
 pub fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void {
     // TODO: make this interval configurable,
@@ -18,7 +19,7 @@ pub fn sleepOrStop(io: Io, stopped: *const std.atomic.Value(bool), ns: u64) void
 
         const s = @min(remaining, stepNs);
         Io.sleep(io, .fromNanoseconds(s), .real) catch |err| {
-            std.debug.print("Sleep or stop error: {}", .{err});
+            Logger.log(.err, "sleep or stop error", .{ .err = err });
         };
         remaining -= s;
     }

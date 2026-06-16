@@ -1,4 +1,5 @@
 const std = @import("std");
+const Logger = @import("logging");
 
 pub const SyntaxError = struct {
     line: u16,
@@ -7,7 +8,7 @@ pub const SyntaxError = struct {
 };
 
 pub fn log(e: SyntaxError) void {
-    std.debug.print("Syntax error at line {d}, column {d}: {s}\n", .{ e.line, e.col, e.message });
+    Logger.log(.warn, "syntax error", .{ .line = e.line, .column = e.col, .message = e.message });
 }
 
 const maxErrors: usize = 4;
