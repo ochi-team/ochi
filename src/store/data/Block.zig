@@ -16,9 +16,9 @@ const tracy = @import("tracy");
 
 const sizing = @import("sizing.zig");
 
-// TODO: no idea if it's a good number, must be tested with high cardinality logs,
-// adjust the number and see what's best we can do
 pub const maxColumns = 2000;
+// at least 1 line fits a block with a large gap
+comptime std.debug.assert(@import("../lines.zig").defaultMaxFieldsPerLine * 2 == maxColumns);
 // maxLines is a max amount of lines that we can put into a block,
 // it's mostly for sanity check assuming the maxBlockSize
 // TODO: we should log blocks meta data if there are more than 64 * 1024 lines

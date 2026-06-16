@@ -3,12 +3,13 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const Store = @import("Store.zig").Store;
-const Encoder = @import("encoding").Encoder;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const encodeTags = @import("store/lines.zig").encodeTags;
 const makeStreamID = @import("store/lines.zig").makeStreamID;
+
+const Logger = @import("logging");
 
 pub const Params = struct {
     tenantID: u64,
@@ -108,18 +109,19 @@ pub const Processor = struct {
             .fields = fieldsCopy,
         };
 
+        // TODO: diagnostic fits here to get more error context
         const size = line.rawSizeValidate() catch |err| {
             switch (err) {
                 error.MaxFieldsPerLineExceeded => {
-                    // TODO: log error
+                    Logger.log(.err, "max fields per line exceeded", .{});
                     return;
                 },
                 error.MaxFieldKeySizeExceeded => {
-                    // TODO: log error
+                    Logger.log(.err, "max field key size exceeded", .{});
                     return;
                 },
                 error.MaxLineSizeExceeded => {
-                    // TODO: log error
+                    Logger.log(.err, "max line size exceeded", .{});
                     return;
                 },
             }
