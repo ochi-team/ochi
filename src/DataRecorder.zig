@@ -35,7 +35,7 @@ const merger = merge.Merger(*Table, maxMemTables);
 const swapper = swap.Swapper(DataRecorder, Table);
 
 fn getFlushTime(io: Io) i64 {
-    return Io.Timestamp.now(io, .real).toMicroseconds() + Consts.dataFlushIntervalNs;
+    return Io.Timestamp.now(io, .real).toMicroseconds() + Consts.dataFlushIntervalUs;
 }
 
 pub const DataRecorder = @This();
