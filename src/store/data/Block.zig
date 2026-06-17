@@ -18,13 +18,16 @@ const sizing = @import("sizing.zig");
 
 pub const maxColumns = 2000;
 // at least 1 line fits a block with a large gap
-comptime std.debug.assert(@import("../lines.zig").defaultMaxFieldsPerLine * 2 == maxColumns);
 // maxLines is a max amount of lines that we can put into a block,
 // it's mostly for sanity check assuming the maxBlockSize
 // TODO: we should log blocks meta data if there are more than 64 * 1024 lines
 // it requires make it as a soft limit,
 // it means every line is less than 32 bytes
 pub const maxLines = 1024 * 1024;
+
+comptime {
+    std.debug.assert(@import("../lines.zig").defaultMaxFieldsPerLine * 2 == maxColumns);
+}
 
 fn columnLessThan(_: void, one: Column, another: Column) bool {
     return std.mem.lessThan(u8, one.key, another.key);

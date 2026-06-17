@@ -33,7 +33,7 @@ pub inline fn writeString(self: *Self, str: []const u8) void {
 
 /// Write bytes padded to a fixed size (padding with zeros)
 pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
-    if (bytes.len > totalSize) @panic("negative padding now allowed");
+    if (bytes.len > totalSize) @panic("negative padding not allowed");
 
     const slice = self.buf[self.offset .. self.offset + totalSize];
     self.offset += totalSize;
