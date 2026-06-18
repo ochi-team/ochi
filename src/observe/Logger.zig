@@ -1,10 +1,17 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const logz = @import("logz");
 
 pub const msgField = "msg";
 pub const timestampField = "timestamp";
 pub const Level = logz.Level;
+
+pub fn levelFromBuildMode() logz.Level {
+    if (builtin.is_test) return .None;
+    if (builtin.mode == .Debug) return .Debug;
+    return .Info;
+}
 
 pub fn setup(io: std.Io, allocator: std.mem.Allocator, config: logz.Config) !void {
     try logz.setup(io, allocator, config);

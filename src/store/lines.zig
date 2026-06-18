@@ -351,9 +351,7 @@ pub const Line = struct {
 // the difference to MultiArray is []Fields is also a flat array for all the lines
 
 pub fn lineLessThan(_: void, one: Line, another: Line) bool {
-    // sid is less
     return one.sid.lessThan(&another.sid) or
-        // or sid is eq, but timestamp is less
         (one.sid.eql(&another.sid) and one.timestampNs < another.timestampNs);
 }
 

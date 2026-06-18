@@ -26,6 +26,15 @@ fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
 
 const partitionKeySize = 8;
 
+// TODO: redesign a partition range to rely not on the time, but the size:
+// 1. limit the max amount of tables to 32
+// 2. limit the max table size to 100gb
+// 3. reaching the limit the partition become a read only:
+// a computed property returning enum state == .full
+// 4. the flag must tell to the store to attempt to create new partition
+// if the store itself is not read only
+// 5. a partition has a range: u32 instead of a day service timestamp in seconds the data begins at: [range, ...)
+// 6. it requires reshape how the partitions are stored and open in the store
 pub const Partition = @This();
 
 /// path is an absolute path to the partition

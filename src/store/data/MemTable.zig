@@ -174,6 +174,48 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
     try blockWriter.finish(io, allocator, streamWriter, &self.tableHeader);
 }
 
+pub fn addLines2(self: *MemTable, io: Io, allocator: std.mem.Allocator, sids: []const SID, linesBySid: []const []Line) !void {
+    std.debug.assert(sids.len == linesBySid.len);
+
+    for (0..sids.len) |k| {
+        const lines = linesBySid[k];
+        const sid = sids[k];
+
+        if (lines.len == 0) {
+            return Error.EmptyLines;
+        }
+
+        var blockWriter = try BlockWriter.init(allocator);
+        defer blockWriter.deinit(allocator);
+        const streamWriter = try TableWriter.initMem(allocator, self);
+        defer streamWriter.deinit(allocator);
+
+        var streamI: usize = 0;
+        var blockSize: u32 = 0;
+
+        // TODO: audit al sort/sortUnstable and use a single one,
+        // currently we use mem.sort AND sort.sort, therefore increase bundle size with no reason
+        std.mem.sortUnstable(Line, lines, {}, lineLessThan);
+        for (lines, 0..) |line, i| {
+            std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
+
+            // TODO: the tables splits blocks by stream ids,
+            // we might want to split them by log level as well,
+            // or design another approach to split logs by severity
+            if (blockSize >= maxBlockSize) {
+                try blockWriter.writeLines(io, allocator, sid, lines[streamI..i], streamWriter);
+                blockSize = 0;
+                streamI = i;
+            }
+            blockSize += line.fieldsSize();
+        }
+        if (streamI != lines.len) {
+            try blockWriter.writeLines(io, allocator, sid, lines[streamI..], streamWriter);
+        }
+        try blockWriter.finish(io, allocator, streamWriter, &self.tableHeader);
+    }
+}
+
 // TODO: find out if we can use StreamWriter to flush the table to disk
 pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
