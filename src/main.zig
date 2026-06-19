@@ -1,13 +1,8 @@
 const std = @import("std");
-const builtin = @import("builtin");
 
-const zeit = @import("zeit");
 const Logger = @import("logging");
 
 const build = @import("build");
-const Conf = @import("Conf.zig");
-const Runtime = @import("Runtime.zig");
-const inspect = @import("inspect.zig");
 const server = @import("server.zig");
 
 pub const tracy_impl = @import("tracy_impl");
@@ -71,6 +66,7 @@ test {
 
     _ = @import("tidy.zig");
     _ = @import("test/server.zig");
+    _ = @import("test/installation.zig");
     std.testing.refAllDecls(server);
 }
 

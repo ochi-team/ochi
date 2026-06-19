@@ -119,7 +119,7 @@ pub const OchiClient = struct {
         };
     }
 
-    fn waitUntilReady(client: *OchiClient, io: Io, alloc: std.mem.Allocator, timeout: std.Io.Duration) !void {
+    pub fn waitUntilReady(client: *OchiClient, io: Io, alloc: std.mem.Allocator, timeout: std.Io.Duration) !void {
         const start = Io.Timestamp.now(io, .real).nanoseconds;
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
@@ -138,6 +138,80 @@ pub const OchiClient = struct {
         }
 
         return error.Timeout;
+    }
+
+    pub fn ingestLokiJson(
+        client: *OchiClient,
+        alloc: Allocator,
+        tenant: u64,
+        body: []const u8,
+    ) !void {
+        const maxCompressedLen = snappy.maxCompressedLength(body.len);
+        const compressed = try alloc.alloc(u8, maxCompressedLen);
+        defer alloc.free(compressed);
+        const compressedLen = try snappy.compress(body, compressed);
+
+        var resp = try client.request(
+            alloc,
+            .POST,
+            "/ingest/loki/api/v1/push",
+            compressed[0..compressedLen],
+            tenant,
+            "application/json",
+            "snappy",
+        );
+        defer resp.deinit(alloc);
+        std.testing.expectEqual(200, resp.statusCode) catch |err| {
+            Logger.log(.err, "ingest request failed", .{ .body = resp.body });
+            return err;
+        };
+    }
+
+    pub fn flush(
+        client: *OchiClient,
+        alloc: Allocator,
+        tenant: u64,
+    ) !void {
+        var resp = try client.request(alloc, .POST, "/flush", "", tenant, "", null);
+        defer resp.deinit(alloc);
+        try std.testing.expectEqual(200, resp.statusCode);
+    }
+
+    pub fn expectQueryIDs(
+        client: *OchiClient,
+        alloc: Allocator,
+        tenant: u64,
+        query: []const u8,
+        expectedIDs: []const []const u8,
+    ) !void {
+        var resp = try client.request(alloc, .POST, "/query", query, tenant, "application/loql", null);
+        defer resp.deinit(alloc);
+        std.testing.expectEqual(200, resp.statusCode) catch |err| {
+            Logger.log(.err, "query request failed", .{ .body = resp.body });
+            return err;
+        };
+
+        const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
+            // TODO: removed sid from the response and switch it false
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+
+        var fetchedIDs = std.ArrayList([]const u8).empty;
+        defer fetchedIDs.deinit(alloc);
+        for (parsed.value) |line| {
+            for (line.fields) |field| {
+                if (std.mem.eql(u8, field.key, "id")) {
+                    try fetchedIDs.append(alloc, field.value);
+                    break;
+                }
+            }
+        }
+
+        try std.testing.expectEqual(fetchedIDs.items.len, expectedIDs.len);
+        for (expectedIDs, 0..query.match.len) |expectedID, i| {
+            try std.testing.expectEqualStrings(expectedID, fetchedIDs.items[i]);
+        }
     }
 };
 
@@ -532,66 +606,38 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // ingest
     {
         const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);
-        Logger.log(.debug, "ingest body", .{ .body = ingestBody });
-        defer alloc.free(ingestBody);
-        const maxCompressedLen = snappy.maxCompressedLength(ingestBody.len);
-        const compressed = try alloc.alloc(u8, maxCompressedLen);
-        defer alloc.free(compressed);
-        const compressedLen = try snappy.compress(ingestBody, compressed);
-
-        var resp = try client.request(
-            alloc,
-            .POST,
-            "/ingest/loki/api/v1/push",
-            compressed[0..compressedLen],
-            corpus.ingest.tenant,
-            "application/json",
-            "snappy",
-        );
-        defer resp.deinit(alloc);
-        std.testing.expectEqual(200, resp.statusCode) catch |err| {
-            Logger.log(.err, "ingest request failed", .{ .body = resp.body });
+        Logger.log(.debug, "ingest body", .{ .body = ingestBody, .corpus = corpus.name });
+        client.ingestLokiJson(alloc, corpus.ingest.tenant, ingestBody) catch |err| {
+            Logger.log(.error, "failed to ingest", .{
+                .err = err,
+                .name = corpus.name,
+            });
             return err;
         };
     }
 
     // flush
     {
-        var resp = try client.request(alloc, .POST, "/flush", "", corpus.ingest.tenant, "", null);
-        defer resp.deinit(alloc);
-        try std.testing.expectEqual(200, resp.statusCode);
+        client.flush(alloc, corpus.ingest.tenant) catch |err| {
+            Logger.log(.error, "failed to flush", .{
+                .err = err,
+                .name = corpus.name,
+            });
+            return err;
+        };
     }
 
     // query all the test cases
     for (corpus.queries) |query| {
-        var resp = try client.request(alloc, .POST, "/query", query.query, query.tenant, "application/loql", null);
-        defer resp.deinit(alloc);
-        std.testing.expectEqual(200, resp.statusCode) catch |err| {
-            Logger.log(.err, "query request failed", .{ .body = resp.body });
+        client.expectQueryIDs(alloc, query.tenant, query.query, query.match) catch |err| {
+            Logger.log(.error, "failed to match query ids", .{
+                .err = err,
+                .query = query.query,
+                .description = query.description,
+                .name = corpus.name,
+            });
             return err;
         };
-
-        const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
-            // TODO: removed sid from the response and switch it false
-            .ignore_unknown_fields = true,
-        });
-        defer parsed.deinit();
-
-        var fetchedIDs = std.ArrayList([]const u8).empty;
-        defer fetchedIDs.deinit(alloc);
-        for (parsed.value) |line| {
-            for (line.fields) |field| {
-                if (std.mem.eql(u8, field.key, "id")) {
-                    try fetchedIDs.append(alloc, field.value);
-                    break;
-                }
-            }
-        }
-
-        try std.testing.expectEqual(fetchedIDs.items.len, query.match.len);
-        for (query.match, 0..query.match.len) |expectedID, i| {
-            try std.testing.expectEqualStrings(expectedID, fetchedIDs.items[i]);
-        }
     }
 }
 
