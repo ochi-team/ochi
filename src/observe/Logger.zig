@@ -13,7 +13,15 @@ pub fn levelFromBuildMode() logz.Level {
     return .Info;
 }
 
+var done: bool = false;
+
 pub fn setup(io: std.Io, allocator: std.mem.Allocator, config: logz.Config) !void {
+    if (done) {
+        // TODO: get rid of a global logger and remove it
+        if (builtin.is_test) return;
+        std.debug.assert(!done);
+    }
+    done = true;
     try logz.setup(io, allocator, config);
 }
 

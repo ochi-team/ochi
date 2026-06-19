@@ -3,11 +3,13 @@ const Io = std.Io;
 
 const httpz = @import("httpz");
 
+const inspect = @import("inspect.zig");
 const Conf = @import("Conf.zig");
 const Runtime = @import("Runtime.zig");
 const Dispatcher = @import("dispatch.zig").Dispatcher;
 const AppContext = @import("dispatch.zig").AppContext;
 const Store = @import("Store.zig").Store;
+const Layout = @import("Layout.zig");
 const insert = @import("handlers/insert.zig");
 const query = @import("handlers/query.zig");
 const flush = @import("handlers/flush.zig");
@@ -45,17 +47,55 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     }
 }
 
-pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *Runtime) !void {
+pub const Info = struct {
+    version: []const u8,
+    release: bool,
+};
+
+pub fn startApp(io: Io, alloc: std.mem.Allocator, info: Info) !void {
+    const conf = Conf.default(alloc);
+    var cwdBuf: [std.fs.max_path_bytes]u8 = undefined;
+
     std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
+    const n = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &cwdBuf);
+    const path = cwdBuf[0..n];
 
-    var store = try Store.init(io, allocator, &conf, runtime);
-    defer store.deinit(io, allocator);
-    try store.start(io, allocator);
+    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const layout = try Layout.make(io, path, &partitionsPathBuf);
 
-    var dispatcher = try Dispatcher.init(io, allocator, &conf.app, &store);
+    const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
+    errdefer runtime.deinit(alloc);
+
+    // initialize a logging pool
+    try Logger.setup(io, alloc, .{
+        .level = Logger.levelFromBuildMode(),
+        .pool_size = 2 * runtime.cpus,
+        .buffer_size = 4096,
+        .large_buffer_count = @max(2, runtime.cpus),
+        .large_buffer_size = 1 << 15, // 32 kb
+        .output = .stdout,
+        .encoding = .logfmt,
+    });
+    try inspect.inspect(info.release, io);
+
+    Logger.log(
+        .info,
+        "Ochi in mono mode starting",
+        .{ .port = conf.server.port, .version = info.version },
+    );
+
+    var store = try Store.init(io, alloc, &conf, runtime, layout);
+    defer store.deinit(io, alloc);
+    try store.start(io, alloc);
+
+    try startServer(io, alloc, conf, &store);
+}
+
+pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, store: *Store) !void {
+    var dispatcher = try Dispatcher.init(io, allocator, &conf.app, store);
     defer dispatcher.deinit();
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
         .address = .all(conf.server.port),
@@ -107,25 +147,16 @@ test "serverWithSIGTERM" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    const conf = Conf.default(allocator);
-    std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
-    var runtimePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const runtimePathLen = try std.Io.Dir.cwd().realPathFile(io, conf.app.storePath, &runtimePathBuf);
-    const runtime = try Runtime.init(io, allocator, runtimePathBuf[0..runtimePathLen], conf.app.maxCachePortion);
-
     // Start the server in a separate thread
     const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf, threadRuntime: *Runtime) void {
-            startServer(io, threadAllocator, threadConf, threadRuntime) catch |err| {
+        fn run(threadAllocator: std.mem.Allocator) void {
+            startApp(io, threadAllocator, .{ .release = false, .version = "" }) catch |err| {
                 Logger.log(.err, "server error", .{ .err = err });
             };
         }
     };
 
-    var future = try io.concurrent(ServerThread.run, .{ allocator, conf, runtime });
+    var future = try io.concurrent(ServerThread.run, .{allocator});
     defer future.await(io);
 
     // Give the server time to start

@@ -110,8 +110,8 @@ fn updateDiskSpace(self: *Runtime, nowMs: u64) DiskSpace {
 }
 
 fn getDiskSpace(path: []const u8, nowMs: u64) DiskSpace {
-    const pathZ = std.posix.toPosixPath(path) catch {
-        std.debug.panic("disk space path too long: '{s}'", .{path});
+    const pathZ = std.posix.toPosixPath(path) catch |err| switch (err) {
+        error.NameTooLong => std.debug.panic("disk space path too long: '{s}'", .{path}),
     };
     var stat: C.struct_statvfs = .{};
     switch (std.posix.errno(C.statvfs(&pathZ, &stat))) {

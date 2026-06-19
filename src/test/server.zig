@@ -11,6 +11,8 @@ const SID = @import("../store/lines.zig").SID;
 const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
 const MemOrder = @import("../stds/sort.zig").MemOrder;
 const Runtime = @import("../Runtime.zig");
+const Store = @import("../Store.zig").Store;
+const Layout = @import("../Layout.zig");
 const Logger = @import("logging");
 
 fn makeSID(alloc: Allocator, tenantID: u64, tags: std.json.Value) !u128 {
@@ -287,6 +289,8 @@ test "serverEndToEndViaHTTP" {
     const oldCwd = try std.process.currentPathAlloc(io, alloc);
     defer {
         std.Io.Threaded.chdir(oldCwd) catch |err| {
+            // TODO: make Logger as non global so we could use one instance for test test emitting the data,
+            // one for the app to mute the general output
             Logger.log(.err, "cannot chdir", .{ .err = err });
         };
         alloc.free(oldCwd);
@@ -304,21 +308,14 @@ test "serverEndToEndViaHTTP" {
     defer alloc.free(tmpPath);
     try std.Io.Threaded.chdir(tmpPath);
 
-    const conf = Conf.default(alloc);
-    try Dir.cwd().createDir(io, conf.app.storePath, .default_dir);
-    var runtimePathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const runtimePathLen = try Dir.cwd().realPathFile(io, conf.app.storePath, &runtimePathBuf);
-    const runtime = try Runtime.init(io, alloc, runtimePathBuf[0..runtimePathLen], conf.app.maxCachePortion);
-
     const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator, threadConf: Conf, threadRuntime: *Runtime) void {
-            server.startServer(io, threadAllocator, threadConf, threadRuntime) catch |err| {
+        fn run(threadAllocator: std.mem.Allocator) void {
+            server.startApp(io, threadAllocator, .{ .release = false, .version = "" }) catch |err| {
                 Logger.log(.err, "server error", .{ .err = err });
             };
         }
     };
-
-    var serverFuture = try Io.concurrent(io, ServerThread.run, .{ std.testing.allocator, conf, runtime });
+    var serverFuture = try Io.concurrent(io, ServerThread.run, .{std.testing.allocator});
     defer serverFuture.await(io);
     defer std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
 
