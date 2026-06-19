@@ -50,3 +50,8 @@ jobs:
           files: |
             dist/Ochi-${{ github.ref_name }}-linux-x86_64.tar.gz
             dist/Ochi-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
+
+      - name: Test new release installation
+        uses: mlugg/setup-zig@v2
+        run: zig build test -DtestInstallation=true
+

@@ -209,7 +209,7 @@ pub const OchiClient = struct {
         }
 
         try std.testing.expectEqual(fetchedIDs.items.len, expectedIDs.len);
-        for (expectedIDs, 0..query.match.len) |expectedID, i| {
+        for (expectedIDs, 0..expectedIDs.len) |expectedID, i| {
             try std.testing.expectEqualStrings(expectedID, fetchedIDs.items[i]);
         }
     }
@@ -608,7 +608,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
         const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);
         Logger.log(.debug, "ingest body", .{ .body = ingestBody, .corpus = corpus.name });
         client.ingestLokiJson(alloc, corpus.ingest.tenant, ingestBody) catch |err| {
-            Logger.log(.error, "failed to ingest", .{
+            Logger.log(.err, "failed to ingest", .{
                 .err = err,
                 .name = corpus.name,
             });
@@ -619,7 +619,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // flush
     {
         client.flush(alloc, corpus.ingest.tenant) catch |err| {
-            Logger.log(.error, "failed to flush", .{
+            Logger.log(.err, "failed to flush", .{
                 .err = err,
                 .name = corpus.name,
             });
@@ -630,7 +630,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // query all the test cases
     for (corpus.queries) |query| {
         client.expectQueryIDs(alloc, query.tenant, query.query, query.match) catch |err| {
-            Logger.log(.error, "failed to match query ids", .{
+            Logger.log(.err, "failed to match query ids", .{
                 .err = err,
                 .query = query.query,
                 .description = query.description,

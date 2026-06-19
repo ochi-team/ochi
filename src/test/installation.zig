@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
+const build = @import("build");
 const test_server = @import("server.zig");
 
 const OchiClient = test_server.OchiClient;
@@ -11,15 +12,12 @@ const expectedIDs = [_][]const u8{"install-001"};
 const query = "[-60m,now] {env=installation AND service=release} id=install-001";
 
 fn getLatestGitTag(alloc: Allocator, io: Io) ![]const u8 {
-    if (!testInstallation) return error.ZigSkipTest;
-
     const result = try std.process.run(alloc, io, .{
         .argv = &.{
             "git",
             "describe",
             "--tags",
-            "--abbrev",
-            "0",
+            "--abbrev=0",
         },
     });
     defer alloc.free(result.stdout);
@@ -34,24 +32,27 @@ fn getLatestGitTag(alloc: Allocator, io: Io) ![]const u8 {
     }
 }
 
-test "installation script installs release binary and data persists across restart" {
+test "installationScriptInstallsReleaseBinaryAndDataPersistsAcrossRestart" {
+    if (!build.testInstallation) return error.SkipZigTest;
+
     const alloc = std.testing.allocator;
     const io = std.testing.io;
 
     var repoPathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    var n = try std.Io.Dir.cwd().realPath(io, &repoPathBuf);
+    var n = try std.Io.Dir.cwd().realPathFile(io, ".", &repoPathBuf);
     const repoPath = repoPathBuf[0..n];
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     var tmpPathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    n = try tmp.dir.realPath(io, &tmpPathBuf);
+    n = try tmp.dir.realPathFile(io, ".", &tmpPathBuf);
     const tmpPath = tmpPathBuf[0..n];
 
     const scriptPath = try std.fs.path.join(alloc, &.{ repoPath, "scripts", "install.sh" });
     defer alloc.free(scriptPath);
     const version = try getLatestGitTag(alloc, io);
+    defer alloc.free(version);
     var binaryPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const binaryPath = try installRelease(
         alloc,
@@ -89,9 +90,9 @@ test "installation script installs release binary and data persists across resta
         defer child.kill(io);
 
         try client.waitUntilReady(io, alloc, .fromSeconds(5));
-        try test_server.ingestLokiJson(alloc, &client, tenant, body);
-        try test_server.flushTenant(alloc, &client, tenant);
-        try test_server.expectQueryIDs(alloc, &client, tenant, query, &expectedIDs);
+        try client.ingestLokiJson(alloc, tenant, body);
+        try client.flush(alloc, tenant);
+        try client.expectQueryIDs(alloc, tenant, query, &expectedIDs);
 
         child.kill(io);
     }
@@ -101,7 +102,7 @@ test "installation script installs release binary and data persists across resta
         defer child.kill(io);
 
         try client.waitUntilReady(io, alloc, .fromSeconds(5));
-        try test_server.expectQueryIDs(alloc, &client, tenant, query, &expectedIDs);
+        try client.expectQueryIDs(alloc, tenant, query, &expectedIDs);
 
         child.kill(io);
     }

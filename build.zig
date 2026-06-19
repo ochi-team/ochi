@@ -1,30 +1,43 @@
 const std = @import("std");
 
-fn addOption(b: *std.Build, exe: *std.Build.Step.Compile) void {
-    const release = b.option(bool, "release", "Release");
-
+fn addOption(
+    b: *std.Build,
+    compile: *std.Build.Step.Compile,
+    release: bool,
+    testInstallation: bool,
+) void {
     // add build options to runtime
     const options = b.addOptions();
-    exe.root_module.addOptions("build", options);
+    compile.root_module.addOptions("build", options);
 
     // build: version
     const args = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
     const version = b.run(args);
     options.addOption([]const u8, "version", version);
-    options.addOption(bool, "release", release orelse false);
+    options.addOption(bool, "release", release);
+    options.addOption(bool, "testInstallation", testInstallation);
 }
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // explicit release flag since we use ReleaseSafe for profiling
+    const release = b.option(bool, "release", "Release") orelse false;
     // Allow the user to enable or disable Tracy support with a build flag
     const tracy_enabled = b.option(
         bool,
         "tracy",
         "Build with Tracy support.",
     ) orelse false;
+    // test filter to run a specific set of tests
     const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
+    // test installation, designated post-release only test
+    const testInstallation = b.option(
+        bool,
+        "testInstallation",
+        "Run installation tests.",
+    ) orelse false;
 
     // 3d party dependencies
     const zeit = b.dependency("zeit", .{
@@ -119,7 +132,7 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
-    addOption(b, exe);
+    addOption(b, exe, release, testInstallation);
 
     // run command
     const run_exe = b.addRunArtifact(exe);
@@ -138,6 +151,7 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
+    addOption(b, unit_tests, release, testInstallation);
 
     // encoding module tests
     const encoding_tests = b.addTest(.{
