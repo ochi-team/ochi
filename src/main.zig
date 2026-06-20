@@ -46,6 +46,8 @@ pub fn main() !void {
     defer ioImpl.deinit();
     const io = ioImpl.io();
 
+    @import("encoding").setupIo(io);
+
     var tracyAlloc = tracy.Allocator{
         .parent = alloc,
     };

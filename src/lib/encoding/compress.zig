@@ -10,13 +10,29 @@ pub const CompressError = error{
 const unknownSize: c_ulonglong = 0xffffffffffffffff;
 const errorSize: c_ulonglong = 0xfffffffffffffffe;
 
+// TODO: we probably must have few instances for that not per thread, but per job or something,
+// because creating per thread might be too many contexts
+var compressCtx: ?*C.ZSTD_CCtx = null;
+var compressMx: std.Io.Mutex = .init;
+var decompressCtx: ?*C.ZSTD_DCtx = null;
+var decompressMx: std.Io.Mutex = .init;
+var io: std.Io = undefined;
+
+pub fn setupIo(injected: std.Io) void {
+    io = injected;
+}
+
 pub fn compressAuto(dst: []u8, src: []const u8) CompressError!usize {
     const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
     return compress(dst, src, level);
 }
 
 pub fn compress(dst: []u8, src: []const u8, level: u8) CompressError!usize {
-    const res = C.ZSTD_compress(dst.ptr, dst.len, src.ptr, src.len, level);
+    compressMx.lockUncancelable(io);
+    defer compressMx.unlock(io);
+
+    if (compressCtx == null) compressCtx = C.ZSTD_createCCtx();
+    const res = C.ZSTD_compressCCtx(compressCtx, dst.ptr, dst.len, src.ptr, src.len, level);
     if (C.ZSTD_isError(res) == 1) {
         // TODO: log an error to understand the exact error code
         // const errCode = c.zstd.ZSTD_getErrorCode(res);
@@ -65,7 +81,11 @@ pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
 }
 
 pub fn decompress(dst: []u8, src: []const u8) DecompressError!usize {
-    const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
+    decompressMx.lockUncancelable(io);
+    defer decompressMx.unlock(io);
+
+    if (decompressCtx == null) decompressCtx = C.ZSTD_createDCtx();
+    const res = C.ZSTD_decompressDCtx(decompressCtx, dst.ptr, dst.len, src.ptr, src.len);
     if (C.ZSTD_isError(res) == 1) {
         const errCode = C.ZSTD_getErrorCode(res);
         const msg = C.ZSTD_getErrorName(res);
