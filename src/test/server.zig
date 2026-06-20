@@ -68,6 +68,7 @@ const StreamIDsResponse = struct {
 pub const OchiClient = struct {
     host: []const u8,
     client: std.http.Client,
+    logger: *Logger.Instance,
 
     fn request(
         client: *OchiClient,
@@ -124,7 +125,7 @@ pub const OchiClient = struct {
 
         while ((Io.Timestamp.now(io, .real).nanoseconds - start) < timeout.nanoseconds) {
             var resp = client.request(alloc, .GET, "/ingest/loki/ready", "", 0, "application/json", null) catch |err| {
-                Logger.log(.debug, "server not ready yet", .{ .err = err });
+                client.logger.log(.debug, "server not ready yet", .{ .err = err });
                 try Io.sleep(io, .fromMilliseconds(50), .real);
                 continue;
             };
@@ -133,7 +134,7 @@ pub const OchiClient = struct {
             if (resp.statusCode == 200) {
                 return;
             }
-            Logger.log(.debug, "server not ready yet", .{ .status = resp.statusCode });
+            client.logger.log(.debug, "server not ready yet", .{ .status = resp.statusCode });
             try Io.sleep(io, .fromMilliseconds(50), .real);
         }
 
@@ -162,7 +163,7 @@ pub const OchiClient = struct {
         );
         defer resp.deinit(alloc);
         std.testing.expectEqual(200, resp.statusCode) catch |err| {
-            Logger.log(.err, "ingest request failed", .{ .body = resp.body });
+            client.logger.log(.err, "ingest request failed", .{ .body = resp.body });
             return err;
         };
     }
@@ -187,7 +188,7 @@ pub const OchiClient = struct {
         var resp = try client.request(alloc, .POST, "/query", query, tenant, "application/loql", null);
         defer resp.deinit(alloc);
         std.testing.expectEqual(200, resp.statusCode) catch |err| {
-            Logger.log(.err, "query request failed", .{ .body = resp.body });
+            client.logger.log(.err, "query request failed", .{ .body = resp.body });
             return err;
         };
 
@@ -359,13 +360,21 @@ fn parseTestFile(comptime T: type, io: Io, alloc: Allocator, filePath: []const u
 test "serverEndToEndViaHTTP" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
+    var logger = try Logger.Instance.init(io, alloc, .{
+        .level = .Debug,
+        .pool_size = 1,
+        .buffer_size = 1 << 10,
+        .large_buffer_count = 1,
+        .large_buffer_size = 1 << 12,
+        .output = .stderr,
+        .encoding = .logfmt,
+    });
+    defer logger.deinit();
 
     const oldCwd = try std.process.currentPathAlloc(io, alloc);
     defer {
         std.Io.Threaded.chdir(oldCwd) catch |err| {
-            // TODO: make Logger as non global so we could use one instance for test test emitting the data,
-            // one for the app to mute the general output
-            Logger.log(.err, "cannot chdir", .{ .err = err });
+            logger.log(.err, "cannot chdir", .{ .err = err });
         };
         alloc.free(oldCwd);
     }
@@ -384,7 +393,11 @@ test "serverEndToEndViaHTTP" {
 
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator) void {
-            server.startApp(io, threadAllocator, .{ .release = false, .version = "" }) catch |err| {
+            server.startApp(
+                io,
+                threadAllocator,
+                .{ .release = false, .version = "", .setupLogger = false },
+            ) catch |err| {
                 Logger.log(.err, "server error", .{ .err = err });
             };
         }
@@ -399,6 +412,7 @@ test "serverEndToEndViaHTTP" {
             .allocator = alloc,
             .io = io,
         },
+        .logger = &logger,
     };
     defer ochiClient.client.deinit();
 
@@ -504,7 +518,7 @@ fn expectStreamIDsByBody(
     std.testing.expectEqual(200, resp.statusCode) catch |err| {
         // TODO: implement a client and move all the error loging to it,
         // it must be comptime configurable
-        Logger.log(.err, "stream_ids request failed", .{ .body = resp.body });
+        client.logger.log(.err, "stream_ids request failed", .{ .body = resp.body });
         return err;
     };
 
@@ -562,7 +576,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
     defer resp.deinit(alloc);
 
     std.testing.expectEqual(200, resp.statusCode) catch |err| {
-        Logger.log(.err, "query-by-sids request failed", .{ .body = resp.body });
+        client.logger.log(.err, "query-by-sids request failed", .{ .body = resp.body });
         return err;
     };
 
@@ -606,9 +620,9 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // ingest
     {
         const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);
-        Logger.log(.debug, "ingest body", .{ .body = ingestBody, .corpus = corpus.name });
+        client.logger.log(.debug, "ingest body", .{ .body = ingestBody, .corpus = corpus.name });
         client.ingestLokiJson(alloc, corpus.ingest.tenant, ingestBody) catch |err| {
-            Logger.log(.err, "failed to ingest", .{
+            client.logger.log(.err, "failed to ingest", .{
                 .err = err,
                 .name = corpus.name,
             });
@@ -619,7 +633,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // flush
     {
         client.flush(alloc, corpus.ingest.tenant) catch |err| {
-            Logger.log(.err, "failed to flush", .{
+            client.logger.log(.err, "failed to flush", .{
                 .err = err,
                 .name = corpus.name,
             });
@@ -630,7 +644,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     // query all the test cases
     for (corpus.queries) |query| {
         client.expectQueryIDs(alloc, query.tenant, query.query, query.match) catch |err| {
-            Logger.log(.err, "failed to match query ids", .{
+            client.logger.log(.err, "failed to match query ids", .{
                 .err = err,
                 .query = query.query,
                 .description = query.description,

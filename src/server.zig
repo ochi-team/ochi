@@ -47,12 +47,15 @@ fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
     }
 }
 
-pub const Info = struct {
+pub const StartOptions = struct {
     version: []const u8,
     release: bool,
+    // TODO: we must get rid of a global logger, it's not ok,
+    // but before we must reimplement the logger to manage buffers per thread / worker
+    setupLogger: bool = true,
 };
 
-pub fn startApp(io: Io, alloc: std.mem.Allocator, info: Info) !void {
+pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
     const conf = Conf.default(alloc);
     var cwdBuf: [std.fs.max_path_bytes]u8 = undefined;
 
@@ -69,22 +72,24 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, info: Info) !void {
     const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
     errdefer runtime.deinit(alloc);
 
-    // initialize a logging pool
-    try Logger.setup(io, alloc, .{
-        .level = Logger.levelFromBuildMode(),
-        .pool_size = 2 * runtime.cpus,
-        .buffer_size = 4096,
-        .large_buffer_count = @max(2, runtime.cpus),
-        .large_buffer_size = 1 << 15, // 32 kb
-        .output = .stdout,
-        .encoding = .logfmt,
-    });
-    try inspect.inspect(info.release, io);
+    if (options.setupLogger) {
+        // initialize a logging pool
+        try Logger.setup(io, alloc, .{
+            .level = Logger.levelFromBuildMode(),
+            .pool_size = 2 * runtime.cpus,
+            .buffer_size = 4096,
+            .large_buffer_count = @max(2, runtime.cpus),
+            .large_buffer_size = 1 << 15, // 32 kb
+            .output = .stdout,
+            .encoding = .logfmt,
+        });
+    }
+    try inspect.inspect(options.release, io);
 
     Logger.log(
         .info,
         "Ochi in mono mode starting",
-        .{ .port = conf.server.port, .version = info.version },
+        .{ .port = conf.server.port, .version = options.version },
     );
 
     var store = try Store.init(io, alloc, &conf, runtime, layout);
@@ -150,7 +155,11 @@ test "serverWithSIGTERM" {
     // Start the server in a separate thread
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator) void {
-            startApp(io, threadAllocator, .{ .release = false, .version = "" }) catch |err| {
+            startApp(
+                io,
+                threadAllocator,
+                .{ .release = false, .version = "", .setupLogger = false },
+            ) catch |err| {
                 Logger.log(.err, "server error", .{ .err = err });
             };
         }
