@@ -195,6 +195,47 @@ const LineBySidSortContext = struct {
         std.mem.swap([]Line, &ctx.linesBySid[a], &ctx.linesBySid[b]);
     }
 
+    pub fn sort(ctx: @This()) void {
+        std.sort.pdqContext(0, ctx.sids.len, ctx);
+        ctx.sortDuplicateSidLines();
+    }
+
+    const LineWindowsSortContext = struct {
+        linesBySid: [][]Line,
+
+        fn len(ctx: @This()) usize {
+            var res: usize = 0;
+            for (ctx.linesBySid) |lines| {
+                res += lines.len;
+            }
+            return res;
+        }
+
+        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+            return lineLessThan({}, ctx.lineAt(a).*, ctx.lineAt(b).*);
+        }
+
+        pub fn swap(ctx: @This(), a: usize, b: usize) void {
+            if (a == b) {
+                return;
+            }
+
+            std.mem.swap(Line, ctx.lineAt(a), ctx.lineAt(b));
+        }
+
+        fn lineAt(ctx: @This(), idx: usize) *Line {
+            var i = idx;
+            for (ctx.linesBySid) |lines| {
+                if (i < lines.len) {
+                    return &lines[i];
+                }
+                i -= lines.len;
+            }
+
+            std.debug.panic("line is out of range", .{});
+        }
+    };
+
     fn sortDuplicateSidLines(ctx: @This()) void {
         var start: usize = 0;
         while (start < ctx.sids.len) {
@@ -204,7 +245,7 @@ const LineBySidSortContext = struct {
             }
 
             if (end - start > 1) {
-                const lineSortContext = DuplicateSidLineSortContext{
+                const lineSortContext = LineWindowsSortContext{
                     .linesBySid = ctx.linesBySid[start..end],
                 };
                 std.sort.pdqContext(0, lineSortContext.len(), lineSortContext);
@@ -212,42 +253,6 @@ const LineBySidSortContext = struct {
 
             start = end;
         }
-    }
-};
-
-const DuplicateSidLineSortContext = struct {
-    linesBySid: [][]Line,
-
-    fn len(ctx: @This()) usize {
-        var res: usize = 0;
-        for (ctx.linesBySid) |lines| {
-            res += lines.len;
-        }
-        return res;
-    }
-
-    pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-        return lineLessThan({}, ctx.lineAt(a).*, ctx.lineAt(b).*);
-    }
-
-    pub fn swap(ctx: @This(), a: usize, b: usize) void {
-        if (a == b) {
-            return;
-        }
-
-        std.mem.swap(Line, ctx.lineAt(a), ctx.lineAt(b));
-    }
-
-    fn lineAt(ctx: @This(), idx: usize) *Line {
-        var i = idx;
-        for (ctx.linesBySid) |lines| {
-            if (i < lines.len) {
-                return &lines[i];
-            }
-            i -= lines.len;
-        }
-
-        std.debug.panic("line is out of range", .{});
     }
 };
 
@@ -263,31 +268,21 @@ pub fn addLines2(
     }
     std.debug.assert(sids.len == linesBySid.len);
 
-    for (linesBySid) |lines| {
-        if (lines.len == 0) {
-            return Error.EmptyLines;
-        }
-
-        std.mem.sortUnstable(Line, lines, {}, lineLessThan);
-    }
-
     const sortContext = LineBySidSortContext{ .sids = sids, .linesBySid = linesBySid };
-    std.sort.pdqContext(0, sids.len, sortContext);
-    sortContext.sortDuplicateSidLines();
+    sortContext.sort();
 
     var blockWriter = try BlockWriter.init(allocator);
     defer blockWriter.deinit(allocator);
     const streamWriter = try TableWriter.initMem(allocator, self);
     defer streamWriter.deinit(allocator);
 
-    var prevSid = sids[0];
-
     for (0..sids.len) |k| {
         const lines = linesBySid[k];
         const sid = sids[k];
 
-        std.debug.assert(!sid.lessThan(&prevSid));
-        prevSid = sid;
+        if (lines.len == 0) {
+            return Error.EmptyLines;
+        }
 
         var streamI: usize = 0;
         var blockSize: u32 = 0;
