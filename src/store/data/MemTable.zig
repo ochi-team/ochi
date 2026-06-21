@@ -27,6 +27,7 @@ const bloomValuesSize = 1024;
 const bloomTokensSize = 1024;
 const columnKeysBufferSize = 512;
 const columnIndexesBufferSize = 128;
+const maxLineWindowsSortChunks = 16;
 
 pub const Error = error{
     EmptyLines,
@@ -202,6 +203,78 @@ const LineBySidSortContext = struct {
 
     const LineWindowsSortContext = struct {
         linesBySid: [][]Line,
+        lineOffsets: []const usize,
+        linesLen: usize,
+
+        fn init(linesBySid: [][]Line, lineOffsetsBuf: []usize) @This() {
+            lineOffsetsBuf[0] = 0;
+            for (linesBySid, 0..) |lines, i| {
+                lineOffsetsBuf[i + 1] = lineOffsetsBuf[i] + lines.len;
+            }
+
+            return .{
+                .linesBySid = linesBySid,
+                .lineOffsets = lineOffsetsBuf[0 .. linesBySid.len + 1],
+                .linesLen = lineOffsetsBuf[linesBySid.len],
+            };
+        }
+
+        fn len(ctx: @This()) usize {
+            return ctx.linesLen;
+        }
+
+        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+            return lineLessThan({}, ctx.lineAt(a).*, ctx.lineAt(b).*);
+        }
+
+        pub fn swap(ctx: @This(), a: usize, b: usize) void {
+            std.mem.swap(Line, ctx.lineAt(a), ctx.lineAt(b));
+        }
+
+        fn lineAt(ctx: @This(), idx: usize) *Line {
+            var low: usize = 0;
+            var high = ctx.lineOffsets.len - 1;
+            while (low < high) {
+                const mid = low + (high - low) / 2;
+                if (idx < ctx.lineOffsets[mid + 1]) {
+                    high = mid;
+                } else {
+                    low = mid + 1;
+                }
+            }
+
+            const offset = ctx.lineOffsets[low];
+            return &ctx.linesBySid[low][idx - offset];
+        }
+    };
+
+    fn sortDuplicateSidLines(ctx: @This()) void {
+        var start: usize = 0;
+        while (start < ctx.sids.len) {
+            var end = start + 1;
+            while (end < ctx.sids.len and ctx.sids[start].eql(&ctx.sids[end])) {
+                end += 1;
+            }
+
+            if (end - start > 1) {
+                const linesBySid = ctx.linesBySid[start..end];
+                var lineOffsetsBuf: [maxLineWindowsSortChunks + 1]usize = undefined;
+
+                if (linesBySid.len <= maxLineWindowsSortChunks) {
+                    const windowsCtx = LineWindowsSortContext.init(linesBySid, &lineOffsetsBuf);
+                    std.sort.pdqContext(0, windowsCtx.len(), windowsCtx);
+                } else {
+                    const lineSortContext = ScanningLineWindowsSortContext{ .linesBySid = linesBySid };
+                    std.sort.pdqContext(0, lineSortContext.len(), lineSortContext);
+                }
+            }
+
+            start = end;
+        }
+    }
+
+    const ScanningLineWindowsSortContext = struct {
+        linesBySid: [][]Line,
 
         fn len(ctx: @This()) usize {
             var res: usize = 0;
@@ -216,10 +289,6 @@ const LineBySidSortContext = struct {
         }
 
         pub fn swap(ctx: @This(), a: usize, b: usize) void {
-            if (a == b) {
-                return;
-            }
-
             std.mem.swap(Line, ctx.lineAt(a), ctx.lineAt(b));
         }
 
@@ -235,25 +304,6 @@ const LineBySidSortContext = struct {
             std.debug.panic("line is out of range", .{});
         }
     };
-
-    fn sortDuplicateSidLines(ctx: @This()) void {
-        var start: usize = 0;
-        while (start < ctx.sids.len) {
-            var end = start + 1;
-            while (end < ctx.sids.len and ctx.sids[start].eql(&ctx.sids[end])) {
-                end += 1;
-            }
-
-            if (end - start > 1) {
-                const lineSortContext = LineWindowsSortContext{
-                    .linesBySid = ctx.linesBySid[start..end],
-                };
-                std.sort.pdqContext(0, lineSortContext.len(), lineSortContext);
-            }
-
-            start = end;
-        }
-    }
 };
 
 pub fn addLines2(
@@ -267,6 +317,11 @@ pub fn addLines2(
         return Error.EmptySids;
     }
     std.debug.assert(sids.len == linesBySid.len);
+    for (linesBySid) |lines| {
+        if (lines.len == 0) {
+            return Error.EmptyLines;
+        }
+    }
 
     const sortContext = LineBySidSortContext{ .sids = sids, .linesBySid = linesBySid };
     sortContext.sort();
@@ -279,10 +334,6 @@ pub fn addLines2(
     for (0..sids.len) |k| {
         const lines = linesBySid[k];
         const sid = sids[k];
-
-        if (lines.len == 0) {
-            return Error.EmptyLines;
-        }
 
         var streamI: usize = 0;
         var blockSize: u32 = 0;
@@ -542,6 +593,31 @@ test "addLinesErrorOnEmpty" {
     const memTable = try MemTable.init(std.testing.allocator);
     defer memTable.deinit(std.testing.allocator);
     const err = memTable.addLines(std.testing.io, std.testing.allocator, lines[0..]);
+    try std.testing.expectError(Error.EmptyLines, err);
+}
+
+test "addLines2 error on empty lines chunk" {
+    const alloc = std.testing.allocator;
+    const sid = SID{ .tenantID = 1, .id = 1 };
+    var fields = [_]Field{.{ .key = "msg", .value = "one" }};
+    var lines = [_]Line{.{
+        .timestampNs = 1,
+        .sid = sid,
+        .fields = fields[0..],
+    }};
+    var emptyLines = [_]Line{};
+    var sids = [_]SID{ sid, sid };
+    var linesBySid = [_][]Line{ lines[0..], emptyLines[0..] };
+
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+
+    const err = memTable.addLines2(
+        std.testing.io,
+        alloc,
+        sids[0..],
+        linesBySid[0..],
+    );
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
