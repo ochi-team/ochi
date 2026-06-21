@@ -100,7 +100,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         _ = try store.openPartition(io, alloc, partitionPath, indexPath, dataPath, day);
     }
 
-    std.mem.sortUnstable(*Partition, store.partitions.items, {}, Partition.lessThan);
+    std.sort.pdq(*Partition, store.partitions.items, {}, Partition.lessThan);
 
     store.lruPartition = if (store.partitions.items.len > 0)
         store.partitions.items[store.partitions.items.len - 1]

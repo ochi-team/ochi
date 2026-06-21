@@ -33,7 +33,7 @@ pub fn writeState(self: *Self, alloc: Allocator, target: *MemBlock) !void {
         return;
     }
 
-    std.mem.sortUnstable(u128, self.streamIDs.items, {}, std.sort.asc(u128));
+    std.sort.pdq(u128, self.streamIDs.items, {}, std.sort.asc(u128));
     self.removeDuplicatedStreams();
 
     const bound = TagRecordsParser.encodeRecordBound(self.prevState.tag, self.streamIDs.items.len);

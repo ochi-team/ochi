@@ -201,7 +201,7 @@ pub fn setPrefixSorted(self: *MemBlock) void {
 }
 
 pub fn sort(self: *MemBlock) void {
-    std.mem.sortUnstable(MemEntry, self.memEntries.items, self, memBlockEntryLessThan);
+    std.sort.pdq(MemEntry, self.memEntries.items, self, memBlockEntryLessThan);
 }
 
 fn memBlockEntryLessThan(self: *const MemBlock, one: MemEntry, another: MemEntry) bool {

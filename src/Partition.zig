@@ -193,7 +193,7 @@ pub fn addLines(
         // sort the stream ids,
         // it's necessary in case the incoming lines are mixed like [1, 3, 2],
         // so to make it [1, 2, 3]
-        std.mem.sortUnstable(u32, streamsToCache.items, lines, streamIndexLess);
+        std.sort.pdq(u32, streamsToCache.items, lines, streamIndexLess);
     }
 
     for (streamsToCache.items, 0..) |i, pos| {
@@ -242,7 +242,7 @@ pub fn queryLines(
                 });
             }
 
-            std.mem.sortUnstable(SID, sids.items, {}, sidLessThan);
+            std.sort.pdq(SID, sids.items, {}, sidLessThan);
 
             break :sids .{ .sids = sids, .cutOff = false };
         } else {

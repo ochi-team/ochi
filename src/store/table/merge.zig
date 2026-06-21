@@ -220,7 +220,7 @@ pub fn Merger(
         };
         const lessThanFn = @field(ownerType, "lessThan");
         fn sortToMerge(toMerge: []T) void {
-            std.mem.sortUnstable(T, toMerge, {}, lessThanFn);
+            std.sort.pdq(T, toMerge, {}, lessThanFn);
         }
     };
 }

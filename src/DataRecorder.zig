@@ -74,7 +74,7 @@ pub const DataShard = struct {
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
 
-    const maxCheckpoints = 16;
+    pub const maxCheckpoints = 16;
 
     fn deinitBuffered(self: *DataShard, alloc: Allocator) void {
         var arena = self.arenaState.promote(alloc);

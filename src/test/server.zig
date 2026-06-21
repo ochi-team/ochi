@@ -36,7 +36,7 @@ fn makeSID(alloc: Allocator, tenantID: u64, tags: std.json.Value) !u128 {
         idx += 1;
     }
 
-    std.mem.sortUnstable(Field, parsedTags, {}, fieldLessThan);
+    std.sort.pdq(Field, parsedTags, {}, fieldLessThan);
 
     const encodedTags = try encodeTags(alloc, parsedTags);
     defer alloc.free(encodedTags);
@@ -530,11 +530,11 @@ fn expectStreamIDsByBody(
     // TODO: avoid copying of test data and the pared value
     const expectedSorted = try alloc.dupe(u128, expectedStreamIDs);
     defer alloc.free(expectedSorted);
-    std.mem.sortUnstable(u128, expectedSorted, {}, std.sort.asc(u128));
+    std.sort.pdq(u128, expectedSorted, {}, std.sort.asc(u128));
 
     const actualSorted = try alloc.dupe(u128, parsed.value.streamIDs);
     defer alloc.free(actualSorted);
-    std.mem.sortUnstable(u128, actualSorted, {}, std.sort.asc(u128));
+    std.sort.pdq(u128, actualSorted, {}, std.sort.asc(u128));
 
     try std.testing.expectEqualSlices(u128, expectedSorted, actualSorted);
     for (actualSorted) |streamID| {
@@ -607,8 +607,8 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
         try expectedIDs.append(alloc, idVal.string);
     }
 
-    std.mem.sortUnstable([]const u8, actualIDs.items, {}, MemOrder(u8).lessThanConst);
-    std.mem.sortUnstable([]const u8, expectedIDs.items, {}, MemOrder(u8).lessThanConst);
+    std.sort.pdq([]const u8, actualIDs.items, {}, MemOrder(u8).lessThanConst);
+    std.sort.pdq([]const u8, expectedIDs.items, {}, MemOrder(u8).lessThanConst);
 
     try std.testing.expectEqual(expectedIDs.items.len, actualIDs.items.len);
     for (expectedIDs.items, 0..) |expectedID, i| {

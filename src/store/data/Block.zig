@@ -318,8 +318,8 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
 }
 
 fn sort(self: *Block) void {
-    std.mem.sortUnstable(Column, self.getColumns(), {}, columnLessThan);
-    std.mem.sortUnstable(Column, self.getInvariantColumns(), {}, columnLessThan);
+    std.sort.pdq(Column, self.getColumns(), {}, columnLessThan);
+    std.sort.pdq(Column, self.getInvariantColumns(), {}, columnLessThan);
 }
 
 // TODO: Investigate if we need to check for unique/duplicated fields keys as well.

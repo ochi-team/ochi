@@ -10,6 +10,7 @@ const fieldLessThan = @import("../lines.zig").fieldLessThan;
 const SID = @import("../lines.zig").SID;
 
 const TableWriter = @import("TableWriter.zig");
+const maxCheckpoints = @import("../../DataRecorder.zig").DataShard.maxCheckpoints;
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const filenames = @import("../../filenames.zig");
@@ -27,7 +28,6 @@ const bloomValuesSize = 1024;
 const bloomTokensSize = 1024;
 const columnKeysBufferSize = 512;
 const columnIndexesBufferSize = 128;
-const maxLineWindowsSortChunks = 16;
 
 pub const Error = error{
     EmptyLines,
@@ -138,44 +138,6 @@ pub fn size(self: *const MemTable) u32 {
     return @intCast(res);
 }
 
-pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []Line) !void {
-    if (lines.len == 0) {
-        return Error.EmptyLines;
-    }
-
-    var blockWriter = try BlockWriter.init(allocator);
-    defer blockWriter.deinit(allocator);
-    const streamWriter = try TableWriter.initMem(allocator, self);
-    defer streamWriter.deinit(allocator);
-
-    var streamI: usize = 0;
-    var blockSize: u32 = 0;
-
-    // TODO: audit al sort/sortUnstable and use a single one,
-    // currently we use mem.sort AND sort.sort, therefore increase bundle size with no reason
-    std.mem.sortUnstable(Line, lines, {}, lineLessThan);
-    var prevSID: SID = lines[0].sid;
-
-    for (lines, 0..) |line, i| {
-        std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
-
-        // TODO: the tables splits blocks by stream ids,
-        // we might want to split them by log level as well,
-        // or design another approach to split logs by severity
-        if (blockSize >= maxBlockSize or !line.sid.eql(&prevSID)) {
-            try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..i], streamWriter);
-            prevSID = line.sid;
-            blockSize = 0;
-            streamI = i;
-        }
-        blockSize += line.fieldsSize();
-    }
-    if (streamI != lines.len) {
-        try blockWriter.writeLines(io, allocator, prevSID, lines[streamI..], streamWriter);
-    }
-    try blockWriter.finish(io, allocator, streamWriter, &self.tableHeader);
-}
-
 const LineBySidSortContext = struct {
     sids: []SID,
     linesBySid: [][]Line,
@@ -207,15 +169,16 @@ const LineBySidSortContext = struct {
         linesLen: usize,
 
         fn init(linesBySid: [][]Line, lineOffsetsBuf: []usize) @This() {
-            lineOffsetsBuf[0] = 0;
+            var offset: usize = 0;
             for (linesBySid, 0..) |lines, i| {
-                lineOffsetsBuf[i + 1] = lineOffsetsBuf[i] + lines.len;
+                offset += lines.len;
+                lineOffsetsBuf[i] = offset;
             }
 
             return .{
                 .linesBySid = linesBySid,
-                .lineOffsets = lineOffsetsBuf[0 .. linesBySid.len + 1],
-                .linesLen = lineOffsetsBuf[linesBySid.len],
+                .lineOffsets = lineOffsetsBuf[0..linesBySid.len],
+                .linesLen = offset,
             };
         }
 
@@ -233,18 +196,18 @@ const LineBySidSortContext = struct {
 
         fn lineAt(ctx: @This(), idx: usize) *Line {
             var low: usize = 0;
-            var high = ctx.lineOffsets.len - 1;
+            var high = ctx.lineOffsets.len;
             while (low < high) {
                 const mid = low + (high - low) / 2;
-                if (idx < ctx.lineOffsets[mid + 1]) {
+                if (idx < ctx.lineOffsets[mid]) {
                     high = mid;
                 } else {
                     low = mid + 1;
                 }
             }
 
-            const offset = ctx.lineOffsets[low];
-            return &ctx.linesBySid[low][idx - offset];
+            const startOffset = if (low == 0) 0 else ctx.lineOffsets[low - 1];
+            return &ctx.linesBySid[low][idx - startOffset];
         }
     };
 
@@ -258,55 +221,18 @@ const LineBySidSortContext = struct {
 
             if (end - start > 1) {
                 const linesBySid = ctx.linesBySid[start..end];
-                var lineOffsetsBuf: [maxLineWindowsSortChunks + 1]usize = undefined;
+                var lineOffsetsBuf: [maxCheckpoints]usize = undefined;
 
-                if (linesBySid.len <= maxLineWindowsSortChunks) {
-                    const windowsCtx = LineWindowsSortContext.init(linesBySid, &lineOffsetsBuf);
-                    std.sort.pdqContext(0, windowsCtx.len(), windowsCtx);
-                } else {
-                    const lineSortContext = ScanningLineWindowsSortContext{ .linesBySid = linesBySid };
-                    std.sort.pdqContext(0, lineSortContext.len(), lineSortContext);
-                }
+                const windowsCtx = LineWindowsSortContext.init(linesBySid, &lineOffsetsBuf);
+                std.sort.pdqContext(0, windowsCtx.len(), windowsCtx);
             }
 
             start = end;
         }
     }
-
-    const ScanningLineWindowsSortContext = struct {
-        linesBySid: [][]Line,
-
-        fn len(ctx: @This()) usize {
-            var res: usize = 0;
-            for (ctx.linesBySid) |lines| {
-                res += lines.len;
-            }
-            return res;
-        }
-
-        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-            return lineLessThan({}, ctx.lineAt(a).*, ctx.lineAt(b).*);
-        }
-
-        pub fn swap(ctx: @This(), a: usize, b: usize) void {
-            std.mem.swap(Line, ctx.lineAt(a), ctx.lineAt(b));
-        }
-
-        fn lineAt(ctx: @This(), idx: usize) *Line {
-            var i = idx;
-            for (ctx.linesBySid) |lines| {
-                if (i < lines.len) {
-                    return &lines[i];
-                }
-                i -= lines.len;
-            }
-
-            std.debug.panic("line is out of range", .{});
-        }
-    };
 };
 
-pub fn addLines2(
+pub fn addLines(
     self: *MemTable,
     io: Io,
     allocator: std.mem.Allocator,
@@ -338,7 +264,7 @@ pub fn addLines2(
         var streamI: usize = 0;
         var blockSize: u32 = 0;
         for (lines, 0..) |line, i| {
-            std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
+            std.sort.pdq(Field, line.fields, {}, fieldLessThan);
 
             // TODO: the tables splits blocks by stream ids,
             // we might want to split them by log level as well,

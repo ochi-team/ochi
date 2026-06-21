@@ -56,7 +56,7 @@ pub const Processor = struct {
         tenantID: u64,
     ) !void {
         // use unstable sort because we don't expect duplicated keys
-        std.mem.sortUnstable(Field, tags, {}, sortStreamFields);
+        std.sort.pdq(Field, tags, {}, sortStreamFields);
 
         const encodedTags = try encodeTags(alloc, tags);
         errdefer alloc.free(encodedTags);
