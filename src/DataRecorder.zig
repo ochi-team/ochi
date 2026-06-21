@@ -7,6 +7,7 @@ const Io = std.Io;
 const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
+const defaultMaxLinesPerBatch = @import("store/lines.zig").defaultMaxLinesPerBatch;
 const Query = @import("query/Query.zig");
 const SID = @import("store/lines.zig").SID;
 
@@ -40,11 +41,29 @@ fn getFlushTime(io: Io) i64 {
 
 pub const DataRecorder = @This();
 
+const SidCheckpoint = struct {
+    sid: SID,
+    // it's safe to use u16, the flush limit is 1/4 of max u16,
+    // so even trippling the amount won't reach it
+    // TODO: implement a tail return from addLines in order to hard limit the lines, 
+    // it allows us to double the limit and be in u16 range
+    i: u16,
+
+    comptime {
+        // verifies u16 fits enough to have max max lines index
+        std.debug.assert(std.math.maxInt(u16) >= defaultMaxLinesPerBatch);
+    }
+};
+
 pub const DataShard = struct {
     // state
 
     mx: Io.Mutex = .init,
     lines: std.ArrayList(Line) = .empty,
+    // TODO: take a meter to understand if we should increase checkpoints array size,
+    // the ration between checkpoints len and size on flushing must be close
+    checkpoints: [maxCheckpoints]SidCheckpoint = undefined,
+    checkpointsLen: u16 = 0,
     // TODO: make all the arenas use page allocator under the hood instead of c allocator
     arenaState: std.heap.ArenaAllocator.State,
 
@@ -55,6 +74,8 @@ pub const DataShard = struct {
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
 
+    const maxCheckpoints = 16;
+
     fn deinitBuffered(self: *DataShard, alloc: Allocator) void {
         var arena = self.arenaState.promote(alloc);
         self.lines.clearRetainingCapacity();
@@ -63,13 +84,70 @@ pub const DataShard = struct {
         self.arenaState = arena.state;
     }
 
+    fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line, sid: SID) !void {
+        var arena = shard.arenaState.promote(alloc);
+        defer shard.arenaState = arena.state;
+        const arenaAlloc = arena.allocator();
+
+        var size: u32 = 0;
+        for (lines) |line| {
+            const prevLine: ?Line = if (shard.lines.items.len > 0)
+                shard.lines.items[shard.lines.items.len - 1]
+            else
+                null;
+            var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields else null;
+
+            const fieldsCopy = try arenaAlloc.alloc(Field, line.fields.len);
+            for (line.fields, 0..) |field, fieldIndex| {
+                const prevField: ?Field = if (prevFields) |pfs|
+                    if (fieldIndex < pfs.len) pfs[fieldIndex] else null
+                else
+                    null;
+
+                const key: []const u8 = k: {
+                    if (prevField) |pf| {
+                        if (std.mem.eql(u8, pf.key, field.key)) break :k pf.key;
+                    }
+                    prevFields = null;
+                    size += @intCast(field.key.len);
+                    break :k try arenaAlloc.dupe(u8, field.key);
+                };
+                const value: []const u8 = v: {
+                    if (prevField) |pf| {
+                        if (std.mem.eql(u8, pf.value, field.value)) break :v pf.value;
+                    }
+                    size += @intCast(field.value.len);
+                    break :v try arenaAlloc.dupe(u8, field.value);
+                };
+                fieldsCopy[fieldIndex] = .{ .key = key, .value = value };
+            }
+
+            try shard.lines.append(alloc, .{
+                .timestampNs = line.timestampNs,
+                .sid = sid,
+                .fields = fieldsCopy,
+            });
+        }
+        shard.size += size;
+
+        if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&sid)) {
+            shard.checkpoints[shard.checkpointsLen] = .{
+                .sid = sid,
+                .i = shard.lines.items.len,
+            };
+            shard.checkpointsLen += 1;
+        } else {
+            shard.checkpoints[shard.checkpointsLen - 1].i = shard.lines.items.len;
+        }
+    }
+
     // threshold as 90% of a max block size
     const flushSizeThreshold = 9 * (maxBlockSize / 10);
     // TODO: make size limit configurable
     // TODO: this threshold is used in processor too,
     // make it configurable and extract from both
-    fn mustFlush(self: *DataShard) bool {
-        return self.size >= flushSizeThreshold;
+    fn mustFlush(self: *const DataShard) bool {
+        return self.size >= flushSizeThreshold or self.checkpointsLen == maxCheckpoints;
     }
 
     // flush sends all the data to a mem Table,
@@ -84,7 +162,23 @@ pub const DataShard = struct {
 
         sem.waitUncancelable(io);
 
-        memTable.addLines(io, alloc, self.lines.items) catch |err| {
+        var linesByCheckpoint: [maxCheckpoints][]Line = undefined;
+        var sids: [maxCheckpoints]SID = undefined;
+
+        var since: usize = 0;
+        for (0..self.checkpointsLen) |i| {
+            const checkpoint = self.checkpoints[i];
+            linesByCheckpoint[i] = self.lines.items[since..checkpoint.i];
+            since = checkpoint.i;
+            sids[i] = checkpoint.sid;
+        }
+
+        memTable.addLines2(
+            io,
+            alloc,
+            sids[0..self.checkpointsLen],
+            linesByCheckpoint[0..self.checkpointsLen],
+        ) catch |err| {
             sem.post(io);
             return err;
         };
@@ -384,6 +478,7 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
 
         shard.flushAtUs = null;
         shard.size = 0;
+        shard.checkpointsLen = 0;
 
         try self.startMemTablesMerge(io, alloc);
     }
@@ -578,60 +673,15 @@ fn mergeTables(
     swapped = true;
 }
 
-pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line) !void {
+pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID) !void {
     const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
     var shard = &self.shards[i];
 
     shard.mx.lockUncancelable(io);
     defer shard.mx.unlock(io);
 
-    var arena = shard.arenaState.promote(alloc);
-    defer shard.arenaState = arena.state;
-    const arenaAlloc = arena.allocator();
+    try shard.appendLines(alloc, lines, sid);
 
-    var size: u32 = 0;
-    for (lines) |line| {
-        const prevLine: ?Line = if (shard.lines.items.len > 0)
-            shard.lines.items[shard.lines.items.len - 1]
-        else
-            null;
-        var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields else null;
-
-        const fieldsCopy = try arenaAlloc.alloc(Field, line.fields.len);
-        for (line.fields, 0..) |field, fieldIndex| {
-            const prevField: ?Field = if (prevFields) |pfs|
-                if (fieldIndex < pfs.len) pfs[fieldIndex] else null
-            else
-                null;
-
-            const key: []const u8 = k: {
-                if (prevField) |pf| {
-                    if (std.mem.eql(u8, pf.key, field.key)) break :k pf.key;
-                }
-                prevFields = null;
-                size += @intCast(field.key.len);
-                break :k try arenaAlloc.dupe(u8, field.key);
-            };
-            const value: []const u8 = v: {
-                if (prevField) |pf| {
-                    if (std.mem.eql(u8, pf.value, field.value)) break :v pf.value;
-                }
-                size += @intCast(field.value.len);
-                break :v try arenaAlloc.dupe(u8, field.value);
-            };
-            fieldsCopy[fieldIndex] = .{ .key = key, .value = value };
-        }
-
-        try shard.lines.append(alloc, .{
-            .timestampNs = line.timestampNs,
-            .sid = .{
-                .tenantID = line.sid.tenantID,
-                .id = line.sid.id,
-            },
-            .fields = fieldsCopy,
-        });
-    }
-    shard.size += size;
     if (shard.mustFlush()) {
         try self.flushShard(io, alloc, shard);
     } else if (shard.flushAtUs == null) {

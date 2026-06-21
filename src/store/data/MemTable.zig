@@ -30,6 +30,7 @@ const columnIndexesBufferSize = 128;
 
 pub const Error = error{
     EmptyLines,
+    EmptySids,
 };
 
 const MemTable = @This();
@@ -174,28 +175,122 @@ pub fn addLines(self: *MemTable, io: Io, allocator: std.mem.Allocator, lines: []
     try blockWriter.finish(io, allocator, streamWriter, &self.tableHeader);
 }
 
-pub fn addLines2(self: *MemTable, io: Io, allocator: std.mem.Allocator, sids: []const SID, linesBySid: []const []Line) !void {
+const LineBySidSortContext = struct {
+    sids: []SID,
+    linesBySid: [][]Line,
+
+    pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+        if (ctx.sids[a].lessThan(&ctx.sids[b])) {
+            return true;
+        }
+        if (ctx.sids[b].lessThan(&ctx.sids[a])) {
+            return false;
+        }
+
+        return ctx.linesBySid[a][0].timestampNs < ctx.linesBySid[b][0].timestampNs;
+    }
+
+    pub fn swap(ctx: @This(), a: usize, b: usize) void {
+        std.mem.swap(SID, &ctx.sids[a], &ctx.sids[b]);
+        std.mem.swap([]Line, &ctx.linesBySid[a], &ctx.linesBySid[b]);
+    }
+
+    fn sortDuplicateSidLines(ctx: @This()) void {
+        var start: usize = 0;
+        while (start < ctx.sids.len) {
+            var end = start + 1;
+            while (end < ctx.sids.len and ctx.sids[start].eql(&ctx.sids[end])) {
+                end += 1;
+            }
+
+            if (end - start > 1) {
+                const lineSortContext = DuplicateSidLineSortContext{
+                    .linesBySid = ctx.linesBySid[start..end],
+                };
+                std.sort.pdqContext(0, lineSortContext.len(), lineSortContext);
+            }
+
+            start = end;
+        }
+    }
+};
+
+const DuplicateSidLineSortContext = struct {
+    linesBySid: [][]Line,
+
+    fn len(ctx: @This()) usize {
+        var res: usize = 0;
+        for (ctx.linesBySid) |lines| {
+            res += lines.len;
+        }
+        return res;
+    }
+
+    pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+        return lineLessThan({}, ctx.lineAt(a).*, ctx.lineAt(b).*);
+    }
+
+    pub fn swap(ctx: @This(), a: usize, b: usize) void {
+        if (a == b) {
+            return;
+        }
+
+        std.mem.swap(Line, ctx.lineAt(a), ctx.lineAt(b));
+    }
+
+    fn lineAt(ctx: @This(), idx: usize) *Line {
+        var i = idx;
+        for (ctx.linesBySid) |lines| {
+            if (i < lines.len) {
+                return &lines[i];
+            }
+            i -= lines.len;
+        }
+
+        std.debug.panic("line is out of range", .{});
+    }
+};
+
+pub fn addLines2(
+    self: *MemTable,
+    io: Io,
+    allocator: std.mem.Allocator,
+    sids: []SID,
+    linesBySid: [][]Line,
+) !void {
+    if (sids.len == 0) {
+        return Error.EmptySids;
+    }
     std.debug.assert(sids.len == linesBySid.len);
+
+    for (linesBySid) |lines| {
+        if (lines.len == 0) {
+            return Error.EmptyLines;
+        }
+
+        std.mem.sortUnstable(Line, lines, {}, lineLessThan);
+    }
+
+    const sortContext = LineBySidSortContext{ .sids = sids, .linesBySid = linesBySid };
+    std.sort.pdqContext(0, sids.len, sortContext);
+    sortContext.sortDuplicateSidLines();
+
+    var blockWriter = try BlockWriter.init(allocator);
+    defer blockWriter.deinit(allocator);
+    const streamWriter = try TableWriter.initMem(allocator, self);
+    defer streamWriter.deinit(allocator);
+
+    var prevSid = sids[0];
 
     for (0..sids.len) |k| {
         const lines = linesBySid[k];
         const sid = sids[k];
 
-        if (lines.len == 0) {
-            return Error.EmptyLines;
-        }
-
-        var blockWriter = try BlockWriter.init(allocator);
-        defer blockWriter.deinit(allocator);
-        const streamWriter = try TableWriter.initMem(allocator, self);
-        defer streamWriter.deinit(allocator);
+        std.debug.assert(!sid.lessThan(&prevSid));
+        prevSid = sid;
 
         var streamI: usize = 0;
         var blockSize: u32 = 0;
-
-        // TODO: audit al sort/sortUnstable and use a single one,
-        // currently we use mem.sort AND sort.sort, therefore increase bundle size with no reason
-        std.mem.sortUnstable(Line, lines, {}, lineLessThan);
         for (lines, 0..) |line, i| {
             std.mem.sortUnstable(Field, line.fields, {}, fieldLessThan);
 
@@ -203,6 +298,8 @@ pub fn addLines2(self: *MemTable, io: Io, allocator: std.mem.Allocator, sids: []
             // we might want to split them by log level as well,
             // or design another approach to split logs by severity
             if (blockSize >= maxBlockSize) {
+                // TODO: since lines by sids are 2 continuous slices and may relate to the same sid
+                // we should rather write them into the same block
                 try blockWriter.writeLines(io, allocator, sid, lines[streamI..i], streamWriter);
                 blockSize = 0;
                 streamI = i;
@@ -212,16 +309,16 @@ pub fn addLines2(self: *MemTable, io: Io, allocator: std.mem.Allocator, sids: []
         if (streamI != lines.len) {
             try blockWriter.writeLines(io, allocator, sid, lines[streamI..], streamWriter);
         }
-        try blockWriter.finish(io, allocator, streamWriter, &self.tableHeader);
     }
+
+    try blockWriter.finish(io, allocator, streamWriter, &self.tableHeader);
 }
 
 // TODO: find out if we can use StreamWriter to flush the table to disk
 pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
     if (Dir.openDirAbsolute(io, path, .{})) |dir| {
-        var d = dir;
-        d.close(io);
+        dir.close(io);
         // TODO: audit all error.xxx and use a full error path
         return error.DirAlreadyExists;
     } else |err| switch (err) {
@@ -310,6 +407,8 @@ const IndexBlockHeader = @import("IndexBlockHeader.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const encoding = @import("encoding");
+const Table = @import("Table.zig");
+const BlockReader = @import("BlockReader.zig").BlockReader;
 
 const SampleLines = struct {
     fields1: [2]Field,
@@ -349,9 +448,9 @@ fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 }
 
 // TODO: test everything using checkAllAllocationFailures
-// TODO: test everything in a similar practice using io failures/cancelations
+// TODO: test everything using checkAllIoFailures or something
 // TODO: make sure we test fallback allocators either as failabable with capacity 1
-// and capacity 16k+
+// and capacity 16k+, audit all of them and perhaps get rid of some
 test "addLines" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{std.testing.io});
 }
@@ -449,6 +548,79 @@ test "addLinesErrorOnEmpty" {
     defer memTable.deinit(std.testing.allocator);
     const err = memTable.addLines(std.testing.io, std.testing.allocator, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
+}
+
+test "addLines2 reorders duplicate SID chunk lines by timestamp" {
+    const ExpectedBlock = struct {
+        min: u64,
+        max: u64,
+    };
+    const Case = struct {
+        chunks: [2][2]u64,
+        expectedBlocks: [2]ExpectedBlock,
+    };
+
+    const cases = [_]Case{
+        .{
+            .chunks = .{ .{ 3, 1 }, .{ 2, 4 } },
+            .expectedBlocks = .{ .{ .min = 1, .max = 2 }, .{ .min = 3, .max = 4 } },
+        },
+        .{
+            .chunks = .{ .{ 4, 3 }, .{ 2, 1 } },
+            .expectedBlocks = .{ .{ .min = 1, .max = 2 }, .{ .min = 3, .max = 4 } },
+        },
+    };
+
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+    const sid = SID{ .tenantID = 1, .id = 1 };
+
+    for (cases) |case| {
+        var fields = [_][1]Field{
+            .{.{ .key = "msg", .value = "one" }},
+            .{.{ .key = "msg", .value = "two" }},
+            .{.{ .key = "msg", .value = "three" }},
+            .{.{ .key = "msg", .value = "four" }},
+        };
+        var firstChunk = [_]Line{
+            .{ .timestampNs = case.chunks[0][0], .sid = sid, .fields = fields[0][0..] },
+            .{ .timestampNs = case.chunks[0][1], .sid = sid, .fields = fields[1][0..] },
+        };
+        var secondChunk = [_]Line{
+            .{ .timestampNs = case.chunks[1][0], .sid = sid, .fields = fields[2][0..] },
+            .{ .timestampNs = case.chunks[1][1], .sid = sid, .fields = fields[3][0..] },
+        };
+        var sids = [_]SID{ sid, sid };
+        var linesBySid = [_][]Line{ firstChunk[0..], secondChunk[0..] };
+
+        const memTable = try MemTable.init(alloc);
+        var memTableOwned = true;
+        defer if (memTableOwned) memTable.deinit(alloc);
+
+        try memTable.addLines2(io, alloc, sids[0..], linesBySid[0..]);
+
+        const table = try Table.fromMem(alloc, memTable);
+        memTableOwned = false;
+        defer table.close(io);
+
+        const blockReader = try BlockReader.initFromMemTable(alloc, table);
+        defer blockReader.deinit(alloc);
+
+        var actualBlocks: [2]ExpectedBlock = undefined;
+        var actualBlocksLen: usize = 0;
+        while (try blockReader.nextBlock(io, alloc)) {
+            try std.testing.expect(actualBlocksLen < actualBlocks.len);
+            try std.testing.expect(blockReader.blockData.sid.eql(&sid));
+            actualBlocks[actualBlocksLen] = .{
+                .min = blockReader.blockData.timestampsData.minTimestamp,
+                .max = blockReader.blockData.timestampsData.maxTimestamp,
+            };
+            actualBlocksLen += 1;
+        }
+
+        try std.testing.expectEqual(case.expectedBlocks.len, actualBlocksLen);
+        try std.testing.expectEqualDeep(case.expectedBlocks[0..], actualBlocks[0..actualBlocksLen]);
+    }
 }
 
 test "flushToDisk writes buffers" {

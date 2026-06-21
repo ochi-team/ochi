@@ -43,6 +43,8 @@ pub fn makeStreamID(tenantID: u64, encodedStream: []const u8) SID {
 
 pub const SID = struct {
     tenantID: u64,
+    // TODO: didn't measure overhead yet, but perhaps worth making it as 2 u64 to reduce the size
+    // making it as a U128 struct with 2 u64 also works
     id: u128,
 
     pub fn order(one: SID, another: SID) std.math.Order {
@@ -248,12 +250,16 @@ pub const Field = struct {
 };
 
 pub const LinesSize = struct {
-    size: u32,
+    size: u16,
     totalFieldsCount: u16,
 };
 pub const defaultMaxFieldsPerLine: usize = 1000;
 pub const defaultMaxFieldKeySize: usize = 100;
-pub const defaultMaxLineSize: usize = 512 * 1024;
+pub const defaultMaxLineSize: usize = 64 * 1024 - 1;
+// approximate value if the max body size ~4mb and an average small line 128 bytes
+// define max amount of lines as 16 * 1024,
+// the batch size is used in the ingest request, processor arena, data shard buffer
+pub const defaultMaxLinesPerBatch: usize = 16 * 1014;
 
 pub const LinesSizeError = error{
     MaxFieldsPerLineExceeded,
@@ -296,7 +302,6 @@ pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
 }
 
 // Line is an internal representation of a log line,
-// TODO: make Array(Line) use MultiArray(Line) to see if it improves the data layout
 pub const Line = struct {
     timestampNs: u64,
     // TODO: having sid in the line seems wrong, it must go away
@@ -315,7 +320,6 @@ pub const Line = struct {
     }
 
     pub fn rawSizeValidate(self: Line) LinesSizeError!LinesSize {
-        // TODO: identify max line size and probably make it u16
         var res: u32 = 0;
         var totalFieldsCount: u16 = 0;
         for (self.fields) |field| {
@@ -336,7 +340,7 @@ pub const Line = struct {
             return error.MaxLineSizeExceeded;
         }
 
-        return .{ .size = res, .totalFieldsCount = totalFieldsCount };
+        return .{ .size = @intCast(res), .totalFieldsCount = totalFieldsCount };
     }
 
     pub fn fieldsSize(self: Line) u32 {
@@ -351,8 +355,7 @@ pub const Line = struct {
 // the difference to MultiArray is []Fields is also a flat array for all the lines
 
 pub fn lineLessThan(_: void, one: Line, another: Line) bool {
-    return one.sid.lessThan(&another.sid) or
-        (one.sid.eql(&another.sid) and one.timestampNs < another.timestampNs);
+    return one.timestampNs < another.timestampNs;
 }
 
 pub fn fieldLessThan(_: void, one: Field, another: Field) bool {

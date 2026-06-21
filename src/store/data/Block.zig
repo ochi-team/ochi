@@ -249,6 +249,7 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
     defer columnI.deinit();
     var linesProcessed = lines;
     for (lines, 0..) |line, i| {
+        // TODO: better to move out of the block in order to handle more keys
         const uniqueKeysCount = columnI.count() + line.fields.len;
         if (uniqueKeysCount > maxColumns) {
             Logger.log(.warn, "skipping log line, exceeded max allowed unique keys", .{
