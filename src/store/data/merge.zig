@@ -25,6 +25,14 @@ const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 
 pub const maxBlockSize = 2 * 1024 * 1024;
 
+fn addLinesForTest(memTable: *MemTable, io: Io, alloc: Allocator, lines: []Line) !void {
+    const checkpointsBuf = try alloc.alloc(MemTable.Checkpoint, lines.len);
+    defer alloc.free(checkpointsBuf);
+
+    const checkpoints = try MemTable.buildCheckpointsFromLines(lines, checkpointsBuf);
+    try memTable.addLines2(io, alloc, checkpoints, lines);
+}
+
 // TODO: rename this crap
 pub fn mergeData(
     io: Io,
@@ -464,8 +472,8 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
             .{ .timestampNs = 4, .sid = sid, .fields = rightFields2[0..] },
         };
 
-        try leftMemTable.addLines(io, alloc, leftLines[0..]);
-        try rightMemTable.addLines(io, alloc, rightLines[0..]);
+        try addLinesForTest(leftMemTable, io, alloc, leftLines[0..]);
+        try addLinesForTest(rightMemTable, io, alloc, rightLines[0..]);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
@@ -572,7 +580,7 @@ test "mergeData multi tenant" {
             .fields = fields[0..],
         }};
 
-        try memTable.addLines(io, alloc, lines[0..]);
+        try addLinesForTest(memTable, io, alloc, lines[0..]);
         try memTable.storeToDisk(io, alloc, tablePath);
 
         const table = try Table.open(io, alloc, tablePath);

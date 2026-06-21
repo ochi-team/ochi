@@ -209,7 +209,11 @@ pub fn addLines(
         try self.cache(io, sid);
     }
 
-    try self.data.addLines(io, allocator, lines.items);
+    try self.data.addLines(
+        io,
+        allocator,
+        lines.items,
+    );
 }
 
 // TODO: experiment with scan sharing,

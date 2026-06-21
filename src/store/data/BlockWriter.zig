@@ -7,6 +7,7 @@ const Io = std.Io;
 
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
+const LinesBatchIterator = @import("LinesBatchIterator.zig").LinesBatchIterator;
 const Block = @import("Block.zig");
 const BlockData = @import("../data/BlockData.zig").BlockData;
 const BlockHeader = @import("BlockHeader.zig");
@@ -88,6 +89,25 @@ pub fn writeLines(
     tableWriter: *TableWriter,
 ) !void {
     const block = try Block.initFromLines(allocator, lines);
+    defer block.deinit(allocator);
+
+    if (block.len() == 0) {
+        return;
+    }
+
+    const c = Content{ .block = block };
+    try self.writeBlock(io, allocator, c, sid, tableWriter);
+}
+
+pub fn writeLinesBatchIterator(
+    self: *BlockWriter,
+    io: Io,
+    allocator: Allocator,
+    sid: SID,
+    lines: *LinesBatchIterator,
+    tableWriter: *TableWriter,
+) !void {
+    const block = try Block.initFromLinesBatchIterator(allocator, lines);
     defer block.deinit(allocator);
 
     if (block.len() == 0) {

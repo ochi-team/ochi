@@ -8,6 +8,7 @@ const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
 const defaultMaxLinesPerBatch = @import("store/lines.zig").defaultMaxLinesPerBatch;
+const Checkpoint = @import("store/data/LinesBatchIterator.zig").Checkpoint;
 const Query = @import("query/Query.zig");
 const SID = @import("store/lines.zig").SID;
 
@@ -41,19 +42,9 @@ fn getFlushTime(io: Io) i64 {
 
 pub const DataRecorder = @This();
 
-const SidCheckpoint = struct {
-    sid: SID,
-    // it's safe to use u16, the flush limit is 1/4 of max u16,
-    // so even trippling the amount won't reach it
-    // TODO: implement a tail return from addLines in order to hard limit the lines, 
-    // it allows us to double the limit and be in u16 range
-    i: u16,
-
-    comptime {
-        // verifies u16 fits enough to have max max lines index
-        std.debug.assert(std.math.maxInt(u16) >= defaultMaxLinesPerBatch);
-    }
-};
+comptime {
+    std.debug.assert(std.math.maxInt(u16) >= defaultMaxLinesPerBatch);
+}
 
 pub const DataShard = struct {
     // state
@@ -62,7 +53,7 @@ pub const DataShard = struct {
     lines: std.ArrayList(Line) = .empty,
     // TODO: take a meter to understand if we should increase checkpoints array size,
     // the ration between checkpoints len and size on flushing must be close
-    checkpoints: [maxCheckpoints]SidCheckpoint = undefined,
+    checkpoints: [maxCheckpoints]Checkpoint = undefined,
     checkpointsLen: u16 = 0,
     // TODO: make all the arenas use page allocator under the hood instead of c allocator
     arenaState: std.heap.ArenaAllocator.State,
@@ -84,7 +75,7 @@ pub const DataShard = struct {
         self.arenaState = arena.state;
     }
 
-    fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line, sid: SID) !void {
+    fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line) !void {
         var arena = shard.arenaState.promote(alloc);
         defer shard.arenaState = arena.state;
         const arenaAlloc = arena.allocator();
@@ -124,21 +115,22 @@ pub const DataShard = struct {
 
             try shard.lines.append(alloc, .{
                 .timestampNs = line.timestampNs,
-                .sid = sid,
+                .sid = line.sid,
                 .fields = fieldsCopy,
             });
+
+            if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&line.sid)) {
+                std.debug.assert(shard.checkpointsLen < maxCheckpoints);
+                shard.checkpoints[shard.checkpointsLen] = .{
+                    .sid = line.sid,
+                    .end = @intCast(shard.lines.items.len),
+                };
+                shard.checkpointsLen += 1;
+            } else {
+                shard.checkpoints[shard.checkpointsLen - 1].end = @intCast(shard.lines.items.len);
+            }
         }
         shard.size += size;
-
-        if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&sid)) {
-            shard.checkpoints[shard.checkpointsLen] = .{
-                .sid = sid,
-                .i = shard.lines.items.len,
-            };
-            shard.checkpointsLen += 1;
-        } else {
-            shard.checkpoints[shard.checkpointsLen - 1].i = shard.lines.items.len;
-        }
     }
 
     // threshold as 90% of a max block size
@@ -162,22 +154,11 @@ pub const DataShard = struct {
 
         sem.waitUncancelable(io);
 
-        var linesByCheckpoint: [maxCheckpoints][]Line = undefined;
-        var sids: [maxCheckpoints]SID = undefined;
-
-        var since: usize = 0;
-        for (0..self.checkpointsLen) |i| {
-            const checkpoint = self.checkpoints[i];
-            linesByCheckpoint[i] = self.lines.items[since..checkpoint.i];
-            since = checkpoint.i;
-            sids[i] = checkpoint.sid;
-        }
-
         memTable.addLines2(
             io,
             alloc,
-            sids[0..self.checkpointsLen],
-            linesByCheckpoint[0..self.checkpointsLen],
+            self.checkpoints[0..self.checkpointsLen],
+            self.lines.items,
         ) catch |err| {
             sem.post(io);
             return err;
@@ -673,14 +654,28 @@ fn mergeTables(
     swapped = true;
 }
 
-pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID) !void {
+pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line) !void {
     const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
     var shard = &self.shards[i];
 
     shard.mx.lockUncancelable(io);
     defer shard.mx.unlock(io);
 
-    try shard.appendLines(alloc, lines, sid);
+    var runStart: usize = 0;
+    while (runStart < lines.len) {
+        var runEnd = runStart + 1;
+        while (runEnd < lines.len and lines[runStart].sid.eql(&lines[runEnd].sid)) {
+            runEnd += 1;
+        }
+
+        const needsCheckpoint = shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&lines[runStart].sid);
+        if (needsCheckpoint and shard.checkpointsLen == DataShard.maxCheckpoints) {
+            try self.flushShard(io, alloc, shard);
+        }
+
+        try shard.appendLines(alloc, lines[runStart..runEnd]);
+        runStart = runEnd;
+    }
 
     if (shard.mustFlush()) {
         try self.flushShard(io, alloc, shard);
@@ -803,7 +798,11 @@ fn createMemTableFromLines(io: Io, alloc: Allocator, lines: []Line) !*Table {
     const memTable = try MemTable.init(alloc);
     errdefer memTable.deinit(alloc);
 
-    try memTable.addLines(io, alloc, lines);
+    const checkpointsBuf = try alloc.alloc(MemTable.Checkpoint, lines.len);
+    defer alloc.free(checkpointsBuf);
+
+    const checkpoints = try MemTable.buildCheckpointsFromLines(lines, checkpointsBuf);
+    try memTable.addLines2(io, alloc, checkpoints, lines);
     return Table.fromMem(alloc, memTable);
 }
 
@@ -982,6 +981,11 @@ test "flushDataShards non-force respects flush deadline" {
     const line = stableLine(1, 1, 0);
     try recorder.shards[0].lines.append(alloc, line);
     recorder.shards[0].size = line.fieldsSize();
+    recorder.shards[0].checkpoints[0] = .{
+        .sid = line.sid,
+        .end = 1,
+    };
+    recorder.shards[0].checkpointsLen = 1;
 
     recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
     try recorder.flushDataShards(io, alloc, false);

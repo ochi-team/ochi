@@ -4,6 +4,7 @@ const Io = std.Io;
 
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
+const LinesBatchIterator = @import("LinesBatchIterator.zig").LinesBatchIterator;
 const Column = @import("Column.zig");
 const BlockData = @import("BlockData.zig").BlockData;
 const Unpacker = @import("Unpacker.zig");
@@ -55,6 +56,22 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     return b;
 }
 
+pub fn initFromLinesBatchIterator(allocator: Allocator, lines: *LinesBatchIterator) !*Block {
+    const b = try allocator.create(Block);
+    errdefer allocator.destroy(b);
+
+    b.* = .{
+        .firstInvariant = undefined,
+        .columns = undefined,
+        .timestamps = undefined,
+    };
+
+    try b.putIterator(allocator, lines);
+    std.debug.assert(b.timestamps.len <= maxLines);
+    b.sort();
+    return b;
+}
+
 pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
     const z = tracy.Zone.begin(.{
         .src = @src(),
@@ -91,7 +108,9 @@ pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpac
         }
     }
 
+    // TODO: unnecessary allocation block can be a value
     const b = try alloc.create(Block);
+    errdefer alloc.destroy(b);
 
     b.* = .{
         .firstInvariant = firstInvariant,
@@ -178,6 +197,19 @@ fn put(self: *Block, allocator: Allocator, lines: []const Line) !void {
     }
 
     return self.putDynamicFields(allocator, lines);
+}
+
+fn putIterator(self: *Block, allocator: Allocator, lines: *LinesBatchIterator) !void {
+    std.debug.assert(lines.len() > 0);
+
+    // fast path if all lines have the same fields
+    const sameFields = areSameFieldsIterator(lines);
+    lines.reset();
+    if (sameFields) {
+        return self.putSameFieldsIterator(allocator, lines);
+    }
+
+    return self.putDynamicFieldsIterator(allocator, lines);
 }
 
 fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void {
@@ -317,6 +349,153 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
     self.columns = columns;
 }
 
+fn putSameFieldsIterator(self: *Block, allocator: Allocator, lines: *LinesBatchIterator) !void {
+    const linesLen = lines.len();
+
+    self.timestamps = try allocator.alloc(u64, linesLen);
+    errdefer allocator.free(self.timestamps);
+
+    lines.reset();
+    var i: usize = 0;
+    while (lines.next()) |line| : (i += 1) {
+        self.timestamps[i] = line.timestampNs;
+    }
+
+    lines.reset();
+    const firstLine = lines.next().?.*;
+
+    var columns = try allocator.alloc(Column, firstLine.fields.len);
+    errdefer allocator.free(columns);
+
+    @memset(columns, .{ .key = "", .values = &[_][]const u8{} });
+
+    var invariantMaskBuffer: [maxColumns]bool = undefined;
+    var invariantMask = invariantMaskBuffer[0..firstLine.fields.len];
+
+    var invariantCount: usize = 0;
+    for (0..firstLine.fields.len) |fieldIdx| {
+        if (canBeSavedAsInvariantIterator(lines, fieldIdx)) {
+            invariantMask[fieldIdx] = true;
+            invariantCount += 1;
+        } else {
+            invariantMask[fieldIdx] = false;
+        }
+    }
+
+    var regularIdx: usize = 0;
+    var invariantIdx: usize = firstLine.fields.len - invariantCount;
+
+    errdefer {
+        for (columns) |col| {
+            if (col.values.len != 0) {
+                allocator.free(col.values);
+            }
+        }
+    }
+    for (firstLine.fields, 0..) |field, fieldIdx| {
+        const isFieldInvariant = invariantMask[fieldIdx];
+        const targetIdx = if (isFieldInvariant) invariantIdx else regularIdx;
+        var col = &columns[targetIdx];
+        col.key = field.key;
+
+        if (isFieldInvariant) {
+            col.values = try allocator.alloc([]const u8, 1);
+            col.values[0] = field.value;
+            invariantIdx += 1;
+        } else {
+            col.values = try allocator.alloc([]const u8, linesLen);
+            lines.reset();
+            var i: usize = 0;
+            while (lines.next()) |line| : (i += 1) {
+                col.values[i] = line.fields[fieldIdx].value;
+            }
+            regularIdx += 1;
+        }
+    }
+
+    self.firstInvariant = @intCast(firstLine.fields.len - invariantCount);
+    self.columns = columns;
+}
+
+fn putDynamicFieldsIterator(self: *Block, allocator: Allocator, lines: *LinesBatchIterator) !void {
+    var columnI = std.StringHashMap(usize).init(allocator);
+    defer columnI.deinit();
+
+    var linesProcessed: usize = 0;
+    lines.reset();
+    while (lines.next()) |line| {
+        // TODO: better to move out of the block in order to handle more keys
+        const uniqueKeysCount = columnI.count() + line.fields.len;
+        if (uniqueKeysCount > maxColumns) {
+            Logger.log(.warn, "skipping log line, exceeded max allowed unique keys", .{
+                .max = maxColumns,
+                .given = uniqueKeysCount,
+            });
+            break;
+        }
+
+        for (line.fields) |field| {
+            if (!columnI.contains(field.key)) {
+                try columnI.put(field.key, columnI.count());
+            }
+        }
+        linesProcessed += 1;
+    }
+
+    const timestamps = try allocator.alloc(u64, linesProcessed);
+    errdefer allocator.free(timestamps);
+    lines.reset();
+    for (0..linesProcessed) |i| {
+        timestamps[i] = lines.next().?.timestampNs;
+    }
+    self.timestamps = timestamps;
+
+    var columns = try allocator.alloc(Column, columnI.count());
+    errdefer allocator.free(columns);
+
+    @memset(columns, .{ .key = "", .values = &[_][]u8{} });
+    errdefer {
+        for (columns) |col| {
+            if (col.values.len != 0) {
+                allocator.free(col.values);
+            }
+        }
+    }
+
+    var columnIter = columnI.iterator();
+    while (columnIter.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const idx = entry.value_ptr.*;
+
+        var col = &columns[idx];
+        col.key = key;
+        col.values = try allocator.alloc([]const u8, linesProcessed);
+        @memset(col.values, "");
+    }
+
+    lines.reset();
+    for (0..linesProcessed) |i| {
+        const line = lines.next().?;
+        for (line.fields) |field| {
+            const idx = columnI.get(field.key).?;
+            columns[idx].values[i] = field.value;
+        }
+    }
+
+    self.firstInvariant = @intCast(columns.len);
+    var i: usize = 0;
+    while (i < self.firstInvariant) {
+        if (columns[i].isInvariant()) {
+            self.firstInvariant -= 1;
+            std.mem.swap(Column, &columns[i], &columns[self.firstInvariant]);
+        } else {
+            i += 1;
+        }
+    }
+
+    self.columns = columns;
+}
+
 fn sort(self: *Block) void {
     std.mem.sortUnstable(Column, self.getColumns(), {}, columnLessThan);
     std.mem.sortUnstable(Column, self.getInvariantColumns(), {}, columnLessThan);
@@ -330,6 +509,28 @@ fn areSameFields(lines: []const Line) bool {
 
     const firstLine = lines[0];
     for (lines[1..]) |line| {
+        if (line.fields.len != firstLine.fields.len) {
+            return false;
+        }
+
+        for (firstLine.fields, 0..) |field, i| {
+            if (!std.mem.eql(u8, field.key, line.fields[i].key)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+fn areSameFieldsIterator(lines: *LinesBatchIterator) bool {
+    lines.reset();
+    if (lines.len() < 2) {
+        return true;
+    }
+
+    const firstLine = lines.next().?.*;
+    while (lines.next()) |line| {
         if (line.fields.len != firstLine.fields.len) {
             return false;
         }
@@ -359,7 +560,27 @@ fn canBeSavedAsInvariant(lines: []const Line, index: usize) bool {
     }
 
     for (lines[1..]) |line| {
-        if (std.mem.eql(u8, line.fields[index].value, value) == false) {
+        if (!std.mem.eql(u8, line.fields[index].value, value)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+fn canBeSavedAsInvariantIterator(lines: *LinesBatchIterator, index: usize) bool {
+    lines.reset();
+    if (lines.len() == 0) {
+        return true;
+    }
+
+    const value = lines.next().?.fields[index].value;
+    if (value.len > Column.maxInvariantColumnValueSize) {
+        return false;
+    }
+
+    while (lines.next()) |line| {
+        if (!std.mem.eql(u8, line.fields[index].value, value)) {
             return false;
         }
     }
@@ -377,6 +598,7 @@ pub fn assert(self: *const Block) void {
 }
 
 const SID = @import("../lines.zig").SID;
+const Run = @import("LinesBatchIterator.zig").Run;
 const TableWriter = @import("TableWriter.zig");
 const MemTable = @import("MemTable.zig");
 const TableReader = @import("TableReader.zig");
@@ -500,6 +722,42 @@ test "initFromLines and initFromData produce identical blocks" {
             }
         }
     }
+}
+
+test "initFromLinesBatchIterator matches initFromLines" {
+    const alloc = std.testing.allocator;
+    const sid = SID{ .id = 1, .tenantID = 1111 };
+
+    var f1 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "info" } };
+    var f2 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "warn" } };
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
+        .{ .timestampNs = 2, .sid = sid, .fields = &f2 },
+    };
+
+    const blockA = try Block.initFromLines(alloc, lines[0..]);
+    defer blockA.deinit(alloc);
+
+    var runs = [_]Run{Run.init(lines[0..])};
+    var it = try LinesBatchIterator.init(alloc, runs[0..]);
+    defer it.deinit(alloc);
+
+    const first = it.next().?;
+    try std.testing.expectEqual(1, first.timestampNs);
+    try std.testing.expectEqualStrings("info", first.fields[1].value);
+    const second = it.next().?;
+    try std.testing.expectEqual(2, second.timestampNs);
+    try std.testing.expectEqualStrings("warn", second.fields[1].value);
+    try std.testing.expectEqual(null, it.next());
+    it.reset();
+    try std.testing.expectEqual(true, canBeSavedAsInvariantIterator(&it, 0));
+    try std.testing.expectEqual(false, canBeSavedAsInvariantIterator(&it, 1));
+    it.reset();
+
+    const blockB = try Block.initFromLinesBatchIterator(alloc, &it);
+    defer blockB.deinit(alloc);
+
+    try expectEqualBlocks(blockA, blockB);
 }
 
 test "areSameFields: happy path" {

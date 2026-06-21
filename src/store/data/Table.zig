@@ -25,6 +25,14 @@ const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
+fn addLinesForTest(memTable: *MemTable, io: Io, alloc: Allocator, lines: []Line) !void {
+    const checkpointsBuf = try alloc.alloc(MemTable.Checkpoint, lines.len);
+    defer alloc.free(checkpointsBuf);
+
+    const checkpoints = try MemTable.buildCheckpointsFromLines(lines, checkpointsBuf);
+    try memTable.addLines2(io, alloc, checkpoints, lines);
+}
+
 const InnerTag = enum { mem, disk };
 const Inner = union(InnerTag) {
     mem: *MemTable,
@@ -678,7 +686,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
@@ -759,7 +767,7 @@ test "fromMem creates proper table from mem table with populated data" {
 
     var lines = [_]Line{ line1, line2 };
 
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -825,7 +833,7 @@ test "open reads table from disk" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
@@ -934,7 +942,7 @@ test "queryLines" {
     };
 
     const memTable = try MemTable.init(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -1053,7 +1061,7 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     };
 
     const memTable = try MemTable.init(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -1105,7 +1113,7 @@ test "queryLines reads disk table fields after open" {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);

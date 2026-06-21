@@ -252,6 +252,14 @@ fn readIndexBlock(
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 
+fn addLinesForTest(memTable: *MemTable, io: Io, allocator: Allocator, lines: []Line) !void {
+    const checkpointsBuf = try allocator.alloc(MemTable.Checkpoint, lines.len);
+    defer allocator.free(checkpointsBuf);
+
+    const checkpoints = try MemTable.buildCheckpointsFromLines(lines, checkpointsBuf);
+    try memTable.addLines2(io, allocator, checkpoints, lines);
+}
+
 const SampleLines = struct {
     fields1: [2]Field,
     fields2: [2]Field,
@@ -323,7 +331,7 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
         return err;
     };
     defer table.close(io);
-    try memTable.addLines(io, allocator, lines[0..]);
+    try addLinesForTest(memTable, io, allocator, lines[0..]);
 
     const th = memTable.tableHeader;
     try std.testing.expectEqual(3, th.len);
@@ -415,7 +423,7 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try addLinesForTest(memTable, io, alloc, lines[0..]);
 
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     memTable.storeToDisk(io, alloc, tablePath) catch |err| {
