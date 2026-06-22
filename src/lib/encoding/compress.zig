@@ -1,84 +1,78 @@
 const std = @import("std");
 const C = @import("c").C;
 const Logger = @import("logging");
-pub const CompressError = error{
-    Unknown,
+
+pub const Error = error{
+    DecompressUnknown,
+    DecompressInsufficientCapacity,
+    DecompressBadChunkAdded,
+    DecompressOutOfLimitChunks,
 };
+
+// TODO: investigate if we can apply dictionary compression or openzl,
+// but efficient dictionary compression may require data reordering and headers redesign
 
 // ZSTD_CONTENTSIZE_UNKNOWN = 0xffffffffffffffff
 // ZSTD_CONTENTSIZE_ERROR = 0xfffffffffffffffe
 const unknownSize: c_ulonglong = 0xffffffffffffffff;
 const errorSize: c_ulonglong = 0xfffffffffffffffe;
 
-pub fn compressAuto(dst: []u8, src: []const u8) CompressError!usize {
+pub fn compressAuto(dst: []u8, src: []const u8) Error!usize {
     const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
     return compress(dst, src, level);
 }
 
-pub fn compress(dst: []u8, src: []const u8, level: u8) CompressError!usize {
+pub fn compress(dst: []u8, src: []const u8, level: u8) Error!usize {
     const res = C.ZSTD_compress(dst.ptr, dst.len, src.ptr, src.len, level);
     if (C.ZSTD_isError(res) == 1) {
-        // TODO: log an error to understand the exact error code
-        // const errCode = c.zstd.ZSTD_getErrorCode(res);
-        // const msg = c.zstd.ZSTD_getErrorName(res);
-        return CompressError.Unknown;
+        const errCode = C.ZSTD_getErrorCode(res);
+        const msg = C.ZSTD_getErrorName(res);
+        Logger.log(.err, "decompress error", .{ .code = errCode, .zstd_msg = std.mem.span(msg) });
+        return handleErrCode(errCode);
     }
     return res;
 }
 
-pub const BoundError = error{
-    Unknown,
-};
-
-pub fn compressBound(size: usize) BoundError!usize {
+pub fn compressBound(size: usize) Error!usize {
     const res = C.ZSTD_compressBound(size);
     if (C.ZSTD_isError(res) == 1) {
-        // TODO: log an error to understand the exact error code
-        // const errCode = c.zstd.ZSTD_getErrorCode(res);
-        // const msg = c.zstd.ZSTD_getErrorName(res);
-        return BoundError.Unknown;
+        const errCode = C.ZSTD_getErrorCode(res);
+        const msg = C.ZSTD_getErrorName(res);
+        Logger.log(.err, "decompress error", .{ .code = errCode, .zstd_msg = std.mem.span(msg) });
+        return handleErrCode(errCode);
     }
     return res;
 }
 
-pub const DecompressError = error{
-    Unknown,
-    InsufficientCapacity,
-    BadChunkAdded,
-    OutOfLimitChunks,
-};
-
-// TODO: handle ZSTD_CONTENTSIZE_UNKNOWN and ZSTD_CONTENTSIZE_ERROR properly
-pub fn getFrameContentSize(src: []const u8) DecompressError!usize {
+pub fn getFrameContentSize(src: []const u8) Error!usize {
     // ZSTD frames have a minimum size of 4 bytes (magic number)
     // but ZSTD_getFrameContentSize can determine the size with fewer bytes
     // in practice. Let ZSTD tell us if the data is invalid.
     const res = C.ZSTD_getFrameContentSize(src.ptr, src.len);
 
     if (res == unknownSize) {
-        return DecompressError.Unknown;
+        return Error.DecompressUnknown;
     }
     if (res == errorSize) {
-        return DecompressError.Unknown;
+        return Error.DecompressUnknown;
     }
     return res;
 }
 
-pub fn decompress(dst: []u8, src: []const u8) DecompressError!usize {
+pub fn decompress(dst: []u8, src: []const u8) Error!usize {
     const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
     if (C.ZSTD_isError(res) == 1) {
         const errCode = C.ZSTD_getErrorCode(res);
         const msg = C.ZSTD_getErrorName(res);
         Logger.log(.err, "decompress error", .{ .code = errCode, .zstd_msg = std.mem.span(msg) });
-        // TODO: log an error to understand the exact error code
         return handleErrCode(errCode);
     }
     return res;
 }
 
-fn handleErrCode(code: C.ZSTD_ErrorCode) DecompressError {
+fn handleErrCode(code: C.ZSTD_ErrorCode) Error {
     return switch (code) {
-        70 => return DecompressError.InsufficientCapacity,
-        else => DecompressError.Unknown,
+        70 => return Error.DecompressInsufficientCapacity,
+        else => Error.DecompressUnknown,
     };
 }

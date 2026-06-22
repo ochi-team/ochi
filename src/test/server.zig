@@ -8,8 +8,9 @@ const encodeTags = @import("../store/lines.zig").encodeTags;
 const makeStreamID = @import("../store/lines.zig").makeStreamID;
 const Field = @import("../store/lines.zig").Field;
 const SID = @import("../store/lines.zig").SID;
+const Line = @import("../store/lines.zig").Line;
+const lineLessThan = @import("../store/lines.zig").lineLessThan;
 const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
-const MemOrder = @import("../stds/sort.zig").MemOrder;
 const Runtime = @import("../Runtime.zig");
 const Store = @import("../Store.zig").Store;
 const Layout = @import("../Layout.zig");
@@ -46,11 +47,6 @@ fn makeSID(alloc: Allocator, tenantID: u64, tags: std.json.Value) !u128 {
 
 const Conf = @import("../Conf.zig");
 const server = @import("../server.zig");
-
-const QueryLine = struct {
-    timestampNs: u64,
-    fields: []const Field,
-};
 
 const HttpResponse = struct {
     statusCode: u16,
@@ -192,7 +188,7 @@ pub const OchiClient = struct {
             return err;
         };
 
-        const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
+        const parsed = try std.json.parseFromSlice([]Line, alloc, resp.body, .{
             .ignore_unknown_fields = false,
         });
         defer parsed.deinit();
@@ -215,15 +211,54 @@ pub const OchiClient = struct {
     }
 };
 
-fn expectField(line: QueryLine, expectedKey: []const u8, expectedValue: []const u8) !void {
-    for (line.fields) |field| {
-        if (std.mem.eql(u8, field.key, expectedKey)) {
-            try std.testing.expectEqualStrings(expectedValue, field.value);
-            return;
+fn logTimestampNs(nowNs: u64, offsetMinutes: i64) !u64 {
+    const offsetNs = offsetMinutes * std.time.ns_per_min;
+    const tsNsSigned = @as(i128, nowNs) + offsetNs;
+    return @intCast(tsNsSigned);
+}
+
+fn expectedLine(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![]Line {
+    if (corpus.ingest.stream != .object) return error.ExpectedStreamObject;
+
+    const streamFieldsCount = corpus.ingest.stream.object.count();
+    const expected = try alloc.alloc(Line, corpus.ingest.logs.len);
+    for (corpus.ingest.logs, 0..) |log, logI| {
+        if (log.fields != .object) return error.ExpectedFieldsObject;
+
+        const fields = try alloc.alloc(Field, streamFieldsCount + log.fields.object.count() + 1);
+        var fieldI: usize = 0;
+
+        var streamIt = corpus.ingest.stream.object.iterator();
+        while (streamIt.next()) |entry| {
+            const value = switch (entry.value_ptr.*) {
+                .string => |s| s,
+                else => return error.StreamValueMustBeString,
+            };
+            fields[fieldI] = .{ .key = entry.key_ptr.*, .value = value };
+            fieldI += 1;
         }
+
+        var fieldsIt = log.fields.object.iterator();
+        while (fieldsIt.next()) |entry| {
+            const value = switch (entry.value_ptr.*) {
+                .string => |s| s,
+                else => return error.FieldValueMustBeString,
+            };
+            fields[fieldI] = .{ .key = entry.key_ptr.*, .value = value };
+            fieldI += 1;
+        }
+
+        fields[fieldI] = .{ .key = "", .value = log.message };
+        std.sort.pdq(Field, fields, {}, fieldLessThan);
+
+        expected[logI] = .{
+            .timestampNs = try logTimestampNs(nowNs, log.offsetMin),
+            .fields = fields,
+        };
     }
 
-    return error.FieldNotFound;
+    std.sort.pdq(Line, expected, {}, lineLessThan);
+    return expected;
 }
 
 const IngestionLog = struct {
@@ -241,12 +276,7 @@ const IngestCorpus = struct {
         var maxTs: u64 = 0;
 
         for (ingest.logs) |log| {
-            const offsetNs = @as(i128, log.offsetMin) * std.time.ns_per_min;
-            const tsNsSigned = @as(i128, nowNs) + offsetNs;
-            if (tsNsSigned < 0 or tsNsSigned > std.math.maxInt(u64)) {
-                return error.InvalidTimestamp;
-            }
-            const tsNs: u64 = @intCast(tsNsSigned);
+            const tsNs = try logTimestampNs(nowNs, log.offsetMin);
             if (tsNs < minTs) minTs = tsNs;
             if (tsNs > maxTs) maxTs = tsNs;
         }
@@ -579,40 +609,21 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
         return err;
     };
 
-    const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
-        .ignore_unknown_fields = true,
+    const parsed = try std.json.parseFromSlice([]Line, alloc, resp.body, .{
+        .ignore_unknown_fields = false,
     });
     defer parsed.deinit();
 
-    // TODO: since the query API is broken and returns sid we can't compare the log lines,
-    // fix it and the compare the lines completely
-    var actualIDs = std.ArrayList([]const u8).empty;
-    defer actualIDs.deinit(alloc);
     for (parsed.value) |line| {
-        for (line.fields) |field| {
-            if (std.mem.eql(u8, field.key, "id")) {
-                try actualIDs.append(alloc, field.value);
-                break;
-            }
-        }
+        std.sort.pdq(Field, line.fields, {}, fieldLessThan);
     }
+    std.sort.pdq(Line, parsed.value, {}, lineLessThan);
 
-    var expectedIDs = std.ArrayList([]const u8).empty;
-    defer expectedIDs.deinit(alloc);
-    for (corpus.ingest.logs) |log| {
-        if (log.fields != .object) return error.ExpectedFieldsObject;
-        const idVal = log.fields.object.get("id") orelse return error.MissingIDField;
-        if (idVal != .string) return error.IDFieldMustBeString;
-        try expectedIDs.append(alloc, idVal.string);
-    }
-
-    std.sort.pdq([]const u8, actualIDs.items, {}, MemOrder(u8).lessThanConst);
-    std.sort.pdq([]const u8, expectedIDs.items, {}, MemOrder(u8).lessThanConst);
-
-    try std.testing.expectEqual(expectedIDs.items.len, actualIDs.items.len);
-    for (expectedIDs.items, 0..) |expectedID, i| {
-        try std.testing.expectEqualStrings(expectedID, actualIDs.items[i]);
-    }
+    const expected = try expectedLine(alloc, corpus, nowNs);
+    // TODO: on a first failure it's worth implementing better,
+    // iterating over every line, compare fields one by one and log an error,
+    // it must take into account the keys might be missing in either
+    try std.testing.expectEqualDeep(expected, parsed.value);
 }
 
 fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
@@ -669,12 +680,7 @@ fn buildIngestBody(alloc: Allocator, ingest: IngestCorpus, nowNs: u64) ![]const 
             try buf.append(alloc, ',');
         }
 
-        const offsetNs = @as(i128, log.offsetMin) * std.time.ns_per_min;
-        const tsNsSigned = @as(i128, nowNs) + offsetNs;
-        if (tsNsSigned < 0 or tsNsSigned > std.math.maxInt(u64)) {
-            return error.InvalidTimestamp;
-        }
-        const tsNs: u64 = @intCast(tsNsSigned);
+        const tsNs = try logTimestampNs(nowNs, log.offsetMin);
 
         const fieldsJson = try std.json.Stringify.valueAlloc(alloc, log.fields, .{});
         defer alloc.free(fieldsJson);

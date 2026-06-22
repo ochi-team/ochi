@@ -2,7 +2,6 @@ const std = @import("std");
 const snappy = @import("snappy").raw;
 
 // TODO: support gzip to cover loki fully
-// TODO: suport the other compressions types here like zstd, datadog, etc.
 // TODO: support streaming decompression together with unmarshalling, so we pass a reader
 // to a json/proto marshaller and don't keep the full uncompressed buffer in memory
 pub const Compression = enum(u8) {

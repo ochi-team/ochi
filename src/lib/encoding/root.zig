@@ -2,14 +2,10 @@
 
 const compress = @import("compress.zig");
 
-pub const CompressError = compress.CompressError;
-
-pub const BoundError = compress.BoundError;
-
 pub const compressAuto = compress.compressAuto;
 pub const compressBound = compress.compressBound;
 
-pub const DecompressError = compress.DecompressError;
+pub const Error = compress.Error;
 
 pub const getFrameContentSize = compress.getFrameContentSize;
 pub const decompress = compress.decompress;
