@@ -20,10 +20,6 @@ const Runtime = @import("Runtime.zig");
 const fs = @import("fs.zig");
 const Logger = @import("logging");
 
-fn streamIndexLess(lines: std.ArrayList(Line), i: u32, j: u32) bool {
-    return lines.items[i].sid.lessThan(&lines.items[j].sid);
-}
-
 const partitionKeySize = 8;
 
 // TODO: redesign a partition range to rely not on the time, but the size:

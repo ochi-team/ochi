@@ -137,7 +137,6 @@ pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(L
 
         lines.appendAssumeCapacity(.{
             .timestampNs = ts,
-            .sid = undefined,
             .fields = fields,
         });
         appendedCount += 1;
@@ -419,17 +418,17 @@ test "initFromLines and initFromData produce identical blocks" {
     var f3 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
     var f4 = [_]Field{ .{ .key = "cpu", .value = "0.8" }, .{ .key = "memory", .value = "512MB" } };
     var lines1 = [_]Line{
-        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
-        .{ .timestampNs = 2, .sid = sid, .fields = &f1 },
+        .{ .timestampNs = 1, .fields = &f1 },
+        .{ .timestampNs = 2, .fields = &f1 },
     };
     var lines2 = [_]Line{
-        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
-        .{ .timestampNs = 2, .sid = sid, .fields = &f2 },
-        .{ .timestampNs = 3, .sid = sid, .fields = &f3 },
+        .{ .timestampNs = 1, .fields = &f1 },
+        .{ .timestampNs = 2, .fields = &f2 },
+        .{ .timestampNs = 3, .fields = &f3 },
     };
     var lines3 = [_]Line{
-        .{ .timestampNs = 1, .sid = sid, .fields = &f1 },
-        .{ .timestampNs = 2, .sid = sid, .fields = &f4 },
+        .{ .timestampNs = 1, .fields = &f1 },
+        .{ .timestampNs = 2, .fields = &f4 },
     };
 
     const Case = struct {
@@ -514,12 +513,10 @@ test "areSameFields: happy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .sid = undefined,
             .fields = fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = undefined,
             .fields = fields2[0..],
         },
     };
@@ -539,12 +536,10 @@ test "areSameFields: unhappy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .sid = undefined,
             .fields = fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = undefined,
             .fields = fields2[0..],
         },
     };
@@ -564,12 +559,10 @@ test "areSameValuesWithinColumn: happy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .sid = undefined,
             .fields = fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = undefined,
             .fields = fields2[0..],
         },
     };
@@ -590,12 +583,10 @@ test "areSameValuesWithinColumn: unhappy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .sid = undefined,
             .fields = fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = undefined,
             .fields = fields2[0..],
         },
     };
@@ -656,7 +647,6 @@ test "SelfInitMaxColumns" {
             }
             lines[i] = Line{
                 .fields = fields,
-                .sid = undefined,
                 .timestampNs = 1,
             };
         }
@@ -697,11 +687,9 @@ test "Self.put" {
         };
         var arr = [_]Line{ .{
             .timestampNs = 100,
-            .sid = undefined,
             .fields = &fields1,
         }, .{
             .timestampNs = 200,
-            .sid = undefined,
             .fields = &fields2,
         } };
         break :blk &arr;
@@ -741,17 +729,14 @@ test "Self.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .sid = undefined,
                 .fields = fields1[0..],
             },
             .{
                 .timestampNs = 200,
-                .sid = undefined,
                 .fields = fields2[0..],
             },
             .{
                 .timestampNs = 300,
-                .sid = undefined,
                 .fields = fields3[0..],
             },
         };
@@ -769,12 +754,10 @@ test "Self.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .sid = undefined,
                 .fields = fields1[0..],
             },
             .{
                 .timestampNs = 200,
-                .sid = undefined,
                 .fields = fields2[0..],
             },
         };
@@ -810,17 +793,14 @@ test "Self.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .sid = undefined,
                 .fields = fields1[0..],
             },
             .{
                 .timestampNs = 200,
-                .sid = undefined,
                 .fields = fields2[0..],
             },
             .{
                 .timestampNs = 300,
-                .sid = undefined,
                 .fields = fields3[0..],
             },
         };
@@ -857,12 +837,10 @@ test "Self.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .sid = undefined,
                 .fields = fields1[0..],
             },
             .{
                 .timestampNs = 200,
-                .sid = undefined,
                 .fields = fields2[0..],
             },
         };

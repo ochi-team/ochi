@@ -124,7 +124,6 @@ pub const DataShard = struct {
 
             try shard.lines.append(alloc, .{
                 .timestampNs = line.timestampNs,
-                .sid = sid,
                 .fields = fieldsCopy,
             });
         }
@@ -795,7 +794,6 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
     const fields = stableFields[variant % stableFields.len][0..];
     return .{
         .timestampNs = ts,
-        .sid = .{ .tenantID = 1, .id = streamID },
         .fields = fields,
     };
 }

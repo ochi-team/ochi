@@ -275,17 +275,14 @@ fn populateSampleLines(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 1,
-            .sid = .{ .id = 2, .tenantID = 2222 },
             .fields = sample.fields1[0..],
         },
         .{
             .timestampNs = 2,
-            .sid = .{ .id = 1, .tenantID = 1111 },
             .fields = sample.fields2[0..],
         },
         .{
             .timestampNs = 3,
-            .sid = .{ .id = 1, .tenantID = 1111 },
             .fields = sample.fields3[0..],
         },
     };
@@ -396,12 +393,10 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
 
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 

@@ -105,7 +105,6 @@ pub const Processor = struct {
 
         const line = Line{
             .timestampNs = timestampNs,
-            .sid = self.sid,
             .fields = fieldsCopy,
         };
 

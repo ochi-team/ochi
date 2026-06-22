@@ -593,10 +593,6 @@ fn queryBlock(
             }
         }
 
-        dst.items[i].sid = .{
-            .tenantID = blockHeader.sid.tenantID,
-            .id = blockHeader.sid.id,
-        };
         i += 1;
     }
 }
@@ -668,12 +664,10 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -748,12 +742,10 @@ test "fromMem creates proper table from mem table with populated data" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -815,12 +807,10 @@ test "open reads table from disk" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields1[0..],
     };
     const line2 = Line{
         .timestampNs = 2,
-        .sid = .{ .id = 1, .tenantID = 1234 },
         .fields = fields2[0..],
     };
 
@@ -920,17 +910,17 @@ test "queryLines" {
     var tenantBFields = [_]Field{ .{ .key = "app", .value = "api-b" }, .{ .key = "level", .value = "info" } };
 
     var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sidBlock, .fields = seqInfo[0..] },
-        .{ .timestampNs = 2, .sid = sidBlock, .fields = seqWarn[0..] },
-        .{ .timestampNs = 3, .sid = sidBlock, .fields = seqError[0..] },
-        .{ .timestampNs = 1, .sid = sid1, .fields = seqInfo[0..] },
-        .{ .timestampNs = 2, .sid = sid1, .fields = seqError[0..] },
-        .{ .timestampNs = 3, .sid = sid2, .fields = apiErrorA[0..] },
-        .{ .timestampNs = 6, .sid = sid2, .fields = apiErrorB[0..] },
-        .{ .timestampNs = 3, .sid = sid3, .fields = apiInfo[0..] },
-        .{ .timestampNs = 10, .sid = sid5, .fields = workerInfo[0..] },
-        .{ .timestampNs = 1, .sid = sidTenantA, .fields = tenantAFields[0..] },
-        .{ .timestampNs = 2, .sid = sidTenantB, .fields = tenantBFields[0..] },
+        .{ .timestampNs = 1, .fields = seqInfo[0..] },
+        .{ .timestampNs = 2, .fields = seqWarn[0..] },
+        .{ .timestampNs = 3, .fields = seqError[0..] },
+        .{ .timestampNs = 1, .fields = seqInfo[0..] },
+        .{ .timestampNs = 2, .fields = seqError[0..] },
+        .{ .timestampNs = 3, .fields = apiErrorA[0..] },
+        .{ .timestampNs = 6, .fields = apiErrorB[0..] },
+        .{ .timestampNs = 3, .fields = apiInfo[0..] },
+        .{ .timestampNs = 10, .fields = workerInfo[0..] },
+        .{ .timestampNs = 1, .fields = tenantAFields[0..] },
+        .{ .timestampNs = 2, .fields = tenantBFields[0..] },
     };
 
     const memTable = try MemTable.init(alloc);

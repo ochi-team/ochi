@@ -88,12 +88,10 @@ test "sizingBlockAndFieldsMatch" {
     const linesOneSameField = [_]Line{
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &sameField1,
         },
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &sameField2,
         },
     };
@@ -109,12 +107,10 @@ test "sizingBlockAndFieldsMatch" {
     const lineOneEmptyField = [_]Line{
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &emptyField1,
         },
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &emptyField2,
         },
     };
@@ -130,12 +126,10 @@ test "sizingBlockAndFieldsMatch" {
     const lineOneEmptyKey = [_]Line{
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &emptyKey1,
         },
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &emptyKey2,
         },
     };
@@ -148,12 +142,10 @@ test "sizingBlockAndFieldsMatch" {
     const diffFieldsLine = [_]Line{
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &diffField1,
         },
         .{
             .timestampNs = undefined,
-            .sid = undefined,
             .fields = &diffField2,
         },
     };

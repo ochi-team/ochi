@@ -400,12 +400,10 @@ fn populateSampleLines(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 2,
-            .sid = .{ .id = 1, .tenantID = 1234 },
             .fields = sample.fields2[0..],
         },
         .{
             .timestampNs = 1,
-            .sid = .{ .id = 1, .tenantID = 1234 },
             .fields = sample.fields1[0..],
         },
     };
@@ -528,7 +526,6 @@ test "addLines2 error on empty lines chunk" {
     var fields = [_]Field{.{ .key = "msg", .value = "one" }};
     var lines = [_]Line{.{
         .timestampNs = 1,
-        .sid = sid,
         .fields = fields[0..],
     }};
     var emptyLines = [_]Line{};
@@ -580,12 +577,12 @@ test "addLines2 reorders duplicate SID chunk lines by timestamp" {
             .{.{ .key = "msg", .value = "four" }},
         };
         var firstChunk = [_]Line{
-            .{ .timestampNs = case.chunks[0][0], .sid = sid, .fields = fields[0][0..] },
-            .{ .timestampNs = case.chunks[0][1], .sid = sid, .fields = fields[1][0..] },
+            .{ .timestampNs = case.chunks[0][0], .fields = fields[0][0..] },
+            .{ .timestampNs = case.chunks[0][1], .fields = fields[1][0..] },
         };
         var secondChunk = [_]Line{
-            .{ .timestampNs = case.chunks[1][0], .sid = sid, .fields = fields[2][0..] },
-            .{ .timestampNs = case.chunks[1][1], .sid = sid, .fields = fields[3][0..] },
+            .{ .timestampNs = case.chunks[1][0], .fields = fields[2][0..] },
+            .{ .timestampNs = case.chunks[1][1], .fields = fields[3][0..] },
         };
         var sids = [_]SID{ sid, sid };
         var linesBySid = [_][]Line{ firstChunk[0..], secondChunk[0..] };
@@ -639,7 +636,6 @@ test "tableHeader timestamp range matches all index blocks" {
     for (0..lineCount) |i| {
         lines[i] = .{
             .timestampNs = @intCast(i + 1),
-            .sid = .{ .tenantID = 1, .id = @intCast(i + 1) },
             .fields = fields[0..],
         };
     }

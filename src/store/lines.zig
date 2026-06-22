@@ -304,8 +304,6 @@ pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
 // Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
-    // TODO: having sid in the line seems wrong, it must go away
-    sid: SID,
     // field.key can be empty meaning it's a message field (_msg by fefault in the API)
     // can't be const because we reorder fields
     fields: []Field,

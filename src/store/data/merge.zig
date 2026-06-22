@@ -277,7 +277,6 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
             },
@@ -285,7 +284,6 @@ test "mergeLines" {
             .expected = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
             },
@@ -294,26 +292,22 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
             },
             .right = &[_]Line{
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
                 },
             },
             .expected = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
                 },
             },
@@ -322,46 +316,38 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
             },
             .right = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
             },
             .expected = &[_]Line{
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 123,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
             },
@@ -370,46 +356,38 @@ test "mergeLines" {
             .left = &[_]Line{
                 .{
                     .timestampNs = 12,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 123456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
             },
             .right = &[_]Line{
                 .{
                     .timestampNs = 1,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
             },
             .expected = &[_]Line{
                 .{
                     .timestampNs = 1,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
                 },
                 .{
                     .timestampNs = 12,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
                 },
                 .{
                     .timestampNs = 456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
                 },
                 .{
                     .timestampNs = 123456,
-                    .sid = .{ .tenantID = 0, .id = 1 },
                     .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
                 },
             },
@@ -456,12 +434,12 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         var rightFields2 = [_]Field{.{ .key = fieldKey, .value = "right-2" }};
 
         var leftLines = [_]Line{
-            .{ .timestampNs = 1, .sid = sid, .fields = leftFields1[0..] },
-            .{ .timestampNs = 3, .sid = sid, .fields = leftFields2[0..] },
+            .{ .timestampNs = 1, .fields = leftFields1[0..] },
+            .{ .timestampNs = 3, .fields = leftFields2[0..] },
         };
         var rightLines = [_]Line{
-            .{ .timestampNs = 2, .sid = sid, .fields = rightFields1[0..] },
-            .{ .timestampNs = 4, .sid = sid, .fields = rightFields2[0..] },
+            .{ .timestampNs = 2, .fields = rightFields1[0..] },
+            .{ .timestampNs = 4, .fields = rightFields2[0..] },
         };
 
         try leftMemTable.addLines(io, alloc, leftLines[0..]);
@@ -568,7 +546,6 @@ test "mergeData multi tenant" {
         };
         var lines = [_]Line{.{
             .timestampNs = @intCast(i + 1),
-            .sid = .{ .tenantID = tenantID, .id = 1 },
             .fields = fields[0..],
         }};
 
