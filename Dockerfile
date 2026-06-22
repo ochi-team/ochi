@@ -2,13 +2,18 @@ FROM ubuntu:24.04 AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates git && rm -rf /var/lib/apt/lists/*
 ARG ZIG_VERSION=0.16.0
-# x86_64 or aarch64
-ARG TARGETARCH=x86_64
+RUN case "$TARGETARCH" in \
+      amd64)  echo "ZIG_ARCH=x86_64"  > /tmp/zig-arch.env ;; \
+      arm64)  echo "ZIG_ARCH=aarch64" > /tmp/zig-arch.env ;; \
+      *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac
+
 RUN --mount=type=cache,id=ochi-zig-tarballs,target=/tmp/zig-cache \
-    zig_dir="/usr/local/zig-${TARGETARCH}-linux-${ZIG_VERSION}" && \
-    zig_tar="/tmp/zig-cache/zig-${TARGETARCH}.tar.xz" && \
+    . /tmp/zig-arch.env && \
+    zig_dir="/usr/local/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}" && \
+    zig_tar="/tmp/zig-cache/zig-${ZIG_ARCH}.tar.xz" && \
     if [ ! -f "${zig_tar}" ]; then \
-      curl -fsSL -o "${zig_tar}" "https://ziglang.org/download/${ZIG_VERSION}/zig-${TARGETARCH}-linux-${ZIG_VERSION}.tar.xz"; \
+      curl -fsSL -o "${zig_tar}" "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz"; \
     fi && \
     tar -xJf "${zig_tar}" -C /usr/local && \
     ln -sf "${zig_dir}/zig" /usr/local/bin/zig
