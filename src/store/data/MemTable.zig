@@ -630,6 +630,306 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
     }
 }
 
+const ExpectedSortedLinesChunk = struct {
+    sid: SID,
+    timestamps: []const u64,
+};
+
+fn testLine(timestampNs: u64) Line {
+    return .{
+        .timestampNs = timestampNs,
+        .fields = undefined,
+    };
+}
+
+fn expectLineBySidSortResult(
+    sids: []const SID,
+    linesBySid: [][]Line,
+    expected: []const ExpectedSortedLinesChunk,
+) !void {
+    try std.testing.expectEqual(expected.len, sids.len);
+    try std.testing.expectEqual(expected.len, linesBySid.len);
+
+    for (expected, 0..) |chunk, i| {
+        try std.testing.expectEqualDeep(chunk.sid, sids[i]);
+        try std.testing.expectEqual(chunk.timestamps.len, linesBySid[i].len);
+        for (chunk.timestamps, 0..) |timestamp, lineI| {
+            try std.testing.expectEqual(timestamp, linesBySid[i][lineI].timestampNs);
+        }
+    }
+}
+
+test "LineBySidSortContext.sort handles no chunks" {
+    var sids = [_]SID{};
+    var linesBySid = [_][]Line{};
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{});
+}
+
+test "LineBySidSortContext.sort handles single sid with many unordered lines" {
+    const sid = SID{ .tenantID = 1, .id = 1 };
+    var lines = [_]Line{
+        testLine(std.math.maxInt(u64)),
+        testLine(3),
+        testLine(0),
+        testLine(3),
+        testLine(1),
+    };
+    var sids = [_]SID{sid};
+    var linesBySid = [_][]Line{lines[0..]};
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{
+        .{ .sid = sid, .timestamps = &.{ 0, 1, 3, 3, std.math.maxInt(u64) } },
+    });
+}
+
+test "LineBySidSortContext.sort handles max checkpoints with single line chunks" {
+    var lines = [_]Line{
+        testLine(16),
+        testLine(15),
+        testLine(14),
+        testLine(13),
+        testLine(12),
+        testLine(11),
+        testLine(10),
+        testLine(9),
+        testLine(8),
+        testLine(7),
+        testLine(6),
+        testLine(5),
+        testLine(4),
+        testLine(3),
+        testLine(2),
+        testLine(1),
+    };
+    var sids = [_]SID{
+        .{ .tenantID = 8, .id = 2 },
+        .{ .tenantID = 3, .id = 2 },
+        .{ .tenantID = 4, .id = 2 },
+        .{ .tenantID = 1, .id = 3 },
+        .{ .tenantID = 7, .id = 2 },
+        .{ .tenantID = 1, .id = 2 },
+        .{ .tenantID = 2, .id = 2 },
+        .{ .tenantID = 6, .id = 2 },
+        .{ .tenantID = 5, .id = 2 },
+        .{ .tenantID = 1, .id = 1 },
+        .{ .tenantID = 9, .id = 2 },
+        .{ .tenantID = 2, .id = 1 },
+        .{ .tenantID = 4, .id = 1 },
+        .{ .tenantID = 3, .id = 1 },
+        .{ .tenantID = 5, .id = 1 },
+        .{ .tenantID = 6, .id = 1 },
+    };
+    var linesBySid = [_][]Line{
+        lines[0..1],
+        lines[1..2],
+        lines[2..3],
+        lines[3..4],
+        lines[4..5],
+        lines[5..6],
+        lines[6..7],
+        lines[7..8],
+        lines[8..9],
+        lines[9..10],
+        lines[10..11],
+        lines[11..12],
+        lines[12..13],
+        lines[13..14],
+        lines[14..15],
+        lines[15..16],
+    };
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{
+        .{ .sid = .{ .tenantID = 1, .id = 1 }, .timestamps = &.{7} },
+        .{ .sid = .{ .tenantID = 1, .id = 2 }, .timestamps = &.{11} },
+        .{ .sid = .{ .tenantID = 1, .id = 3 }, .timestamps = &.{13} },
+        .{ .sid = .{ .tenantID = 2, .id = 1 }, .timestamps = &.{5} },
+        .{ .sid = .{ .tenantID = 2, .id = 2 }, .timestamps = &.{10} },
+        .{ .sid = .{ .tenantID = 3, .id = 1 }, .timestamps = &.{3} },
+        .{ .sid = .{ .tenantID = 3, .id = 2 }, .timestamps = &.{15} },
+        .{ .sid = .{ .tenantID = 4, .id = 1 }, .timestamps = &.{4} },
+        .{ .sid = .{ .tenantID = 4, .id = 2 }, .timestamps = &.{14} },
+        .{ .sid = .{ .tenantID = 5, .id = 1 }, .timestamps = &.{2} },
+        .{ .sid = .{ .tenantID = 5, .id = 2 }, .timestamps = &.{8} },
+        .{ .sid = .{ .tenantID = 6, .id = 1 }, .timestamps = &.{1} },
+        .{ .sid = .{ .tenantID = 6, .id = 2 }, .timestamps = &.{9} },
+        .{ .sid = .{ .tenantID = 7, .id = 2 }, .timestamps = &.{12} },
+        .{ .sid = .{ .tenantID = 8, .id = 2 }, .timestamps = &.{16} },
+        .{ .sid = .{ .tenantID = 9, .id = 2 }, .timestamps = &.{6} },
+    });
+}
+
+test "LineBySidSortContext.sort handles many single line chunks for one sid" {
+    const sid = SID{ .tenantID = 5, .id = 9 };
+    var lines = [_]Line{
+        testLine(100),
+        testLine(0),
+        testLine(50),
+        testLine(std.math.maxInt(u64)),
+        testLine(1),
+        testLine(50),
+    };
+    var sids = [_]SID{ sid, sid, sid, sid, sid, sid };
+    var linesBySid = [_][]Line{
+        lines[0..1],
+        lines[1..2],
+        lines[2..3],
+        lines[3..4],
+        lines[4..5],
+        lines[5..6],
+    };
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{
+        .{ .sid = sid, .timestamps = &.{0} },
+        .{ .sid = sid, .timestamps = &.{1} },
+        .{ .sid = sid, .timestamps = &.{50} },
+        .{ .sid = sid, .timestamps = &.{50} },
+        .{ .sid = sid, .timestamps = &.{100} },
+        .{ .sid = sid, .timestamps = &.{std.math.maxInt(u64)} },
+    });
+}
+
+test "LineBySidSortContext.sort handles many items per chunk across duplicate sids" {
+    const sid = SID{ .tenantID = 2, .id = 7 };
+    var linesA = [_]Line{
+        testLine(9),
+        testLine(1),
+        testLine(7),
+    };
+    var linesB = [_]Line{
+        testLine(6),
+        testLine(5),
+        testLine(4),
+        testLine(3),
+    };
+    var linesC = [_]Line{
+        testLine(8),
+        testLine(2),
+    };
+    var sids = [_]SID{ sid, sid, sid };
+    var linesBySid = [_][]Line{
+        linesA[0..],
+        linesB[0..],
+        linesC[0..],
+    };
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{
+        .{ .sid = sid, .timestamps = &.{ 1, 2, 3, 4 } },
+        .{ .sid = sid, .timestamps = &.{ 5, 6 } },
+        .{ .sid = sid, .timestamps = &.{ 7, 8, 9 } },
+    });
+}
+
+test "LineBySidSortContext.sort handles one unordered chunk per sid" {
+    const sidA = SID{ .tenantID = 1, .id = 1 };
+    const sidB = SID{ .tenantID = 1, .id = 2 };
+    const sidC = SID{ .tenantID = 2, .id = 1 };
+    var linesA = [_]Line{
+        testLine(5),
+        testLine(4),
+        testLine(6),
+    };
+    var linesB = [_]Line{
+        testLine(3),
+        testLine(1),
+        testLine(2),
+    };
+    var linesC = [_]Line{
+        testLine(9),
+        testLine(7),
+        testLine(8),
+    };
+    var sids = [_]SID{ sidC, sidA, sidB };
+    var linesBySid = [_][]Line{
+        linesC[0..],
+        linesA[0..],
+        linesB[0..],
+    };
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{
+        .{ .sid = sidA, .timestamps = &.{ 4, 5, 6 } },
+        .{ .sid = sidB, .timestamps = &.{ 1, 2, 3 } },
+        .{ .sid = sidC, .timestamps = &.{ 7, 8, 9 } },
+    });
+}
+
+test "LineBySidSortContext.sort handles sid and timestamp extremes" {
+    const minSid = SID{ .tenantID = 0, .id = 0 };
+    const maxIdSid = SID{ .tenantID = 0, .id = std.math.maxInt(u128) };
+    const maxTenantSid = SID{ .tenantID = std.math.maxInt(u64), .id = 0 };
+    var minSidFirst = [_]Line{
+        testLine(std.math.maxInt(u64)),
+        testLine(0),
+    };
+    var minSidSecond = [_]Line{
+        testLine(1),
+    };
+    var maxIdLines = [_]Line{
+        testLine(2),
+        testLine(0),
+    };
+    var maxTenantLines = [_]Line{
+        testLine(std.math.maxInt(u64)),
+        testLine(std.math.maxInt(u64) - 1),
+    };
+    var sids = [_]SID{ maxTenantSid, minSid, maxIdSid, minSid };
+    var linesBySid = [_][]Line{
+        maxTenantLines[0..],
+        minSidFirst[0..],
+        maxIdLines[0..],
+        minSidSecond[0..],
+    };
+
+    const sortContext = LineBySidSortContext{
+        .sids = sids[0..],
+        .linesBySid = linesBySid[0..],
+    };
+    sortContext.sort();
+
+    try expectLineBySidSortResult(sids[0..], linesBySid[0..], &.{
+        .{ .sid = minSid, .timestamps = &.{0} },
+        .{ .sid = minSid, .timestamps = &.{ 1, std.math.maxInt(u64) } },
+        .{ .sid = maxIdSid, .timestamps = &.{ 0, 2 } },
+        .{ .sid = maxTenantSid, .timestamps = &.{ std.math.maxInt(u64) - 1, std.math.maxInt(u64) } },
+    });
+}
+
 test "flushToDisk writes buffers" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{std.testing.io});
 }
