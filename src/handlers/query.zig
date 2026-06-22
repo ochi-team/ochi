@@ -53,23 +53,7 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
     res.status = 200;
 }
 
-// TODO: remove it when Line has no sid
-/// JSON response shape for a single log line.
-const LineResponse = struct {
-    ts: u64,
-    fields: []const Field,
-};
-
-// TODO: this is broken, it writes SID with array list fields
 fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
-    var responseLines = try std.ArrayList(LineResponse).initCapacity(res.arena, lines.len);
-    for (lines) |line| {
-        responseLines.appendAssumeCapacity(.{
-            .ts = line.timestampNs,
-            .fields = line.fields,
-        });
-    }
-
     const buf = try std.json.Stringify.valueAlloc(res.arena, lines, .{});
 
     res.body = buf;
