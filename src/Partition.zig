@@ -155,7 +155,6 @@ pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []co
     try fs.syncPathAndParentDir(io, path);
 }
 
-const bufSize = 1024;
 pub fn addLines(
     self: *Partition,
     io: Io,
@@ -163,54 +162,78 @@ pub fn addLines(
     lines: std.ArrayList(Line),
     tags: []Field,
     encodedTags: []const u8,
+    sid: SID,
     blocksCache: *Cache(*MemBlock),
 ) !void {
-    var fallbackFba = std.heap.stackFallback(bufSize, allocator);
-    const fba = fallbackFba.get();
-    var streamsToCache = try std.ArrayList(u32).initCapacity(fba, bufSize / @sizeOf(u32));
-    defer streamsToCache.deinit(fba);
-
-    // detect not cached stream ids
-    for (0..lines.items.len) |i| {
-        const line = lines.items[i];
-        if (self.isCached(io, line.sid)) {
-            continue;
-        }
-
-        if (streamsToCache.items.len == 0) {
-            try streamsToCache.append(fba, @intCast(i));
-            continue;
-        }
-
-        const lineToCacheIdx = streamsToCache.items[streamsToCache.items.len - 1];
-        const lineToCache = lines.items[lineToCacheIdx];
-        if (!line.sid.eql(&lineToCache.sid)) {
-            try streamsToCache.append(fba, @intCast(i));
-        }
-    }
-
-    if (streamsToCache.items.len > 0) {
-        // sort the stream ids,
-        // it's necessary in case the incoming lines are mixed like [1, 3, 2],
-        // so to make it [1, 2, 3]
-        std.sort.pdq(u32, streamsToCache.items, lines, streamIndexLess);
-    }
-
-    for (streamsToCache.items, 0..) |i, pos| {
-        const sid = lines.items[i].sid;
-
-        if (pos > 0 and lines.items[streamsToCache.items[pos - 1]].sid.eql(&sid)) continue;
-
-        if (self.isCached(io, lines.items[i].sid)) continue;
-
+    if (!self.isCached(io, sid)) {
         if (!try self.index.hasStream(io, allocator, sid, blocksCache)) {
             try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
         try self.cache(io, sid);
     }
 
-    try self.data.addLines(io, allocator, lines.items);
+    try self.data.addLines(io, allocator, lines.items, sid);
 }
+
+// TODO: this api is not used, but if we want to collect more sids in the processor
+// we can ressurect it back
+// const bufSize = 1024;
+// pub fn addLinesWithSidChunks(
+//     self: *Partition,
+//     io: Io,
+//     allocator: Allocator,
+//     lines: std.ArrayList(Line),
+//     tags: []Field,
+//     encodedTags: []const u8,
+//     sids: []SID,
+//     blocksCache: *Cache(*MemBlock),
+// ) !void {
+//     var fallbackFba = std.heap.stackFallback(bufSize, allocator);
+//     const fba = fallbackFba.get();
+//     var streamsToCache = try std.ArrayList(u32).initCapacity(fba, bufSize / @sizeOf(u32));
+//     defer streamsToCache.deinit(fba);
+//
+//     // detect not cached stream ids
+//     for (0..lines.items.len) |i| {
+//         const line = lines.items[i];
+//         if (self.isCached(io, line.sid)) {
+//             continue;
+//         }
+//
+//         if (streamsToCache.items.len == 0) {
+//             try streamsToCache.append(fba, @intCast(i));
+//             continue;
+//         }
+//
+//         const lineToCacheIdx = streamsToCache.items[streamsToCache.items.len - 1];
+//         const lineToCache = lines.items[lineToCacheIdx];
+//         if (!line.sid.eql(&lineToCache.sid)) {
+//             try streamsToCache.append(fba, @intCast(i));
+//         }
+//     }
+//
+//     if (streamsToCache.items.len > 0) {
+//         // sort the stream ids,
+//         // it's necessary in case the incoming lines are mixed like [1, 3, 2],
+//         // so to make it [1, 2, 3]
+//         std.sort.pdq(u32, streamsToCache.items, lines, streamIndexLess);
+//     }
+//
+//     for (streamsToCache.items, 0..) |i, pos| {
+//         const sid = lines.items[i].sid;
+//
+//         if (pos > 0 and lines.items[streamsToCache.items[pos - 1]].sid.eql(&sid)) continue;
+//
+//         if (self.isCached(io, lines.items[i].sid)) continue;
+//
+//         if (!try self.index.hasStream(io, allocator, sid, blocksCache)) {
+//             try self.index.indexStream(io, allocator, sid, tags, encodedTags);
+//         }
+//         try self.cache(io, sid);
+//     }
+//
+//     try self.data.addLines(io, allocator, lines.items);
+// }
 
 // TODO: experiment with scan sharing,
 // we could hash the query for a very short time (3s)

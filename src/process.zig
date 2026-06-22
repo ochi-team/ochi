@@ -145,7 +145,7 @@ pub const Processor = struct {
     }
 
     pub fn flush(self: *Processor, io: Io, alloc: std.mem.Allocator) !void {
-        try self.store.addLines(io, alloc, self.lines.items, self.tags, self.encodedTags);
+        try self.store.addLines(io, alloc, self.lines.items, self.tags, self.encodedTags, self.sid);
         self.resetBuffered(alloc);
     }
 };

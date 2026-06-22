@@ -45,7 +45,7 @@ const SidCheckpoint = struct {
     sid: SID,
     // it's safe to use u16, the flush limit is 1/4 of max u16,
     // so even trippling the amount won't reach it
-    // TODO: implement a tail return from addLines in order to hard limit the lines, 
+    // TODO: implement a tail return from addLines in order to hard limit the lines,
     // it allows us to double the limit and be in u16 range
     i: u16,
 
@@ -133,11 +133,11 @@ pub const DataShard = struct {
         if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&sid)) {
             shard.checkpoints[shard.checkpointsLen] = .{
                 .sid = sid,
-                .i = shard.lines.items.len,
+                .i = @intCast(shard.lines.items.len),
             };
             shard.checkpointsLen += 1;
         } else {
-            shard.checkpoints[shard.checkpointsLen - 1].i = shard.lines.items.len;
+            shard.checkpoints[shard.checkpointsLen - 1].i = @intCast(shard.lines.items.len);
         }
     }
 
@@ -145,7 +145,8 @@ pub const DataShard = struct {
     const flushSizeThreshold = 9 * (maxBlockSize / 10);
     // TODO: make size limit configurable
     // TODO: this threshold is used in processor too,
-    // make it configurable and extract from both
+    // make it configurable and extract from both or just get rid of the processor,
+    // we might not need an intermediate buffer
     fn mustFlush(self: *const DataShard) bool {
         return self.size >= flushSizeThreshold or self.checkpointsLen == maxCheckpoints;
     }
@@ -173,7 +174,7 @@ pub const DataShard = struct {
             sids[i] = checkpoint.sid;
         }
 
-        memTable.addLines2(
+        memTable.addLines(
             io,
             alloc,
             sids[0..self.checkpointsLen],
