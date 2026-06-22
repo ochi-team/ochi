@@ -160,7 +160,7 @@ const LineBySidSortContext = struct {
 
     pub fn sort(ctx: @This()) void {
         std.sort.pdqContext(0, ctx.sids.len, ctx);
-        ctx.sortDuplicateSidLines();
+        ctx.sortLineWindows();
     }
 
     const LineWindowsSortContext = struct {
@@ -211,7 +211,7 @@ const LineBySidSortContext = struct {
         }
     };
 
-    fn sortDuplicateSidLines(ctx: @This()) void {
+    fn sortLineWindows(ctx: @This()) void {
         var start: usize = 0;
         while (start < ctx.sids.len) {
             var end = start + 1;
@@ -219,7 +219,7 @@ const LineBySidSortContext = struct {
                 end += 1;
             }
 
-            if (end - start > 1) {
+            if (end - start > 0) {
                 const linesBySid = ctx.linesBySid[start..end];
                 var lineOffsetsBuf: [maxCheckpoints]usize = undefined;
 
@@ -381,12 +381,25 @@ const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 const encoding = @import("encoding");
 const Table = @import("Table.zig");
 const BlockReader = @import("BlockReader.zig").BlockReader;
+const sampleSid = SID{ .tenantID = 1234, .id = 1 };
 
 const SampleLines = struct {
     fields1: [2]Field,
     fields2: [2]Field,
     lines: [2]Line,
 };
+
+pub fn addLinesForSid(
+    self: *MemTable,
+    io: Io,
+    allocator: std.mem.Allocator,
+    sid: SID,
+    lines: []Line,
+) !void {
+    var sids = [_]SID{sid};
+    var linesBySid = [_][]Line{lines};
+    return self.addLines(io, allocator, sids[0..], linesBySid[0..]);
+}
 
 fn populateSampleLines(sample: *SampleLines) void {
     sample.fields1 = .{
@@ -441,7 +454,7 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
 
     const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
-    try memTable.addLines(io, allocator, lines[0..]);
+    try memTable.addLinesForSid(io, allocator, sampleSid, lines[0..]);
 
     const timestampsContent = memTable.timestampsBuf.items;
     const indexContent = memTable.indexBuf.items;
@@ -516,11 +529,11 @@ test "addLinesErrorOnEmpty" {
     var lines = [_]Line{};
     const memTable = try MemTable.init(std.testing.allocator);
     defer memTable.deinit(std.testing.allocator);
-    const err = memTable.addLines(std.testing.io, std.testing.allocator, lines[0..]);
+    const err = memTable.addLinesForSid(std.testing.io, std.testing.allocator, sampleSid, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
-test "addLines2 error on empty lines chunk" {
+test "addLines error on empty lines chunk" {
     const alloc = std.testing.allocator;
     const sid = SID{ .tenantID = 1, .id = 1 };
     var fields = [_]Field{.{ .key = "msg", .value = "one" }};
@@ -535,7 +548,7 @@ test "addLines2 error on empty lines chunk" {
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
 
-    const err = memTable.addLines2(
+    const err = memTable.addLines(
         std.testing.io,
         alloc,
         sids[0..],
@@ -544,7 +557,7 @@ test "addLines2 error on empty lines chunk" {
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
-test "addLines2 reorders duplicate SID chunk lines by timestamp" {
+test "addLines reorders duplicate SID chunk lines by timestamp" {
     const ExpectedBlock = struct {
         min: u64,
         max: u64,
@@ -591,7 +604,7 @@ test "addLines2 reorders duplicate SID chunk lines by timestamp" {
         var memTableOwned = true;
         defer if (memTableOwned) memTable.deinit(alloc);
 
-        try memTable.addLines2(io, alloc, sids[0..], linesBySid[0..]);
+        try memTable.addLines(io, alloc, sids[0..], linesBySid[0..]);
 
         const table = try Table.fromMem(alloc, memTable);
         memTableOwned = false;
@@ -631,6 +644,10 @@ test "tableHeader timestamp range matches all index blocks" {
     const lineCount = 2200;
     var lines = try alloc.alloc(Line, lineCount);
     defer alloc.free(lines);
+    var sids = try alloc.alloc(SID, lineCount);
+    defer alloc.free(sids);
+    var linesBySid = try alloc.alloc([]Line, lineCount);
+    defer alloc.free(linesBySid);
 
     var fields = [_]Field{.{ .key = "k", .value = "v" }};
     for (0..lineCount) |i| {
@@ -638,9 +655,11 @@ test "tableHeader timestamp range matches all index blocks" {
             .timestampNs = @intCast(i + 1),
             .fields = fields[0..],
         };
+        sids[i] = .{ .tenantID = 1, .id = @intCast(i + 1) };
+        linesBySid[i] = lines[i .. i + 1];
     }
 
-    try memTable.addLines(io, alloc, lines);
+    try memTable.addLines(io, alloc, sids, linesBySid);
 
     const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
         alloc,
@@ -686,7 +705,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
 
-    try memTable.addLines(io, allocator, lines[0..]);
+    try memTable.addLinesForSid(io, allocator, sampleSid, lines[0..]);
     try memTable.storeToDisk(io, allocator, flushPath);
 
     const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnKeys });

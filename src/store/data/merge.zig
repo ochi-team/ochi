@@ -442,8 +442,8 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
             .{ .timestampNs = 4, .fields = rightFields2[0..] },
         };
 
-        try leftMemTable.addLines(io, alloc, leftLines[0..]);
-        try rightMemTable.addLines(io, alloc, rightLines[0..]);
+        try leftMemTable.addLinesForSid(io, alloc, sid, leftLines[0..]);
+        try rightMemTable.addLinesForSid(io, alloc, sid, rightLines[0..]);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
@@ -549,7 +549,7 @@ test "mergeData multi tenant" {
             .fields = fields[0..],
         }};
 
-        try memTable.addLines(io, alloc, lines[0..]);
+        try memTable.addLinesForSid(io, alloc, .{ .tenantID = tenantID, .id = 1 }, lines[0..]);
         try memTable.storeToDisk(io, alloc, tablePath);
 
         const table = try Table.open(io, alloc, tablePath);

@@ -790,7 +790,11 @@ var stableFields = [_][2]Field{
     },
 };
 
-fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
+fn stableSID(streamID: u128) SID {
+    return .{ .tenantID = 1, .id = streamID };
+}
+
+fn stableLine(ts: u64, variant: usize) Line {
     const fields = stableFields[variant % stableFields.len][0..];
     return .{
         .timestampNs = ts,
@@ -798,11 +802,11 @@ fn stableLine(ts: u64, streamID: u128, variant: usize) Line {
     };
 }
 
-fn createMemTableFromLines(io: Io, alloc: Allocator, lines: []Line) !*Table {
+fn createMemTableFromLines(io: Io, alloc: Allocator, sid: SID, lines: []Line) !*Table {
     const memTable = try MemTable.init(alloc);
     errdefer memTable.deinit(alloc);
 
-    try memTable.addLines(io, alloc, lines);
+    try memTable.addLinesForSid(io, alloc, sid, lines);
     return Table.fromMem(alloc, memTable);
 }
 
@@ -978,8 +982,10 @@ test "flushDataShards non-force respects flush deadline" {
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
     defer recorder.deinit(io, alloc);
 
-    const line = stableLine(1, 1, 0);
+    const line = stableLine(1, 0);
     try recorder.shards[0].lines.append(alloc, line);
+    recorder.shards[0].checkpoints[0] = .{ .sid = stableSID(1), .i = 1 };
+    recorder.shards[0].checkpointsLen = 1;
     recorder.shards[0].size = line.fieldsSize();
 
     recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
@@ -1011,11 +1017,11 @@ test "mergeTables force single mem table creates disk table" {
     defer recorder.deinit(io, alloc);
 
     var lines = [_]Line{
-        stableLine(1, 1, 0),
-        stableLine(2, 1, 1),
-        stableLine(3, 1, 2),
+        stableLine(1, 0),
+        stableLine(2, 1),
+        stableLine(3, 2),
     };
-    const table = try createMemTableFromLines(io, alloc, lines[0..]);
+    const table = try createMemTableFromLines(io, alloc, stableSID(1), lines[0..]);
     errdefer table.close(io);
 
     try recorder.memTables.append(alloc, table);
@@ -1046,8 +1052,8 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
-            var batch = [_]Line{stableLine(@intCast(i + 1), 1, i)};
-            try recorder.addLines(io, alloc, batch[0..]);
+            var batch = [_]Line{stableLine(@intCast(i + 1), i)};
+            try recorder.addLines(io, alloc, batch[0..], stableSID(1));
         }
 
         try recorder.flushForce(io, alloc);

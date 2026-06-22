@@ -332,7 +332,7 @@ test "BlockData readFrom populates columnsData and invariantColumns" {
     const memTable = try MemTable.init(allocator);
     const table = try Table.fromMem(allocator, memTable);
     defer table.close(io);
-    try memTable.addLines(io, allocator, lines[0..]);
+    try memTable.addLinesForSid(io, allocator, .{ .id = 1, .tenantID = 1111 }, lines[0..]);
 
     const blockReader = try BlockReader.initFromMemTable(allocator, table);
     defer blockReader.deinit(allocator);

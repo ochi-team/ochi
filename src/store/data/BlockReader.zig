@@ -320,7 +320,15 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
         return err;
     };
     defer table.close(io);
-    try memTable.addLines(io, allocator, lines[0..]);
+    var sids = [_]SID{
+        .{ .id = 2, .tenantID = 2222 },
+        .{ .id = 1, .tenantID = 1111 },
+    };
+    var linesBySid = [_][]Line{
+        lines[0..1],
+        lines[1..3],
+    };
+    try memTable.addLines(io, allocator, sids[0..], linesBySid[0..]);
 
     const th = memTable.tableHeader;
     try std.testing.expectEqual(3, th.len);
@@ -410,7 +418,7 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
 
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     memTable.storeToDisk(io, alloc, tablePath) catch |err| {

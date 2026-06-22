@@ -672,7 +672,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
@@ -751,7 +751,7 @@ test "fromMem creates proper table from mem table with populated data" {
 
     var lines = [_]Line{ line1, line2 };
 
-    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -815,7 +815,7 @@ test "open reads table from disk" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
@@ -882,7 +882,7 @@ test "queryLines" {
     const io = testing.io;
     const ExpectedLine = struct {
         timestampNs: u64,
-        sid: SID,
+        app: []const u8,
     };
     const Case = struct {
         requestedSIDs: []const SID,
@@ -924,7 +924,17 @@ test "queryLines" {
     };
 
     const memTable = try MemTable.init(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    var sids = [_]SID{ sidBlock, sid1, sid2, sid3, sid5, sidTenantA, sidTenantB };
+    var linesBySid = [_][]Line{
+        lines[0..3],
+        lines[3..5],
+        lines[5..7],
+        lines[7..8],
+        lines[8..9],
+        lines[9..10],
+        lines[10..11],
+    };
+    try memTable.addLines(io, alloc, sids[0..], linesBySid[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -939,15 +949,15 @@ test "queryLines" {
             .requestedSIDs = &.{sidBlock},
             .query = .{ .start = 1, .end = 3, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{
-                .{ .timestampNs = 1, .sid = sidBlock },
-                .{ .timestampNs = 2, .sid = sidBlock },
-                .{ .timestampNs = 3, .sid = sidBlock },
+                .{ .timestampNs = 1, .app = "seq" },
+                .{ .timestampNs = 2, .app = "seq" },
+                .{ .timestampNs = 3, .app = "seq" },
             },
         },
         .{
             .requestedSIDs = &.{sidBlock},
             .query = .{ .start = 1, .end = 3, .tagsExpr = &noTagsExpr, .fieldsExpr = &warnExpr },
-            .expected = &.{.{ .timestampNs = 2, .sid = sidBlock }},
+            .expected = &.{.{ .timestampNs = 2, .app = "seq" }},
         },
         .{
             .requestedSIDs = &.{sidBlock},
@@ -962,28 +972,28 @@ test "queryLines" {
         .{
             .requestedSIDs = &.{ sidMissing, sid5 },
             .query = .{ .start = 0, .end = 20, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
-            .expected = &.{.{ .timestampNs = 10, .sid = sid5 }},
+            .expected = &.{.{ .timestampNs = 10, .app = "worker" }},
         },
         .{
             .requestedSIDs = &.{ sid1, sid2 },
             .query = .{ .start = 2, .end = 5, .tagsExpr = &noTagsExpr, .fieldsExpr = &errorExpr },
             .expected = &.{
-                .{ .timestampNs = 2, .sid = sid1 },
-                .{ .timestampNs = 3, .sid = sid2 },
+                .{ .timestampNs = 2, .app = "seq" },
+                .{ .timestampNs = 3, .app = "api" },
             },
         },
         .{
             .requestedSIDs = &.{ sid1, sid1 },
             .query = .{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{
-                .{ .timestampNs = 1, .sid = sid1 },
-                .{ .timestampNs = 2, .sid = sid1 },
+                .{ .timestampNs = 1, .app = "seq" },
+                .{ .timestampNs = 2, .app = "seq" },
             },
         },
         .{
             .requestedSIDs = &.{sidTenantB},
             .query = .{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
-            .expected = &.{.{ .timestampNs = 2, .sid = sidTenantB }},
+            .expected = &.{.{ .timestampNs = 2, .app = "api-b" }},
         },
         .{
             .requestedSIDs = &.{ sidMissing, sid5 },
@@ -1014,7 +1024,15 @@ test "queryLines" {
 
         for (case.expected, 0..) |expected, i| {
             try testing.expectEqual(expected.timestampNs, queried.items[i].timestampNs);
-            try testing.expect(queried.items[i].sid.eql(&expected.sid));
+            var app: ?[]const u8 = null;
+            for (queried.items[i].fields) |field| {
+                if (std.mem.eql(u8, field.key, "app")) {
+                    app = field.value;
+                    break;
+                }
+            }
+            try testing.expect(app != null);
+            try testing.expectEqualStrings(expected.app, app.?);
         }
     }
 }
@@ -1038,12 +1056,12 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
         .{ .key = "level", .value = "warn" },
     };
     var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid, .fields = fields1[0..] },
-        .{ .timestampNs = 2, .sid = sid, .fields = fields2[0..] },
+        .{ .timestampNs = 1, .fields = fields1[0..] },
+        .{ .timestampNs = 2, .fields = fields2[0..] },
     };
 
     const memTable = try MemTable.init(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, sid, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -1089,13 +1107,13 @@ test "queryLines reads disk table fields after open" {
         .{ .key = "path", .value = "/api/orders" },
     };
     var lines = [_]Line{
-        .{ .timestampNs = 1, .sid = sid, .fields = fields1[0..] },
-        .{ .timestampNs = 2, .sid = sid, .fields = fields2[0..] },
+        .{ .timestampNs = 1, .fields = fields1[0..] },
+        .{ .timestampNs = 2, .fields = fields2[0..] },
     };
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    try memTable.addLines(io, alloc, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, sid, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
