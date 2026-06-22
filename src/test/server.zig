@@ -193,8 +193,7 @@ pub const OchiClient = struct {
         };
 
         const parsed = try std.json.parseFromSlice([]QueryLine, alloc, resp.body, .{
-            // TODO: removed sid from the response and switch it false
-            .ignore_unknown_fields = true,
+            .ignore_unknown_fields = false,
         });
         defer parsed.deinit();
 
