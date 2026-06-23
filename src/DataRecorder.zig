@@ -354,7 +354,6 @@ fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 
 fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
     while (!self.stopped.load(.acquire)) {
-        // TODO: setup a diagnostic pattern to inject more context about the error and log messages
         self.flushMemTables(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 

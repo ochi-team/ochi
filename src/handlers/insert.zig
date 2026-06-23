@@ -15,11 +15,12 @@ const Compression = @import("../server/compression.zig").Compression;
 // and find a way to test it extensively
 // to reproduce all the errors
 
-/// insertLokiJson defines a loki json insertion operation
-pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
+/// ingestLokiJsonHandler defines a loki json insertion operation
+pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
     const contentType = r.headers.get("content-type");
 
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
+        ctx.diagnostic.set(.{ .key = "req.contentType", .value = contentType.? });
         // TODO: implement protobuf marhsalling
         return ApiError.ContentTypeNotSupported;
     }
@@ -50,8 +51,8 @@ pub fn insertLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
     res.status = 200;
 }
 
-/// insertLokiReady defines a loki handler to signal its readiness
-pub fn insertLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
+/// ingestLokiReady defines a loki handler to signal its readiness
+pub fn ingestLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.body = "ready";
 }

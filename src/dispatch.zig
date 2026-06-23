@@ -21,6 +21,8 @@ pub const AppContext = struct {
     tenantID: u64,
     store: *Store,
 
+    diagnostic: *Logger.Diagnostic,
+
     dispatchMeter: *DispatchMeter,
     storeMeter: *StoreMeter,
 };
@@ -70,19 +72,20 @@ pub const Dispatcher = struct {
             };
         };
 
+        var diagnostic: Logger.Diagnostic = .{};
+
         var ctx = AppContext{
             .io = self.io,
             .allocator = self.allocator,
             .conf = self.conf,
             .tenantID = tenantID,
             .store = self.store,
+            .diagnostic = &diagnostic,
             .dispatchMeter = &self.meter,
             .storeMeter = &self.store.meter,
         };
 
         action(&ctx, req, res) catch |err| {
-            Logger.log(.err, "failed to handle request", .{ .err = err });
-
             switch (err) {
                 ApiError.EmptyBody => {
                     res.status = 400;
@@ -121,6 +124,8 @@ pub const Dispatcher = struct {
                     res.body = "internal server error";
                 },
             }
+
+            Logger.logWithDiagnostic(.err, "failed to handle request", .{ .err = err }, ctx.diagnostic);
         };
     }
 

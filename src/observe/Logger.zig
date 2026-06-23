@@ -50,6 +50,19 @@ pub fn log(comptime level: std.log.Level, comptime msg: []const u8, args: anytyp
     logWith(loggerForGlobal(level), msg, args);
 }
 
+pub fn logWithDiagnostic(
+    comptime level: std.log.Level,
+    comptime msg: []const u8,
+    args: anytype,
+    diag: *const Diagnostic,
+) void {
+    var e = loggerForGlobal(level);
+    for (0..diag.len) |i| {
+        e = e.string(diag.data[i].key, diag.data[i].value);
+    }
+    logWith(e, msg, args);
+}
+
 fn logWith(e0: logz.Logger, comptime msg: []const u8, args: anytype) void {
     var e = e0;
     e = e.string(msgField, msg);
@@ -105,6 +118,24 @@ fn logField(e: logz.Logger, comptime key: []const u8, value: anytype) logz.Logge
 
     @compileError("unsupported log field type for '" ++ key ++ "': " ++ @typeName(T));
 }
+
+const diagnosticBufferSize = 16;
+const Field = struct { key: []const u8, value: []const u8 };
+
+pub const Diagnostic = struct {
+    len: u8 = 0,
+    data: [diagnosticBufferSize]Field = undefined,
+
+    pub fn set(diag: *Diagnostic, f: Field) void {
+        if (diag.len >= diagnosticBufferSize) {
+            log(.err, "diagnostic buffer is full, extend or fix it's usage", .{});
+            return;
+        }
+
+        diag.data[diag.len] = f;
+        diag.len += 1;
+    }
+};
 
 test "Log accepts structured fields" {
     log(.debug, "do doing", .{

@@ -1,0 +1,38 @@
+data_dir: .vector
+
+sources:
+  in:
+    type: stdin
+
+transforms:
+  parse:
+    type: remap
+    inputs: [in]
+    source: |-
+      parsed = parse_json!(.message)
+      metadata = {}
+
+      for_each(object!(parsed)) -> |key, value| {
+        if key != "msg" {
+          metadata = set!(metadata, [key], string(value) ?? encode_json(value))
+        }
+      }
+
+      .message = string!(parsed.msg)
+      .metadata = metadata
+
+sinks:
+  loki:
+    type: loki
+    inputs: [parse]
+    endpoint: http://localhost:9014
+    path: /ingest/loki/api/v1/push
+    compression: none
+    healthcheck:
+      enabled: false
+    structured_metadata:
+      '"*"': "{{ metadata }}"
+    encoding:
+      codec: text
+    labels:
+      job: "local"

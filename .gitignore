@@ -16,3 +16,6 @@ load/k6
 
 # default ochi store path
 .ochi/
+
+# vector local state
+.vector/

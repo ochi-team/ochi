@@ -120,8 +120,8 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, store: *Sto
     router.get("/health", health, .{});
     router.get("/metrics", metrics, .{});
 
-    router.get("/ingest/loki/ready", insert.insertLokiReady, .{});
-    router.post("/ingest/loki/api/v1/push", insert.insertLokiJsonHandler, .{});
+    router.get("/ingest/loki/ready", insert.ingestLokiReady, .{});
+    router.post("/ingest/loki/api/v1/push", insert.ingestLokiJsonHandler, .{});
 
     router.post("/query", query.queryHandler, .{});
     router.post("/stream_ids", stream_ids.streamIDsHandler, .{});
