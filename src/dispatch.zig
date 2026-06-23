@@ -18,9 +18,10 @@ pub const AppContext = struct {
     io: Io,
     allocator: Allocator,
     conf: *const AppConfig,
-    tenantID: u64,
     store: *Store,
 
+    // TODO: move it to a request context, a lifetime highlighted object
+    tenantID: u64,
     diagnostic: *Logger.Diagnostic,
 
     dispatchMeter: *DispatchMeter,

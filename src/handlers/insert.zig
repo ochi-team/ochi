@@ -10,6 +10,7 @@ const Field = @import("../store/lines.zig").Field;
 const Params = @import("../process.zig").Params;
 const ApiError = @import("../server/error.zig").ApiError;
 const Compression = @import("../server/compression.zig").Compression;
+const Logger = @import("logging");
 
 // TODO: document API in a typed spec
 // and find a way to test it extensively
@@ -83,7 +84,7 @@ fn process(
     if (streams.array.items.len > 0 and streams.array.items[0] == .object) {
         const stream = streams.array.items[0].object;
         // Parse "stream" object (labels) - preallocate for typical label count
-        var labelSize: u16 = 1; // 1 is for _msg
+        var labelSize: u16 = 1; // 1 is for msgKey
         if (stream.get("stream")) |streamObj| {
             if (streamObj == .object) {
                 labelSize += @intCast(streamObj.object.count());
@@ -166,7 +167,7 @@ fn process(
             // TODO: support a flag to parse msg as json
             // it requires 2 more options: parseJsonMsg and msgField,
             // first defines whether the parins is required,
-            // second is optional and defines what field in the given json is read as a _msg field
+            // second is optional and defines what field in the given json is read as a `msgKey` field
             try tags.append(parseAlloc, .{ .key = "", .value = msg });
 
             // TODO: we push every line with all the labels including the tags,
@@ -191,12 +192,14 @@ const testing = std.testing;
 // TODO: move this test to corpora
 test "process does not panic when values has three lines" {
     var store: Store = undefined;
+    var diagnostic: Logger.Diagnostic = .{};
     var ctx = AppContext{
         .io = testing.io,
         .allocator = testing.allocator,
         .conf = undefined,
         .tenantID = 0,
         .store = &store,
+        .diagnostic = &diagnostic,
         .dispatchMeter = undefined,
         .storeMeter = undefined,
     };

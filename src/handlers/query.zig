@@ -48,15 +48,24 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
     };
     defer lines.deinit(res.arena);
 
-    writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;
+    writeResponse(ctx.io, res, lines.items) catch return ApiError.FailedToWriteResponse;
 
     res.status = 200;
 }
 
-fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
-    const buf = try std.json.Stringify.valueAlloc(res.arena, lines, .{});
+// TODO: query must be {lines: [...]} in order to keep the object extensible
+fn writeResponse(io: Io, res: *httpz.Response, lines: []const Line) !void {
+    var writer = try std.Io.Writer.Allocating.initCapacity(res.arena, 4096);
+    errdefer writer.deinit();
 
-    res.body = buf;
+    var jw: std.json.Stringify = .{ .writer = &writer.writer };
+    try jw.beginArray();
+    for (lines) |line| {
+        try line.stringifyJSON(io, &jw);
+    }
+    try jw.endArray();
+
+    res.body = try writer.toOwnedSlice();
     res.content_type = .JSON;
 }
 

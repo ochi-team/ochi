@@ -1,9 +1,13 @@
 const std = @import("std");
+const zeit = @import("zeit");
 
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 
 const sizing = @import("data/sizing.zig");
+
+pub const timestampKey = "_time";
+pub const msgKey = "_msg";
 
 // TODO: if we don't use decoding of it perhaps we don't need to encode lens
 pub fn encodeTags(allocator: std.mem.Allocator, tags: []const Field) ![]u8 {
@@ -304,9 +308,29 @@ pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
 // Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
-    // field.key can be empty meaning it's a message field (_msg by fefault in the API)
+    // field.key can be empty meaning it's a message field (msgKey by fefault in the API)
     // can't be const because we reorder fields
     fields: []Field,
+
+    pub fn stringifyJSON(self: Line, io: std.Io, jw: anytype) !void {
+        const inst = try zeit.instant(io, .{ .source = .{ .unix_nano = @as(i64, @intCast(self.timestampNs)) } });
+        var timeBuf: [32]u8 = undefined;
+        const timestamp = try inst.time().bufPrint(&timeBuf, .rfc3339);
+
+        try jw.beginObject();
+        try jw.objectField(timestampKey);
+        try jw.write(timestamp);
+        for (self.fields) |field| {
+            if (field.value.len == 0) {
+                continue;
+            }
+
+            const key = if (field.key.len == 0) msgKey else field.key;
+            try jw.objectField(key);
+            try jw.write(field.value);
+        }
+        try jw.endObject();
+    }
 
     pub fn rawSize(self: Line) u32 {
         var res: u32 = 0;
@@ -414,5 +438,47 @@ test "Field.encodeIndexTag" {
         try testing.expectEqual(decodeBuf.len, decodeOffset);
 
         try testing.expect(f.eql(.{ .key = decoded.key, .value = decoded.value }));
+    }
+}
+
+test "Line.stringifyJSON emits flat query response object" {
+    const Case = struct {
+        timestampNs: u64,
+        fields: []Field,
+        expected: []const u8,
+    };
+
+    var normalFields = [_]Field{
+        .{ .key = "x", .value = "y" },
+        .{ .key = "", .value = "hello" },
+        .{ .key = "skip", .value = "" },
+    };
+    var escapedFields = [_]Field{
+        .{ .key = "quote\"key", .value = "line\nvalue" },
+        .{ .key = "slash\\key", .value = "tab\tvalue" },
+    };
+
+    const cases = [_]Case{
+        .{
+            .timestampNs = 0,
+            .fields = normalFields[0..],
+            .expected = "{\"" ++ timestampKey ++ "\":\"1970-01-01T00:00:00.000000000Z\",\"x\":\"y\",\"" ++ msgKey ++ "\":\"hello\"}",
+        },
+        .{
+            .timestampNs = 1_234_567_890,
+            .fields = escapedFields[0..],
+            .expected = "{\"" ++ timestampKey ++ "\":\"1970-01-01T00:00:01.234567890Z\",\"quote\\\"key\":\"line\\nvalue\",\"slash\\\\key\":\"tab\\tvalue\"}",
+        },
+    };
+
+    for (cases) |case| {
+        var writer = try std.Io.Writer.Allocating.initCapacity(testing.allocator, 128);
+        defer writer.deinit();
+
+        var jw: std.json.Stringify = .{ .writer = &writer.writer };
+        const line = Line{ .timestampNs = case.timestampNs, .fields = case.fields };
+        try line.stringifyJSON(std.testing.io, &jw);
+
+        try testing.expectEqualStrings(case.expected, writer.written());
     }
 }

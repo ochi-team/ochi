@@ -4,13 +4,14 @@ const zeit = @import("zeit");
 
 // timestamp in UTC
 const tsRfc3339Nano = "2006-01-02T15:04:05.999999999Z";
-const tsLineJsonSurrounding = "{\"_time\":\"\"}\n";
+const tsLineJsonSurrounding = "{\"" ++ timestampKey ++ "\":\"\"}\n";
 const lineTsSize: u32 = tsRfc3339Nano.len + tsLineJsonSurrounding.len;
 const lineSurroundSize: u32 = "\"\":\"\",".len;
-const msgKey = "_msg";
 
 const Block = @import("Block.zig");
 const Line = @import("../lines.zig").Line;
+const msgKey = @import("../lines.zig").msgKey;
+const timestampKey = @import("../lines.zig").timestampKey;
 
 // gives size in resulted json object
 // TODO: test against real resulted log record
@@ -190,7 +191,7 @@ test "sizingBlockAndFieldsMatch" {
             var obj: std.json.ObjectMap = .empty;
             defer obj.deinit(alloc);
 
-            try obj.put(alloc, "_time", .{ .string = now });
+            try obj.put(alloc, timestampKey, .{ .string = now });
             for (line.fields) |f| {
                 if (f.value.len == 0) continue;
                 const key = if (f.key.len == 0) msgKey else f.key;
