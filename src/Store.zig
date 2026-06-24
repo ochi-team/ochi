@@ -54,6 +54,9 @@ conf: *const Conf,
 
 // TODO: start partitions retention watcher
 pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layout: Layout) !Store {
+    errdefer |err| {
+        Logger.log(.err, "unexpected failure to init Store", .{ .err = err });
+    }
     const file = try createLockFile(io, runtime.path);
     errdefer file.close(io);
 

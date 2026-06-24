@@ -9,17 +9,19 @@ transforms:
     type: remap
     inputs: [in]
     source: |-
-      parsed = parse_json!(.message)
-      metadata = {}
-
-      for_each(object!(parsed)) -> |key, value| {
-        if key != "msg" {
-          metadata = set!(metadata, [key], string(value) ?? encode_json(value))
+      parsed, err = parse_json(.message)
+      if err != null {
+        .metadata = {}
+      } else {
+        metadata = {}
+        for_each(object!(parsed)) -> |key, value| {
+          if key != "msg" {
+            metadata = set!(metadata, [key], string(value) ?? encode_json(value))
+          }
         }
+        .message = string!(parsed.msg)
+        .metadata = metadata
       }
-
-      .message = string!(parsed.msg)
-      .metadata = metadata
 
 sinks:
   loki:
