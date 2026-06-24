@@ -441,7 +441,7 @@ test "Field.encodeIndexTag" {
     }
 }
 
-test "Line.stringifyJSON emits flat query response object" {
+test "Line.stringifyJSON emits query response line object" {
     const Case = struct {
         timestampNs: u64,
         fields: []Field,
@@ -462,12 +462,12 @@ test "Line.stringifyJSON emits flat query response object" {
         .{
             .timestampNs = 0,
             .fields = normalFields[0..],
-            .expected = "{\"" ++ timestampKey ++ "\":\"1970-01-01T00:00:00.000000000Z\",\"x\":\"y\",\"" ++ msgKey ++ "\":\"hello\"}",
+            .expected = "{\"" ++ timestampKey ++ "\":\"1970-01-01T00:00:00.000Z\",\"x\":\"y\",\"" ++ msgKey ++ "\":\"hello\"}",
         },
         .{
             .timestampNs = 1_234_567_890,
             .fields = escapedFields[0..],
-            .expected = "{\"" ++ timestampKey ++ "\":\"1970-01-01T00:00:01.234567890Z\",\"quote\\\"key\":\"line\\nvalue\",\"slash\\\\key\":\"tab\\tvalue\"}",
+            .expected = "{\"" ++ timestampKey ++ "\":\"1970-01-01T00:00:01.234Z\",\"quote\\\"key\":\"line\\nvalue\",\"slash\\\\key\":\"tab\\tvalue\"}",
         },
     };
 
