@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 
+const Logger = @import("logging");
 const filenames = @import("../../filenames.zig");
 const fs = @import("../../fs.zig");
 const MemTable = @import("../data/MemTable.zig");
@@ -535,6 +536,16 @@ fn queryBlock(
     blockHeader: BlockHeader,
     query: Query,
 ) !void {
+    errdefer |err| {
+        Logger.log(.err, "failed to query a block", .{
+            .err = err,
+            .table = self.path,
+            .columnsHeaderOffset = blockHeader.columnsHeaderOffset,
+            .columnsHeaderIndexOffset = blockHeader.columnsHeaderIndexOffset,
+            .timestampsOffset = blockHeader.timestampsHeader.offset,
+        });
+    }
+
     var colIdx = std.AutoHashMap(u16, u16).init(alloc);
     defer colIdx.deinit();
 

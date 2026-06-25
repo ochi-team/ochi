@@ -3,12 +3,15 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Dir = Io.Dir;
 const snappy = @import("snappy").raw;
+const zeit = @import("zeit");
 
 const encodeTags = @import("../store/lines.zig").encodeTags;
 const makeStreamID = @import("../store/lines.zig").makeStreamID;
 const Field = @import("../store/lines.zig").Field;
 const SID = @import("../store/lines.zig").SID;
 const Line = @import("../store/lines.zig").Line;
+const timestampKey = @import("../store/lines.zig").timestampKey;
+const msgKey = @import("../store/lines.zig").msgKey;
 const lineLessThan = @import("../store/lines.zig").lineLessThan;
 const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
 const Runtime = @import("../Runtime.zig");
@@ -60,6 +63,22 @@ const HttpResponse = struct {
 const StreamIDsResponse = struct {
     streamIDs: []const u128,
 };
+
+const QueryResponse = struct {
+    lines: []std.json.Value,
+};
+
+fn responseObjectString(value: std.json.Value, key: []const u8) ?[]const u8 {
+    if (value != .object) {
+        return null;
+    }
+
+    const field = value.object.get(key) orelse return null;
+    return switch (field) {
+        .string => |s| s,
+        else => null,
+    };
+}
 
 pub const OchiClient = struct {
     host: []const u8,
@@ -188,19 +207,16 @@ pub const OchiClient = struct {
             return err;
         };
 
-        const parsed = try std.json.parseFromSlice([]Line, alloc, resp.body, .{
+        const parsed = try std.json.parseFromSlice(QueryResponse, alloc, resp.body, .{
             .ignore_unknown_fields = false,
         });
         defer parsed.deinit();
 
         var fetchedIDs = std.ArrayList([]const u8).empty;
         defer fetchedIDs.deinit(alloc);
-        for (parsed.value) |line| {
-            for (line.fields) |field| {
-                if (std.mem.eql(u8, field.key, "id")) {
-                    try fetchedIDs.append(alloc, field.value);
-                    break;
-                }
+        for (parsed.value.lines) |line| {
+            if (responseObjectString(line, "id")) |id| {
+                try fetchedIDs.append(alloc, id);
             }
         }
 
@@ -215,6 +231,30 @@ fn logTimestampNs(nowNs: u64, offsetMinutes: i64) !u64 {
     const offsetNs = offsetMinutes * std.time.ns_per_min;
     const tsNsSigned = @as(i128, nowNs) + offsetNs;
     return @intCast(tsNsSigned);
+}
+
+fn expectResponseLine(expected: Line, actual: std.json.Value) !void {
+    if (actual != .object) {
+        return error.ExpectedLineObject;
+    }
+
+    const timestamp = responseObjectString(actual, timestampKey) orelse return error.MissingTimestamp;
+    const expectedTime = try zeit.instant(std.testing.io, .{ .source = .{ .unix_nano = @as(i64, @intCast(expected.timestampNs)) } });
+    var timeBuf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings(try expectedTime.time().bufPrint(&timeBuf, .rfc3339), timestamp);
+
+    for (expected.fields) |field| {
+        const key = if (field.key.len == 0) msgKey else field.key;
+        const actualValue = responseObjectString(actual, key) orelse return error.MissingField;
+        try std.testing.expectEqualStrings(field.value, actualValue);
+    }
+}
+
+fn expectResponseLines(expected: []const Line, actual: []const std.json.Value) !void {
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |expectedLineValue, actualLineValue| {
+        try expectResponseLine(expectedLineValue, actualLineValue);
+    }
 }
 
 fn expectedLine(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![]Line {
@@ -428,6 +468,7 @@ test "serverEndToEndViaHTTP" {
                 .{ .release = false, .version = "", .setupLogger = false },
             ) catch |err| {
                 Logger.log(.err, "server error", .{ .err = err });
+                std.debug.panic("server error: {s}\n", .{@errorName(err)});
             };
         }
     };
@@ -609,21 +650,16 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
         return err;
     };
 
-    const parsed = try std.json.parseFromSlice([]Line, alloc, resp.body, .{
+    const parsed = try std.json.parseFromSlice(QueryResponse, alloc, resp.body, .{
         .ignore_unknown_fields = false,
     });
     defer parsed.deinit();
-
-    for (parsed.value) |line| {
-        std.sort.pdq(Field, line.fields, {}, fieldLessThan);
-    }
-    std.sort.pdq(Line, parsed.value, {}, lineLessThan);
 
     const expected = try expectedLine(alloc, corpus, nowNs);
     // TODO: on a first failure it's worth implementing better,
     // iterating over every line, compare fields one by one and log an error,
     // it must take into account the keys might be missing in either
-    try std.testing.expectEqualDeep(expected, parsed.value);
+    try expectResponseLines(expected, parsed.value.lines);
 }
 
 fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {

@@ -57,6 +57,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     errdefer |err| {
         Logger.log(.err, "unexpected failure to init Store", .{ .err = err });
     }
+
     const file = try createLockFile(io, runtime.path);
     errdefer file.close(io);
 
@@ -143,9 +144,6 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
-    // deinit runtime the last, because partitions (recorders) need it
-    // in order to flush the last mem tables
-    self.runtime.deinit(allocator);
 }
 
 // Store tracks disk usage so:
@@ -710,6 +708,7 @@ test "init opens existing partitions, sorts them and sets lru" {
 
     const conf = Conf.getConf();
     const runtime = try Runtime.init(io, alloc, storePath, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
 
     var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const layout = try Layout.make(io, storePath, &partitionsPathBuf);
@@ -872,6 +871,7 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     const conf = Conf.getConf();
     const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
 
     var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const layout = try Layout.make(io, rootPath, &partitionsPathBuf);

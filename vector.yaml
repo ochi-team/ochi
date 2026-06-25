@@ -33,7 +33,7 @@ sinks:
     healthcheck:
       enabled: false
     structured_metadata:
-      '"*"': "{{ metadata }}"
+      '*': "{{ metadata }}"
     encoding:
       codec: text
     labels:

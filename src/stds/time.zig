@@ -10,6 +10,7 @@ pub const TimestampError = error{
     InvalidTimestamp,
 };
 
+// TODO: test all the limits and document it, it's easy to overflow the value
 pub fn parseDurationNs(raw: []const u8) ParserDurationError!u64 {
     if (raw.len < 2) {
         return ParserDurationError.InvalidDuration;

@@ -70,7 +70,7 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
     const layout = try Layout.make(io, path, &partitionsPathBuf);
 
     const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
-    errdefer runtime.deinit(alloc);
+    defer runtime.deinit(alloc);
 
     if (options.setupLogger) {
         // initialize a logging pool
@@ -161,6 +161,7 @@ test "serverWithSIGTERM" {
                 .{ .release = false, .version = "", .setupLogger = false },
             ) catch |err| {
                 Logger.log(.err, "server error", .{ .err = err });
+                std.debug.panic("server error: {s}\n", .{@errorName(err)});
             };
         }
     };
