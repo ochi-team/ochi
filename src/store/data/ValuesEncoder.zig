@@ -30,14 +30,10 @@ allocator: std.mem.Allocator,
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const parsed = std.ArrayList(u64).empty;
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 512);
-    errdefer buf.deinit(allocator);
-    var values = try std.ArrayList([]const u8).initCapacity(allocator, 64);
-    errdefer values.deinit(allocator);
     const e = try allocator.create(Self);
     e.* = .{
-        .buf = buf,
-        .values = values,
+        .buf = .empty,
+        .values = .empty,
         .allocator = allocator,
         .parsed = parsed,
     };
@@ -91,6 +87,12 @@ pub fn encode(self: *Self, values: []const []const u8, columnValues: *ColumnDict
     return .{ .type = .string, .min = 0, .max = 0 };
 }
 
+fn lens(vals: []const []const u8) usize {
+    var len: usize = 0;
+    for (vals) |v| len += v.len;
+    return len;
+}
+
 fn tryDictEncoding(self: *Self, values: []const []const u8, columnValues: *ColumnDict) !?EncodeValueType {
     const startBufLen = self.buf.items.len;
     const startValuesLen = self.values.items.len;
@@ -100,6 +102,8 @@ fn tryDictEncoding(self: *Self, values: []const []const u8, columnValues: *Colum
         columnValues.reset();
     }
 
+    try self.buf.ensureUnusedCapacity(self.allocator, lens(values));
+    try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
         const idx = columnValues.set(v) orelse {
             self.buf.items.len = startBufLen;
@@ -109,8 +113,8 @@ fn tryDictEncoding(self: *Self, values: []const []const u8, columnValues: *Colum
         };
 
         const start = self.buf.items.len;
-        try self.buf.append(self.allocator, idx);
-        try self.values.append(self.allocator, self.buf.items[start..]);
+        self.buf.appendAssumeCapacity(idx);
+        self.values.appendAssumeCapacity(self.buf.items[start..]);
     }
 
     return .{
@@ -143,19 +147,28 @@ fn tryUintEncoding(self: *Self, values: []const []const u8) !?EncodeValueType {
         17...32 => .uint32,
         else => .uint64,
     };
+    const width: usize = switch (vt) {
+        .uint8 => 1,
+        .uint16 => 2,
+        .uint32 => 4,
+        .uint64 => 8,
+        else => std.debug.panic("unexpected uint type, given={any}", .{vt}),
+    };
 
     // Second pass: encode in one generic codepath
+    try self.buf.ensureUnusedCapacity(self.allocator, width * self.parsed.items.len);
+    try self.values.ensureUnusedCapacity(self.allocator, self.parsed.items.len);
     for (self.parsed.items) |n| {
         const start = self.buf.items.len;
         switch (vt) {
-            .uint8 => try self.buf.append(self.allocator, @as(u8, @intCast(n))),
-            .uint16 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u16, @as(u16, @intCast(n)))),
-            .uint32 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u32, @as(u32, @intCast(n)))),
-            .uint64 => try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u64, n)),
+            .uint8 => self.buf.appendAssumeCapacity(@as(u8, @intCast(n))),
+            .uint16 => self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u16, @as(u16, @intCast(n)))),
+            .uint32 => self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u32, @as(u32, @intCast(n)))),
+            .uint64 => self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u64, n)),
             else => std.debug.panic("unexpected uint type, given={any}", .{vt}),
         }
         const slice = self.buf.items[start..];
-        try self.values.append(self.allocator, slice);
+        self.values.appendAssumeCapacity(slice);
     }
 
     return .{
@@ -178,6 +191,8 @@ fn tryIntEncoding(self: *Self, values: []const []const u8) !?EncodeValueType {
         self.values.items.len = startValuesLen;
     }
 
+    try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(i64) * values.len);
+    try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
         const n = std.fmt.parseInt(i64, v, 10) catch {
             self.buf.items.len = startBufLen;
@@ -188,8 +203,8 @@ fn tryIntEncoding(self: *Self, values: []const []const u8) !?EncodeValueType {
         maxVal = @max(maxVal, n);
 
         const start = self.buf.items.len;
-        try self.buf.appendSlice(self.allocator, &Encoder.toBytes(i64, n));
-        try self.values.append(self.allocator, self.buf.items[start..]);
+        self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(i64, n));
+        self.values.appendAssumeCapacity(self.buf.items[start..]);
     }
 
     return .{
@@ -212,6 +227,8 @@ fn tryFloat64Encoding(self: *Self, values: []const []const u8) !?EncodeValueType
         self.values.items.len = startValuesLen;
     }
 
+    try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(u64) * values.len);
+    try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
         const n = std.fmt.parseFloat(f64, v) catch {
             self.buf.items.len = startBufLen;
@@ -225,8 +242,8 @@ fn tryFloat64Encoding(self: *Self, values: []const []const u8) !?EncodeValueType
         const bits: u64 = @bitCast(n);
 
         const start = self.buf.items.len;
-        try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u64, bits));
-        try self.values.append(self.allocator, self.buf.items[start..]);
+        self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u64, bits));
+        self.values.appendAssumeCapacity(self.buf.items[start..]);
     }
 
     return .{
@@ -247,6 +264,8 @@ fn tryIPv4Encoding(self: *Self, values: []const []const u8) !?EncodeValueType {
         self.values.items.len = startValuesLen;
     }
 
+    try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(u32) * values.len);
+    try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
         const n = parseIPv4(v) catch {
             self.buf.items.len = startBufLen;
@@ -260,8 +279,8 @@ fn tryIPv4Encoding(self: *Self, values: []const []const u8) !?EncodeValueType {
         const bits: u32 = @bitCast(n);
 
         const start = self.buf.items.len;
-        try self.buf.appendSlice(self.allocator, &Encoder.toBytes(u32, bits));
-        try self.values.append(self.allocator, self.buf.items[start..]);
+        self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u32, bits));
+        self.values.appendAssumeCapacity(self.buf.items[start..]);
     }
 
     return .{
@@ -282,6 +301,8 @@ fn tryTimestampISO8601Encoding(self: *Self, values: []const []const u8) !?Encode
         self.values.items.len = startValuesLen;
     }
 
+    try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(i64) * values.len);
+    try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
         const time = zeit.Time.fromISO8601(v) catch {
             self.buf.items.len = startBufLen;
@@ -296,8 +317,8 @@ fn tryTimestampISO8601Encoding(self: *Self, values: []const []const u8) !?Encode
         const bits: i64 = @bitCast(n);
 
         const start = self.buf.items.len;
-        try self.buf.appendSlice(self.allocator, &Encoder.toBytes(i64, bits));
-        try self.values.append(self.allocator, self.buf.items[start..]);
+        self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(i64, bits));
+        self.values.appendAssumeCapacity(self.buf.items[start..]);
     }
 
     return .{
@@ -345,8 +366,9 @@ fn parseIPv4(s: []const u8) !u32 {
         @as(u32, octets[3]);
 }
 
+const ValuesDecoder = @import("ValuesDecoder.zig");
+
 test "ValuesEncoder.encodeAndDecodeRoundtrip" {
-    const ValuesDecoder = @import("ValuesDecoder.zig");
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var dictValues = try std.ArrayList([]const u8).initCapacity(allocator, 8);
@@ -493,7 +515,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         var decodedValues = try allocator.alloc([]const u8, encoder.values.items.len);
         defer allocator.free(decodedValues);
         for (encoder.values.items, 0..) |encodedValue, i| {
-            decodedValues[i] = @constCast(encodedValue);
+            decodedValues[i] = encodedValue;
         }
 
         // transfer encoder's values to decoder (decoder takes ownership)
@@ -520,4 +542,36 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
             try std.testing.expect(cv.values.items.len == 0);
         }
     }
+}
+
+test "ValuesEncoder keeps buffered value slices stable after growth" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var input: [ColumnDict.maxDictColumnValuesLen * 4][]const u8 = undefined;
+    const dictValues = [_][]const u8{ "error", "", "warn", "info" };
+    for (&input, 0..) |*value, i| {
+        value.* = dictValues[i % dictValues.len];
+    }
+
+    const encoder = try Self.init(allocator);
+    defer encoder.deinit();
+
+    var cv = try ColumnDict.init(allocator);
+    defer cv.deinit(allocator);
+
+    const valueType = try encoder.encode(&input, &cv);
+    try std.testing.expectEqual(.dict, valueType.type);
+    try std.testing.expectEqualDeep(&dictValues, cv.values.items);
+
+    var decodedValues: [ColumnDict.maxDictColumnValuesLen * 4][]const u8 = undefined;
+    for (encoder.values.items, 0..) |encodedValue, i| {
+        decodedValues[i] = encodedValue;
+    }
+
+    const decoder = try ValuesDecoder.init(allocator);
+    defer decoder.deinit();
+
+    try decoder.decode(io, decodedValues[0..decodedValues.len], valueType.type, cv.values.items);
+    try std.testing.expectEqualDeep(&input, decodedValues[0..decodedValues.len]);
 }

@@ -134,10 +134,29 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
     addOption(b, exe, release, testInstallation);
 
+    const scooby_exe = b.addExecutable(.{
+        .name = "scooby",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/scooby.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &imports,
+        }),
+    });
+
+    b.installArtifact(scooby_exe);
+
     // run command
     const run_exe = b.addRunArtifact(exe);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
+
+    const run_scooby = b.addRunArtifact(scooby_exe);
+    if (b.args) |args| {
+        run_scooby.addArgs(args);
+    }
+    const scooby_step = b.step("scooby", "Run the Scooby data debug tool");
+    scooby_step.dependOn(&run_scooby.step);
 
     // prepare test
     const unit_tests = b.addTest(.{
@@ -187,5 +206,6 @@ pub fn build(b: *std.Build) void {
     // check command
     const check = b.step("check", "Check if compiles");
     check.dependOn(&exe.step);
+    check.dependOn(&scooby_exe.step);
     check.dependOn(&unit_tests.step);
 }

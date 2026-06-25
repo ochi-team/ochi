@@ -47,6 +47,7 @@ pub fn decode(
             if (self.dictStrings) |ds| {
                 if (ds.len > 0) self.allocator.free(ds);
             }
+            // TODO: maybe move instead of dupe? document why if we can’t
             self.dictStrings = try self.allocator.dupe([]const u8, dictValues);
             if (self.dictStrings) |ds| {
                 for (values, 0..) |v, i| {
@@ -57,7 +58,7 @@ pub fn decode(
                     if (id >= ds.len) {
                         return error.DictIdOutOfRange;
                     }
-                    values[i] = @constCast(ds[id]);
+                    values[i] = ds[id];
                 }
             }
         },

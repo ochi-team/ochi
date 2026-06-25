@@ -541,8 +541,11 @@ fn queryBlock(
             .err = err,
             .table = self.path,
             .columnsHeaderOffset = blockHeader.columnsHeaderOffset,
+            .columnsHeaderSize = blockHeader.columnsHeaderSize,
             .columnsHeaderIndexOffset = blockHeader.columnsHeaderIndexOffset,
+            .columnsHeaderIndexSize = blockHeader.columnsHeaderIndexSize,
             .timestampsOffset = blockHeader.timestampsHeader.offset,
+            .timestampsSize = blockHeader.timestampsHeader.size,
         });
     }
 
