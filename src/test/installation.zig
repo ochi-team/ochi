@@ -6,6 +6,8 @@ const build = @import("build");
 const test_server = @import("server.zig");
 
 const OchiClient = test_server.OchiClient;
+const Field = @import("../store/lines.zig").Field;
+const Line = @import("../store/lines.zig").Line;
 
 const tenant: u64 = 17;
 const expectedIDs = [_][]const u8{"install-001"};
@@ -85,6 +87,17 @@ test "installationScriptInstallsReleaseBinaryAndDataPersistsAcrossRestart" {
     );
     defer alloc.free(body);
 
+    var expectedFields = [_]Field{
+        .{ .key = "", .value = "installation persistence smoke" },
+        .{ .key = "env", .value = "installation" },
+        .{ .key = "id", .value = "install-001" },
+        .{ .key = "service", .value = "release" },
+    };
+    const expectedLines = [_]Line{.{
+        .timestampNs = nowNs,
+        .fields = expectedFields[0..],
+    }};
+
     {
         var child = try startOchi(io, binaryPath, dataPath);
         defer child.kill(io);
@@ -92,7 +105,7 @@ test "installationScriptInstallsReleaseBinaryAndDataPersistsAcrossRestart" {
         try client.waitUntilReady(io, alloc, .fromSeconds(5));
         try client.ingestLokiJson(alloc, tenant, body);
         try client.flush(alloc, tenant);
-        try client.expectQueryIDs(alloc, tenant, query, &expectedIDs);
+        try client.expectQueryIDs(alloc, tenant, query, &expectedIDs, &expectedLines);
 
         child.kill(io);
     }
@@ -102,7 +115,7 @@ test "installationScriptInstallsReleaseBinaryAndDataPersistsAcrossRestart" {
         defer child.kill(io);
 
         try client.waitUntilReady(io, alloc, .fromSeconds(5));
-        try client.expectQueryIDs(alloc, tenant, query, &expectedIDs);
+        try client.expectQueryIDs(alloc, tenant, query, &expectedIDs, &expectedLines);
 
         child.kill(io);
     }

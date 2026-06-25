@@ -10,6 +10,7 @@ const makeStreamID = @import("../store/lines.zig").makeStreamID;
 const Field = @import("../store/lines.zig").Field;
 const SID = @import("../store/lines.zig").SID;
 const Line = @import("../store/lines.zig").Line;
+const writeLines = @import("../store/lines.zig").writeLines;
 const timestampKey = @import("../store/lines.zig").timestampKey;
 const msgKey = @import("../store/lines.zig").msgKey;
 const lineLessThan = @import("../store/lines.zig").lineLessThan;
@@ -78,6 +79,43 @@ fn responseObjectString(value: std.json.Value, key: []const u8) ?[]const u8 {
         .string => |s| s,
         else => null,
     };
+}
+
+fn stringifyJsonValueList(writer: *std.Io.Writer, values: []const std.json.Value) !void {
+    try std.json.Stringify.value(values, .{}, writer);
+}
+
+fn lineID(line: Line) ?[]const u8 {
+    for (line.fields) |field| {
+        if (std.mem.eql(u8, field.key, "id")) {
+            return field.value;
+        }
+    }
+    return null;
+}
+
+fn containsID(ids: []const []const u8, needle: []const u8) bool {
+    for (ids) |id| {
+        if (std.mem.eql(u8, id, needle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn filterLinesByIDs(alloc: Allocator, lines: []const Line, ids: []const []const u8) ![]Line {
+    var filtered = std.ArrayList(Line).empty;
+    errdefer filtered.deinit(alloc);
+
+    for (lines) |line| {
+        const id = lineID(line);
+        if (id == null) std.debug.panic("every corpus line must contain id field", .{});
+        if (containsID(ids, id.?)) {
+            try filtered.append(alloc, line);
+        }
+    }
+
+    return filtered.toOwnedSlice(alloc);
 }
 
 pub const OchiClient = struct {
@@ -199,6 +237,7 @@ pub const OchiClient = struct {
         tenant: u64,
         query: []const u8,
         expectedIDs: []const []const u8,
+        expectedLines: []const Line,
     ) !void {
         var resp = try client.request(alloc, .POST, "/query", query, tenant, "application/loql", null);
         defer resp.deinit(alloc);
@@ -220,9 +259,37 @@ pub const OchiClient = struct {
             }
         }
 
-        try std.testing.expectEqual(fetchedIDs.items.len, expectedIDs.len);
-        for (expectedIDs, 0..expectedIDs.len) |expectedID, i| {
-            try std.testing.expectEqualStrings(expectedID, fetchedIDs.items[i]);
+        // assert ids
+        try std.testing.expectEqual(expectedIDs.len, fetchedIDs.items.len);
+        for (expectedIDs, fetchedIDs.items) |expectedID, fetchedID| {
+            try std.testing.expectEqualStrings(expectedID, fetchedID);
+        }
+
+        // get the matching line,
+        // we must not compare to all the ingested lines,
+        // because the query takes only filtered data
+        const expectedMatchedLines = try filterLinesByIDs(alloc, expectedLines, expectedIDs);
+        defer alloc.free(expectedMatchedLines);
+        try client.expectResponseLines(expectedMatchedLines, parsed.value.lines);
+    }
+
+    fn expectResponseLines(client: *const OchiClient, expected: []const Line, actual: []const std.json.Value) !void {
+        try std.testing.expectEqual(expected.len, actual.len);
+        for (expected, actual) |expectedLineValue, actualLineValue| {
+            expectResponseLine(expectedLineValue, actualLineValue) catch |err| {
+                var expectedBuffer: [4096]u8 = undefined;
+                var fetchedBuffer: [4096]u8 = undefined;
+                var expectedWriter = std.Io.Writer.fixed(&expectedBuffer);
+                var fetchedWriter = std.Io.Writer.fixed(&fetchedBuffer);
+
+                try writeLines(&expectedWriter, expected);
+                try stringifyJsonValueList(&fetchedWriter, actual);
+                client.logger.log(.err, "expected response lines len don't match", .{
+                    .expected = expectedWriter.buffer[0..expectedWriter.end],
+                    .fetched = fetchedWriter.buffer[0..fetchedWriter.end],
+                });
+                return err;
+            };
         }
     }
 };
@@ -247,13 +314,6 @@ fn expectResponseLine(expected: Line, actual: std.json.Value) !void {
         const key = if (field.key.len == 0) msgKey else field.key;
         const actualValue = responseObjectString(actual, key) orelse return error.MissingField;
         try std.testing.expectEqualStrings(field.value, actualValue);
-    }
-}
-
-fn expectResponseLines(expected: []const Line, actual: []const std.json.Value) !void {
-    try std.testing.expectEqual(expected.len, actual.len);
-    for (expected, actual) |expectedLineValue, actualLineValue| {
-        try expectResponseLine(expectedLineValue, actualLineValue);
     }
 }
 
@@ -383,7 +443,7 @@ const CorporaReader = struct {
             errdefer parsedQueries.deinit();
 
             try tests.append(alloc, .{
-                .name = entry.name,
+                .name = try alloc.dupe(u8, entry.name),
                 .ingest = parsedIngest.value,
                 .queries = parsedQueries.value,
             });
@@ -451,7 +511,12 @@ test "serverEndToEndViaHTTP" {
     var corporaReader = CorporaReader{ .dirPath = oldCwd };
     defer corporaReader.deinit(alloc);
     var corpora = try corporaReader.read(io, alloc);
-    defer corpora.deinit(alloc);
+    defer {
+        for (corpora.items) |corpus| {
+            alloc.free(corpus.name);
+        }
+        corpora.deinit(alloc);
+    }
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -659,7 +724,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
     // TODO: on a first failure it's worth implementing better,
     // iterating over every line, compare fields one by one and log an error,
     // it must take into account the keys might be missing in either
-    try expectResponseLines(expected, parsed.value.lines);
+    try client.expectResponseLines(expected, parsed.value.lines);
 }
 
 fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
@@ -688,8 +753,9 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     }
 
     // query all the test cases
+    const expectedLines = try expectedLine(alloc, corpus, nowNs);
     for (corpus.queries) |query| {
-        client.expectQueryIDs(alloc, query.tenant, query.query, query.match) catch |err| {
+        client.expectQueryIDs(alloc, query.tenant, query.query, query.match, expectedLines) catch |err| {
             client.logger.log(.err, "failed to match query ids", .{
                 .err = err,
                 .query = query.query,

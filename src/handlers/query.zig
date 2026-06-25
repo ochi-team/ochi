@@ -5,6 +5,7 @@ const Io = std.Io;
 const httpz = @import("httpz");
 
 const Line = @import("../store/lines.zig").Line;
+const putJsonArrayLines = @import("../store/lines.zig").putJsonArrayLines;
 const Query = @import("../query/Query.zig");
 
 const Loql = @import("../query/Loql.zig");
@@ -47,23 +48,19 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
     };
     defer lines.deinit(res.arena);
 
-    writeResponse(ctx.io, res, lines.items) catch return ApiError.FailedToWriteResponse;
+    writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;
 
     res.status = 200;
 }
 
-fn writeResponse(io: Io, res: *httpz.Response, lines: []const Line) !void {
+fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
     var writer = try std.Io.Writer.Allocating.initCapacity(res.arena, 4096);
     errdefer writer.deinit();
 
     var jw: std.json.Stringify = .{ .writer = &writer.writer };
     try jw.beginObject();
     try jw.objectField("lines");
-    try jw.beginArray();
-    for (lines) |line| {
-        try line.stringifyJSON(io, &jw);
-    }
-    try jw.endArray();
+    try putJsonArrayLines(&jw, lines);
     try jw.endObject();
 
     res.body = try writer.toOwnedSlice();

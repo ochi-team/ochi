@@ -312,8 +312,8 @@ pub const Line = struct {
     // can't be const because we reorder fields
     fields: []Field,
 
-    pub fn stringifyJSON(self: Line, io: std.Io, jw: anytype) !void {
-        const inst = try zeit.instant(io, .{ .source = .{ .unix_nano = @as(i64, @intCast(self.timestampNs)) } });
+    pub fn stringifyJSON(self: Line, jw: *std.json.Stringify) !void {
+        const inst: zeit.Instant = .{ .timestamp = self.timestampNs, .timezone = &zeit.utc };
         var timeBuf: [32]u8 = undefined;
         const timestamp = try inst.time().bufPrint(&timeBuf, .rfc3339);
 
@@ -369,6 +369,19 @@ pub const Line = struct {
         return sizing.fieldsJsonSize(self);
     }
 };
+
+pub fn putJsonArrayLines(jw: *std.json.Stringify, lines: []const Line) !void {
+    try jw.beginArray();
+    for (lines) |line| {
+        try line.stringifyJSON(jw);
+    }
+    try jw.endArray();
+}
+
+pub fn writeLines(writer: *std.Io.Writer, lines: []const Line) !void {
+    var jw: std.json.Stringify = .{ .writer = writer };
+    try putJsonArrayLines(&jw, lines);
+}
 
 // TODO: we might want to introduce BlockLines type that holds a struct similar to
 // Block state: slice of timestamps, slice of columns, and slice of all the fields,
@@ -477,7 +490,7 @@ test "Line.stringifyJSON emits query response line object" {
 
         var jw: std.json.Stringify = .{ .writer = &writer.writer };
         const line = Line{ .timestampNs = case.timestampNs, .fields = case.fields };
-        try line.stringifyJSON(std.testing.io, &jw);
+        try line.stringifyJSON(&jw);
 
         try testing.expectEqualStrings(case.expected, writer.written());
     }
