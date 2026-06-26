@@ -192,6 +192,7 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
             },
             .tail = query[1..],
         },
+        '\'', '"' => try self.scanQuotedLiteral(query, reporter),
         // comment OR alphanumeric or literal value starting with '_'
         'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '@', '+', '/', '.' => blk: {
             // / could be not only a comment, but a url path e.g. /health
@@ -248,6 +249,40 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
     return token;
 }
 
+fn scanQuotedLiteral(
+    self: *Scanner,
+    query: []const u8,
+    reporter: *ErrorReporter,
+) Error!ScannedToken {
+    const opener = query[0];
+    var escaped: bool = false;
+    for (1..query.len) |i| {
+        const char = query[i];
+        if (char == opener and !escaped) {
+            return .{
+                .token = .{
+                    .kind = .Literal,
+                    .lexeme = query[0 .. i + 1],
+                    .line = self.line,
+                    .col = self.col,
+                },
+                .tail = query[i + 1 ..],
+            };
+        }
+
+        if (char == '\\') {
+            escaped = !escaped;
+        }
+    }
+
+    _ = reporter.reportSyntaxError(.{
+        .line = self.line,
+        .col = self.col,
+        .message = "Unterminated quoted literal.",
+    });
+    return Error.SyntaxError;
+}
+
 // TODO: benchmark if it's better to return the position shift
 // from the token, not to iterate over the consumed query again
 fn advancePosition(self: *Scanner, consumed: []const u8) void {
@@ -295,6 +330,32 @@ test "Scanner.scan table-driven" {
                 .{ .kind = .Literal, .lexeme = "orban", .line = 1, .col = 15 },
             },
             .expectedSyntaxErrors = &[_]ErrorReporter.SyntaxError{},
+        },
+        .{
+            .query = "message='msg=\"failed\"' field=\"msg=\\\"failed\\\"\" other=\"msg='failed'\"",
+            .expectedTokens = &[_]Token{
+                .{ .kind = .Literal, .lexeme = "message", .line = 1, .col = 1 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 8 },
+                .{ .kind = .Literal, .lexeme = "msg=\"failed\"", .line = 1, .col = 9 },
+                .{ .kind = .Literal, .lexeme = "field", .line = 1, .col = 24 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 29 },
+                .{ .kind = .Literal, .lexeme = "msg=\"failed\"", .line = 1, .col = 30 },
+                .{ .kind = .Literal, .lexeme = "other", .line = 1, .col = 47 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 52 },
+                .{ .kind = .Literal, .lexeme = "msg='failed'", .line = 1, .col = 53 },
+            },
+            .expectedSyntaxErrors = &[_]ErrorReporter.SyntaxError{},
+        },
+        .{
+            .query = "message='unterminated",
+            .expectedTokens = &[_]Token{
+                .{ .kind = .Literal, .lexeme = "message", .line = 1, .col = 1 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 8 },
+            },
+            .expectedErr = Error.SyntaxError,
+            .expectedSyntaxErrors = &[_]ErrorReporter.SyntaxError{
+                .{ .line = 1, .col = 9, .message = "Unterminated quoted literal." },
+            },
         },
         .{
             .query = "[]{}\n()\\",

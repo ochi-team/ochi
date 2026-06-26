@@ -30,7 +30,11 @@ pub fn deinit(self: *Loql, allocator: Allocator) void {
     self.translator.deinit(allocator);
 }
 
-const maxQueryLength = 2048;
+pub const maxQueryLength = 2048;
+// -128 for timestamps, in case they are passed as short duration,
+// but we need to parse as full timestamps (-64)
+// and a little gap for safety (-64)
+pub const maxQueryBodyLength = maxQueryLength - 128;
 // TODO: it must accept a reader probably, not a query string
 pub fn translateQuery(
     self: *Loql,
@@ -249,6 +253,39 @@ test "translateQuery" {
                         &.{ .predicate = .{ .key = "endpoint", .value = "health", .op = .notMatchRegex } },
                     } },
                 } },
+            },
+            .expectedReports = &.{},
+        },
+        // message single quoted
+        .{
+            .query = "[-5m,now] {env=prod} message='@ts=1782479674646 @l=ERROR msg=\"failed to handle request\" err=FailedToParse'",
+            .expected = .{
+                .start = fiveMinutesAgo,
+                .end = now,
+                .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                .fieldsExpr = &.{ .predicate = .{ .key = "message", .value = "@ts=1782479674646 @l=ERROR msg=\"failed to handle request\" err=FailedToParse", .op = .equal } },
+            },
+            .expectedReports = &.{},
+        },
+        // message double quoted, inner keys are escaped
+        .{
+            .query = "[-5m,now] {env=prod} message=\"@ts=1782479674646 @l=ERROR msg=\\\"failed to handle request\\\" err=FailedToParse\"",
+            .expected = .{
+                .start = fiveMinutesAgo,
+                .end = now,
+                .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                .fieldsExpr = &.{ .predicate = .{ .key = "message", .value = "@ts=1782479674646 @l=ERROR msg=\"failed to handle request\" err=FailedToParse", .op = .equal } },
+            },
+            .expectedReports = &.{},
+        },
+        // message double quoted, inner keys are single quoted
+        .{
+            .query = "[-5m,now] {env=prod} message=\"@ts=1782479674646 @l=ERROR msg='failed to handle request' err=FailedToParse\"",
+            .expected = .{
+                .start = fiveMinutesAgo,
+                .end = now,
+                .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                .fieldsExpr = &.{ .predicate = .{ .key = "message", .value = "@ts=1782479674646 @l=ERROR msg='failed to handle request' err=FailedToParse", .op = .equal } },
             },
             .expectedReports = &.{},
         },
