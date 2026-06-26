@@ -102,7 +102,8 @@ fn tryDictEncoding(self: *Self, values: []const []const u8, columnValues: *Colum
         columnValues.reset();
     }
 
-    try self.buf.ensureUnusedCapacity(self.allocator, lens(values));
+    // same amount since buf would store only dict ids (1 byte each)
+    try self.buf.ensureUnusedCapacity(self.allocator, values.len);
     try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
         const idx = columnValues.set(v) orelse {
@@ -540,6 +541,50 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
             try std.testing.expectEqualDeep(expectedDict.values.items, cv.values.items);
         } else {
             try std.testing.expect(cv.values.items.len == 0);
+        }
+    }
+}
+
+test "ValuesEncoder handles dict values shorter than row count" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct {
+        values: []const []const u8,
+        expectedDict: []const []const u8,
+        expectedIndexes: []const u8,
+    };
+
+    const cases = [_]Case{
+        .{
+            .values = &[_][]const u8{""},
+            .expectedDict = &[_][]const u8{""},
+            .expectedIndexes = &[_]u8{0},
+        },
+        .{
+            .values = &[_][]const u8{ "", "" },
+            .expectedDict = &[_][]const u8{""},
+            .expectedIndexes = &[_]u8{ 0, 0 },
+        },
+        .{
+            .values = &[_][]const u8{ "a", "", "a" },
+            .expectedDict = &[_][]const u8{ "a", "" },
+            .expectedIndexes = &[_]u8{ 0, 1, 0 },
+        },
+    };
+
+    for (cases) |case| {
+        const encoder = try Self.init(allocator);
+        defer encoder.deinit();
+
+        var cv = try ColumnDict.init(allocator);
+        defer cv.deinit(allocator);
+
+        const valueType = try encoder.encode(case.values, &cv);
+        try std.testing.expectEqual(.dict, valueType.type);
+        try std.testing.expectEqualDeep(case.expectedDict, cv.values.items);
+        try std.testing.expectEqual(case.expectedIndexes.len, encoder.values.items.len);
+        for (case.expectedIndexes, encoder.values.items) |expectedIdx, encodedValue| {
+            try std.testing.expectEqualSlices(u8, &[_]u8{expectedIdx}, encodedValue);
         }
     }
 }

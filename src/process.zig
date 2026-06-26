@@ -6,6 +6,7 @@ const Store = @import("Store.zig").Store;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
+const copyFields = @import("store/lines.zig").copyFields;
 const encodeTags = @import("store/lines.zig").encodeTags;
 const makeStreamID = @import("store/lines.zig").makeStreamID;
 
@@ -46,6 +47,8 @@ pub const Processor = struct {
         self.lines.clearRetainingCapacity();
         _ = arena.reset(.retain_capacity);
         self.arenaState = arena.state;
+        // we don't free tags due to arena.reset
+        self.tags = &[_]Field{};
         self.size = 0;
     }
 
@@ -65,10 +68,17 @@ pub const Processor = struct {
 
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
+            self.encodedTags = "";
         }
         self.resetBuffered(alloc);
 
-        self.tags = tags;
+        var arena = self.arenaState.promote(alloc);
+        defer self.arenaState = arena.state;
+
+        // TODO: we probably can avoid the copy, the issue is if the Field array grows to much
+        // the borrowed slice becomes dangling, so we can shift the time when we borrow,
+        // if we can't - document why
+        self.tags = try copyFields(arena.allocator(), tags);
         self.encodedTags = encodedTags;
         self.sid = streamID;
     }
@@ -148,3 +158,27 @@ pub const Processor = struct {
         self.resetBuffered(alloc);
     }
 };
+
+const testing = std.testing;
+
+test "Processor.reinit owns stream tags after caller reuses tag storage" {
+    var store: Store = undefined;
+    var processor = Processor.empty(&store);
+    defer processor.deinit(testing.allocator);
+
+    var tags = try std.ArrayList(Field).initCapacity(testing.allocator, 2);
+    defer tags.deinit(testing.allocator);
+    tags.appendAssumeCapacity(.{ .key = "app", .value = "api" });
+    tags.appendAssumeCapacity(.{ .key = "env", .value = "prod" });
+
+    try processor.reinit(testing.allocator, tags.items, 0);
+
+    tags.items[0] = .{ .key = "id", .value = "line-1" };
+    tags.items[1] = .{ .key = "", .value = "message" };
+
+    const expected = [_]Field{
+        .{ .key = "app", .value = "api" },
+        .{ .key = "env", .value = "prod" },
+    };
+    try testing.expectEqualDeep(expected[0..], processor.tags);
+}
