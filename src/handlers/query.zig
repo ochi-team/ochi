@@ -5,10 +5,14 @@ const Io = std.Io;
 const httpz = @import("httpz");
 
 const Line = @import("../store/lines.zig").Line;
+const msgKey = @import("../store/lines.zig").msgKey;
 const putJsonArrayLines = @import("../store/lines.zig").putJsonArrayLines;
 const Query = @import("../query/Query.zig");
+const FilterExpression = Query.FilterExpression;
 
 const Loql = @import("../query/Loql.zig");
+const maxQueryLength = Loql.maxQueryLength;
+const maxQueryBodyLength = Loql.maxQueryBodyLength;
 const ErrorReporter = @import("../query/ErrorReporter.zig");
 
 const AppContext = @import("../dispatch.zig").AppContext;
@@ -21,7 +25,8 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
 
     const body = r.body() orelse return ApiError.EmptyBody;
 
-    if (body.len > ctx.conf.maxRequestSize) {
+    // -64 for timestamps,
+    if (body.len > maxQueryBodyLength) {
         return ApiError.MaxBodySize;
     }
 
@@ -42,6 +47,10 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
             return ApiError.ContentTypeNotSupported;
         }
     };
+
+    Logger.log(.debug, "received query", .{
+        .query = body,
+    });
 
     var lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.tenantID, query) catch {
         return ApiError.FailedToProccess;

@@ -289,6 +289,17 @@ test "translateQuery" {
             },
             .expectedReports = &.{},
         },
+        // brackets surrounded quoted literal
+        .{
+            .query = "[-5m,now] {job=local} (_msg=\"@ts=1782478454763 @l=INFO msg=\\\"Ochi in mono mode starting\\\" port=9014 version=\\\"main-027a8736\")",
+            .expected = .{
+                .start = fiveMinutesAgo,
+                .end = now,
+                .tagsExpr = &.{ .predicate = .{ .key = "job", .value = "local", .op = .equal } },
+                .fieldsExpr = &.{ .predicate = .{ .key = "_msg", .value = "@ts=1782478454763 @l=INFO msg=\"Ochi in mono mode starting\" port=9014 version=\"main-027a8736", .op = .equal } },
+            },
+            .expectedReports = &.{},
+        },
         .{
             .query = "[" ++ absoluteStartStr ++ "," ++ absoluteEndStr ++ "] {env=prod}",
             .expected = .{

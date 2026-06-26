@@ -19,6 +19,7 @@ const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TableReader = @import("../data/TableReader.zig");
 
 const Line = @import("../lines.zig").Line;
+const msgKey = @import("../lines.zig").msgKey;
 const SID = @import("../lines.zig").SID;
 const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
@@ -620,23 +621,35 @@ fn matchesFilterExpression(fields: []const Field, expr: *const Query.FilterExpre
 }
 
 fn matchesPredicate(fields: []const Field, p: Query.FilterPredicate) !bool {
-    switch (p.op) {
-        .equal => {
-            for (fields) |f| {
-                if (std.mem.eql(u8, f.key, p.key) and std.mem.eql(u8, f.value, p.value))
-                    return true;
-            }
-            return false;
-        },
-        .notEqual => {
-            for (fields) |f| {
-                if (std.mem.eql(u8, f.key, p.key) and !std.mem.eql(u8, f.value, p.value))
-                    return true;
-            }
-            return false;
-        },
-        else => return error.QueryMatchOperationNotImplemented,
+    for (fields) |f| {
+        // TODO: this is a demo of a broken ingestion design;
+        // initially ingestion was designed around Loki API,
+        // it has a <log line> and structured fields,
+        // as a result <lig line> is threated as a special empty key: "",
+        // to serve the the data as a json we made up its key as msgKey,
+        // but then to filter and query such keys they clients query it as msgKey
+        // and now we have to mutate it in place,
+        if (std.mem.eql(u8, f.key, p.key) or (f.key.len == 0 and std.mem.eql(u8, msgKey, p.key))) {
+            const res = switch (p.op) {
+                .equal => std.mem.eql(u8, f.value, p.value),
+                .notEqual => !std.mem.eql(u8, f.value, p.value),
+                else => return error.QueryMatchOperationNotImplemented,
+            };
+            Logger.log(.debug, "matching query line", .{
+                .queryKey = p.key,
+                .queryValue = p.value,
+                .op = @tagName(p.op),
+                .lineKey = f.key,
+                .lineValue = f.value,
+            });
+            return res;
+        }
     }
+
+    Logger.log(.debug, "key not found to match", .{
+        .key = p.key,
+    });
+    return false;
 }
 
 fn indexBlockHeaderSidLowerBoundOrder(ctx: SID, self: IndexBlockHeader) std.math.Order {
