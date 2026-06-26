@@ -368,12 +368,21 @@ pub fn queryLines(
     }
     self.partitionsMx.unlock(io);
 
-    var results = std.ArrayList(Line).empty;
+    var results = try std.ArrayList(Line).initCapacity(alloc, 200);
+    errdefer results.deinit(alloc);
     for (parts.items) |part| {
         var partResults = try part.queryLines(io, alloc, longAlloc, tenantID, query, self.memBlocksCache);
         defer partResults.deinit(alloc);
 
-        try results.appendSlice(alloc, partResults.items);
+        // TODO: we need to make a real pagination, it's a plug not to overload the ui,
+        // otherwise it fetches 10k lines and becomes unusable
+        if (results.capacity >= partResults.items.len) {
+            results.appendSliceAssumeCapacity(partResults.items);
+        } else {
+            const cap = results.capacity - results.items.len;
+            results.appendSliceAssumeCapacity(partResults.items[0..cap]);
+            break;
+        }
     }
 
     return results;

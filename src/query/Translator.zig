@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const zeit = @import("zeit");
+const zeit = @import("zeit");
 
 const stdsTime = @import("../stds/time.zig");
 const Query = @import("Query.zig");

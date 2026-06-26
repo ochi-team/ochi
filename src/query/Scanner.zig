@@ -193,7 +193,7 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
             .tail = query[1..],
         },
         // comment OR alphanumeric or literal value starting with '_'
-        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '@', '+', '/' => blk: {
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '@', '+', '/', '.' => blk: {
             // / could be not only a comment, but a url path e.g. /health
             if (query.len > 1 and query[1] == '/') {
                 const nextLineIdx = std.mem.indexOfScalar(u8, query, '\n') orelse query.len;
@@ -212,6 +212,7 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
                     query[idx] == ':' or
                     query[idx] == '/' or
                     query[idx] == '@' or
+                    query[idx] == '.' or
                     query[idx] == '+')) : (idx += 1)
             {}
 

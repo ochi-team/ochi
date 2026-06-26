@@ -4,6 +4,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const zeit = @import("zeit");
+
 const Scanner = @import("Scanner.zig");
 const Parser = @import("Parser.zig");
 const Translator = @import("Translator.zig");
@@ -47,7 +49,6 @@ pub fn translateQuery(
 
     // TODO: validate whether it's a syntax error and return report content
     // or unknown error
-    // TODO: most likely scanner has a state, we must reset it
     try self.scanner.scan(allocator, trimmedQueryStr, reporter);
     const expr = try self.parser.querySet(allocator, self.scanner.tokens.items, reporter);
     const query = try self.translator.query(allocator, expr, nowNs);
@@ -71,7 +72,12 @@ test "translateQuery" {
     const now: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     const fiveMinutesAgo = now - 5 * std.time.ns_per_min;
     const fixedTs = "2024-01-10T00:00:00Z";
-    const fixedTsNs: u64 = @intCast((try Translator.zeit.Time.fromISO8601(fixedTs)).instant().timestamp);
+    const fixedTsNs: u64 = @intCast((try zeit.Time.fromISO8601(fixedTs)).instant().timestamp);
+
+    const absoluteStartStr = "2026-06-26T06:41:09.924Z";
+    const absoluteEndStr = "2026-06-26T09:41:09.924Z";
+    const absoluteStart: u64 = @intCast((try zeit.Time.fromISO8601(absoluteStartStr)).instant().timestamp);
+    const absoluteEnd: u64 = @intCast((try zeit.Time.fromISO8601(absoluteEndStr)).instant().timestamp);
 
     const Case = struct {
         query: []const u8,
@@ -243,6 +249,15 @@ test "translateQuery" {
                         &.{ .predicate = .{ .key = "endpoint", .value = "health", .op = .notMatchRegex } },
                     } },
                 } },
+            },
+            .expectedReports = &.{},
+        },
+        .{
+            .query = "[" ++ absoluteStartStr ++ "," ++ absoluteEndStr ++ "] {env=prod}",
+            .expected = .{
+                .start = absoluteStart,
+                .end = absoluteEnd,
+                .tagsExpr = &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
             },
             .expectedReports = &.{},
         },
