@@ -5,6 +5,8 @@ const builtin = @import("builtin");
 const build = @import("build");
 const test_server = @import("server.zig");
 
+const Logger = @import("logging");
+
 const OchiClient = test_server.OchiClient;
 const Field = @import("../store/lines.zig").Field;
 const Line = @import("../store/lines.zig").Line;
@@ -70,12 +72,23 @@ test "installationScriptInstallsReleaseBinaryAndDataPersistsAcrossRestart" {
     const dataPath = try std.fs.path.join(alloc, &.{ tmpPath, ".ochi" });
     defer alloc.free(dataPath);
 
+    var logger = try Logger.Instance.init(io, alloc, .{
+        .level = .Debug,
+        .pool_size = 1,
+        .buffer_size = 1 << 10,
+        .large_buffer_count = 1,
+        .large_buffer_size = 1 << 12,
+        .output = .stderr,
+        .encoding = .logfmt,
+    });
+    defer logger.deinit();
     var client: OchiClient = .{
         .host = "http://localhost:9014",
         .client = .{
             .allocator = alloc,
             .io = io,
         },
+        .logger = &logger,
     };
     defer client.client.deinit();
 
