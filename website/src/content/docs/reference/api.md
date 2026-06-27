@@ -56,8 +56,8 @@ Read [Loki ingestion API](https://grafana.com/docs/loki/latest/reference/loki-ht
       },
       "values": [
         [
-          "1715173665000000000", // timestamp in nanoseconds as a string
-          "same message", // log message
+          "1715173665000000000", // timestamp in nanoseconds as a string, in a query becomes `_time`
+          "same message", // log message, in a query becomes `_msg`
           {
             "field1": "x",
             "field2": "x"
@@ -103,19 +103,22 @@ Full language reference: [LOQL](../loql)
 `200 OK` with JSON array of matching lines:
 
 ```json
-[
-  {
-    "timestampNs": 1715173665000000000,
-    "fields": [
-      { "key": "tag1", "value": "alpha" },
-      { "key": "tag2", "value": "beta" },
-      { "key": "field1", "value": "x" },
-      { "key": "field2", "value": "x" },
-      { "key": "", "value": "same message" }
+{
+    "line": [
+        {
+            "_time": 1715173665000000000,
+            "field_1": "value 1"
+        },
+        {
+            "_time": 1715173665000000000,
+            "field_1": "value 2"
+        }
     ]
-  }
-]
+}
 ```
+
+where:
+- `_time` - timestamp key in nanoseconds
 
 - The log message is returned as a field with empty key (`"key": ""`).
 - Query filters are exact matches.

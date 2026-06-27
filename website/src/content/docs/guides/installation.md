@@ -9,7 +9,28 @@ sidebar:
 
 The artifacts are available on the [release page](https://github.com/ochi-team/ochi/releases)
 
+Download latest release via:
+```sh
+VERSION=v0.4.2 &&
+curl -Ls "https://github.com/ochi-team/ochi/releases/download/${VERSION}/Ochi-${VERSION}-linux-x86_64.tar.gz" | tar -xz
+```
+
+Start Ochi on port 9014:
+```
+./ochi
+```
+
 #### Build from source
 
 - install [zig](https://ziglang.org/learn/getting-started/#managers) 0.16.0
-- compile with `zig build -Doptimize=ReleaseSafe`
+- compile with `zig build -Doptimize=ReleaseSafe -Drelease=true`
+
+#### Build docker image
+
+We provide a Dockerfile you can find in a repository, so cloning it one can run:
+```sh
+docker build -t ochi:latest .
+```
+
+Hit us in [Discord](https://discord.gg/AsCKpCNp5c) or [Github](https://github.com/ochi-team/ochi) if you need to pull a pre-built image!
+

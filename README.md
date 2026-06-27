@@ -16,12 +16,15 @@ We are creating a more efficient alternative for storing logs.
 
 #### Download pre-built binary
 
-Visit [release page](https://github.com/ochi-team/ochi/releases)
+```sh
+VERSION=v0.4.2 &&
+curl -Ls "https://github.com/ochi-team/ochi/releases/download/${VERSION}/Ochi-${VERSION}-linux-x86_64.tar.gz" | tar -xz
+```
 
 #### Build from source
 
 - install [zig](https://ziglang.org/learn/getting-started/#managers) 0.16.0
-- do `zig build -Doptimize=ReleaseSafe`
+- compile with `zig build -Doptimize=ReleaseSafe -Drelease=true`
 
 ## Documentation
 
@@ -32,9 +35,9 @@ https://ochi.dev/docs/guides/installation/
 - [x] store persists the data, working simple API queries
 - [x] Grafana datasource available
 - [x] home made query language
-- [ ] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
+- [x] installation scripts
+- [x] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
 - [ ] full support of Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
-- [ ] installation scripts
 - [ ] docker-compose with configured datasource to grafana
 - [ ] OTEL collector API support
 - [ ] configuration support
@@ -44,11 +47,10 @@ https://ochi.dev/docs/guides/installation/
 - home made UI
 - cost analysis built in
 - GDPR compliance
-- support ARM64 and x86_64 as Tier 1
+- support aarch64 and x86_64 as Tier 1
 - support Windows and POSIX systems for development
-- support only Linux for production workloads (community if free to do whatever)
+- support only Linux for production workloads (community is free to do whatever)
 - better core over features
-- documentation to answer 99% of questions
 
 ## Non goals
 - support every OS
@@ -56,11 +58,10 @@ https://ochi.dev/docs/guides/installation/
 
 ## Contributing
 
-Ochi is being actively developed by a small team of engineers.
+Ochi is being actively developed by a small team of engineers (team of 1).
 
-Features are requested by opening an issue, though currently there is a very small chance they will be taken into consideration, due to the ongoing development of the project.
-
-Bugs can be fixed without opening an issue, but you are welcome file one.
+Open an issue before submitting a PR. 
+Although bug fixes are exceptions, but they must be provided with a test to demonstrate a bug.
 
 Optimization improvements are welcome, but must be accompanied by a benchmark.
 
