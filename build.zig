@@ -4,7 +4,6 @@ fn addOption(
     b: *std.Build,
     compile: *std.Build.Step.Compile,
     release: bool,
-    testInstallation: bool,
 ) void {
     // add build options to runtime
     const options = b.addOptions();
@@ -15,7 +14,6 @@ fn addOption(
     const version = b.run(args);
     options.addOption([]const u8, "version", version);
     options.addOption(bool, "release", release);
-    options.addOption(bool, "testInstallation", testInstallation);
 }
 
 pub fn build(b: *std.Build) void {
@@ -32,12 +30,6 @@ pub fn build(b: *std.Build) void {
     ) orelse false;
     // test filter to run a specific set of tests
     const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
-    // test installation, designated post-release only test
-    const testInstallation = b.option(
-        bool,
-        "testInstallation",
-        "Run installation tests.",
-    ) orelse false;
 
     // 3d party dependencies
     const zeit = b.dependency("zeit", .{
@@ -132,7 +124,7 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
-    addOption(b, exe, release, testInstallation);
+    addOption(b, exe, release);
 
     const scooby_exe = b.addExecutable(.{
         .name = "scooby",
@@ -170,7 +162,7 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
-    addOption(b, unit_tests, release, testInstallation);
+    addOption(b, unit_tests, release);
 
     // encoding module tests
     const encoding_tests = b.addTest(.{

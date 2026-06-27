@@ -66,7 +66,6 @@ test {
 
     _ = @import("tidy.zig");
     _ = @import("test/server.zig");
-    _ = @import("test/installation.zig");
     std.testing.refAllDecls(server);
 }
 

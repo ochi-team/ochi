@@ -527,6 +527,8 @@ test "serverEndToEndViaHTTP" {
 
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator) void {
+            // TODO: shitdown the server, start again
+            // and validate all the latest corpora queries pass
             server.startApp(
                 io,
                 threadAllocator,
