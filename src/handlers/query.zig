@@ -5,13 +5,10 @@ const Io = std.Io;
 const httpz = @import("httpz");
 
 const Line = @import("../store/lines.zig").Line;
-const msgKey = @import("../store/lines.zig").msgKey;
 const putJsonArrayLines = @import("../store/lines.zig").putJsonArrayLines;
 const Query = @import("../query/Query.zig");
-const FilterExpression = Query.FilterExpression;
 
 const Loql = @import("../query/Loql.zig");
-const maxQueryLength = Loql.maxQueryLength;
 const maxQueryBodyLength = Loql.maxQueryBodyLength;
 const ErrorReporter = @import("../query/ErrorReporter.zig");
 
@@ -30,11 +27,13 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
         return ApiError.MaxBodySize;
     }
 
+    // init loql outside of the query block,
+    // because the underluying query memory must live til the query is done
+    var loql: Loql = .{};
+    defer loql.deinit(res.arena);
+
     const query = q: {
         if (contentType == null or std.mem.eql(u8, "application/loql", contentType.?)) {
-            var loql: Loql = .{};
-            defer loql.deinit(res.arena);
-
             const now = Io.Timestamp.now(ctx.io, .real);
             var errs: ErrorReporter = .{};
 

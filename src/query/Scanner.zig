@@ -6,7 +6,7 @@ const ErrorReporter = @import("ErrorReporter.zig");
 
 pub const Error = error{
     SyntaxError,
-};
+} || Allocator.Error;
 
 const ScannedToken = struct {
     token: ?Token,
@@ -62,14 +62,18 @@ pub const Token = struct {
 
 pub const Scanner = @This();
 /// tokens holds the current parsed tokens state,
-/// we keep it asa member to reuse the allocated memory
 tokens: std.ArrayList(Token) = .empty,
+/// quotedLiterals are a special chunk, it's required to build new slices for such tokens
+/// in order to unescape quotes
+quotedLiterals: std.ArrayList([]const u8) = .empty,
 
 // state
 line: u16 = 1,
 col: u16 = 1,
 
 pub fn deinit(self: *Scanner, allocator: Allocator) void {
+    for (self.quotedLiterals.items) |literal| allocator.free(literal);
+    self.quotedLiterals.deinit(allocator);
     self.tokens.deinit(allocator);
 }
 
@@ -84,7 +88,7 @@ pub fn scan(
     var tail = query[0..];
 
     while (tail.len > 0) {
-        const next = try self.scanToken(tail, reporter);
+        const next = try self.scanToken(allocator, tail, reporter);
         tail = next.tail;
         if (next.token) |token| {
             try self.tokens.append(allocator, token);
@@ -92,7 +96,12 @@ pub fn scan(
     }
 }
 
-fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!ScannedToken {
+fn scanToken(
+    self: *Scanner,
+    allocator: Allocator,
+    query: []const u8,
+    reporter: *ErrorReporter,
+) Error!ScannedToken {
     const token: ScannedToken = switch (query[0]) {
         // time range
         '[' => .{
@@ -192,7 +201,7 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
             },
             .tail = query[1..],
         },
-        '\'', '"' => try self.scanQuotedLiteral(query, reporter),
+        '\'', '"' => try self.scanQuotedLiteral(allocator, query, reporter),
         // comment OR alphanumeric or literal value starting with '_'
         'a'...'z', 'A'...'Z', '0'...'9', '_', '-', ':', '@', '+', '/', '.' => blk: {
             // / could be not only a comment, but a url path e.g. /health
@@ -251,18 +260,21 @@ fn scanToken(self: *Scanner, query: []const u8, reporter: *ErrorReporter) Error!
 
 fn scanQuotedLiteral(
     self: *Scanner,
+    allocator: Allocator,
     query: []const u8,
     reporter: *ErrorReporter,
 ) Error!ScannedToken {
     const opener = query[0];
     var escaped: bool = false;
+    var hasEscapes: bool = false;
     for (1..query.len) |i| {
         const char = query[i];
         if (char == opener and !escaped) {
+            const lexeme = if (hasEscapes) try self.unescapeQuotedLiteral(allocator, query[1..i]) else query[1..i];
             return .{
                 .token = .{
                     .kind = .Literal,
-                    .lexeme = query[0 .. i + 1],
+                    .lexeme = lexeme,
                     .line = self.line,
                     .col = self.col,
                 },
@@ -270,9 +282,10 @@ fn scanQuotedLiteral(
             };
         }
 
-        if (char == '\\') {
-            escaped = !escaped;
+        if (char == '\\' and !escaped) {
+            hasEscapes = true;
         }
+        escaped = char == '\\' and !escaped;
     }
 
     _ = reporter.reportSyntaxError(.{
@@ -281,6 +294,34 @@ fn scanQuotedLiteral(
         .message = "Unterminated quoted literal.",
     });
     return Error.SyntaxError;
+}
+
+fn unescapeQuotedLiteral(self: *Scanner, allocator: Allocator, raw: []const u8) Allocator.Error![]const u8 {
+    try self.quotedLiterals.ensureUnusedCapacity(allocator, 1);
+
+    var buf = try std.ArrayList(u8).initCapacity(allocator, raw.len);
+    errdefer buf.deinit(allocator);
+
+    var escaped = false;
+    for (raw) |char| {
+        if (escaped) {
+            buf.appendAssumeCapacity(char);
+            escaped = false;
+        } else if (char == '\\') {
+            escaped = true;
+        } else {
+            buf.appendAssumeCapacity(char);
+        }
+    }
+
+    if (escaped) {
+        buf.appendAssumeCapacity('\\');
+    }
+
+    const literal = try buf.toOwnedSlice(allocator);
+    errdefer allocator.free(literal);
+    self.quotedLiterals.appendAssumeCapacity(literal);
+    return literal;
 }
 
 // TODO: benchmark if it's better to return the position shift
