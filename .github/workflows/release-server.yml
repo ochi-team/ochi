@@ -30,6 +30,9 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Test new release installation
+        run: zig build test
+
       - name: Build ReleaseSafe binary
         run: zig build -Doptimize=ReleaseSafe -Drelease=true
 
@@ -50,7 +53,4 @@ jobs:
           files: |
             dist/ochi-${{ github.ref_name }}-linux-x86_64.tar.gz
             dist/ochi-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
-
-      - name: Test new release installation
-        run: zig build test -DtestInstallation=true
 
