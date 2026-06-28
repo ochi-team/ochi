@@ -11,7 +11,7 @@ The artifacts are available on the [release page](https://github.com/ochi-team/o
 
 Download latest release via:
 ```sh
-VERSION=v0.4.2 &&
+VERSION=v0.4.3 &&
 curl -Ls "https://github.com/ochi-team/ochi/releases/download/${VERSION}/Ochi-${VERSION}-linux-x86_64.tar.gz" | tar -xz
 ```
 
