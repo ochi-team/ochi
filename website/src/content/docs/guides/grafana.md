@@ -160,6 +160,8 @@ services:
         RELEASE: true
     command: ["/usr/local/bin/ochi"]
     cgroup_parent: ochi.slice
+    volumes:
+        - ochi:/app/.ochi
     ports:
       - "9014:9014"
 
