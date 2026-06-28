@@ -5,6 +5,7 @@ const zeit = @import("zeit");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
+const parseTimestampISO8601 = @import("../../stds/time.zig").parseTimestampISO8601;
 const ColumnDict = @import("ColumnDict.zig");
 const ColumnType = @import("ColumnHeader.zig").ColumnType;
 
@@ -305,12 +306,11 @@ fn tryTimestampISO8601Encoding(self: *Self, values: []const []const u8) !?Encode
     try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(i64) * values.len);
     try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
-        const time = zeit.Time.fromISO8601(v) catch {
+        const n = parseTimestampISO8601(v) orelse {
             self.buf.items.len = startBufLen;
             self.values.items.len = startValuesLen;
             return null;
         };
-        const n: i64 = @intCast(time.instant().timestamp);
 
         minVal = @min(minVal, n);
         maxVal = @max(maxVal, n);
@@ -543,6 +543,34 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
             try std.testing.expect(cv.values.items.len == 0);
         }
     }
+}
+
+test "ValuesEncoder does not treat bare number as timestamp" {
+    const allocator = std.testing.allocator;
+
+    const values = [_][]const u8{
+        "2011-04-19T03:44:01.000Z",
+        "2011-04-19T03:44:01.001Z",
+        "2011-04-19T03:44:01.002Z",
+        "2011-04-19T03:44:01.003Z",
+        "2011-04-19T03:44:01.004Z",
+        "2011-04-19T03:44:01.005Z",
+        "2011-04-19T03:44:01.006Z",
+        "2011-04-19T03:44:01.007Z",
+        "389",
+    };
+
+    const encoder = try Self.init(allocator);
+    defer encoder.deinit();
+
+    var cv = try ColumnDict.init(allocator);
+    defer cv.deinit(allocator);
+
+    const valueType = try encoder.encode(&values, &cv);
+    try std.testing.expectEqual(.string, valueType.type);
+    try std.testing.expectEqual(0, valueType.min);
+    try std.testing.expectEqual(0, valueType.max);
+    try std.testing.expectEqualDeep(&values, encoder.values.items);
 }
 
 test "ValuesEncoder handles dict values shorter than row count" {
