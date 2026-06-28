@@ -3,7 +3,7 @@ import { getCollection, render } from "astro:content";
 import Header from "../../components/Header.astro";
 import Footer from "../../components/Footer.astro";
 import BlogBackground from "../../components/BlogBackground.astro";
-import "../../styles/global.css";
+import "../../styles/site.css";
 
 export async function getStaticPaths() {
   const posts = await getCollection("blog");
@@ -35,7 +35,6 @@ const authorAvatar = authorName
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{post.data.title} - Ochi Blog</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <link
       href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
       rel="stylesheet"

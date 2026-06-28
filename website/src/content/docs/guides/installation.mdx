@@ -5,20 +5,28 @@ sidebar:
   order: 1
 ---
 
+import { Steps } from '@astrojs/starlight/components';
+
 #### Download pre-built binaries
 
 The artifacts are available on the [release page](https://github.com/ochi-team/ochi/releases)
 
-Download latest release via:
-```sh
-VERSION=v0.4.3 &&
-curl -Ls "https://github.com/ochi-team/ochi/releases/download/${VERSION}/Ochi-${VERSION}-linux-x86_64.tar.gz" | tar -xz
-```
+<Steps>
 
-Start Ochi on port 9014:
-```
-./ochi
-```
+1. Download latest release via:
+
+    ```sh
+    VERSION=v0.4.3 &&
+    curl -Ls "https://github.com/ochi-team/ochi/releases/download/${VERSION}/Ochi-${VERSION}-linux-x86_64.tar.gz" | tar -xz
+    ```
+
+2. Start Ochi on port 9014:
+
+    ```
+    ./ochi
+    ```
+
+</Steps>
 
 #### Build from source
 

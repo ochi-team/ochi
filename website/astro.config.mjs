@@ -14,7 +14,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Ochi Documentation",
-      customCss: ["./src/styles/theme.css"],
+      customCss: ["./src/styles/global.css", "./src/styles/theme.css"],
       favicon: "/favicon.ico",
       social: [
         {
@@ -35,15 +35,15 @@ export default defineConfig({
       sidebar: [
         {
           label: "Guides",
-          autogenerate: { directory: "guides" },
+          items: [{ autogenerate: { directory: "guides" } }],
         },
         {
           label: "Reference",
-          autogenerate: { directory: "reference" },
+          items: [{ autogenerate: { directory: "reference" } }],
         },
         {
           label: "Changelog",
-          autogenerate: { directory: "changelog" },
+          items: [{ autogenerate: { directory: "changelog" } }],
         },
       ],
       defaultLocale: "en",

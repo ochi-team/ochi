@@ -43,7 +43,7 @@ WORKDIR /app
 ENV LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
 ENV TSAN_OPTIONS=external_symbolizer_path=/usr/bin/llvm-symbolizer,symbolize=1,halt_on_error=1,verbosity=1
 
-COPY --from=build /app/zig-out/bin/Ochi /usr/local/bin/ochi
+COPY --from=build /app/zig-out/bin/ochi /usr/local/bin/ochi
 
 EXPOSE 9014
 

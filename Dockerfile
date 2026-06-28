@@ -29,17 +29,18 @@ RUN --mount=type=cache,id=ochi-zig-global,target=/root/.cache/zig \
 
 COPY src/ src/
 ARG OPTIMIZE=ReleaseSafe
+ARG RELEASE=false
 ARG TRACY=false
 RUN --mount=type=cache,id=ochi-zig-global,target=/root/.cache/zig \
     --mount=type=cache,id=ochi-zig-local,target=/app/.zig-cache \
-    /usr/local/bin/zig build -Doptimize=${OPTIMIZE} -Dtracy=${TRACY}
+    /usr/local/bin/zig build -Doptimize=${OPTIMIZE} -Dtracy=${TRACY} -Drelease=${RELEASE}
 
 # FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 FROM ubuntu:24.04 AS runtime
 
 WORKDIR /app
 
-COPY --from=build /app/zig-out/bin/Ochi /usr/local/bin/ochi
+COPY --from=build /app/zig-out/bin/ochi /usr/local/bin/ochi
 
 EXPOSE 9014
 

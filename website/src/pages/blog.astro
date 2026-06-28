@@ -1,5 +1,5 @@
 ---
-import "../styles/global.css";
+import "../styles/site.css";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 import BlogBackground from "../components/BlogBackground.astro";
@@ -15,7 +15,6 @@ posts.sort((a, b) => new Date(b.data.date) - new Date(a.data.date));
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Blog - Ochi</title>
-		<script src="https://cdn.tailwindcss.com"></script>
 		<link
 			href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
 			rel="stylesheet"
