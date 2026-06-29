@@ -118,7 +118,6 @@ const logEntries: LogEntry[] = [
     };
 });
 
-const navItems = ['Dashboard', 'Logs', 'Metrics', 'Traces', 'Notebooks'];
 const sideItems = [
     { icon: 'dns', label: 'Infrastructure', active: true },
     { icon: 'lan', label: 'Network', active: false },
@@ -204,86 +203,11 @@ const LogView: Component = () => {
                     )}
                     aria-label="Primary"
                 >
-                    <For each={navItems}>
-                        {(item) => (
-                            <button
-                                class={cx(
-                                    'min-h-14 cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-2 font-["Hanken_Grotesk",var(--font-sans)] text-base text-[#a9b7c5]',
-                                    item === 'Logs' && 'border-b-[#4be277] font-normal text-[#4be277]',
-                                )}
-                            >
-                                {item}
-                            </button>
-                        )}
-                    </For>
                 </nav>
 
-                <div class="flex items-center gap-2 max-[640px]:gap-1" aria-label="Account actions">
-                    <button class={toolbarIconButton} aria-label="Settings">settings</button>
-                    <button class={toolbarIconButton} aria-label="Help">help</button>
-                    <button class={toolbarIconButton} aria-label="Notifications">notifications</button>
-                    <div
-                        class={cx(
-                            'size-[34px] rounded-full border border-[#4be277]',
-                            '[background:radial-gradient(circle_at_50%_28%,#b38a66_0_13%,transparent_14%),linear-gradient(140deg,#132838,#1a5b6d_45%,#081220)]',
-                            '[box-shadow:inset_0_0_0_2px_#0b1323]',
-                        )}
-                        aria-label="User profile"
-                    />
-                </div>
             </header>
 
-            <div class="grid min-h-[calc(100vh-57px)] grid-cols-[280px_minmax(0,1fr)] max-[900px]:min-h-0 max-[900px]:grid-cols-1">
-                <aside
-                    class={cx(
-                        'sticky top-[57px] flex h-[calc(100vh-57px)] flex-col justify-between border-r bg-[#061022] px-0 pb-6 pt-[18px]',
-                        borderStrong,
-                        'max-[900px]:static max-[900px]:h-auto max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:px-2 max-[900px]:py-3',
-                    )}
-                    aria-label="Log navigation"
-                >
-                    <div class="flex items-center gap-3 px-4 pb-7 max-[900px]:px-2 max-[900px]:pb-3">
-                        <div
-                            class={cx(
-                                iconFont,
-                                'grid size-8 place-items-center border border-[#4be277]/[0.35] bg-[#4be277]/10 text-xl text-[#4be277]',
-                            )}
-                        >
-                            analytics
-                        </div>
-                        <div>
-                            <h2 class="m-0 text-sm font-extrabold text-[#dbe2f8]">Ochi Logs</h2>
-                            <p class="m-0 mt-1 text-[10px] uppercase tracking-[0.1em] text-[#8fa3ab]">Production Cluster</p>
-                        </div>
-                    </div>
-                    <div class="grid gap-1 max-[900px]:flex max-[900px]:overflow-x-auto">
-                        <For each={sideItems}>
-                            {(item) => (
-                                <button
-                                    class={cx(
-                                        sidebarButton,
-                                        item.active &&
-                                            'border-l-[#4be277] bg-[#4be277]/10 font-extrabold text-[#4be277] hover:text-[#4be277]',
-                                    )}
-                                >
-                                    <span class={cx(iconFont, 'w-5 text-lg')}>{item.icon}</span>
-                                    {item.label}
-                                </button>
-                            )}
-                        </For>
-                    </div>
-                    <div class="grid gap-1 max-[900px]:flex max-[900px]:overflow-x-auto">
-                        <button class={sidebarButton}>
-                            <span class={cx(iconFont, 'w-5 text-lg')}>menu_book</span>
-                            Docs
-                        </button>
-                        <button class={sidebarButton}>
-                            <span class={cx(iconFont, 'w-5 text-lg')}>contact_support</span>
-                            Support
-                        </button>
-                    </div>
-                </aside>
-
+            <div class="grid min-h-[calc(100vh-57px)] max-[900px]:min-h-0 max-[900px]:grid-cols-1">
                 <section
                     class="flex h-[calc(100vh-57px)] min-w-0 flex-col overflow-hidden max-[900px]:h-auto max-[900px]:min-h-[calc(100vh-153px)]"
                     aria-label="Ochi Logs"
@@ -389,11 +313,6 @@ const LogView: Component = () => {
                                 <span class={cx(iconFont, 'w-5 text-lg')}>expand_more</span>
                             </button>
                             <p class="m-0 mr-auto text-xs text-[#8fa3ab]">Showing <strong class="text-[#dbe2f8]">1,248</strong> entries</p>
-                            <div class="flex items-center gap-2">
-                                <button class={toolbarIconButton} aria-label="Bookmark">bookmark</button>
-                                <button class={toolbarIconButton} aria-label="Share">share</button>
-                                <button class={toolbarIconButton} aria-label="Download">download</button>
-                            </div>
                         </div>
                     </section>
 
@@ -422,16 +341,6 @@ const LogView: Component = () => {
                                         JSON
                                     </button>
                                 </div>
-                            </div>
-                            <div class="flex items-center gap-2 whitespace-nowrap text-[11px] uppercase tracking-[0.16em] text-[#4be277]">
-                                <span class="size-2 rounded-full bg-[#4be277]" />
-                                Live Tail Active
-                                <button
-                                    class={cx(iconFont, 'size-7 cursor-pointer border-0 bg-transparent text-xl text-[#8fa3ab]')}
-                                    aria-label="More stream options"
-                                >
-                                    more_vert
-                                </button>
                             </div>
                         </div>
 
