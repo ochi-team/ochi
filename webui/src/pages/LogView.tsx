@@ -129,156 +129,330 @@ const sideItems = [
 
 const levelLabels: Level[] = ['info', 'error', 'warn', 'debug'];
 
+const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
+
+const CloseIcon: Component = () => (
+    <svg class="size-3" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+        <path
+            d="M2.25 2.25 9.75 9.75M9.75 2.25 2.25 9.75"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-width="1.8"
+        />
+    </svg>
+);
+
+const borderStrong = 'border-[rgba(255,255,255,0.72)]';
+const iconFont = 'font-["Material_Symbols_Outlined",var(--font-mono)] overflow-hidden whitespace-nowrap';
+const toolbarIconButton = cx(
+    iconFont,
+    'grid size-8 cursor-pointer place-items-center border bg-transparent text-xl text-[#a9b7c5]',
+    borderStrong,
+    'hover:border-[#4be277] hover:bg-[#4be277]/[0.08] hover:text-[#dbe2f8]',
+);
+const sidebarButton = cx(
+    'flex min-h-9 cursor-pointer items-center gap-2.5 border border-transparent bg-transparent px-4 text-left text-[13px] font-bold text-[#a9b7c5]',
+    'hover:border-[#4be277] hover:bg-[#4be277]/[0.08] hover:text-[#dbe2f8] max-[640px]:whitespace-nowrap',
+);
+const titleClass = 'm-0 text-[13px] font-extrabold uppercase leading-[1.2] tracking-[0.08em] text-[#a9b7c5]';
+const levelStyles: Record<Level, { bar: string; legend: string; badge: string; message: string }> = {
+    info: {
+        bar: 'bg-[#4be277]',
+        legend: 'before:bg-[#4be277]',
+        badge: 'bg-[#4be277]/[0.12] text-[#4be277]',
+        message: 'text-[#dbe2f8]',
+    },
+    error: {
+        bar: 'bg-[#ef4444]',
+        legend: 'before:bg-[#ef4444]',
+        badge: 'bg-[#4a0d0d] text-[#ffb4ab]',
+        message: 'text-[#ef4444]',
+    },
+    warn: {
+        bar: 'bg-[#ddb7ff]',
+        legend: 'before:bg-[#ddb7ff]',
+        badge: 'bg-[#ddb7ff]/[0.14] text-[#ddb7ff]',
+        message: 'text-[#dbe2f8]',
+    },
+    debug: {
+        bar: 'bg-[#b0cadf]',
+        legend: 'before:bg-[#b0cadf]',
+        badge: 'bg-white/5 text-[#8fa3ab]',
+        message: 'text-[#dbe2f8]',
+    },
+};
+
 const LogView: Component = () => {
     return (
-        <main class="log-shell">
-            <header class="topbar">
-                <div class="brand-block">
+        <main class="min-h-screen overflow-hidden bg-[#0b1323] font-sans tracking-normal text-[#dbe2f8]">
+            <header
+                class={cx(
+                    'sticky top-0 z-[5] grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-8 border-b bg-[#0b1323] px-4',
+                    borderStrong,
+                    'max-[900px]:grid-cols-[1fr_auto] max-[900px]:gap-4 max-[900px]:min-h-0 max-[640px]:px-3',
+                )}
+            >
+                <div class='font-["Hanken_Grotesk",var(--font-sans)] text-[22px] font-extrabold text-[#4be277]'>
                     <strong>Ochi</strong>
                 </div>
 
-                <nav class="main-nav" aria-label="Primary">
+                <nav
+                    class={cx(
+                        'flex min-w-0 items-center gap-0.5 overflow-x-auto',
+                        'max-[900px]:order-3 max-[900px]:col-span-full max-[900px]:-mx-4 max-[900px]:border-t max-[900px]:border-white/20 max-[900px]:px-4',
+                    )}
+                    aria-label="Primary"
+                >
                     <For each={navItems}>
-                        {(item) => <button classList={{ active: item === 'Logs' }}>{item}</button>}
+                        {(item) => (
+                            <button
+                                class={cx(
+                                    'min-h-14 cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-2 font-["Hanken_Grotesk",var(--font-sans)] text-base text-[#a9b7c5]',
+                                    item === 'Logs' && 'border-b-[#4be277] font-normal text-[#4be277]',
+                                )}
+                            >
+                                {item}
+                            </button>
+                        )}
                     </For>
                 </nav>
 
-                <div class="top-actions" aria-label="Account actions">
-                    <button aria-label="Settings">settings</button>
-                    <button aria-label="Help">help</button>
-                    <button aria-label="Notifications">notifications</button>
-                    <div class="avatar" aria-label="User profile" />
+                <div class="flex items-center gap-2 max-[640px]:gap-1" aria-label="Account actions">
+                    <button class={toolbarIconButton} aria-label="Settings">settings</button>
+                    <button class={toolbarIconButton} aria-label="Help">help</button>
+                    <button class={toolbarIconButton} aria-label="Notifications">notifications</button>
+                    <div
+                        class={cx(
+                            'size-[34px] rounded-full border border-[#4be277]',
+                            '[background:radial-gradient(circle_at_50%_28%,#b38a66_0_13%,transparent_14%),linear-gradient(140deg,#132838,#1a5b6d_45%,#081220)]',
+                            '[box-shadow:inset_0_0_0_2px_#0b1323]',
+                        )}
+                        aria-label="User profile"
+                    />
                 </div>
             </header>
 
-            <div class="log-workspace">
-                <aside class="log-sidebar" aria-label="Log navigation">
-                    <div class="sidebar-product">
-                        <div class="sidebar-mark">analytics</div>
+            <div class="grid min-h-[calc(100vh-57px)] grid-cols-[280px_minmax(0,1fr)] max-[900px]:min-h-0 max-[900px]:grid-cols-1">
+                <aside
+                    class={cx(
+                        'sticky top-[57px] flex h-[calc(100vh-57px)] flex-col justify-between border-r bg-[#061022] px-0 pb-6 pt-[18px]',
+                        borderStrong,
+                        'max-[900px]:static max-[900px]:h-auto max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:px-2 max-[900px]:py-3',
+                    )}
+                    aria-label="Log navigation"
+                >
+                    <div class="flex items-center gap-3 px-4 pb-7 max-[900px]:px-2 max-[900px]:pb-3">
+                        <div
+                            class={cx(
+                                iconFont,
+                                'grid size-8 place-items-center border border-[#4be277]/[0.35] bg-[#4be277]/10 text-xl text-[#4be277]',
+                            )}
+                        >
+                            analytics
+                        </div>
                         <div>
-                            <h2>Ochi Logs</h2>
-                            <p>Production Cluster</p>
+                            <h2 class="m-0 text-sm font-extrabold text-[#dbe2f8]">Ochi Logs</h2>
+                            <p class="m-0 mt-1 text-[10px] uppercase tracking-[0.1em] text-[#8fa3ab]">Production Cluster</p>
                         </div>
                     </div>
-                    <div class="sidebar-section">
+                    <div class="grid gap-1 max-[900px]:flex max-[900px]:overflow-x-auto">
                         <For each={sideItems}>
                             {(item) => (
-                                <button classList={{ active: item.active }}>
-                                    <span>{item.icon}</span>
+                                <button
+                                    class={cx(
+                                        sidebarButton,
+                                        item.active &&
+                                            'border-l-[#4be277] bg-[#4be277]/10 font-extrabold text-[#4be277] hover:text-[#4be277]',
+                                    )}
+                                >
+                                    <span class={cx(iconFont, 'w-5 text-lg')}>{item.icon}</span>
                                     {item.label}
                                 </button>
                             )}
                         </For>
                     </div>
-                    <div class="sidebar-footer">
-                        <button>
-                            <span>menu_book</span>
+                    <div class="grid gap-1 max-[900px]:flex max-[900px]:overflow-x-auto">
+                        <button class={sidebarButton}>
+                            <span class={cx(iconFont, 'w-5 text-lg')}>menu_book</span>
                             Docs
                         </button>
-                        <button>
-                            <span>contact_support</span>
+                        <button class={sidebarButton}>
+                            <span class={cx(iconFont, 'w-5 text-lg')}>contact_support</span>
                             Support
                         </button>
                     </div>
                 </aside>
 
-                <section class="log-content" aria-label="Ochi Logs">
-                    <section class="event-panel" aria-label="Event Distribution Last 15 minutes">
-                        <div class="panel-title">
-                            <h2>Event Distribution (Last 15m)</h2>
-                            <div class="legend">
+                <section
+                    class="flex h-[calc(100vh-57px)] min-w-0 flex-col overflow-hidden max-[900px]:h-auto max-[900px]:min-h-[calc(100vh-153px)]"
+                    aria-label="Ochi Logs"
+                >
+                    <section
+                        class={cx('border-b bg-[#0b1628] px-5 pb-3.5 pt-[18px] max-[640px]:px-3', borderStrong)}
+                        aria-label="Event Distribution Last 15 minutes"
+                    >
+                        <div class="mb-[18px] flex items-start justify-between gap-4 max-[640px]:flex-col">
+                            <h2 class={titleClass}>Event Distribution (Last 15m)</h2>
+                            <div class="flex flex-wrap items-center gap-3.5 text-[10px] uppercase text-[#a9b7c5]">
                                 <For each={levelLabels}>
-                                    {(level) => <span class={`legend-${level}`}>{level}</span>}
+                                    {(level) => (
+                                        <span
+                                            class={cx(
+                                                'before:mr-[5px] before:inline-block before:size-2 before:content-[""]',
+                                                levelStyles[level].legend,
+                                            )}
+                                        >
+                                            {level}
+                                        </span>
+                                    )}
                                 </For>
                             </div>
                         </div>
-                        <div class="event-chart">
+                        <div class="grid h-[106px] grid-cols-[repeat(60,minmax(5px,1fr))] items-end gap-[3px] p-0 max-[900px]:grid-cols-[repeat(30,minmax(6px,1fr))] max-[640px]:grid-cols-[repeat(20,minmax(7px,1fr))] max-[640px]:overflow-x-auto">
                             <For each={eventBuckets}>
                                 {(bucket) => (
                                     <div
-                                        class="event-bar"
+                                        class="flex h-24 flex-col items-end justify-end overflow-hidden"
                                         aria-label={`INFO: ${bucket.info}% ERROR: ${bucket.error}% WARN: ${bucket.warn}% DEBUG: ${bucket.debug}%`}
                                     >
                                         <span
-                                            class="bar-debug"
+                                            class={cx('min-h-[3px] w-full', levelStyles.debug.bar)}
                                             style={{ height: `${bucket.debug}%` }}
                                             title={`DEBUG: ${bucket.debug}%`}
                                         />
                                         <span
-                                            class="bar-warn"
+                                            class={cx('min-h-[3px] w-full', levelStyles.warn.bar)}
                                             style={{ height: `${bucket.warn}%` }}
                                             title={`WARN: ${bucket.warn}%`}
                                         />
                                         <span
-                                            class="bar-error"
+                                            class={cx('min-h-[3px] w-full', levelStyles.error.bar)}
                                             style={{ height: `${bucket.error}%` }}
                                             title={`ERROR: ${bucket.error}%`}
                                         />
-                                        <span class="bar-info" style={{ height: `${bucket.info}%` }} title={`INFO: ${bucket.info}%`} />
+                                        <span
+                                            class={cx('min-h-[3px] w-full', levelStyles.info.bar)}
+                                            style={{ height: `${bucket.info}%` }}
+                                            title={`INFO: ${bucket.info}%`}
+                                        />
                                     </div>
                                 )}
                             </For>
                         </div>
-                        <div class="chart-range">
+                        <div class="mt-1.5 flex items-center justify-between gap-3 text-xs text-[#a9b7c5] max-[640px]:flex-col max-[640px]:items-start">
                             <time>2026-06-28T20:18:36.915Z</time>
                             <time>2026-06-28T20:33:36.915Z</time>
                         </div>
                     </section>
 
-                    <section class="query-panel" aria-label="Log query controls">
-                        <div class="filter-row">
-                            <div class="query-input">
-                                <span class="query-icon">search</span>
-                                <span class="filter-chip filter-chip-service">
+                    <section class={cx('border-b bg-[#131c2b] px-5 py-[18px] max-[640px]:px-3', borderStrong)} aria-label="Log query controls">
+                        <div class="flex items-center gap-2 max-[640px]:flex-col max-[640px]:items-stretch">
+                            <div class="flex min-h-12 min-w-60 flex-auto items-center gap-2 border border-white/10 bg-[#0b1323]/45 px-2.5 max-[640px]:flex-wrap max-[640px]:py-2">
+                                <span class={cx(iconFont, 'w-[22px] text-xl text-[#8fa3ab]')}>search</span>
+                                <span class="inline-flex min-h-[26px] items-center gap-1.5 border border-[#4be277]/[0.35] bg-[#0d4a2a]/[0.42] px-1.5 text-[13px] text-[#4be277]">
                                     service: <strong>api-gateway</strong>
-                                    <button aria-label="Remove service filter">close</button>
+                                    <button
+                                        class="grid size-[18px] cursor-pointer place-items-center border-0 bg-transparent p-0 text-current"
+                                        aria-label="Remove service filter"
+                                    >
+                                        <CloseIcon />
+                                    </button>
                                 </span>
-                                <span class="filter-chip filter-chip-env">
+                                <span class="inline-flex min-h-[26px] items-center gap-1.5 border border-[#ddb7ff]/[0.35] bg-[#7206c1]/[0.24] px-1.5 text-[13px] text-[#ddb7ff]">
                                     env: <strong>prod</strong>
-                                    <button aria-label="Remove environment filter">close</button>
+                                    <button
+                                        class="grid size-[18px] cursor-pointer place-items-center border-0 bg-transparent p-0 text-current"
+                                        aria-label="Remove environment filter"
+                                    >
+                                        <CloseIcon />
+                                    </button>
                                 </span>
-                                <button class="add-filter">Add filter...</button>
+                                <button class="min-h-9 cursor-pointer border-0 bg-transparent px-3 text-[#8fa3ab] hover:border-[#4be277] hover:bg-[#4be277]/[0.08] hover:text-[#dbe2f8]">
+                                    Add filter...
+                                </button>
                             </div>
-                            <button class="run-query">Run Query</button>
-                        </div>
-                        <div class="query-meta">
-                            <button class="time-select">
-                                <span>schedule</span>
-                                Last 15 minutes
-                                <span>expand_more</span>
+                            <button class="min-h-12 cursor-pointer border border-[#4be277] bg-[#4be277] px-[18px] font-extrabold text-[#003915]">
+                                Run Query
                             </button>
-                            <p>Showing <strong>1,248</strong> entries</p>
-                            <div class="stream-actions">
-                                <button aria-label="Bookmark">bookmark</button>
-                                <button aria-label="Share">share</button>
-                                <button aria-label="Download">download</button>
+                        </div>
+                        <div class="mt-3 flex items-center justify-between gap-3 max-[640px]:flex-col max-[640px]:items-start">
+                            <button
+                                class={cx(
+                                    'inline-flex min-h-9 cursor-pointer items-center gap-2 border bg-transparent px-3 text-[#dbe2f8]',
+                                    borderStrong,
+                                    'hover:border-[#4be277] hover:bg-[#4be277]/[0.08] hover:text-[#dbe2f8]',
+                                )}
+                            >
+                                <span class={cx(iconFont, 'w-5 text-lg')}>schedule</span>
+                                Last 15 minutes
+                                <span class={cx(iconFont, 'w-5 text-lg')}>expand_more</span>
+                            </button>
+                            <p class="m-0 mr-auto text-xs text-[#8fa3ab]">Showing <strong class="text-[#dbe2f8]">1,248</strong> entries</p>
+                            <div class="flex items-center gap-2">
+                                <button class={toolbarIconButton} aria-label="Bookmark">bookmark</button>
+                                <button class={toolbarIconButton} aria-label="Share">share</button>
+                                <button class={toolbarIconButton} aria-label="Download">download</button>
                             </div>
                         </div>
                     </section>
 
-                    <section class="stream-panel" aria-label="Log stream">
-                        <div class="stream-toolbar">
-                            <div class="stream-heading">
-                                <h2>Log Stream</h2>
-                                <div class="stream-tabs" role="tablist" aria-label="Log display format">
-                                    <button class="active" role="tab" aria-selected="true">MESSAGE</button>
-                                    <button role="tab" aria-selected="false">JSON</button>
+                    <section class="flex min-h-0 flex-auto flex-col overflow-hidden" aria-label="Log stream">
+                        <div
+                            class={cx(
+                                'flex items-center justify-between gap-3 border-b bg-[#131c2b] px-5 py-2.5 max-[640px]:flex-col max-[640px]:items-start max-[640px]:px-3',
+                                borderStrong,
+                            )}
+                        >
+                            <div class="flex items-center gap-7 max-[640px]:flex-col max-[640px]:items-start">
+                                <h2 class={titleClass}>Log Stream</h2>
+                                <div class="flex gap-0 rounded-[2px] bg-[#2d3546] p-0.5" role="tablist" aria-label="Log display format">
+                                    <button
+                                        class="min-h-7 min-w-[78px] cursor-pointer border-0 bg-[#22c55e] px-3 text-[11px] font-extrabold text-[#004b1e]"
+                                        role="tab"
+                                        aria-selected="true"
+                                    >
+                                        MESSAGE
+                                    </button>
+                                    <button
+                                        class="min-h-7 min-w-[78px] cursor-pointer border-0 bg-transparent px-3 text-[11px] font-extrabold text-[#8fa3ab]"
+                                        role="tab"
+                                        aria-selected="false"
+                                    >
+                                        JSON
+                                    </button>
                                 </div>
                             </div>
-                            <div class="status-pill">
-                                <span />
+                            <div class="flex items-center gap-2 whitespace-nowrap text-[11px] uppercase tracking-[0.16em] text-[#4be277]">
+                                <span class="size-2 rounded-full bg-[#4be277]" />
                                 Live Tail Active
-                                <button aria-label="More stream options">more_vert</button>
+                                <button
+                                    class={cx(iconFont, 'size-7 cursor-pointer border-0 bg-transparent text-xl text-[#8fa3ab]')}
+                                    aria-label="More stream options"
+                                >
+                                    more_vert
+                                </button>
                             </div>
                         </div>
 
-                        <div class="log-list">
+                        <div class="grid min-h-0 content-start overflow-auto bg-[#0b1323]">
                             <For each={logEntries}>
                                 {(entry) => (
-                                    <article class={`log-row level-${entry.level}`}>
-                                        <time>{entry.time}</time>
-                                        <span class="level">{entry.level}</span>
-                                        <p>{entry.message}</p>
+                                    <article
+                                        class="grid min-h-[46px] grid-cols-[180px_80px_minmax(260px,1fr)] items-center gap-3 border-b border-[rgba(255,255,255,0.72)] px-5 text-[13px] hover:bg-white/[0.02] hover:[box-shadow:inset_2px_0_0_#22c55e] max-[640px]:grid-cols-[126px_58px_minmax(220px,1fr)] max-[640px]:px-2.5"
+                                    >
+                                        <time class="whitespace-nowrap text-[#8fa3ab]">{entry.time}</time>
+                                        <span
+                                            class={cx(
+                                                'inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
+                                                levelStyles[entry.level].badge,
+                                            )}
+                                        >
+                                            {entry.level}
+                                        </span>
+                                        <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', levelStyles[entry.level].message)}>
+                                            {entry.message}
+                                        </p>
                                     </article>
                                 )}
                             </For>
