@@ -88,7 +88,7 @@ const Lines: Component = () => {
             <For each={logEntries}>
                 {(entry) => (
                     <article
-                        class="grid min-h-[46px] grid-cols-[180px_80px_24px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_24px_minmax(180px,1fr)] max-[640px]:gap-2 max-[640px]:px-2.5"
+                        class="grid min-h-[32px] grid-cols-[180px_80px_24px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_24px_minmax(180px,1fr)] max-[640px]:gap-2 max-[640px]:px-2.5"
                     >
                         <time class="whitespace-nowrap text-muted-foreground">{entry.time}</time>
                         <span
