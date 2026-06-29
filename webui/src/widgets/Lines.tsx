@@ -74,13 +74,21 @@ const levelStyles: Record<Level, { bar: string; legend: string; badge: string; m
     },
 };
 
+const OpenSideWindowIcon: Component = () => (
+    <svg class="size-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+        <path d="m14 9 3 3-3 3" />
+    </svg>
+);
+
 const Lines: Component = () => {
     return (
         <div class="grid min-h-0 content-start overflow-auto bg-background">
             <For each={logEntries}>
                 {(entry) => (
                     <article
-                        class="grid min-h-[46px] grid-cols-[180px_80px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_minmax(220px,1fr)] max-[640px]:px-2.5"
+                        class="grid min-h-[46px] grid-cols-[180px_80px_24px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_24px_minmax(180px,1fr)] max-[640px]:gap-2 max-[640px]:px-2.5"
                     >
                         <time class="whitespace-nowrap text-muted-foreground">{entry.time}</time>
                         <span
@@ -91,6 +99,13 @@ const Lines: Component = () => {
                         >
                             {entry.level}
                         </span>
+                        <button
+                            class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
+                            title="Open in side window"
+                            aria-label="Open in side window"
+                        >
+                            <OpenSideWindowIcon />
+                        </button>
                         <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', levelStyles[entry.level].message)}>
                             {entry.message}
                         </p>
