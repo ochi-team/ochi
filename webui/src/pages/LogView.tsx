@@ -9,6 +9,9 @@ const borderStrong = 'border-border';
 const titleClass = 'm-0 text-[13px] font-extrabold uppercase leading-[1.2] tracking-[0.08em] text-muted-foreground';
 
 const LogView: Component = () => {
+    const setQueryToken = (token: string) => {
+        console.info('set time range query token', token);
+    }
     return (
         <main class="min-h-screen overflow-hidden bg-background font-sans tracking-normal text-foreground">
             <header
@@ -39,7 +42,7 @@ const LogView: Component = () => {
                     aria-label="Ochi Logs"
                 >
 
-                    <QueryBuilder />
+                    <QueryBuilder setTimeRangeQueryToken={setQueryToken} />
 
                     <section class="flex min-h-0 flex-auto flex-col overflow-hidden" aria-label="Log stream">
                         <div
