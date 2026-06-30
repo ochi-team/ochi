@@ -1,4 +1,4 @@
-import type { Component } from 'solid-js';
+import type { Component, Setter } from 'solid-js';
 import { For, createSignal } from 'solid-js';
 import QueryInput from './QueryInput';
 
@@ -42,7 +42,9 @@ if (timeRangeOptions.length != timeRangeQueryTokens.length) {
 }
 
 type QueryBuilderProps = {
-    setTimeRangeQueryToken: (token: string) => void,
+    query: string;
+    setQuery: Setter<string>;
+    setTimeRangeQueryToken: (token: string) => void;
 };
 
 const QueryBuilder: Component<QueryBuilderProps> = (props) => {
@@ -51,7 +53,7 @@ const QueryBuilder: Component<QueryBuilderProps> = (props) => {
     return (
         <section class={cx('border-b bg-card px-5 py-[18px] max-[640px]:px-3', borderStrong)} aria-label="Log query controls">
             <div class="flex items-center gap-2 max-[640px]:flex-col max-[640px]:items-stretch">
-                <QueryInput />
+                <QueryInput query={props.query} setQuery={props.setQuery} />
                 <button class="min-h-12 cursor-pointer border border-primary bg-primary px-[18px] font-extrabold text-primary-foreground">
                     Run Query
                 </button>

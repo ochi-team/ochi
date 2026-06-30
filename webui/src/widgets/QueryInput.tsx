@@ -1,4 +1,4 @@
-import type { Component, JSX } from 'solid-js';
+import type { Component, JSX, Setter } from 'solid-js';
 import { For, Show, createMemo, createSignal } from 'solid-js';
 
 type TokenKind =
@@ -28,6 +28,14 @@ type Token = {
     text: string;
     start: number;
     end: number;
+};
+
+export type QueryFilterOperator = '=' | '!=';
+
+export type QueryFilterClause = {
+    key: string;
+    operator: QueryFilterOperator;
+    value: string;
 };
 
 type RenderPart = Token & {
@@ -436,6 +444,135 @@ const wordRangeAt = (query: string, offset: number) => {
     return { start, end, prefix: query.slice(start, offset) };
 };
 
+const queryLiteralIsSafe = (text: string) => text.length > 0 && isKeyword(text) === null && [...text].every(isLiteralChar);
+
+const quoteQueryLiteral = (text: string) => JSON.stringify(text);
+
+const formatQueryLiteral = (value: unknown): string => {
+    const text =
+        value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+            ? String(value)
+            : JSON.stringify(value);
+
+    return queryLiteralIsSafe(text) ? text : quoteQueryLiteral(text);
+};
+
+export const buildFilterClause = (key: string, operator: QueryFilterOperator, value: unknown): string =>
+    `${formatQueryLiteral(key)}${operator}${formatQueryLiteral(value)}`;
+
+export const appendFilterClause = (query: string, clause: string): string => {
+    const trimmedEnd = query.replace(/\s+$/, '');
+    return trimmedEnd ? `${trimmedEnd} ${clause}` : clause;
+};
+
+const normalizeQuotedLiteral = (text: string): string => {
+    if (text.length < 2) return text;
+
+    const quote = text[0];
+    if ((quote !== '"' && quote !== "'") || text[text.length - 1] !== quote) return text;
+
+    if (quote === '"') {
+        try {
+            return JSON.parse(text);
+        } catch {
+            return text.slice(1, -1);
+        }
+    }
+
+    let result = '';
+    for (let index = 1; index < text.length - 1; index += 1) {
+        const char = text[index];
+        if (char === '\\' && index + 1 < text.length - 1) {
+            index += 1;
+            result += text[index];
+        } else {
+            result += char;
+        }
+    }
+    return result;
+};
+
+const normalizeQueryLiteral = (text: string): string => normalizeQuotedLiteral(text);
+
+const filterKey = (filter: QueryFilterClause): string => `${filter.key}\u0000${filter.operator}\u0000${filter.value}`;
+
+const tokenIsOpeningBracket = (token: Token): boolean =>
+    token.kind === 'left-square' || token.kind === 'left-curly' || token.kind === 'left-paren';
+
+const tokenIsClosingBracket = (token: Token): boolean =>
+    token.kind === 'right-square' || token.kind === 'right-curly' || token.kind === 'right-paren';
+
+export const basicFilterClauses = (query: string): QueryFilterClause[] => {
+    const tokens = scanQuery(query);
+    let depth = 0;
+
+    for (const token of tokens) {
+        if (tokenIsOpeningBracket(token)) {
+            depth += 1;
+            continue;
+        }
+
+        if (tokenIsClosingBracket(token)) {
+            depth = Math.max(0, depth - 1);
+            continue;
+        }
+
+        if (depth === 0 && token.kind === 'or') {
+            return [];
+        }
+    }
+
+    const clauses: QueryFilterClause[] = [];
+    depth = 0;
+
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+
+        if (tokenIsOpeningBracket(token)) {
+            depth += 1;
+            continue;
+        }
+
+        if (tokenIsClosingBracket(token)) {
+            depth = Math.max(0, depth - 1);
+            continue;
+        }
+
+        if (depth !== 0 || token.kind !== 'literal') {
+            continue;
+        }
+
+        const opIndex = nextNonSpace(tokens, index + 1);
+        const valueIndex = nextNonSpace(tokens, opIndex + 1);
+        const operation = tokens[opIndex];
+        const value = tokens[valueIndex];
+
+        if (!operation || !value || value.kind !== 'literal') {
+            continue;
+        }
+
+        if (operation.kind === 'equal' || operation.kind === 'not-equal') {
+            clauses.push({
+                key: normalizeQueryLiteral(token.text),
+                operator: operation.kind === 'equal' ? '=' : '!=',
+                value: normalizeQueryLiteral(value.text),
+            });
+            index = valueIndex;
+        }
+    }
+
+    return clauses;
+};
+
+export const basicFilterSet = (query: string): Set<string> => new Set(basicFilterClauses(query).map(filterKey));
+
+export const hasBasicFilterClause = (
+    filters: Set<string>,
+    key: string,
+    operator: QueryFilterOperator,
+    value: unknown,
+): boolean => filters.has(filterKey({ key, operator, value: normalizeQueryLiteral(formatQueryLiteral(value)) }));
+
 const CloseIcon: Component = () => (
     <svg class="size-3.5" viewBox="0 0 12 12" aria-hidden="true">
         <path
@@ -448,12 +585,19 @@ const CloseIcon: Component = () => (
     </svg>
 );
 
-const QueryInput: Component = () => {
+type QueryInputProps = {
+    query: string;
+    setQuery: Setter<string>;
+};
+
+const QueryInput: Component<QueryInputProps> = (props) => {
     let editorRef: HTMLDivElement | undefined;
-    const [query, setQuery] = createSignal('');
     const [caret, setCaret] = createSignal(0);
     const [completionPrefix, setCompletionPrefix] = createSignal('');
     const [activeCompletion, setActiveCompletion] = createSignal(0);
+
+    const query = () => props.query;
+    const setQuery = (nextQuery: string) => props.setQuery(nextQuery);
 
     const tokens = createMemo(() => scanQuery(query()));
     const segments = createMemo(() => renderSegments(tokens()));

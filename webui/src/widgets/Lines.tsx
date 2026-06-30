@@ -1,5 +1,6 @@
 import type { Component, JSX } from 'solid-js';
-import { createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import { basicFilterSet, hasBasicFilterClause, type QueryFilterOperator } from './QueryInput';
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -10,6 +11,8 @@ export type LinesViewType = 'message' | 'json';
 
 type LinesProps = {
     viewType: LinesViewType;
+    query: string;
+    onAttributeAction: (action: AttributeAction, key: string, value: JsonValue) => void;
 };
 
 const timestampKey = '_time';
@@ -263,9 +266,10 @@ const RemoveCircleIcon: Component = () => (
 
 type AttributeAction = 'add' | 'remove';
 
-function logAttributeAction(action: AttributeAction, key: string, value: JsonValue) {
-    console.log(action, key, value);
-}
+const attributeActionOperator: Record<AttributeAction, QueryFilterOperator> = {
+    add: '=',
+    remove: '!=',
+};
 
 function stopPropagation(event: Event) {
     event.stopPropagation();
@@ -273,44 +277,69 @@ function stopPropagation(event: Event) {
 
 type AttributeRowsProps = {
     entry: LogEntry;
+    isActionDisabled: (action: AttributeAction, key: string, value: JsonValue) => boolean;
+    onAttributeAction: (action: AttributeAction, key: string, value: JsonValue) => void;
 };
 
-function finishAttributeAction(event: MouseEvent, action: AttributeAction, key: string, value: JsonValue) {
+function finishAttributeAction(
+    event: MouseEvent,
+    action: AttributeAction,
+    key: string,
+    value: JsonValue,
+    onAttributeAction: (action: AttributeAction, key: string, value: JsonValue) => void,
+) {
     stopPropagation(event);
-    logAttributeAction(action, key, value);
-    event.currentTarget.blur();
+    onAttributeAction(action, key, value);
+    (event.currentTarget as HTMLElement | null)?.blur();
 }
 
 const AttributeRows: Component<AttributeRowsProps> = (props) => (
     <div class="col-span-full border-t border-border/70 bg-muted/35 py-2 pl-[292px] pr-2 max-[640px]:pl-0">
         <div class="flex flex-col gap-1">
             <For each={Object.entries(props.entry)}>
-                {([key, value]) => (
-                    <div class="group/attr -mx-1 flex min-h-7 items-center gap-3 rounded-[2px] px-1 font-mono text-[12px] hover:bg-accent max-[640px]:gap-2">
-                        <span class="w-32 flex-shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{key}</span>
-                        <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-foreground">{formatAttributeValue(value)}</span>
-                        <div class="flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/attr:opacity-100 group-focus-within/attr:opacity-100">
-                            <button
-                                type="button"
-                                class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-primary/20 hover:text-primary"
-                                title={`Add ${key}`}
-                                aria-label={`Add ${key}`}
-                                onClick={(event) => finishAttributeAction(event, 'add', key, value)}
-                            >
-                                <AddCircleIcon />
-                            </button>
-                            <button
-                                type="button"
-                                class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-                                title={`Remove ${key}`}
-                                aria-label={`Remove ${key}`}
-                                onClick={(event) => finishAttributeAction(event, 'remove', key, value)}
-                            >
-                                <RemoveCircleIcon />
-                            </button>
+                {([key, value]) => {
+                    const addDisabled = () => props.isActionDisabled('add', key, value);
+                    const removeDisabled = () => props.isActionDisabled('remove', key, value);
+
+                    return (
+                        <div class="group/attr -mx-1 flex min-h-7 items-center gap-3 rounded-[2px] px-1 font-mono text-[12px] hover:bg-accent max-[640px]:gap-2">
+                            <span class="w-32 flex-shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{key}</span>
+                            <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-foreground">{formatAttributeValue(value)}</span>
+                            <div class="flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/attr:opacity-100 group-focus-within/attr:opacity-100">
+                                <button
+                                    type="button"
+                                    disabled={addDisabled()}
+                                    class={cx(
+                                        'grid size-6 place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground',
+                                        addDisabled()
+                                            ? 'cursor-not-allowed opacity-35'
+                                            : 'cursor-pointer hover:bg-primary/20 hover:text-primary',
+                                    )}
+                                    title={addDisabled() ? `${key} is already included` : `Add ${key}`}
+                                    aria-label={`Add ${key}`}
+                                    onClick={(event) => finishAttributeAction(event, 'add', key, value, props.onAttributeAction)}
+                                >
+                                    <AddCircleIcon />
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={removeDisabled()}
+                                    class={cx(
+                                        'grid size-6 place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground',
+                                        removeDisabled()
+                                            ? 'cursor-not-allowed opacity-35'
+                                            : 'cursor-pointer hover:bg-destructive/20 hover:text-destructive',
+                                    )}
+                                    title={removeDisabled() ? `${key} is already excluded` : `Remove ${key}`}
+                                    aria-label={`Remove ${key}`}
+                                    onClick={(event) => finishAttributeAction(event, 'remove', key, value, props.onAttributeAction)}
+                                >
+                                    <RemoveCircleIcon />
+                                </button>
+                            </div>
                         </div>
-                    </div>
-                )}
+                    );
+                }}
             </For>
         </div>
     </div>
@@ -318,6 +347,10 @@ const AttributeRows: Component<AttributeRowsProps> = (props) => (
 
 const Lines: Component<LinesProps> = (props) => {
     const [expandedRows, setExpandedRows] = createSignal<Set<number>>(new Set());
+    const filters = createMemo(() => basicFilterSet(props.query));
+
+    const isActionDisabled = (action: AttributeAction, key: string, value: JsonValue): boolean =>
+        hasBasicFilterClause(filters(), key, attributeActionOperator[action], value);
 
     function isExpanded(index: number): boolean {
         return expandedRows().has(index);
@@ -392,7 +425,11 @@ const Lines: Component<LinesProps> = (props) => {
                                         {getMsg(entry)}
                                     </p>
                                     <Show when={isExpanded(index)}>
-                                        <AttributeRows entry={entry} />
+                                        <AttributeRows
+                                            entry={entry}
+                                            isActionDisabled={isActionDisabled}
+                                            onAttributeAction={props.onAttributeAction}
+                                        />
                                     </Show>
                                 </article>
                             }
@@ -426,7 +463,11 @@ const Lines: Component<LinesProps> = (props) => {
                                     {formatEntry(entry)}
                                 </pre>
                                 <Show when={isExpanded(index)}>
-                                    <AttributeRows entry={entry} />
+                                    <AttributeRows
+                                        entry={entry}
+                                        isActionDisabled={isActionDisabled}
+                                        onAttributeAction={props.onAttributeAction}
+                                    />
                                 </Show>
                             </article>
                         </Show>

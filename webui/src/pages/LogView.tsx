@@ -3,6 +3,7 @@ import { createSignal } from 'solid-js';
 
 import Lines, { type LinesViewType } from "../widgets/Lines";
 import QueryBuilder from "../widgets/QueryBuilder";
+import { appendFilterClause, buildFilterClause } from "../widgets/QueryInput";
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -11,10 +12,18 @@ const titleClass = 'm-0 text-[13px] font-extrabold uppercase leading-[1.2] track
 
 const LogView: Component = () => {
     const [linesViewType, setLinesViewType] = createSignal<LinesViewType>('message');
+    const [query, setQuery] = createSignal('');
 
     const setQueryToken = (token: string) => {
         console.info('set time range query token', token);
     }
+
+    const applyAttributeAction = (action: 'add' | 'remove', key: string, value: unknown) => {
+        const operator = action === 'add' ? '=' : '!=';
+        const clause = buildFilterClause(key, operator, value);
+        setQuery((current) => appendFilterClause(current, clause));
+    };
+
     return (
         <main class="min-h-screen overflow-hidden bg-background font-sans tracking-normal text-foreground">
             <header
@@ -45,7 +54,7 @@ const LogView: Component = () => {
                     aria-label="Ochi Logs"
                 >
 
-                    <QueryBuilder setTimeRangeQueryToken={setQueryToken} />
+                    <QueryBuilder query={query()} setQuery={setQuery} setTimeRangeQueryToken={setQueryToken} />
 
                     <section class="flex min-h-0 flex-auto flex-col overflow-hidden" aria-label="Log stream">
                         <div
@@ -83,7 +92,7 @@ const LogView: Component = () => {
                             </div>
                         </div>
 
-                        <Lines viewType={linesViewType()} />
+                        <Lines viewType={linesViewType()} query={query()} onAttributeAction={applyAttributeAction} />
                     </section>
                 </section>
             </div>
