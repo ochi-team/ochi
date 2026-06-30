@@ -1,7 +1,6 @@
 import type { Component } from 'solid-js';
 
 import Lines from "../widgets/Lines";
-import Stats from "../widgets/Stats";
 import QueryBuilder from "../widgets/QueryBuilder";
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
@@ -40,7 +39,6 @@ const LogView: Component = () => {
                     aria-label="Ochi Logs"
                 >
 
-                    <Stats />
                     <QueryBuilder />
 
                     <section class="flex min-h-0 flex-auto flex-col overflow-hidden" aria-label="Log stream">
