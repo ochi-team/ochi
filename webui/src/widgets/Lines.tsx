@@ -264,6 +264,13 @@ const RemoveCircleIcon: Component = () => (
     </svg>
 );
 
+const CopyIcon: Component = () => (
+    <svg class="size-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect width="14" height="14" x="8" y="8" rx="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+);
+
 type AttributeAction = 'add' | 'remove';
 
 const attributeActionOperator: Record<AttributeAction, QueryFilterOperator> = {
@@ -291,6 +298,16 @@ function finishAttributeAction(
     stopPropagation(event);
     onAttributeAction(action, key, value);
     (event.currentTarget as HTMLElement | null)?.blur();
+}
+
+async function copyAttributeValue(event: MouseEvent, value: JsonValue) {
+    stopPropagation(event);
+
+    try {
+        await navigator.clipboard.writeText(formatAttributeValue(value));
+    } finally {
+        (event.currentTarget as HTMLElement | null)?.blur();
+    }
 }
 
 const AttributeRows: Component<AttributeRowsProps> = (props) => (
@@ -335,6 +352,15 @@ const AttributeRows: Component<AttributeRowsProps> = (props) => (
                                     onClick={(event) => finishAttributeAction(event, 'remove', key, value, props.onAttributeAction)}
                                 >
                                     <RemoveCircleIcon />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground"
+                                    title={`Copy ${key} value`}
+                                    aria-label={`Copy ${key} value`}
+                                    onClick={(event) => copyAttributeValue(event, value)}
+                                >
+                                    <CopyIcon />
                                 </button>
                             </div>
                         </div>
@@ -419,7 +445,7 @@ const Lines: Component<LinesProps> = (props) => {
                                         aria-label="Open in side window"
                                         onClick={stopPropagation}
                                     >
-                                        <OpenSideWindowIcon />
+                                        {/* <OpenSideWindowIcon /> */}
                                     </button>
                                     <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', styles.message)}>
                                         {getMsg(entry)}
