@@ -1,6 +1,7 @@
 import type { Component } from 'solid-js';
+import { createSignal } from 'solid-js';
 
-import Lines from "../widgets/Lines";
+import Lines, { type LinesViewType } from "../widgets/Lines";
 import QueryBuilder from "../widgets/QueryBuilder";
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
@@ -9,6 +10,8 @@ const borderStrong = 'border-border';
 const titleClass = 'm-0 text-[13px] font-extrabold uppercase leading-[1.2] tracking-[0.08em] text-muted-foreground';
 
 const LogView: Component = () => {
+    const [linesViewType, setLinesViewType] = createSignal<LinesViewType>('message');
+
     const setQueryToken = (token: string) => {
         console.info('set time range query token', token);
     }
@@ -55,16 +58,24 @@ const LogView: Component = () => {
                                 <h2 class={titleClass}>Log Stream</h2>
                                 <div class="flex gap-0 rounded-[2px] bg-muted p-0.5" role="tablist" aria-label="Log display format">
                                     <button
-                                        class="min-h-7 min-w-[78px] cursor-pointer border-0 bg-primary px-3 text-[11px] font-extrabold text-primary-foreground"
+                                        class={cx(
+                                            'min-h-7 min-w-[78px] cursor-pointer border-0 px-3 text-[11px] font-extrabold',
+                                            linesViewType() === 'message' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground',
+                                        )}
                                         role="tab"
-                                        aria-selected="true"
+                                        aria-selected={linesViewType() === 'message'}
+                                        onClick={() => setLinesViewType('message')}
                                     >
                                         MESSAGE
                                     </button>
                                     <button
-                                        class="min-h-7 min-w-[78px] cursor-pointer border-0 bg-transparent px-3 text-[11px] font-extrabold text-muted-foreground"
+                                        class={cx(
+                                            'min-h-7 min-w-[78px] cursor-pointer border-0 px-3 text-[11px] font-extrabold',
+                                            linesViewType() === 'json' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground',
+                                        )}
                                         role="tab"
-                                        aria-selected="false"
+                                        aria-selected={linesViewType() === 'json'}
+                                        onClick={() => setLinesViewType('json')}
                                     >
                                         JSON
                                     </button>
@@ -72,7 +83,7 @@ const LogView: Component = () => {
                             </div>
                         </div>
 
-                        <Lines />
+                        <Lines viewType={linesViewType()} />
                     </section>
                 </section>
             </div>

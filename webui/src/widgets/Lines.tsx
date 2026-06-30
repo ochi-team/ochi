@@ -1,11 +1,16 @@
 import type { Component } from 'solid-js';
-import { For } from 'solid-js';
+import { For, Show } from 'solid-js';
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
 type Level = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'critical' | 'unknown';
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type LogEntry = Record<string, JsonValue>;
+export type LinesViewType = 'message' | 'json';
+
+type LinesProps = {
+    viewType: LinesViewType;
+};
 
 const timestampKey = '_time';
 const msgKey = '_msg';
@@ -65,6 +70,10 @@ function getString(value: JsonValue | undefined): string {
     }
 
     return '';
+}
+
+function formatEntry(entry: LogEntry): string {
+    return JSON.stringify(entry, null, 2);
 }
 
 
@@ -186,7 +195,7 @@ const OpenSideWindowIcon: Component = () => (
     </svg>
 );
 
-const Lines: Component = () => {
+const Lines: Component<LinesProps> = (props) => {
     return (
         <div class="grid min-h-0 content-start overflow-auto bg-background">
             <For each={logs}>
@@ -195,29 +204,41 @@ const Lines: Component = () => {
                     const styles = levelStyles[level];
 
                     return (
-                        <article
-                            class="grid min-h-[32px] grid-cols-[180px_80px_24px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_24px_minmax(180px,1fr)] max-[640px]:gap-2 max-[640px]:px-2.5"
+                        <Show
+                            when={props.viewType === 'json'}
+                            fallback={
+                                <article
+                                    class="grid min-h-[32px] grid-cols-[180px_80px_24px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_24px_minmax(180px,1fr)] max-[640px]:gap-2 max-[640px]:px-2.5"
+                                >
+                                    <time class="whitespace-nowrap text-muted-foreground">{getTime(entry)}</time>
+                                    <span
+                                        class={cx(
+                                            'inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
+                                            styles.badge,
+                                        )}
+                                    >
+                                        {level}
+                                    </span>
+                                    <button
+                                        class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
+                                        title="Open in side window"
+                                        aria-label="Open in side window"
+                                    >
+                                        <OpenSideWindowIcon />
+                                    </button>
+                                    <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', styles.message)}>
+                                        {getMsg(entry)}
+                                    </p>
+                                </article>
+                            }
                         >
-                            <time class="whitespace-nowrap text-muted-foreground">{getTime(entry)}</time>
-                            <span
-                                class={cx(
-                                    'inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
-                                    styles.badge,
-                                )}
-                            >
-                                {level}
-                            </span>
-                            <button
-                                class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
-                                title="Open in side window"
-                                aria-label="Open in side window"
-                            >
-                                <OpenSideWindowIcon />
-                            </button>
-                            <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', styles.message)}>
-                                {getMsg(entry)}
-                            </p>
-                        </article>
+                            <article class="grid grid-cols-[4px_minmax(0,1fr)] border-b border-border text-[13px] hover:bg-accent">
+                                <div class={styles.bar} aria-hidden="true" />
+                                <pre class="m-0 overflow-auto px-5 py-3 font-mono text-[12px] leading-[1.45] text-foreground max-[640px]:px-2.5">
+                                    {formatEntry(entry)}
+                                </pre>
+                            </article>
+                        </Show>
                     );
                 }}
             </For>
