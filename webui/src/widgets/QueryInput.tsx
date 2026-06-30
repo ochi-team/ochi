@@ -38,6 +38,23 @@ export type QueryFilterClause = {
     value: string;
 };
 
+type CompletionKind = 'key' | 'value' | 'history';
+
+type CompletionContext = {
+    kind: 'key' | 'value';
+    start: number;
+    end: number;
+    prefix: string;
+};
+
+type Completion = {
+    kind: CompletionKind;
+    label: string;
+    insertion: string;
+    replaceStart: number;
+    replaceEnd: number;
+};
+
 type RenderPart = Token & {
     role: TokenRole;
 };
@@ -74,33 +91,6 @@ const closingToOpening: Record<string, string> = {
     '"': '"',
 };
 
-const suggestions = [
-    'env',
-    'service',
-    'host',
-    'level',
-    'message',
-    'path',
-    'endpoint',
-    'status',
-    'region',
-    'namespace',
-    'pod',
-    'container',
-    'prod',
-    'error',
-    'warn',
-    'info',
-    'debug',
-    'api',
-    'web',
-    'health',
-    'timeout',
-    'panic',
-    'now',
-    'value=42',
-];
-
 const tokenClassByRole: Record<TokenRole, string> = {
     key: 'text-chart-2 font-extrabold',
     value: 'text-chart-1',
@@ -112,8 +102,6 @@ const tokenClassByRole: Record<TokenRole, string> = {
     unknown: 'text-destructive',
 };
 
-const isAlpha = (char: string) => /^[A-Za-z]$/.test(char);
-const isWordChar = (char: string) => /^[A-Za-z0-9_.-]$/.test(char);
 const isLiteralChar = (char: string) => /^[A-Za-z0-9]$/.test(char) || literalChars.has(char);
 const isWhitespace = (char: string) => char === ' ' || char === '\t' || char === '\n';
 const isOperation = (kind: TokenKind) => kind === 'equal' || kind === 'not-equal' || kind === 'match-regex' || kind === 'not-match-regex';
@@ -438,8 +426,8 @@ const wordRangeAt = (query: string, offset: number) => {
     let start = offset;
     let end = offset;
 
-    while (start > 0 && isWordChar(query[start - 1])) start -= 1;
-    while (end < query.length && isWordChar(query[end])) end += 1;
+    while (start > 0 && isLiteralChar(query[start - 1])) start -= 1;
+    while (end < query.length && isLiteralChar(query[end])) end += 1;
 
     return { start, end, prefix: query.slice(start, offset) };
 };
@@ -588,12 +576,16 @@ const CloseIcon: Component = () => (
 type QueryInputProps = {
     query: string;
     setQuery: Setter<string>;
+    keys: string[];
+    values: string[];
+    historicQueries: string[];
 };
 
 const QueryInput: Component<QueryInputProps> = (props) => {
     let editorRef: HTMLDivElement | undefined;
     const [caret, setCaret] = createSignal(0);
-    const [completionPrefix, setCompletionPrefix] = createSignal('');
+    const [completionContext, setCompletionContext] = createSignal<CompletionContext | null>(null);
+    const [historyCompletionOpen, setHistoryCompletionOpen] = createSignal(false);
     const [activeCompletion, setActiveCompletion] = createSignal(0);
 
     const query = () => props.query;
@@ -602,11 +594,59 @@ const QueryInput: Component<QueryInputProps> = (props) => {
     const tokens = createMemo(() => scanQuery(query()));
     const segments = createMemo(() => renderSegments(tokens()));
     const completions = createMemo(() => {
-        const prefix = completionPrefix().toLowerCase();
-        if (!prefix) return [];
-        return suggestions
-            .filter((suggestion) => suggestion.toLowerCase().startsWith(prefix) && suggestion.toLowerCase() !== prefix)
-            .slice(0, 5);
+        const currentQuery = query();
+        const historyNeedle = currentQuery.trim().toLowerCase();
+        const seen = new Set<string>();
+        const result: Completion[] = [];
+        const context = completionContext();
+
+        if (context) {
+            const prefix = context.prefix.toLowerCase();
+            const source = context.kind === 'key' ? props.keys : props.values;
+
+            for (const suggestion of source) {
+                const loweredSuggestion = suggestion.toLowerCase();
+                if (!loweredSuggestion.startsWith(prefix) || loweredSuggestion === prefix) {
+                    continue;
+                }
+
+                const insertion = formatQueryLiteral(suggestion);
+                const id = `${context.kind}\u0000${insertion}\u0000${context.start}\u0000${context.end}`;
+                if (seen.has(id)) continue;
+
+                seen.add(id);
+                result.push({
+                    kind: context.kind,
+                    label: suggestion,
+                    insertion,
+                    replaceStart: context.start,
+                    replaceEnd: context.end,
+                });
+            }
+        }
+
+        if (historyCompletionOpen() && historyNeedle) {
+            for (const historicQuery of props.historicQueries) {
+                const loweredHistoricQuery = historicQuery.toLowerCase();
+                if (!loweredHistoricQuery.includes(historyNeedle) || loweredHistoricQuery === historyNeedle) {
+                    continue;
+                }
+
+                const id = `history\u0000${historicQuery}`;
+                if (seen.has(id)) continue;
+
+                seen.add(id);
+                result.push({
+                    kind: 'history',
+                    label: historicQuery,
+                    insertion: historicQuery,
+                    replaceStart: 0,
+                    replaceEnd: currentQuery.length,
+                });
+            }
+        }
+
+        return result.slice(0, 5);
     });
     const showCompletions = createMemo(() => completions().length > 0);
 
@@ -622,15 +662,46 @@ const QueryInput: Component<QueryInputProps> = (props) => {
         scheduleCaretRestore(nextCaret);
     };
 
+    const closeCompletion = () => {
+        setCompletionContext(null);
+        setHistoryCompletionOpen(false);
+        setActiveCompletion(0);
+    };
+
     const updateCompletion = (nextQuery: string, nextCaret: number, forceOpen: boolean) => {
-        const word = wordRangeAt(nextQuery, nextCaret);
-        if (forceOpen && word.prefix && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(word.prefix)) {
-            setCompletionPrefix(word.prefix);
-            setActiveCompletion(0);
-        } else {
-            setCompletionPrefix('');
-            setActiveCompletion(0);
+        if (!forceOpen) {
+            closeCompletion();
+            return;
         }
+
+        const word = wordRangeAt(nextQuery, nextCaret);
+        setHistoryCompletionOpen(Boolean(nextQuery.trim()));
+
+        if (word.prefix) {
+            const previous = nearestNonSpaceBefore(scanQuery(nextQuery), word.start);
+            setCompletionContext({
+                kind: previous?.kind === 'equal' || previous?.kind === 'not-equal' ? 'value' : 'key',
+                start: word.start,
+                end: word.end,
+                prefix: word.prefix,
+            });
+            setActiveCompletion(0);
+            return;
+        }
+
+        const previous = nearestNonSpaceBefore(scanQuery(nextQuery), nextCaret);
+        if (previous?.kind === 'equal' || previous?.kind === 'not-equal') {
+            setCompletionContext({
+                kind: 'value',
+                start: nextCaret,
+                end: nextCaret,
+                prefix: '',
+            });
+            setActiveCompletion(0);
+            return;
+        }
+
+        closeCompletion();
     };
 
     const currentRange = () => {
@@ -660,11 +731,11 @@ const QueryInput: Component<QueryInputProps> = (props) => {
 
         if (text.length === 1 && closingToOpening[text] && start === end && current[start] === text && bracketSequenceIsValid(current)) {
             scheduleCaretRestore(start + 1);
-            setCompletionPrefix('');
+            closeCompletion();
             return;
         }
 
-        replaceRange(start, end, text, start + text.length, text.length === 1 && isAlpha(text));
+        replaceRange(start, end, text, start + text.length, text.length === 1 && !isWhitespace(text));
     };
 
     const deleteText = (backward: boolean) => {
@@ -687,7 +758,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
                 const next = current.slice(0, start - 1) + current.slice(start + 1);
                 if (bracketSequenceIsValid(next)) {
                     setQueryWithCaret(next, start - 1);
-                    setCompletionPrefix('');
+                    closeCompletion();
                     return;
                 }
             }
@@ -696,7 +767,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
                 const next = current.slice(0, start - 2) + current.slice(start);
                 if (bracketSequenceIsValid(next)) {
                     setQueryWithCaret(next, start - 2);
-                    setCompletionPrefix('');
+                    closeCompletion();
                     return;
                 }
             }
@@ -715,7 +786,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
             const next = current.slice(0, start) + current.slice(start + 2);
             if (bracketSequenceIsValid(next)) {
                 setQueryWithCaret(next, start);
-                setCompletionPrefix('');
+                closeCompletion();
                 return;
             }
         }
@@ -724,7 +795,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
             const next = current.slice(0, start - 1) + current.slice(start + 1);
             if (bracketSequenceIsValid(next)) {
                 setQueryWithCaret(next, start - 1);
-                setCompletionPrefix('');
+                closeCompletion();
                 return;
             }
         }
@@ -738,13 +809,11 @@ const QueryInput: Component<QueryInputProps> = (props) => {
         editorRef?.focus();
     };
 
-    const applyCompletion = (completion: string) => {
-        const { start, end } = wordRangeAt(query(), caret());
-        const nextQuery = query().slice(0, start) + completion + query().slice(end);
-        const nextCaret = start + completion.length;
+    const applyCompletion = (completion: Completion) => {
+        const nextQuery = query().slice(0, completion.replaceStart) + completion.insertion + query().slice(completion.replaceEnd);
+        const nextCaret = completion.replaceStart + completion.insertion.length;
         setQueryWithCaret(nextQuery, nextCaret);
-        setCompletionPrefix('');
-        setActiveCompletion(0);
+        closeCompletion();
         editorRef?.focus();
     };
 
@@ -790,13 +859,14 @@ const QueryInput: Component<QueryInputProps> = (props) => {
 
             if (event.key === 'Enter' || event.key === 'Tab') {
                 event.preventDefault();
-                applyCompletion(completions()[activeCompletion()]);
+                const completion = completions()[activeCompletion()];
+                if (completion) applyCompletion(completion);
                 return;
             }
 
             if (event.key === 'Escape') {
                 event.preventDefault();
-                setCompletionPrefix('');
+                closeCompletion();
                 return;
             }
         } else if (event.key === 'Enter') {
@@ -823,14 +893,14 @@ const QueryInput: Component<QueryInputProps> = (props) => {
     const onMouseUp = () => {
         const range = currentRange();
         scheduleCaretRestore(range.end);
-        setCompletionPrefix('');
+        closeCompletion();
     };
 
     const onKeyUp: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
         if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') {
             const range = currentRange();
             setCaret(range.end);
-            setCompletionPrefix('');
+            closeCompletion();
         }
     };
 
@@ -899,20 +969,21 @@ const QueryInput: Component<QueryInputProps> = (props) => {
             </Show>
 
             <Show when={showCompletions()}>
-                <div class="absolute left-0 top-[calc(100%+4px)] z-20 w-56 border border-border bg-popover shadow-md">
+                <div class="absolute left-0 top-[calc(100%+4px)] z-20 w-72 border border-border bg-popover shadow-md">
                     <For each={completions()}>
                         {(completion, index) => (
                             <button
                                 type="button"
                                 class={cx(
-                                    'block min-h-8 w-full cursor-pointer border-0 px-3 text-left text-sm text-popover-foreground',
+                                    'flex min-h-8 w-full cursor-pointer items-center gap-3 border-0 px-3 text-left text-sm text-popover-foreground',
                                     index() === activeCompletion() && 'bg-primary text-primary-foreground',
                                     index() !== activeCompletion() && 'bg-transparent hover:bg-accent hover:text-accent-foreground',
                                 )}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => applyCompletion(completion)}
                             >
-                                {completion}
+                                <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{completion.label}</span>
+                                <span class="shrink-0 text-[10px] font-extrabold uppercase opacity-65">{completion.kind}</span>
                             </button>
                         )}
                     </For>

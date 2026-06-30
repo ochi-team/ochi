@@ -44,6 +44,9 @@ if (timeRangeOptions.length != timeRangeQueryTokens.length) {
 type QueryBuilderProps = {
     query: string;
     setQuery: Setter<string>;
+    keys: string[];
+    values: string[];
+    historicQueries: string[];
     setTimeRangeQueryToken: (token: string) => void;
     entriesCount: number;
     isLoading: boolean;
@@ -64,7 +67,13 @@ const QueryBuilder: Component<QueryBuilderProps> = (props) => {
                     void props.onRunQuery();
                 }}
             >
-                <QueryInput query={props.query} setQuery={props.setQuery} />
+                <QueryInput
+                    query={props.query}
+                    setQuery={props.setQuery}
+                    keys={props.keys}
+                    values={props.values}
+                    historicQueries={props.historicQueries}
+                />
                 <button
                     type="submit"
                     disabled={props.isLoading}

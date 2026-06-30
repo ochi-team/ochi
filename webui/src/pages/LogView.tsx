@@ -1,21 +1,27 @@
 import type { Component } from 'solid-js';
-import { createSignal, onCleanup, onMount } from 'solid-js';
+import { createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 
 import Lines, { type LinesViewType } from "../widgets/Lines";
 import QueryBuilder from "../widgets/QueryBuilder";
 import { appendFilterClause, buildFilterClause } from "../widgets/QueryInput";
-import { buildLoqlQuery, queryLogs, type LogEntry } from "../client/query";
+import { buildLoqlQuery, queryLogs, type JsonValue, type LogEntry } from "../client/query";
+import { loadQueryHistory, pushQueryHistory, saveQueryHistory } from "../stores/queryHistory";
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
 const borderStrong = 'border-border';
 const titleClass = 'm-0 text-[13px] font-extrabold uppercase leading-[1.2] tracking-[0.08em] text-muted-foreground';
 
+function isPrimitiveAttributeValue(value: JsonValue): value is string | number | boolean | null {
+    return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
 const LogView: Component = () => {
     const [linesViewType, setLinesViewType] = createSignal<LinesViewType>('message');
     const [query, setQuery] = createSignal('');
     const [timeRangeQueryToken, setTimeRangeQueryToken] = createSignal('15m');
     const [lines, setLines] = createSignal<LogEntry[]>([]);
+    const [historicQueries, setHistoricQueries] = createSignal<string[]>(loadQueryHistory());
     const [isQueryLoading, setIsQueryLoading] = createSignal(false);
     const [queryError, setQueryError] = createSignal<string | null>(null);
     let queryController: AbortController | undefined;
@@ -24,8 +30,39 @@ const LogView: Component = () => {
         setTimeRangeQueryToken(token);
     }
 
+    const querySuggestionKeys = createMemo(() => {
+        const seen = new Set<string>();
+        for (const line of lines()) {
+            for (const key of Object.keys(line)) {
+                seen.add(key);
+            }
+        }
+        return [...seen].sort((left, right) => left.localeCompare(right));
+    });
+
+    const querySuggestionValues = createMemo(() => {
+        const seen = new Set<string>();
+        for (const line of lines()) {
+            for (const value of Object.values(line)) {
+                if (isPrimitiveAttributeValue(value)) {
+                    seen.add(String(value));
+                }
+            }
+        }
+        return [...seen].sort((left, right) => left.localeCompare(right));
+    });
+
+    const rememberCurrentQuery = () => {
+        setHistoricQueries((current) => {
+            const next = pushQueryHistory(current, query());
+            saveQueryHistory(next);
+            return next;
+        });
+    };
+
     const runQuery = async () => {
         queryController?.abort();
+        rememberCurrentQuery();
 
         const controller = new AbortController();
         queryController = controller;
@@ -99,6 +136,9 @@ const LogView: Component = () => {
                     <QueryBuilder
                         query={query()}
                         setQuery={setQuery}
+                        keys={querySuggestionKeys()}
+                        values={querySuggestionValues()}
+                        historicQueries={historicQueries()}
                         setTimeRangeQueryToken={setQueryToken}
                         entriesCount={lines().length}
                         isLoading={isQueryLoading()}
