@@ -71,6 +71,7 @@ const LogView: Component = () => {
                                 </div>
                             </div>
                         </div>
+
                         <Lines />
                     </section>
                 </section>
