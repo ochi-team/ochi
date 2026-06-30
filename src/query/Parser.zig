@@ -14,6 +14,8 @@ const expectCloseSquareBracket = "Expect ']' after time range.";
 const expectComaBetweenTimeValues = "Expect ',' between time range values.";
 const expectExpression = "Expect expression.";
 
+const maxParseIterations = 512;
+
 // TODO: benchmark if *[2]Expression gives better locality,
 // do the same for FilterExpression
 pub const Expression = union(enum) {
@@ -201,7 +203,7 @@ fn conjunction(
 ) ParseError!Expression {
     var expr = try self.equality(allocator, tokens, allowsOps, reporter);
 
-    while (self.match(tokens, &.{.And})) {
+    while (self.match(tokens, &.{.And}) or self.matchEquality(tokens, allowsOps)) {
         const right = try self.equality(allocator, tokens, allowsOps, reporter);
 
         const leftNode = try self.allocExpression(allocator, expr);
@@ -211,6 +213,31 @@ fn conjunction(
     }
 
     return expr;
+}
+
+fn matchEquality(self: *const Parser, tokens: []const Token, allowsOps: []const TokenKind) bool {
+    if (self.current >= tokens.len) {
+        return false;
+    }
+
+    // identifies it starts with <Literal, Op>
+    switch (tokens[self.current].kind) {
+        .LeftParenthesis => return true,
+        .Literal => {
+            if (self.current + 1 >= tokens.len) {
+                return false;
+            }
+
+            for (allowsOps) |op| {
+                if (tokens[self.current + 1].kind == op) {
+                    return true;
+                }
+            }
+
+            return false;
+        },
+        else => return false,
+    }
 }
 
 fn equality(
@@ -394,6 +421,37 @@ test "Parser.expression" {
                 .query = .{ .equalOp = .{
                     &.{ .literal = "field" },
                     &.{ .literal = "value" },
+                } },
+                .pipes = .empty,
+            },
+            .expectedSyntaxErrors = &.{},
+        },
+        // implicit AND between adjacent equality expressions
+        .{
+            .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
+                .{ .kind = .Literal, .lexeme = "env", .line = 1, .col = 8 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 11 },
+                .{ .kind = .Literal, .lexeme = "prod", .line = 1, .col = 12 },
+                .{ .kind = .Literal, .lexeme = "message", .line = 1, .col = 17 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 24 },
+                .{ .kind = .Literal, .lexeme = "err", .line = 1, .col = 25 },
+            },
+            .expectedQuerySet = .{
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
+                .tags = null,
+                .query = .{ .andOp = .{
+                    &.{ .equalOp = .{
+                        &.{ .literal = "env" },
+                        &.{ .literal = "prod" },
+                    } },
+                    &.{ .equalOp = .{
+                        &.{ .literal = "message" },
+                        &.{ .literal = "err" },
+                    } },
                 } },
                 .pipes = .empty,
             },
