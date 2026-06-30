@@ -15,6 +15,7 @@ type LinesProps = {
 const timestampKey = '_time';
 const msgKey = '_msg';
 const levelKeys = ['level', 'lvl', 'l', '@l'];
+const lineRowGrid = 'grid-cols-[180px_80px_24px_minmax(0,1fr)] max-[640px]:grid-cols-[180px_58px_24px_minmax(180px,1fr)]';
 
 function getTime(e: LogEntry): string {
     return getString(e[timestampKey]);
@@ -73,7 +74,45 @@ function getString(value: JsonValue | undefined): string {
 }
 
 function formatEntry(entry: LogEntry): string {
-    return JSON.stringify(entry, null, 2);
+    return formatJsonValue(entry, 0);
+}
+
+function formatJsonValue(value: JsonValue, depth: number): string {
+    const indent = '  '.repeat(depth);
+    const childIndent = '  '.repeat(depth + 1);
+
+    if (value === null) {
+        return 'null';
+    }
+
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return '[]';
+        }
+
+        const lines = value.map((item, index) => {
+            const comma = index === value.length - 1 ? '' : ',';
+            return `${childIndent}${formatJsonValue(item, depth + 1)}${comma}`;
+        });
+
+        return `[\n${lines.join('\n')}\n${indent}]`;
+    }
+
+    const entries = Object.entries(value);
+    if (entries.length === 0) {
+        return '{}';
+    }
+
+    const lines = entries.map(([key, item], index) => {
+        const comma = index === entries.length - 1 ? '' : ',';
+        return `${childIndent}${key}: ${formatJsonValue(item, depth + 1)}${comma}`;
+    });
+
+    return `{\n${lines.join('\n')}\n${indent}}`;
 }
 
 
@@ -208,12 +247,15 @@ const Lines: Component<LinesProps> = (props) => {
                             when={props.viewType === 'json'}
                             fallback={
                                 <article
-                                    class="grid min-h-[32px] grid-cols-[180px_80px_24px_minmax(260px,1fr)] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:grid-cols-[126px_58px_24px_minmax(180px,1fr)] max-[640px]:gap-2 max-[640px]:px-2.5"
+                                    class={cx(
+                                        'grid min-h-[32px] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
+                                        lineRowGrid,
+                                    )}
                                 >
                                     <time class="whitespace-nowrap text-muted-foreground">{getTime(entry)}</time>
                                     <span
                                         class={cx(
-                                            'inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
+                                            'ml-2 inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
                                             styles.badge,
                                         )}
                                     >
@@ -232,9 +274,29 @@ const Lines: Component<LinesProps> = (props) => {
                                 </article>
                             }
                         >
-                            <article class="grid grid-cols-[4px_minmax(0,1fr)] border-b border-border text-[13px] hover:bg-accent">
-                                <div class={styles.bar} aria-hidden="true" />
-                                <pre class="m-0 overflow-auto px-5 py-3 font-mono text-[12px] leading-[1.45] text-foreground max-[640px]:px-2.5">
+                            <article
+                                class={cx(
+                                    'grid auto-rows-auto items-start gap-3 border-b border-border px-5 py-2 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
+                                    lineRowGrid,
+                                )}
+                            >
+                                <time class="whitespace-nowrap pt-0.5 text-muted-foreground">{getTime(entry)}</time>
+                                <span
+                                    class={cx(
+                                        'ml-2 mt-0.5 inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
+                                        styles.badge,
+                                    )}
+                                >
+                                    {level}
+                                </span>
+                                <button
+                                    class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
+                                    title="Open in side window"
+                                    aria-label="Open in side window"
+                                >
+                                    <OpenSideWindowIcon />
+                                </button>
+                                <pre class="m-0 block min-h-0 min-w-0 overflow-x-auto overflow-y-visible whitespace-pre font-mono text-[12px] leading-[1.45] text-foreground">
                                     {formatEntry(entry)}
                                 </pre>
                             </article>
