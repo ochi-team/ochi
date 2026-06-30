@@ -40,7 +40,7 @@ pub const TimeValue = union(enum) {
 
 pub const QuerySet = struct {
     timeRange: TimeRangeExpression,
-    tags: Expression,
+    tags: ?Expression,
     query: ?Expression,
     pipes: std.ArrayList(PipeEpxpression) = .empty,
 };
@@ -136,8 +136,11 @@ fn time(self: *Parser, tokens: []const Token, reporter: *ErrorReporter) ParseErr
     return Error.SyntaxError;
 }
 
-fn tags(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!Expression {
-    try self.consume(tokens, .LeftCurlyBracket, expectOpenCurlyBracket, reporter);
+fn tags(self: *Parser, allocator: Allocator, tokens: []const Token, reporter: *ErrorReporter) ParseError!?Expression {
+    if (!self.match(tokens, &.{.LeftCurlyBracket})) {
+        return null;
+    }
+
     const expr = try self.boolean(allocator, tokens, &.{ .Equal, .NotEqual }, reporter);
     try self.consume(tokens, .RightCurlyBracket, expectCloseCurlyBracket, reporter);
 
@@ -366,6 +369,28 @@ test "Parser.expression" {
                     &.{ .literal = "env" },
                     &.{ .literal = "prod" },
                 } },
+                .query = .{ .equalOp = .{
+                    &.{ .literal = "field" },
+                    &.{ .literal = "value" },
+                } },
+                .pipes = .empty,
+            },
+            .expectedSyntaxErrors = &.{},
+        },
+        // null tags
+        .{
+            .query = &.{
+                .{ .kind = .LeftSquareBracket, .lexeme = "[", .line = 1, .col = 1 },
+                .{ .kind = .Literal, .lexeme = "-5m", .line = 1, .col = 2 },
+                .{ .kind = .Comma, .lexeme = ",", .line = 1, .col = 5 },
+                .{ .kind = .RightSquareBracket, .lexeme = "]", .line = 1, .col = 6 },
+                .{ .kind = .Literal, .lexeme = "field", .line = 1, .col = 11 },
+                .{ .kind = .Equal, .lexeme = "=", .line = 1, .col = 16 },
+                .{ .kind = .Literal, .lexeme = "value", .line = 1, .col = 17 },
+            },
+            .expectedQuerySet = .{
+                .timeRange = .{ .{ .duration = "-5m" }, .{ .now = {} } },
+                .tags = null,
                 .query = .{ .equalOp = .{
                     &.{ .literal = "field" },
                     &.{ .literal = "value" },

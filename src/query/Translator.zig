@@ -33,7 +33,10 @@ pub fn deinit(self: *Translator, allocator: Allocator) void {
 pub fn query(self: *Translator, allocator: Allocator, qset: QuerySet, nowNs: u64) TranslateError!Query {
     const range = try translateRange(qset.timeRange, nowNs);
 
-    const tagsExpr = try self.translateExpression(allocator, unwrapGroup(&qset.tags));
+    var tagsExpr: ?*const FilterExpression = null;
+    if (qset.tags) |tags| {
+        tagsExpr = try self.translateExpression(allocator, unwrapGroup(&tags));
+    }
     const fieldsExpr = if (qset.query) |q| try self.translateExpression(allocator, unwrapGroup(&q)) else null;
     const q: Query = .{
         .start = range.startTimeNs,
@@ -247,6 +250,34 @@ test "Translator.query" {
                     &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
                     &.{ .predicate = .{ .key = "service", .value = "api", .op = .notEqual } },
                 } },
+                .fieldsExpr = &.{ .orOp = .{
+                    &.{ .predicate = .{ .key = "message", .value = "err.*", .op = .matchRegex } },
+                    &.{ .andOp = .{
+                        &.{ .predicate = .{ .key = "path", .value = "/health", .op = .notMatchRegex } },
+                        &.{ .predicate = .{ .key = "status", .value = "500", .op = .equal } },
+                    } },
+                } },
+            },
+        },
+        // nullable tags
+        .{
+            .qset = .{
+                .timeRange = .{ .{ .duration = "-1m" }, .{ .now = {} } },
+                .tags = null,
+                .query = .{ .orOp = .{
+                    &.{ .matchRegexOp = .{ &.{ .literal = "message" }, &.{ .literal = "err.*" } } },
+                    &.{ .andOp = .{
+                        &.{ .notMatchRegexOp = .{ &.{ .literal = "path" }, &.{ .literal = "/health" } } },
+                        &.{ .equalOp = .{ &.{ .literal = "status" }, &.{ .literal = "500" } } },
+                    } },
+                } },
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedQuery = .{
+                .start = now - std.time.ns_per_min,
+                .end = now,
+                .tagsExpr = null,
                 .fieldsExpr = &.{ .orOp = .{
                     &.{ .predicate = .{ .key = "message", .value = "err.*", .op = .matchRegex } },
                     &.{ .andOp = .{

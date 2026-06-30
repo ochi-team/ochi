@@ -174,6 +174,32 @@ test "translateQuery" {
             },
             .expectedReports = &.{},
         },
+        // tags are optional
+        .{
+            .query = "[-5m,now] env=prod AND message=err",
+            .expected = .{
+                .start = fiveMinutesAgo,
+                .end = now,
+                .fieldsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .predicate = .{ .key = "message", .value = "err", .op = .equal } },
+                } },
+            },
+            .expectedReports = &.{},
+        },
+        // AND is implicit
+        .{
+            .query = "[-5m,now] env=prod message=err",
+            .expected = .{
+                .start = fiveMinutesAgo,
+                .end = now,
+                .fieldsExpr = &.{ .andOp = .{
+                    &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+                    &.{ .predicate = .{ .key = "message", .value = "err", .op = .equal } },
+                } },
+            },
+            .expectedReports = &.{},
+        },
         .{
             .query = "[-2d,30m] {env=prod and service!=api} (message~timeout and path!~health)",
             .expected = .{
