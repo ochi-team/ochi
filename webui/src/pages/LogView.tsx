@@ -41,15 +41,22 @@ const LogView: Component = () => {
     });
 
     const querySuggestionValues = createMemo(() => {
-        const seen = new Set<string>();
+        const seen = new Map<string, Set<string>>();
         for (const line of lines()) {
-            for (const value of Object.values(line)) {
+            for (const [key, value] of Object.entries(line)) {
                 if (isPrimitiveAttributeValue(value)) {
-                    seen.add(String(value));
+                    const values = seen.get(key) ?? new Set<string>();
+                    values.add(String(value));
+                    seen.set(key, values);
                 }
             }
         }
-        return [...seen].sort((left, right) => left.localeCompare(right));
+        return new Map(
+            [...seen].map(([key, values]) => [
+                key,
+                [...values].sort((left, right) => left.localeCompare(right)),
+            ]),
+        );
     });
 
     const rememberCurrentQuery = () => {

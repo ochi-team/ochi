@@ -41,11 +41,18 @@ export type QueryFilterClause = {
 type CompletionKind = 'key' | 'value' | 'history';
 
 type CompletionContext = {
-    kind: 'key' | 'value';
     start: number;
     end: number;
     prefix: string;
-};
+} & (
+    | {
+          kind: 'key';
+      }
+    | {
+          kind: 'value';
+          key: string | null;
+      }
+);
 
 type Completion = {
     kind: CompletionKind;
@@ -320,6 +327,13 @@ const nearestNonSpaceBefore = (tokens: Token[], offset: number): Token | undefin
     return undefined;
 };
 
+const keyBeforeOperation = (tokens: Token[], operation: Token | undefined): string | null => {
+    if (!operation) return null;
+
+    const key = nearestNonSpaceBefore(tokens, operation.start);
+    return key?.kind === 'literal' ? normalizeQueryLiteral(key.text) : null;
+};
+
 const nearestNonSpaceAfter = (tokens: Token[], offset: number): Token | undefined => {
     for (const token of tokens) {
         if (token.start >= offset && token.kind !== 'space') return token;
@@ -577,7 +591,7 @@ type QueryInputProps = {
     query: string;
     setQuery: Setter<string>;
     keys: string[];
-    values: string[];
+    values: ReadonlyMap<string, readonly string[]>;
     historicQueries: string[];
 };
 
@@ -602,7 +616,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
 
         if (context) {
             const prefix = context.prefix.toLowerCase();
-            const source = context.kind === 'key' ? props.keys : props.values;
+            const source = context.kind === 'key' ? props.keys : context.key ? (props.values.get(context.key) ?? []) : [];
 
             for (const suggestion of source) {
                 const loweredSuggestion = suggestion.toLowerCase();
@@ -678,24 +692,29 @@ const QueryInput: Component<QueryInputProps> = (props) => {
         setHistoryCompletionOpen(Boolean(nextQuery.trim()));
 
         if (word.prefix) {
-            const previous = nearestNonSpaceBefore(scanQuery(nextQuery), word.start);
+            const nextTokens = scanQuery(nextQuery);
+            const previous = nearestNonSpaceBefore(nextTokens, word.start);
+            const valueContext = previous?.kind === 'equal' || previous?.kind === 'not-equal';
             setCompletionContext({
-                kind: previous?.kind === 'equal' || previous?.kind === 'not-equal' ? 'value' : 'key',
+                kind: valueContext ? 'value' : 'key',
                 start: word.start,
                 end: word.end,
                 prefix: word.prefix,
+                ...(valueContext ? { key: keyBeforeOperation(nextTokens, previous) } : {}),
             });
             setActiveCompletion(0);
             return;
         }
 
-        const previous = nearestNonSpaceBefore(scanQuery(nextQuery), nextCaret);
+        const nextTokens = scanQuery(nextQuery);
+        const previous = nearestNonSpaceBefore(nextTokens, nextCaret);
         if (previous?.kind === 'equal' || previous?.kind === 'not-equal') {
             setCompletionContext({
                 kind: 'value',
                 start: nextCaret,
                 end: nextCaret,
                 prefix: '',
+                key: keyBeforeOperation(nextTokens, previous),
             });
             setActiveCompletion(0);
             return;

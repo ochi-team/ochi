@@ -45,7 +45,7 @@ type QueryBuilderProps = {
     query: string;
     setQuery: Setter<string>;
     keys: string[];
-    values: string[];
+    values: ReadonlyMap<string, readonly string[]>;
     historicQueries: string[];
     setTimeRangeQueryToken: (token: string) => void;
     entriesCount: number;
