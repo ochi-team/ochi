@@ -275,6 +275,12 @@ type AttributeRowsProps = {
     entry: LogEntry;
 };
 
+function finishAttributeAction(event: MouseEvent, action: AttributeAction, key: string, value: JsonValue) {
+    stopPropagation(event);
+    logAttributeAction(action, key, value);
+    event.currentTarget.blur();
+}
+
 const AttributeRows: Component<AttributeRowsProps> = (props) => (
     <div class="col-span-full border-t border-border/70 bg-muted/35 py-2 pl-[292px] pr-2 max-[640px]:pl-0">
         <div class="flex flex-col gap-1">
@@ -289,10 +295,7 @@ const AttributeRows: Component<AttributeRowsProps> = (props) => (
                                 class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-primary/20 hover:text-primary"
                                 title={`Add ${key}`}
                                 aria-label={`Add ${key}`}
-                                onClick={(event) => {
-                                    stopPropagation(event);
-                                    logAttributeAction('add', key, value);
-                                }}
+                                onClick={(event) => finishAttributeAction(event, 'add', key, value)}
                             >
                                 <AddCircleIcon />
                             </button>
@@ -301,10 +304,7 @@ const AttributeRows: Component<AttributeRowsProps> = (props) => (
                                 class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
                                 title={`Remove ${key}`}
                                 aria-label={`Remove ${key}`}
-                                onClick={(event) => {
-                                    stopPropagation(event);
-                                    logAttributeAction('remove', key, value);
-                                }}
+                                onClick={(event) => finishAttributeAction(event, 'remove', key, value)}
                             >
                                 <RemoveCircleIcon />
                             </button>
