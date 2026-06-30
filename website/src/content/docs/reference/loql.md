@@ -44,8 +44,8 @@ Is a special value that represents the current time, e.g. `now` means the curren
 ### Tags
 
 Tags are key-value pairs that are associated with log lines. 
-They define a stream.
-Your collect specifies them during the ingestion time.
+They define a [stream](../stream).
+Your collectors specify them during the ingestion time.
 They are defined in curly braces, e.g. `{tag1=alpha AND tag2=beta}`. The expression inside the curly braces is a boolean expression that can contain the following:
 
 - `AND` for logical AND
@@ -55,6 +55,12 @@ They are defined in curly braces, e.g. `{tag1=alpha AND tag2=beta}`. The express
 Eventually the query might be more complex, e.g. `{(tag1=alpha AND tag2=beta) OR (tag3=gamma AND tag4=delta)}`.
 
 For comparison of the tag value, only exact match is supported, e.g. `tag1=alpha` means that the value of `tag1` must be exactly `alpha`.
+
+The following key value operators are possible:
+- `=` for exact match, e.g. `field1=x` means that the value of `field1` must be exactly `x`.
+- `!=` for not equal, e.g. `field1!=x` means that
+
+The tags expression is optional, but highly recommended if the stream tags are known. It improves query performance utilizing the indexed fields instead of performing sequential scan.
 
 ### Fields
 
