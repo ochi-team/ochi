@@ -16,8 +16,17 @@ transforms:
         if msg_err == null {
           metadata = {}
           for_each(object(parsed)) -> |key, value| {
-            if key != "msg" {
-              metadata = set!(metadata, [key], string(value) ?? encode_json(value))
+            if key == "@ts" || key == "_ts" {
+              ts, ts_err = parse_timestamp(string(value) ?? encode_json(value), format: "%+")
+              if ts_err == null {
+                .timestamp = ts
+              }
+            } else if key != "msg" {
+              metadata_key = key
+              if key == "@l" || key == "_l" {
+                metadata_key = "lvl"
+              }
+              metadata = set!(metadata, [metadata_key], string(value) ?? encode_json(value))
             }
           }
           .message = msg

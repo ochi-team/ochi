@@ -41,7 +41,7 @@ pub fn main() !void {
     // TODO: replace IO API to evented/zio
     var ioImpl: std.Io.Threaded = .init(alloc, .{
         // TODO: change to a real number of cpus
-        .concurrent_limit = .limited(24),
+        .concurrent_limit = .limited(48),
     });
     defer ioImpl.deinit();
     const io = ioImpl.io();

@@ -1,17 +1,19 @@
 import type { Component, JSX } from 'solid-js';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { basicFilterSet, hasBasicFilterClause, type QueryFilterOperator } from './QueryInput';
+import type { JsonValue, LogEntry } from '../client/query';
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
 type Level = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'critical' | 'unknown';
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-type LogEntry = Record<string, JsonValue>;
 export type LinesViewType = 'message' | 'json';
 
 type LinesProps = {
     viewType: LinesViewType;
     query: string;
+    lines: LogEntry[];
+    isLoading: boolean;
+    error: string | null;
     onAttributeAction: (action: AttributeAction, key: string, value: JsonValue) => void;
 };
 
@@ -131,71 +133,6 @@ function formatJsonValue(value: JsonValue, depth: number): string {
 }
 
 
-const logs: LogEntry[] = [
-    {
-        _time: '2026-06-30T12:42:12.525Z',
-        _msg: 'Socket connection closed unexpectedly by remote peer',
-        level: 'debug',
-        peer: '10.2.41.87',
-        transport: 'tcp',
-        retries: 2,
-    },
-    {
-        _time: '2026-06-30T12:42:10.918Z',
-        _msg: "Optimization: Database index 'idx_user_email' was used for query",
-        lvl: 'info',
-        table: 'users',
-        index: 'idx_user_email',
-        duration_ms: 18,
-    },
-    {
-        _time: '2026-06-30T12:42:08.104Z',
-        _msg: 'Rate limit approaching for IP 185.22.41.12',
-        l: 'WARN',
-        client_ip: '185.22.41.12',
-        remaining: 9,
-        limit: 100,
-    },
-    {
-        _time: '2026-06-30T12:42:05.711Z',
-        _msg: "Health check passed for container 'ochi-api-node-2'",
-        '@l': 'INFO',
-        id: 'ochi-api-node-2',
-        region: 'eu-west-1',
-        ready: true,
-    },
-    {
-        _time: '2026-06-30T12:42:02.377Z',
-        _msg: 'Failed to load resource: the server responded with a status of 404 (Not Found)',
-        level: 'error',
-        method: 'GET',
-        path: '/assets/app.css',
-        status: 404,
-    },
-    {
-        _time: '2026-06-30T12:41:59.880Z',
-        _msg: 'Slow query detected: SELECT * FROM audit_logs WHERE user_id = 9912 (1.2s)',
-        level: 'warning',
-        query: 'SELECT * FROM audit_logs WHERE user_id = 9912',
-        duration_ms: 1200,
-    },
-    {
-        _time: '2026-06-30T12:41:56.024Z',
-        _msg: 'User session established for sid:492...8a',
-        sid: '492...8a',
-        user_id: 9912,
-        mfa: true,
-    },
-    {
-        _time: '2026-06-30T12:41:53.300Z',
-        _msg: 'Worker thread 04 released back to pool',
-        level: 'debug',
-        thread: 4,
-        pool: 'query-exec',
-        queued_jobs: 0,
-    },
-];
-
 const levelStyles: Record<Level, { bar: string; legend: string; badge: string; message: string }> = {
     info: {
         bar: 'bg-chart-1',
@@ -311,7 +248,7 @@ async function copyAttributeValue(event: MouseEvent, value: JsonValue) {
 }
 
 const AttributeRows: Component<AttributeRowsProps> = (props) => (
-    <div class="col-span-full border-t border-border/70 bg-muted/35 py-2 pl-[292px] pr-2 max-[640px]:pl-0">
+    <div class="border-t border-border/70 bg-muted/35 py-2 pl-[292px] pr-2 max-[640px]:pl-0">
         <div class="flex flex-col gap-1">
             <For each={Object.entries(props.entry)}>
                 {([key, value]) => {
@@ -404,8 +341,18 @@ const Lines: Component<LinesProps> = (props) => {
     }
 
     return (
-        <div class="grid min-h-0 content-start overflow-auto bg-background">
-            <For each={logs}>
+        <div class="flex min-h-0 flex-col overflow-auto bg-background">
+            <Show when={props.error}>
+                {(error) => (
+                    <div class="border-b border-border bg-destructive/10 px-5 py-3 text-[13px] font-bold text-destructive">
+                        {error()}
+                    </div>
+                )}
+            </Show>
+            <Show when={!props.isLoading && !props.error && props.lines.length === 0}>
+                <div class="border-b border-border px-5 py-3 text-[13px] text-muted-foreground">No entries</div>
+            </Show>
+            <For each={props.lines}>
                 {(entry, rowIndex) => {
                     const index = rowIndex();
                     const level = getLevel(entry);
@@ -422,17 +369,58 @@ const Lines: Component<LinesProps> = (props) => {
                         <Show
                             when={props.viewType === 'json'}
                             fallback={
+                                <div class="border-b border-border hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] focus-within:[box-shadow:inset_2px_0_0_var(--primary)]">
+                                    <article
+                                        {...rowProps}
+                                        class={cx(
+                                            'grid min-h-[32px] cursor-pointer items-center gap-3 px-5 text-[13px] max-[640px]:gap-2 max-[640px]:px-2.5',
+                                            lineRowGrid,
+                                        )}
+                                    >
+                                        <time class="whitespace-nowrap text-muted-foreground">{getTime(entry)}</time>
+                                        <span
+                                            class={cx(
+                                                'ml-2 inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
+                                                styles.badge,
+                                            )}
+                                        >
+                                            {level}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
+                                            title="Open in side window"
+                                            aria-label="Open in side window"
+                                            onClick={stopPropagation}
+                                        >
+                                            {/* <OpenSideWindowIcon /> */}
+                                        </button>
+                                        <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', styles.message)}>
+                                            {getMsg(entry)}
+                                        </p>
+                                    </article>
+                                    <Show when={isExpanded(index)}>
+                                        <AttributeRows
+                                            entry={entry}
+                                            isActionDisabled={isActionDisabled}
+                                            onAttributeAction={props.onAttributeAction}
+                                        />
+                                    </Show>
+                                </div>
+                            }
+                        >
+                            <div class="border-b border-border hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] focus-within:[box-shadow:inset_2px_0_0_var(--primary)]">
                                 <article
                                     {...rowProps}
                                     class={cx(
-                                        'grid min-h-[32px] cursor-pointer items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] focus-visible:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
+                                        'grid cursor-pointer items-start gap-3 px-5 py-2 text-[13px] max-[640px]:gap-2 max-[640px]:px-2.5',
                                         lineRowGrid,
                                     )}
                                 >
-                                    <time class="whitespace-nowrap text-muted-foreground">{getTime(entry)}</time>
+                                    <time class="whitespace-nowrap pt-0.5 text-muted-foreground">{getTime(entry)}</time>
                                     <span
                                         class={cx(
-                                            'ml-2 inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
+                                            'ml-2 mt-0.5 inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
                                             styles.badge,
                                         )}
                                     >
@@ -445,49 +433,12 @@ const Lines: Component<LinesProps> = (props) => {
                                         aria-label="Open in side window"
                                         onClick={stopPropagation}
                                     >
-                                        {/* <OpenSideWindowIcon /> */}
+                                        <OpenSideWindowIcon />
                                     </button>
-                                    <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', styles.message)}>
-                                        {getMsg(entry)}
-                                    </p>
-                                    <Show when={isExpanded(index)}>
-                                        <AttributeRows
-                                            entry={entry}
-                                            isActionDisabled={isActionDisabled}
-                                            onAttributeAction={props.onAttributeAction}
-                                        />
-                                    </Show>
+                                    <pre class="m-0 block min-h-0 min-w-0 overflow-x-auto overflow-y-visible whitespace-pre font-mono text-[12px] leading-[1.45] text-foreground">
+                                        {formatEntry(entry)}
+                                    </pre>
                                 </article>
-                            }
-                        >
-                            <article
-                                {...rowProps}
-                                class={cx(
-                                    'grid auto-rows-auto cursor-pointer items-start gap-3 border-b border-border px-5 py-2 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] focus-visible:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
-                                    lineRowGrid,
-                                )}
-                            >
-                                <time class="whitespace-nowrap pt-0.5 text-muted-foreground">{getTime(entry)}</time>
-                                <span
-                                    class={cx(
-                                        'ml-2 mt-0.5 inline-flex w-fit rounded-[2px] px-1.5 text-[10px] font-extrabold uppercase leading-4',
-                                        styles.badge,
-                                    )}
-                                >
-                                    {level}
-                                </span>
-                                <button
-                                    type="button"
-                                    class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
-                                    title="Open in side window"
-                                    aria-label="Open in side window"
-                                    onClick={stopPropagation}
-                                >
-                                    <OpenSideWindowIcon />
-                                </button>
-                                <pre class="m-0 block min-h-0 min-w-0 overflow-x-auto overflow-y-visible whitespace-pre font-mono text-[12px] leading-[1.45] text-foreground">
-                                    {formatEntry(entry)}
-                                </pre>
                                 <Show when={isExpanded(index)}>
                                     <AttributeRows
                                         entry={entry}
@@ -495,7 +446,7 @@ const Lines: Component<LinesProps> = (props) => {
                                         onAttributeAction={props.onAttributeAction}
                                     />
                                 </Show>
-                            </article>
+                            </div>
                         </Show>
                     );
                 }}

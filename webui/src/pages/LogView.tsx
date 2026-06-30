@@ -1,9 +1,10 @@
 import type { Component } from 'solid-js';
-import { createSignal } from 'solid-js';
+import { createSignal, onCleanup, onMount } from 'solid-js';
 
 import Lines, { type LinesViewType } from "../widgets/Lines";
 import QueryBuilder from "../widgets/QueryBuilder";
 import { appendFilterClause, buildFilterClause } from "../widgets/QueryInput";
+import { buildLoqlQuery, queryLogs, type LogEntry } from "../client/query";
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -13,10 +14,51 @@ const titleClass = 'm-0 text-[13px] font-extrabold uppercase leading-[1.2] track
 const LogView: Component = () => {
     const [linesViewType, setLinesViewType] = createSignal<LinesViewType>('message');
     const [query, setQuery] = createSignal('');
+    const [timeRangeQueryToken, setTimeRangeQueryToken] = createSignal('15m');
+    const [lines, setLines] = createSignal<LogEntry[]>([]);
+    const [isQueryLoading, setIsQueryLoading] = createSignal(false);
+    const [queryError, setQueryError] = createSignal<string | null>(null);
+    let queryController: AbortController | undefined;
 
     const setQueryToken = (token: string) => {
-        console.info('set time range query token', token);
+        setTimeRangeQueryToken(token);
     }
+
+    const runQuery = async () => {
+        queryController?.abort();
+
+        const controller = new AbortController();
+        queryController = controller;
+
+        setIsQueryLoading(true);
+        setQueryError(null);
+
+        try {
+            const response = await queryLogs({
+                query: buildLoqlQuery(timeRangeQueryToken(), query()),
+                signal: controller.signal,
+            });
+            setLines(response.lines);
+        } catch (err) {
+            if (controller.signal.aborted) {
+                return;
+            }
+            setQueryError(err instanceof Error ? err.message : 'Query failed');
+        } finally {
+            if (queryController === controller) {
+                queryController = undefined;
+                setIsQueryLoading(false);
+            }
+        }
+    };
+
+    onMount(() => {
+        void runQuery();
+    });
+
+    onCleanup(() => {
+        queryController?.abort();
+    });
 
     const applyAttributeAction = (action: 'add' | 'remove', key: string, value: unknown) => {
         const operator = action === 'add' ? '=' : '!=';
@@ -54,7 +96,14 @@ const LogView: Component = () => {
                     aria-label="Ochi Logs"
                 >
 
-                    <QueryBuilder query={query()} setQuery={setQuery} setTimeRangeQueryToken={setQueryToken} />
+                    <QueryBuilder
+                        query={query()}
+                        setQuery={setQuery}
+                        setTimeRangeQueryToken={setQueryToken}
+                        entriesCount={lines().length}
+                        isLoading={isQueryLoading()}
+                        onRunQuery={runQuery}
+                    />
 
                     <section class="flex min-h-0 flex-auto flex-col overflow-hidden" aria-label="Log stream">
                         <div
@@ -92,7 +141,14 @@ const LogView: Component = () => {
                             </div>
                         </div>
 
-                        <Lines viewType={linesViewType()} query={query()} onAttributeAction={applyAttributeAction} />
+                        <Lines
+                            viewType={linesViewType()}
+                            query={query()}
+                            lines={lines()}
+                            error={queryError()}
+                            isLoading={isQueryLoading()}
+                            onAttributeAction={applyAttributeAction}
+                        />
                     </section>
                 </section>
             </div>

@@ -45,19 +45,37 @@ type QueryBuilderProps = {
     query: string;
     setQuery: Setter<string>;
     setTimeRangeQueryToken: (token: string) => void;
+    entriesCount: number;
+    isLoading: boolean;
+    onRunQuery: () => void | Promise<void>;
 };
+
+const formatEntriesCount = (count: number): string => new Intl.NumberFormat().format(count);
 
 const QueryBuilder: Component<QueryBuilderProps> = (props) => {
     const [timestampRange, setTimestampRange] = createSignal('Last 15 minutes');
 
     return (
         <section class={cx('border-b bg-card px-5 py-[18px] max-[640px]:px-3', borderStrong)} aria-label="Log query controls">
-            <div class="flex items-center gap-2 max-[640px]:flex-col max-[640px]:items-stretch">
+            <form
+                class="flex items-center gap-2 max-[640px]:flex-col max-[640px]:items-stretch"
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    void props.onRunQuery();
+                }}
+            >
                 <QueryInput query={props.query} setQuery={props.setQuery} />
-                <button class="min-h-12 cursor-pointer border border-primary bg-primary px-[18px] font-extrabold text-primary-foreground">
-                    Run Query
+                <button
+                    type="submit"
+                    disabled={props.isLoading}
+                    class={cx(
+                        'min-h-12 border border-primary bg-primary px-[18px] font-extrabold text-primary-foreground',
+                        props.isLoading ? 'cursor-wait opacity-70' : 'cursor-pointer',
+                    )}
+                >
+                    {props.isLoading ? 'Running' : 'Run Query'}
                 </button>
-            </div>
+            </form>
             <div class="mt-3 flex items-center justify-between gap-3 max-[640px]:flex-col max-[640px]:items-start">
                 <label
                     class={cx(
@@ -83,7 +101,10 @@ const QueryBuilder: Component<QueryBuilderProps> = (props) => {
                     </select>
                     <span class={cx(iconFont, 'pointer-events-none absolute right-3 top-1/2 w-5 -translate-y-1/2 text-lg')}>expand_more</span>
                 </label>
-                <p class="m-0 mr-auto text-xs text-muted-foreground">Showing <strong class="text-foreground">1,248</strong> entries</p>
+                <p class="m-0 mr-auto text-xs text-muted-foreground">
+                    Showing <strong class="text-foreground">{formatEntriesCount(props.entriesCount)}</strong>{' '}
+                    {props.entriesCount === 1 ? 'entry' : 'entries'}
+                </p>
             </div>
         </section>
 

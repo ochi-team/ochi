@@ -635,20 +635,10 @@ fn matchesPredicate(fields: []const Field, p: Query.FilterPredicate) !bool {
                 .notEqual => !std.mem.eql(u8, f.value, p.value),
                 else => return error.QueryMatchOperationNotImplemented,
             };
-            Logger.log(.debug, "matching query line", .{
-                .queryKey = p.key,
-                .queryValue = p.value,
-                .op = @tagName(p.op),
-                .lineKey = f.key,
-                .lineValue = f.value,
-            });
             return res;
         }
     }
 
-    Logger.log(.debug, "key not found to match", .{
-        .key = p.key,
-    });
     return false;
 }
 
