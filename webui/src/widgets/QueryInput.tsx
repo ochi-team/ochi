@@ -593,6 +593,7 @@ type QueryInputProps = {
     keys: string[];
     values: ReadonlyMap<string, readonly string[]>;
     historicQueries: string[];
+    onRunQuery: () => void | Promise<void>;
 };
 
 const QueryInput: Component<QueryInputProps> = (props) => {
@@ -890,6 +891,8 @@ const QueryInput: Component<QueryInputProps> = (props) => {
             }
         } else if (event.key === 'Enter') {
             event.preventDefault();
+            void props.onRunQuery();
+            return;
         }
 
         if (event.key === 'Backspace') {

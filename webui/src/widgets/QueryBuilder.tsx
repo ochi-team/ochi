@@ -73,6 +73,7 @@ const QueryBuilder: Component<QueryBuilderProps> = (props) => {
                     keys={props.keys}
                     values={props.values}
                     historicQueries={props.historicQueries}
+                    onRunQuery={props.onRunQuery}
                 />
                 <button
                     type="submit"
