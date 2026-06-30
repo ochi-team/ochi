@@ -265,8 +265,11 @@ pub fn queryLines(
 
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
-            const tagsExpr = query.tagsExpr orelse return Query.Error.NoTagsFilter;
-            break :sids try self.index.querySIDs(io, alloc, longAlloc, tenantID, tagsExpr, memBlocksCache);
+            if (query.tagsExpr) |tags| {
+                break :sids try self.index.querySIDs(io, alloc, longAlloc, tenantID, tags, memBlocksCache);
+            }
+
+            break :sids .{ .cutOff = false, .sids = .empty };
         }
     };
     defer sidsRes.sids.deinit(alloc);
