@@ -453,6 +453,10 @@ fn readBuf(dst: []u8, src: []const u8, offset: u64) !usize {
 
 pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
     // TODO: assert sids are sorted
+    if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
+        return self.queryLinesAllBlocks(io, alloc, dst, query);
+    }
+
     var indexBlockHeaders = self.indexBlockHeaders;
     var sidsToFind = sids;
 
@@ -525,6 +529,30 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
 
             sid = sidsToFind[n];
             sidsToFind = sidsToFind[n..];
+        }
+    }
+}
+
+fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), query: Query) !void {
+    for (self.indexBlockHeaders) |indexBlockHeader| {
+        if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
+            continue;
+        }
+
+        var blockHeaders = std.ArrayList(BlockHeader).empty;
+        defer blockHeaders.deinit(alloc);
+        const indexBuffer = try alloc.alloc(u8, indexBlockHeader.size - indexBlockHeader.offset);
+        defer alloc.free(indexBuffer);
+        const n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
+        std.debug.assert(indexBuffer.len == n);
+        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, indexBuffer, indexBlockHeader);
+
+        for (blockHeaders.items) |blockHeader| {
+            if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
+                continue;
+            }
+
+            try self.queryBlock(io, alloc, dst, blockHeader, query);
         }
     }
 }
@@ -1021,6 +1049,11 @@ test "queryLines" {
             .requestedSIDs = &.{},
             .query = .{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null },
             .expected = &.{},
+        },
+        .{
+            .requestedSIDs = &.{},
+            .query = .{ .start = 0, .end = 10, .tagsExpr = null, .fieldsExpr = &warnExpr },
+            .expected = &.{.{ .timestampNs = 2, .app = "seq" }},
         },
     };
 
