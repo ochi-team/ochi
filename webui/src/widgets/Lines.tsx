@@ -1,5 +1,5 @@
-import type { Component } from 'solid-js';
-import { For, Show } from 'solid-js';
+import type { Component, JSX } from 'solid-js';
+import { createSignal, For, Show } from 'solid-js';
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -75,6 +75,18 @@ function getString(value: JsonValue | undefined): string {
 
 function formatEntry(entry: LogEntry): string {
     return formatJsonValue(entry, 0);
+}
+
+function formatAttributeValue(value: JsonValue): string {
+    if (value === null) {
+        return 'null';
+    }
+
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+    }
+
+    return JSON.stringify(value);
 }
 
 function formatJsonValue(value: JsonValue, depth: number): string {
@@ -234,21 +246,127 @@ const OpenSideWindowIcon: Component = () => (
     </svg>
 );
 
+const AddCircleIcon: Component = () => (
+    <svg class="size-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M8 12h8" />
+        <path d="M12 8v8" />
+    </svg>
+);
+
+const RemoveCircleIcon: Component = () => (
+    <svg class="size-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M8 12h8" />
+    </svg>
+);
+
+type AttributeAction = 'add' | 'remove';
+
+function logAttributeAction(action: AttributeAction, key: string, value: JsonValue) {
+    console.log(action, key, value);
+}
+
+function stopPropagation(event: Event) {
+    event.stopPropagation();
+}
+
+type AttributeRowsProps = {
+    entry: LogEntry;
+};
+
+const AttributeRows: Component<AttributeRowsProps> = (props) => (
+    <div class="col-span-full border-t border-border/70 bg-muted/35 py-2 pl-[292px] pr-2 max-[640px]:pl-0">
+        <div class="flex flex-col gap-1">
+            <For each={Object.entries(props.entry)}>
+                {([key, value]) => (
+                    <div class="group/attr -mx-1 flex min-h-7 items-center gap-3 rounded-[2px] px-1 font-mono text-[12px] hover:bg-accent max-[640px]:gap-2">
+                        <span class="w-32 flex-shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{key}</span>
+                        <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-foreground">{formatAttributeValue(value)}</span>
+                        <div class="flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/attr:opacity-100 group-focus-within/attr:opacity-100">
+                            <button
+                                type="button"
+                                class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-primary/20 hover:text-primary"
+                                title={`Add ${key}`}
+                                aria-label={`Add ${key}`}
+                                onClick={(event) => {
+                                    stopPropagation(event);
+                                    logAttributeAction('add', key, value);
+                                }}
+                            >
+                                <AddCircleIcon />
+                            </button>
+                            <button
+                                type="button"
+                                class="grid size-6 cursor-pointer place-items-center rounded-[2px] border-0 bg-transparent p-0 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                                title={`Remove ${key}`}
+                                aria-label={`Remove ${key}`}
+                                onClick={(event) => {
+                                    stopPropagation(event);
+                                    logAttributeAction('remove', key, value);
+                                }}
+                            >
+                                <RemoveCircleIcon />
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </For>
+        </div>
+    </div>
+);
+
 const Lines: Component<LinesProps> = (props) => {
+    const [expandedRows, setExpandedRows] = createSignal<Set<number>>(new Set());
+
+    function isExpanded(index: number): boolean {
+        return expandedRows().has(index);
+    }
+
+    function toggleExpanded(index: number) {
+        setExpandedRows((current) => {
+            const next = new Set(current);
+            if (next.has(index)) {
+                next.delete(index);
+            } else {
+                next.add(index);
+            }
+            return next;
+        });
+    }
+
+    function onRowKeyDown(event: KeyboardEvent, index: number) {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+            return;
+        }
+
+        event.preventDefault();
+        toggleExpanded(index);
+    }
+
     return (
         <div class="grid min-h-0 content-start overflow-auto bg-background">
             <For each={logs}>
-                {(entry) => {
+                {(entry, rowIndex) => {
+                    const index = rowIndex();
                     const level = getLevel(entry);
                     const styles = levelStyles[level];
+                    const rowProps: JSX.HTMLAttributes<HTMLElement> = {
+                        role: 'button',
+                        tabIndex: 0,
+                        'aria-expanded': isExpanded(index),
+                        onClick: () => toggleExpanded(index),
+                        onKeyDown: (event) => onRowKeyDown(event, index),
+                    };
 
                     return (
                         <Show
                             when={props.viewType === 'json'}
                             fallback={
                                 <article
+                                    {...rowProps}
                                     class={cx(
-                                        'grid min-h-[32px] items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
+                                        'grid min-h-[32px] cursor-pointer items-center gap-3 border-b border-border px-5 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] focus-visible:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
                                         lineRowGrid,
                                     )}
                                 >
@@ -262,21 +380,27 @@ const Lines: Component<LinesProps> = (props) => {
                                         {level}
                                     </span>
                                     <button
+                                        type="button"
                                         class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
                                         title="Open in side window"
                                         aria-label="Open in side window"
+                                        onClick={stopPropagation}
                                     >
                                         <OpenSideWindowIcon />
                                     </button>
                                     <p class={cx('m-0 overflow-hidden text-ellipsis whitespace-nowrap', styles.message)}>
                                         {getMsg(entry)}
                                     </p>
+                                    <Show when={isExpanded(index)}>
+                                        <AttributeRows entry={entry} />
+                                    </Show>
                                 </article>
                             }
                         >
                             <article
+                                {...rowProps}
                                 class={cx(
-                                    'grid auto-rows-auto items-start gap-3 border-b border-border px-5 py-2 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
+                                    'grid auto-rows-auto cursor-pointer items-start gap-3 border-b border-border px-5 py-2 text-[13px] hover:bg-accent hover:[box-shadow:inset_2px_0_0_var(--primary)] focus-visible:[box-shadow:inset_2px_0_0_var(--primary)] max-[640px]:gap-2 max-[640px]:px-2.5',
                                     lineRowGrid,
                                 )}
                             >
@@ -290,15 +414,20 @@ const Lines: Component<LinesProps> = (props) => {
                                     {level}
                                 </span>
                                 <button
+                                    type="button"
                                     class="grid size-6 cursor-pointer place-items-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
                                     title="Open in side window"
                                     aria-label="Open in side window"
+                                    onClick={stopPropagation}
                                 >
                                     <OpenSideWindowIcon />
                                 </button>
                                 <pre class="m-0 block min-h-0 min-w-0 overflow-x-auto overflow-y-visible whitespace-pre font-mono text-[12px] leading-[1.45] text-foreground">
                                     {formatEntry(entry)}
                                 </pre>
+                                <Show when={isExpanded(index)}>
+                                    <AttributeRows entry={entry} />
+                                </Show>
                             </article>
                         </Show>
                     );
