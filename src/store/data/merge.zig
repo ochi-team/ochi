@@ -9,6 +9,7 @@ const sizing = @import("../data/sizing.zig");
 const TableHeader = @import("../data/TableHeader.zig");
 const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
+const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const SID = @import("../lines.zig").SID;
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
@@ -130,8 +131,7 @@ pub const StreamMerger = struct {
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
-        for (self.lines.items) |line| freeFields(alloc, line.fields);
-        self.lines.deinit(alloc);
+        deinitLinesFull(alloc, &self.lines);
         self.mergeBufferLines.deinit(alloc);
         self.unpacker.deinit(alloc);
         self.decoder.deinit();

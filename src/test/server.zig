@@ -13,7 +13,7 @@ const Line = @import("../store/lines.zig").Line;
 const writeLines = @import("../store/lines.zig").writeLines;
 const timestampKey = @import("../store/lines.zig").timestampKey;
 const msgKey = @import("../store/lines.zig").msgKey;
-const lineLessThan = @import("../store/lines.zig").lineLessThan;
+const lineLatestFirst = @import("../store/lines.zig").lineLatestFirst;
 const fieldLessThan = @import("../store/lines.zig").fieldLessThan;
 const Runtime = @import("../Runtime.zig");
 const Store = @import("../Store.zig").Store;
@@ -94,24 +94,19 @@ fn lineID(line: Line) ?[]const u8 {
     return null;
 }
 
-fn containsID(ids: []const []const u8, needle: []const u8) bool {
-    for (ids) |id| {
-        if (std.mem.eql(u8, id, needle)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 fn filterLinesByIDs(alloc: Allocator, lines: []const Line, ids: []const []const u8) ![]Line {
     var filtered = std.ArrayList(Line).empty;
     errdefer filtered.deinit(alloc);
 
-    for (lines) |line| {
-        const id = lineID(line);
-        if (id == null) std.debug.panic("every corpus line must contain id field", .{});
-        if (containsID(ids, id.?)) {
-            try filtered.append(alloc, line);
+    // iterate over expected ids to save their order for assertion
+    for (ids) |expectedID| {
+        for (lines) |line| {
+            const id = lineID(line);
+            if (id == null) std.debug.panic("every corpus line must contain id field", .{});
+            if (std.mem.eql(u8, expectedID, id.?)) {
+                try filtered.append(alloc, line);
+                break;
+            }
         }
     }
 
@@ -357,7 +352,7 @@ fn expectedLine(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![]Line {
         };
     }
 
-    std.sort.pdq(Line, expected, {}, lineLessThan);
+    std.sort.pdq(Line, expected, {}, lineLatestFirst);
     return expected;
 }
 

@@ -16,6 +16,9 @@ const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
+const freeFields = @import("store/lines.zig").freeFields;
+const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
+const lineLatestFirst = @import("store/lines.zig").lineLatestFirst;
 const Query = @import("query/Query.zig");
 
 const Partition = @import("Partition.zig");
@@ -368,24 +371,29 @@ pub fn queryLines(
     }
     self.partitionsMx.unlock(io);
 
-    var results = try std.ArrayList(Line).initCapacity(alloc, 200);
-    errdefer results.deinit(alloc);
+    var results = std.ArrayList(Line).empty;
+    errdefer deinitLinesFull(alloc, &results);
     for (parts.items) |part| {
         var partResults = try part.queryLines(io, alloc, longAlloc, tenantID, query, self.memBlocksCache);
         defer partResults.deinit(alloc);
 
-        // TODO: we need to make a real pagination, it's a plug not to overload the ui,
-        // otherwise it fetches 10k lines and becomes unusable
-        if (results.capacity >= partResults.items.len) {
-            results.appendSliceAssumeCapacity(partResults.items);
-        } else {
-            const cap = results.capacity - results.items.len;
-            results.appendSliceAssumeCapacity(partResults.items[0..cap]);
-            break;
-        }
+        try results.appendSlice(alloc, partResults.items);
     }
 
+    // TODO: we need to make a real pagination, it's a plug not to overload the ui,
+    // otherwise it fetches 10k lines and becomes unusable
+    keepLatestLines(alloc, &results, 200);
     return results;
+}
+
+fn keepLatestLines(alloc: Allocator, lines: *std.ArrayList(Line), limit: usize) void {
+    std.sort.pdq(Line, lines.items, {}, lineLatestFirst);
+    if (lines.items.len <= limit) return;
+
+    for (lines.items[limit..]) |line| {
+        freeFields(alloc, line.fields);
+    }
+    lines.shrinkRetainingCapacity(limit);
 }
 
 pub fn queryStreamIDs(
@@ -863,6 +871,48 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
             .{ .minDay = 15, .maxDay = 100, .expectedDays = &.{} },
         });
     }
+}
+
+test "keepLatestLines sorts by timestamp and trims old rows" {
+    const alloc = testing.allocator;
+
+    const makeLine = struct {
+        fn run(allocator: Allocator, timestampNs: u64, value: []const u8) !Line {
+            const fields = try allocator.alloc(Field, 1);
+            errdefer allocator.free(fields);
+            const key = try allocator.dupe(u8, "id");
+            errdefer allocator.free(key);
+            const copiedValue = try allocator.dupe(u8, value);
+            fields[0] = .{ .key = key, .value = copiedValue };
+            return .{ .timestampNs = timestampNs, .fields = fields };
+        }
+    }.run;
+    const appendLine = struct {
+        fn run(allocator: Allocator, dst: *std.ArrayList(Line), timestampNs: u64, value: []const u8) !void {
+            const line = try makeLine(allocator, timestampNs, value);
+            errdefer freeFields(allocator, line.fields);
+            try dst.append(allocator, line);
+        }
+    }.run;
+
+    var lines = std.ArrayList(Line).empty;
+    defer deinitLinesFull(alloc, &lines);
+
+    try appendLine(alloc, &lines, 10, "oldest");
+    try appendLine(alloc, &lines, 50, "newest");
+    try appendLine(alloc, &lines, 20, "old");
+    try appendLine(alloc, &lines, 40, "newer");
+    try appendLine(alloc, &lines, 30, "middle");
+
+    keepLatestLines(alloc, &lines, 3);
+
+    try testing.expectEqual(3, lines.items.len);
+    try testing.expectEqual(50, lines.items[0].timestampNs);
+    try testing.expectEqual(40, lines.items[1].timestampNs);
+    try testing.expectEqual(30, lines.items[2].timestampNs);
+    try testing.expectEqualStrings("newest", lines.items[0].fields[0].value);
+    try testing.expectEqualStrings("newer", lines.items[1].fields[0].value);
+    try testing.expectEqualStrings("middle", lines.items[2].fields[0].value);
 }
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {

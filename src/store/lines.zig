@@ -305,6 +305,13 @@ pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
     alloc.free(fields);
 }
 
+pub fn deinitLinesFull(alloc: std.mem.Allocator, lines: *std.ArrayList(Line)) void {
+    for (lines.items) |line| {
+        freeFields(alloc, line.fields);
+    }
+    lines.deinit(alloc);
+}
+
 // Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
@@ -389,8 +396,14 @@ pub fn writeLines(writer: *std.Io.Writer, lines: []const Line) !void {
 // if this type gets wider usage worth naming it Lines instead,
 // the difference to MultiArray is []Fields is also a flat array for all the lines
 
+/// this is a default ingestion sorting
 pub fn lineLessThan(_: void, one: Line, another: Line) bool {
     return one.timestampNs < another.timestampNs;
+}
+
+/// this is a sorting for querying, latest lines are on top of the view
+pub fn lineLatestFirst(_: void, a: Line, b: Line) bool {
+    return a.timestampNs > b.timestampNs;
 }
 
 pub fn fieldLessThan(_: void, one: Field, another: Field) bool {

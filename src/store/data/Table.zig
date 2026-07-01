@@ -23,6 +23,7 @@ const msgKey = @import("../lines.zig").msgKey;
 const SID = @import("../lines.zig").SID;
 const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
+const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
@@ -1117,12 +1118,7 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     defer table.release(io);
 
     var queried = std.ArrayList(Line).empty;
-    defer {
-        for (queried.items) |line| {
-            freeFields(alloc, line.fields);
-        }
-        queried.deinit(alloc);
-    }
+    defer deinitLinesFull(alloc, &queried);
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
