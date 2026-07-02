@@ -76,7 +76,6 @@ const LogView: Component = () => {
 
     const runQuery = async () => {
         queryController?.abort();
-        rememberCurrentQuery();
 
         const controller = new AbortController();
         queryController = controller;
@@ -91,6 +90,9 @@ const LogView: Component = () => {
                 query: prefix + query(),
                 signal: controller.signal,
             });
+            if (response.status === 200) {
+                rememberCurrentQuery();
+            }
             setLines(response.lines);
         } catch (err) {
             if (controller.signal.aborted) {

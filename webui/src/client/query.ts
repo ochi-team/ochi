@@ -3,6 +3,7 @@ export type LogEntry = Record<string, JsonValue>;
 
 type QueryResponse = {
     lines: LogEntry[];
+    status: number;
 };
 
 export type QuerySyntaxErrorLoc = {
@@ -33,12 +34,12 @@ function isJsonRecord(value: unknown): value is LogEntry {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseQueryResponse(value: unknown): QueryResponse {
+function parseQueryResponse(value: unknown, status: number): QueryResponse {
     if (!isJsonRecord(value) || !Array.isArray(value.lines) || !value.lines.every(isJsonRecord)) {
         throw new Error('Unexpected query response shape');
     }
 
-    return { lines: value.lines };
+    return { lines: value.lines, status };
 }
 
 function isQuerySyntaxErrorLoc(value: unknown): value is QuerySyntaxErrorLoc {
@@ -93,5 +94,5 @@ export async function queryLogs(params: QueryLogsParams): Promise<QueryResponse>
         throw new Error(body || `Query failed with HTTP ${response.status}`);
     }
 
-    return parseQueryResponse(await response.json());
+    return parseQueryResponse(await response.json(), response.status);
 }
