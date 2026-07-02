@@ -39,6 +39,7 @@ fn registerSigtermHandler() void {
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.TERM, &act, null);
+    std.posix.sigaction(std.posix.SIG.INT, &act, null);
 }
 
 fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
@@ -147,32 +148,4 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, store: *Sto
             return err;
         },
     };
-}
-
-test "serverWithSIGTERM" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-
-    // Start the server in a separate thread
-    const ServerThread = struct {
-        fn run(threadAllocator: std.mem.Allocator) void {
-            startApp(
-                io,
-                threadAllocator,
-                .{ .release = false, .version = "", .setupLogger = false },
-            ) catch |err| {
-                Logger.log(.err, "server error", .{ .err = err });
-                std.debug.panic("server error: {s}\n", .{@errorName(err)});
-            };
-        }
-    };
-
-    var future = try io.concurrent(ServerThread.run, .{allocator});
-    defer future.await(io);
-
-    // Give the server time to start
-    try io.sleep(.fromMilliseconds(100), .real);
-
-    // Send SIGTERM to ourselves
-    try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
 }

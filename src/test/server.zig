@@ -69,6 +69,19 @@ const QueryResponse = struct {
     lines: []std.json.Value,
 };
 
+const QuerySyntaxErrorResponse = struct {
+    code: []const u8,
+    meta: struct {
+        locs: []const Loc,
+    },
+
+    const Loc = struct {
+        line: u16,
+        col: u16,
+        msg: []const u8,
+    };
+};
+
 fn responseObjectString(value: std.json.Value, key: []const u8) ?[]const u8 {
     if (value != .object) {
         return null;
@@ -268,6 +281,32 @@ pub const OchiClient = struct {
         try client.expectResponseLines(expectedMatchedLines, parsed.value.lines);
     }
 
+    pub fn expectQuerySyntaxError(
+        client: *OchiClient,
+        alloc: Allocator,
+        tenant: u64,
+        query: []const u8,
+        expectedLocs: []const QuerySyntaxErrorResponse.Loc,
+    ) !void {
+        var resp = try client.request(alloc, .POST, "/query", query, tenant, "application/loql", null);
+        defer resp.deinit(alloc);
+        std.testing.expectEqual(400, resp.statusCode) catch |err| {
+            client.logger.log(.err, "query syntax request returned unexpected status", .{
+                .body = resp.body,
+                .status = resp.statusCode,
+            });
+            return err;
+        };
+
+        const parsed = try std.json.parseFromSlice(QuerySyntaxErrorResponse, alloc, resp.body, .{
+            .ignore_unknown_fields = false,
+        });
+        defer parsed.deinit();
+
+        try std.testing.expectEqualStrings("QUERY_SYNTAX", parsed.value.code);
+        try std.testing.expectEqualDeep(expectedLocs, parsed.value.meta.locs);
+    }
+
     fn expectResponseLines(client: *const OchiClient, expected: []const Line, actual: []const std.json.Value) !void {
         try std.testing.expectEqual(expected.len, actual.len);
         for (expected, actual) |expectedLineValue, actualLineValue| {
@@ -309,6 +348,62 @@ fn expectResponseLine(expected: Line, actual: std.json.Value) !void {
         const key = if (field.key.len == 0) msgKey else field.key;
         const actualValue = responseObjectString(actual, key) orelse return error.MissingField;
         try std.testing.expectEqualStrings(field.value, actualValue);
+    }
+}
+
+fn expectLoqlSyntaxErrors(alloc: Allocator, client: *OchiClient) !void {
+    const Case = struct {
+        query: []const u8,
+        expectedLocs: []const QuerySyntaxErrorResponse.Loc,
+    };
+
+    const cases = [_]Case{
+        .{
+            .query = "[,] {env=prod}",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 5, .msg = "At least one of the time range values must be specified." },
+            },
+        },
+        .{
+            .query = "[-5m,now] {env~prod}",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 15, .msg = "Expect '}' after tags." },
+            },
+        },
+        .{
+            .query = "[-5m,now] {env=prod} message=",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 29, .msg = "Expect expression." },
+            },
+        },
+        .{
+            .query = "[-5m, now] {v}",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 13, .msg = "Expect expression." },
+            },
+        },
+        .{
+            .query = "[-5m, now] 42",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 12, .msg = "Expect expression." },
+            },
+        },
+        .{
+            .query = "[-5m,now] {env=prod} (message=timeout",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 31, .msg = "Expect ')' after expression." },
+            },
+        },
+        .{
+            .query = "[560,now] {env=prod} (message=timeout",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 31, .msg = "Expect ')' after expression." },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        try client.expectQuerySyntaxError(alloc, 0, case.query, case.expectedLocs);
     }
 }
 
@@ -549,6 +644,8 @@ test "serverEndToEndViaHTTP" {
     defer ochiClient.client.deinit();
 
     try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
+
+    try expectLoqlSyntaxErrors(alloc, &ochiClient);
 
     // TODO: writing deinits in the testing code is overwhelming,
     // we don't need to clean it eventually and use testing alloc only to pass to the server

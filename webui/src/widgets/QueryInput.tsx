@@ -1,5 +1,6 @@
 import type { Component, JSX, Setter } from 'solid-js';
 import { For, Show, createMemo, createSignal } from 'solid-js';
+import type { QuerySyntaxErrorLoc } from '../client/query';
 
 type TokenKind =
     | 'space'
@@ -234,6 +235,20 @@ const roleForToken = (token: Token): TokenRole => {
 };
 
 const asPart = (token: Token, role = roleForToken(token)): RenderPart => ({ ...token, role });
+
+const offsetFromLoc = (query: string, loc: QuerySyntaxErrorLoc): number => {
+    let line = 1;
+    let lineStart = 0;
+
+    for (let index = 0; index < query.length && line < loc.line; index += 1) {
+        if (query[index] === '\n') {
+            line += 1;
+            lineStart = index + 1;
+        }
+    }
+
+    return Math.max(0, Math.min(query.length, lineStart + loc.col - 1));
+};
 
 const nextNonSpace = (tokens: Token[], index: number): number => {
     let next = index;
@@ -593,6 +608,7 @@ type QueryInputProps = {
     keys: string[];
     values: ReadonlyMap<string, readonly string[]>;
     historicQueries: string[];
+    syntaxErrors: QuerySyntaxErrorLoc[];
     onRunQuery: () => void | Promise<void>;
 };
 
@@ -608,6 +624,20 @@ const QueryInput: Component<QueryInputProps> = (props) => {
 
     const tokens = createMemo(() => scanQuery(query()));
     const segments = createMemo(() => renderSegments(tokens()));
+    const syntaxErrorOffsets = createMemo(() => props.syntaxErrors.map((error) => offsetFromLoc(query(), error)));
+    const firstSyntaxError = createMemo(() => props.syntaxErrors[0] ?? null);
+    const tokenHasSyntaxError = (token: Token) => {
+        const offsets = syntaxErrorOffsets();
+        return offsets.some((offset) => {
+            if (token.start <= offset && offset < token.end) return true;
+            return offset === query().length && token.end === offset;
+        });
+    };
+    const tokenClass = (part: RenderPart) =>
+        cx(
+            tokenClassByRole[part.role],
+            tokenHasSyntaxError(part) && 'rounded-[2px] bg-destructive/10 text-destructive underline decoration-destructive decoration-wavy underline-offset-4',
+        );
     const completions = createMemo(() => {
         const currentQuery = query();
         const historyNeedle = currentQuery.trim().toLowerCase();
@@ -696,13 +726,22 @@ const QueryInput: Component<QueryInputProps> = (props) => {
             const nextTokens = scanQuery(nextQuery);
             const previous = nearestNonSpaceBefore(nextTokens, word.start);
             const valueContext = previous?.kind === 'equal' || previous?.kind === 'not-equal';
-            setCompletionContext({
-                kind: valueContext ? 'value' : 'key',
-                start: word.start,
-                end: word.end,
-                prefix: word.prefix,
-                ...(valueContext ? { key: keyBeforeOperation(nextTokens, previous) } : {}),
-            });
+            setCompletionContext(
+                valueContext
+                    ? {
+                          kind: 'value',
+                          start: word.start,
+                          end: word.end,
+                          prefix: word.prefix,
+                          key: keyBeforeOperation(nextTokens, previous),
+                      }
+                    : {
+                          kind: 'key',
+                          start: word.start,
+                          end: word.end,
+                          prefix: word.prefix,
+                      },
+            );
             setActiveCompletion(0);
             return;
         }
@@ -942,6 +981,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
                 class={cx(
                     'relative flex min-h-12 min-w-60 flex-auto cursor-text items-center gap-1 overflow-x-auto whitespace-pre-wrap break-words border border-border bg-input px-2.5 py-2 text-sm leading-7',
                     'focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40',
+                    props.syntaxErrors.length > 0 && 'border-destructive focus:border-destructive focus:ring-destructive/30',
                     'max-[640px]:flex-wrap',
                 )}
             >
@@ -950,7 +990,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
                         <Show
                             when={segment.type === 'predicate'}
                             fallback={
-                                <span class={tokenClassByRole[(segment as Extract<RenderSegment, { type: 'token' }>).part.role]}>
+                                <span class={tokenClass((segment as Extract<RenderSegment, { type: 'token' }>).part)}>
                                     {(segment as Extract<RenderSegment, { type: 'token' }>).part.text}
                                 </span>
                             }
@@ -961,7 +1001,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
                                 data-expression-end={(segment as Extract<RenderSegment, { type: 'predicate' }>).end}
                             >
                                 <For each={(segment as Extract<RenderSegment, { type: 'predicate' }>).parts}>
-                                    {(part) => <span class={tokenClassByRole[part.role]}>{part.text}</span>}
+                                    {(part) => <span class={tokenClass(part)}>{part.text}</span>}
                                 </For>
                                 <button
                                     type="button"
@@ -988,6 +1028,15 @@ const QueryInput: Component<QueryInputProps> = (props) => {
                 <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                     {'{region-eu-west-1} level=error'}
                 </span>
+            </Show>
+
+            <Show when={firstSyntaxError()}>
+                {(error) => (
+                    <div class="absolute left-0 top-[calc(100%+4px)] z-10 max-w-full border border-destructive bg-popover px-2.5 py-1.5 text-xs text-destructive shadow-sm">
+                        <span class="font-extrabold">Syntax error</span>
+                        <span class="ml-2">{error().msg}</span>
+                    </div>
+                )}
             </Show>
 
             <Show when={showCompletions()}>

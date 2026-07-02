@@ -378,6 +378,22 @@ test "translateQuery" {
             },
         },
         .{
+            .query = "[-5m, now] {v}",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 13, .message = "Expect expression." },
+            },
+        },
+        .{
+            .query = "[-5m, now] 42",
+            .expected = null,
+            .expectedErr = error.SyntaxError,
+            .expectedReports = &.{
+                .{ .line = 1, .col = 12, .message = "Expect expression." },
+            },
+        },
+        .{
             .query = "[-5m,now] {env=prod} (message=timeout",
             .expected = null,
             .expectedErr = error.SyntaxError,

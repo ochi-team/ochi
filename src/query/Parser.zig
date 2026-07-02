@@ -247,6 +247,7 @@ fn equality(
     allowsOps: []const TokenKind,
     reporter: *ErrorReporter,
 ) ParseError!Expression {
+    const start = self.current;
     var expr = try self.primary(allocator, tokens, allowsOps, reporter);
 
     while (self.match(tokens, allowsOps)) {
@@ -273,7 +274,32 @@ fn equality(
         };
     }
 
+    switch (expr) {
+        .literal => {
+            if (!self.atOperator(tokens)) {
+                _ = reporter.reportSyntaxError(.{
+                    .line = tokens[start].line,
+                    .col = tokens[start].col,
+                    .message = expectExpression,
+                });
+                return Error.SyntaxError;
+            }
+        },
+        else => {},
+    }
+
     return expr;
+}
+
+fn atOperator(self: *const Parser, tokens: []const Token) bool {
+    if (self.current >= tokens.len) {
+        return false;
+    }
+
+    return switch (tokens[self.current].kind) {
+        .Equal, .NotEqual, .MatchRegex, .NotMatchRegex => true,
+        else => false,
+    };
 }
 
 fn primary(

@@ -1,5 +1,6 @@
 import type { Component, Setter } from 'solid-js';
 import { For, createSignal } from 'solid-js';
+import type { QuerySyntaxErrorLoc } from '../client/query';
 import QueryInput from './QueryInput';
 
 const borderStrong = 'border-border';
@@ -47,6 +48,7 @@ type QueryBuilderProps = {
     keys: string[];
     values: ReadonlyMap<string, readonly string[]>;
     historicQueries: string[];
+    syntaxErrors: QuerySyntaxErrorLoc[];
     setTimeRangeQueryToken: (token: string) => void;
     entriesCount: number;
     isLoading: boolean;
@@ -73,6 +75,7 @@ const QueryBuilder: Component<QueryBuilderProps> = (props) => {
                     keys={props.keys}
                     values={props.values}
                     historicQueries={props.historicQueries}
+                    syntaxErrors={props.syntaxErrors}
                     onRunQuery={props.onRunQuery}
                 />
                 <button

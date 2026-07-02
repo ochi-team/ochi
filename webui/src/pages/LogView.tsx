@@ -4,7 +4,7 @@ import { createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import Lines, { type LinesViewType } from "../widgets/Lines";
 import QueryBuilder from "../widgets/QueryBuilder";
 import { appendFilterClause, buildFilterClause } from "../widgets/QueryInput";
-import { buildLoqlQuery, queryLogs, type JsonValue, type LogEntry } from "../client/query";
+import { QuerySyntaxError, loqlQueryPrefix, queryLogs, type JsonValue, type LogEntry, type QuerySyntaxErrorLoc } from "../client/query";
 import { loadQueryHistory, pushQueryHistory, saveQueryHistory } from "../stores/queryHistory";
 
 const cx = (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' ');
@@ -24,7 +24,14 @@ const LogView: Component = () => {
     const [historicQueries, setHistoricQueries] = createSignal<string[]>(loadQueryHistory());
     const [isQueryLoading, setIsQueryLoading] = createSignal(false);
     const [queryError, setQueryError] = createSignal<string | null>(null);
+    const [querySyntaxErrors, setQuerySyntaxErrors] = createSignal<QuerySyntaxErrorLoc[]>([]);
     let queryController: AbortController | undefined;
+
+    const setVisibleQuery = (next: string | ((current: string) => string)) => {
+        setQuery(next);
+        setQuerySyntaxErrors([]);
+        setQueryError(null);
+    };
 
     const setQueryToken = (token: string) => {
         setTimeRangeQueryToken(token);
@@ -76,15 +83,26 @@ const LogView: Component = () => {
 
         setIsQueryLoading(true);
         setQueryError(null);
+        setQuerySyntaxErrors([]);
 
         try {
+            const prefix = loqlQueryPrefix(timeRangeQueryToken());
             const response = await queryLogs({
-                query: buildLoqlQuery(timeRangeQueryToken(), query()),
+                query: prefix + query(),
                 signal: controller.signal,
             });
             setLines(response.lines);
         } catch (err) {
             if (controller.signal.aborted) {
+                return;
+            }
+            if (err instanceof QuerySyntaxError) {
+                const prefix = loqlQueryPrefix(timeRangeQueryToken());
+                setQuerySyntaxErrors(err.locs.map((loc) => ({
+                    ...loc,
+                    col: loc.line === 1 ? Math.max(1, loc.col - prefix.length) : loc.col,
+                })));
+                setQueryError(err.message);
                 return;
             }
             setQueryError(err instanceof Error ? err.message : 'Query failed');
@@ -107,7 +125,7 @@ const LogView: Component = () => {
     const applyAttributeAction = (action: 'add' | 'remove', key: string, value: unknown) => {
         const operator = action === 'add' ? '=' : '!=';
         const clause = buildFilterClause(key, operator, value);
-        setQuery((current) => appendFilterClause(current, clause));
+        setVisibleQuery((current) => appendFilterClause(current, clause));
     };
 
     return (
@@ -142,10 +160,11 @@ const LogView: Component = () => {
 
                     <QueryBuilder
                         query={query()}
-                        setQuery={setQuery}
+                        setQuery={setVisibleQuery}
                         keys={querySuggestionKeys()}
                         values={querySuggestionValues()}
                         historicQueries={historicQueries()}
+                        syntaxErrors={querySyntaxErrors()}
                         setTimeRangeQueryToken={setQueryToken}
                         entriesCount={lines().length}
                         isLoading={isQueryLoading()}

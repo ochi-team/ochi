@@ -37,7 +37,13 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
             const now = Io.Timestamp.now(ctx.io, .real);
             var errs: ErrorReporter = .{};
 
-            const translatedQuery = loql.translateQuery(res.arena, &errs, body, @intCast(now.nanoseconds)) catch return ApiError.FailedToParse;
+            const translatedQuery = loql.translateQuery(res.arena, &errs, body, @intCast(now.nanoseconds)) catch |err| {
+                if (err == error.SyntaxError and errs.syntaxErrors().len > 0) {
+                    writeSyntaxErrorResponse(res, errs.syntaxErrors()) catch return ApiError.FailedToWriteResponse;
+                    return;
+                }
+                return ApiError.FailedToParse;
+            };
             break :q translatedQuery;
         } else if (std.mem.eql(u8, "application/json", contentType.?)) {
             const value = parseQuery(res.arena, body) catch return ApiError.FailedToParse;
@@ -71,6 +77,37 @@ fn writeResponse(res: *httpz.Response, lines: []const Line) !void {
     try putJsonArrayLines(&jw, lines);
     try jw.endObject();
 
+    res.body = try writer.toOwnedSlice();
+    res.content_type = .JSON;
+}
+
+fn writeSyntaxErrorResponse(res: *httpz.Response, errs: []const ErrorReporter.SyntaxError) !void {
+    var writer = try std.Io.Writer.Allocating.initCapacity(res.arena, 512);
+    errdefer writer.deinit();
+
+    var jw: std.json.Stringify = .{ .writer = &writer.writer };
+    try jw.beginObject();
+    try jw.objectField("code");
+    try jw.write("QUERY_SYNTAX");
+    try jw.objectField("meta");
+    try jw.beginObject();
+    try jw.objectField("locs");
+    try jw.beginArray();
+    for (errs) |err| {
+        try jw.beginObject();
+        try jw.objectField("line");
+        try jw.write(err.line);
+        try jw.objectField("col");
+        try jw.write(err.col);
+        try jw.objectField("msg");
+        try jw.write(err.message);
+        try jw.endObject();
+    }
+    try jw.endArray();
+    try jw.endObject();
+    try jw.endObject();
+
+    res.status = 400;
     res.body = try writer.toOwnedSlice();
     res.content_type = .JSON;
 }
