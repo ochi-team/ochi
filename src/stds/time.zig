@@ -4,13 +4,13 @@ const zeit = @import("zeit");
 
 pub const ParserDurationError = error{
     InvalidDuration,
+    DurationLimit,
 };
 
 pub const TimestampError = error{
     InvalidTimestamp,
 };
 
-// TODO: test all the limits and document it, it's easy to overflow the value
 pub fn parseDurationNs(raw: []const u8) ParserDurationError!u64 {
     if (raw.len < 2) {
         return ParserDurationError.InvalidDuration;
@@ -18,7 +18,10 @@ pub fn parseDurationNs(raw: []const u8) ParserDurationError!u64 {
 
     const unit = raw[raw.len - 1];
     const valueRaw = raw[0 .. raw.len - 1];
-    const value = std.fmt.parseInt(u64, valueRaw, 10) catch return ParserDurationError.InvalidDuration;
+    const value = std.fmt.parseInt(u64, valueRaw, 10) catch |err| switch (err) {
+        error.Overflow => return ParserDurationError.DurationLimit,
+        else => return ParserDurationError.InvalidDuration,
+    };
 
     const multiplier: u64 = switch (unit) {
         's' => std.time.ns_per_s,
@@ -28,7 +31,7 @@ pub fn parseDurationNs(raw: []const u8) ParserDurationError!u64 {
         else => return ParserDurationError.InvalidDuration,
     };
 
-    return std.math.mul(u64, value, multiplier) catch ParserDurationError.InvalidDuration;
+    return std.math.mul(u64, value, multiplier) catch ParserDurationError.DurationLimit;
 }
 
 pub fn parseTimestamp(ts: []const u8) TimestampError!u64 {
@@ -135,13 +138,21 @@ test "parseDurationNs" {
         .{ .raw = "3h", .expected = 3 * std.time.ns_per_hour },
         .{ .raw = "4d", .expected = 4 * std.time.ns_per_day },
         .{ .raw = "0s", .expected = 0 },
-        .{ .raw = "18446744073s", .expected = 18446744073000000000 },
-        .{ .raw = "18446744074s", .expectedErr = ParserDurationError.InvalidDuration },
         .{ .raw = "", .expectedErr = ParserDurationError.InvalidDuration },
         .{ .raw = "9", .expectedErr = ParserDurationError.InvalidDuration },
         .{ .raw = "s", .expectedErr = ParserDurationError.InvalidDuration },
         .{ .raw = "12x", .expectedErr = ParserDurationError.InvalidDuration },
         .{ .raw = "1ms", .expectedErr = ParserDurationError.InvalidDuration },
+        .{ .raw = "18446744073s", .expected = 18446744073000000000 },
+        .{ .raw = "18446744074s", .expectedErr = ParserDurationError.DurationLimit },
+        .{ .raw = "307445734m", .expected = 18446744040000000000 },
+        .{ .raw = "307445735m", .expectedErr = ParserDurationError.DurationLimit },
+        .{ .raw = "5124095h", .expected = 18446742000000000000 },
+        .{ .raw = "5124096h", .expectedErr = ParserDurationError.DurationLimit },
+        .{ .raw = "213503d", .expected = 18446659200000000000 },
+        .{ .raw = "213504d", .expectedErr = ParserDurationError.DurationLimit },
+        .{ .raw = "18446744073709551615s", .expectedErr = ParserDurationError.DurationLimit },
+        .{ .raw = "18446744073709551616s", .expectedErr = ParserDurationError.DurationLimit },
     };
 
     for (cases) |case| {

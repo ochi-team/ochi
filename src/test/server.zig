@@ -400,6 +400,18 @@ fn expectLoqlSyntaxErrors(alloc: Allocator, client: *OchiClient) !void {
                 .{ .line = 1, .col = 31, .msg = "Expect ')' after expression." },
             },
         },
+        .{
+            .query = "[-50000d,now] {env=prod}",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 1, .msg = "Relative time range starts before the Unix epoch." },
+            },
+        },
+        .{
+            .query = "[-18446744242s,now] job=local",
+            .expectedLocs = &.{
+                .{ .line = 1, .col = 1, .msg = "Invalid relative time range duration." },
+            },
+        },
     };
 
     for (cases) |case| {

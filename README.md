@@ -37,6 +37,9 @@ https://ochi.dev/docs/guides/installation/
 - [x] home made query language
 - [x] installation scripts
 - [x] Ochi starts emitting logs to itself, [dogfooding](https://en.wikipedia.org/wiki/Eating_your_own_dog_food) Ochi
+- [x] Home made UI
+- [ ] Disk snapshots and recovery
+- [ ] Replication to a secondary mount
 - [ ] full support of Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
 - [ ] docker-compose with configured datasource to grafana
 - [ ] OTEL collector API support

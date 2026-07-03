@@ -38,8 +38,28 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
             var errs: ErrorReporter = .{};
 
             const translatedQuery = loql.translateQuery(res.arena, &errs, body, @intCast(now.nanoseconds)) catch |err| {
-                if (err == error.SyntaxError and errs.syntaxErrors().len > 0) {
-                    writeSyntaxErrorResponse(res, errs.syntaxErrors()) catch return ApiError.FailedToWriteResponse;
+                const syntaxErrors: []const ErrorReporter.SyntaxError = switch (err) {
+                    error.SyntaxError => errs.syntaxErrors(),
+                    error.InvalidDuration => &.{.{
+                        .line = 1,
+                        .col = 1,
+                        .message = "Invalid relative time range duration.",
+                    }},
+                    error.DurationBeforeUnixEpoch => &.{.{
+                        .line = 1,
+                        .col = 1,
+                        .message = "Relative time range starts before the Unix epoch.",
+                    }},
+                    error.OverflowDuration => &.{.{
+                        .line = 1,
+                        .col = 1,
+                        .message = "Relative time range ends after the maximum timestamp.",
+                    }},
+                    else => return ApiError.FailedToParse,
+                };
+
+                if (syntaxErrors.len > 0) {
+                    writeSyntaxErrorResponse(res, syntaxErrors) catch return ApiError.FailedToWriteResponse;
                     return;
                 }
                 return ApiError.FailedToParse;

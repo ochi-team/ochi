@@ -15,6 +15,7 @@ const Expression = @import("Parser.zig").Expression;
 pub const TranslateError = error{
     InvalidDuration,
     OverflowDuration,
+    DurationBeforeUnixEpoch,
     InvalidTimestamp,
     InvalidRange,
     ExpectedLiteral,
@@ -78,10 +79,10 @@ fn translateTimeValue(value: TimeValue, nowNs: u64) TranslateError!u64 {
 
             if (d[0] == '-') {
                 const dur = try translateTimeDuration(d[1..]);
-                return std.math.sub(u64, nowNs, dur) catch TranslateError.OverflowDuration;
+                return std.math.sub(u64, nowNs, dur) catch TranslateError.DurationBeforeUnixEpoch;
             } else {
                 const dur = try translateTimeDuration(d);
-                return std.math.add(u64, nowNs, dur) catch TranslateError.InvalidDuration;
+                return std.math.add(u64, nowNs, dur) catch TranslateError.OverflowDuration;
             }
         },
         .timestamp => |ts| {
@@ -163,6 +164,54 @@ fn allocFilterExpression(
 }
 
 const testing = std.testing;
+
+test "translateTimeValue distinguishes duration parse limits from arithmetic overflow" {
+    const Case = struct {
+        raw: []const u8,
+        nowNs: u64,
+        expected: ?u64 = null,
+        expectedErr: ?TranslateError = null,
+    };
+    const nowNs: u64 = 1_000_000_000_000;
+
+    const cases = [_]Case{
+        .{ .raw = "18446744073s", .nowNs = 0, .expected = 18446744073000000000 },
+        .{ .raw = "18446744074s", .nowNs = 0, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "307445734m", .nowNs = 0, .expected = 18446744040000000000 },
+        .{ .raw = "307445735m", .nowNs = 0, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "5124095h", .nowNs = 0, .expected = 18446742000000000000 },
+        .{ .raw = "5124096h", .nowNs = 0, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "213503d", .nowNs = 0, .expected = 18446659200000000000 },
+        .{ .raw = "213504d", .nowNs = 0, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "18446744073709551615s", .nowNs = 0, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "18446744073709551616s", .nowNs = 0, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "-18446744242s", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "1s", .nowNs = std.math.maxInt(u64), .expectedErr = TranslateError.OverflowDuration },
+        .{ .raw = "-1s", .nowNs = 0, .expectedErr = TranslateError.DurationBeforeUnixEpoch },
+        .{ .raw = "1s", .nowNs = nowNs, .expected = nowNs + std.time.ns_per_s },
+        .{ .raw = "2m", .nowNs = nowNs, .expected = nowNs + 2 * std.time.ns_per_min },
+        .{ .raw = "3h", .nowNs = nowNs, .expected = nowNs + 3 * std.time.ns_per_hour },
+        .{ .raw = "4d", .nowNs = nowNs, .expected = nowNs + 4 * std.time.ns_per_day },
+        .{ .raw = "0s", .nowNs = nowNs, .expected = nowNs },
+        .{ .raw = "-1s", .nowNs = nowNs, .expected = nowNs - std.time.ns_per_s },
+        .{ .raw = "", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "-", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "9", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "s", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "12x", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+        .{ .raw = "1ms", .nowNs = nowNs, .expectedErr = TranslateError.InvalidDuration },
+    };
+
+    for (cases) |case| {
+        const actual = translateTimeValue(.{ .duration = case.raw }, case.nowNs);
+        if (case.expectedErr) |err| {
+            try testing.expectError(err, actual);
+            continue;
+        }
+
+        try testing.expectEqual(case.expected.?, try actual);
+    }
+}
 
 test "Translator.query" {
     const allocator = testing.allocator;
