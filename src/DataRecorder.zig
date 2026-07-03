@@ -2,6 +2,7 @@
 // we must desine a single component to manage both
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
 
 const fs = @import("fs.zig");
@@ -30,6 +31,8 @@ const cap = @import("store/table/cap.zig");
 const swap = @import("store/table/swap.zig");
 
 const Consts = @import("Consts.zig");
+
+const flushSizeThreshold = Consts.flushSizeThreshold;
 
 const maxMemTables = 24;
 const merger = merge.Merger(*Table, maxMemTables);
@@ -64,32 +67,25 @@ pub const DataShard = struct {
     // the ration between checkpoints len and size on flushing must be close
     checkpoints: [maxCheckpoints]SidCheckpoint = undefined,
     checkpointsLen: u16 = 0,
-    // TODO: make all the arenas use page allocator under the hood instead of c allocator
-    arenaState: std.heap.ArenaAllocator.State,
+    buffer: FixedBufferAllocator,
 
-    /// size defines the amount of space is take by the shard,
-    /// raw bytes required to hold the lines
-    size: u32 = 0,
     // TODO: currently there is a single background process flushing the data shards
     // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
 
     pub const maxCheckpoints = 16;
 
-    fn deinitBuffered(self: *DataShard, alloc: Allocator) void {
-        var arena = self.arenaState.promote(alloc);
+    fn reset(self: *DataShard) void {
         self.lines.clearRetainingCapacity();
-        // TODO: good to collect a meter to udnerstand how often it frees the arena
-        _ = arena.reset(.retain_capacity);
-        self.arenaState = arena.state;
+        self.buffer.reset();
+    }
+    fn deinit(self: *DataShard, alloc: Allocator) void {
+        self.lines.deinit(alloc);
+        alloc.free(self.buffer.buffer);
     }
 
     fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line, sid: SID) !void {
-        var arena = shard.arenaState.promote(alloc);
-        defer shard.arenaState = arena.state;
-        const arenaAlloc = arena.allocator();
-
-        var size: u32 = 0;
+        const bufferAlloc = shard.buffer.allocator();
         for (lines) |line| {
             const prevLine: ?Line = if (shard.lines.items.len > 0)
                 shard.lines.items[shard.lines.items.len - 1]
@@ -97,7 +93,7 @@ pub const DataShard = struct {
                 null;
             var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields else null;
 
-            const fieldsCopy = try arenaAlloc.alloc(Field, line.fields.len);
+            const fieldsCopy = try bufferAlloc.alloc(Field, line.fields.len);
             for (line.fields, 0..) |field, fieldIndex| {
                 const prevField: ?Field = if (prevFields) |pfs|
                     if (fieldIndex < pfs.len) pfs[fieldIndex] else null
@@ -109,15 +105,13 @@ pub const DataShard = struct {
                         if (std.mem.eql(u8, pf.key, field.key)) break :k pf.key;
                     }
                     prevFields = null;
-                    size += @intCast(field.key.len);
-                    break :k try arenaAlloc.dupe(u8, field.key);
+                    break :k try bufferAlloc.dupe(u8, field.key);
                 };
                 const value: []const u8 = v: {
                     if (prevField) |pf| {
                         if (std.mem.eql(u8, pf.value, field.value)) break :v pf.value;
                     }
-                    size += @intCast(field.value.len);
-                    break :v try arenaAlloc.dupe(u8, field.value);
+                    break :v try bufferAlloc.dupe(u8, field.value);
                 };
                 fieldsCopy[fieldIndex] = .{ .key = key, .value = value };
             }
@@ -127,7 +121,6 @@ pub const DataShard = struct {
                 .fields = fieldsCopy,
             });
         }
-        shard.size += size;
 
         if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&sid)) {
             shard.checkpoints[shard.checkpointsLen] = .{
@@ -140,14 +133,8 @@ pub const DataShard = struct {
         }
     }
 
-    // threshold as 90% of a max block size
-    const flushSizeThreshold = 9 * (maxBlockSize / 10);
-    // TODO: make size limit configurable
-    // TODO: this threshold is used in processor too,
-    // make it configurable and extract from both or just get rid of the processor,
-    // we might not need an intermediate buffer
     fn mustFlush(self: *const DataShard) bool {
-        return self.size >= flushSizeThreshold or self.checkpointsLen == maxCheckpoints;
+        return self.buffer.end_index >= flushSizeThreshold or self.checkpointsLen == maxCheckpoints;
     }
 
     // flush sends all the data to a mem Table,
@@ -182,7 +169,7 @@ pub const DataShard = struct {
             sem.post(io);
             return err;
         };
-        self.deinitBuffered(alloc);
+        self.reset();
 
         sem.post(io);
 
@@ -224,11 +211,18 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
     std.debug.assert(concurrency != 0);
 
     const shards = try alloc.alloc(DataShard, concurrency);
-    errdefer alloc.free(shards);
+    var shardsInited: u16 = 0;
+    errdefer {
+        for (shards[0..shardsInited]) |*shard| shard.deinit(alloc);
+        alloc.free(shards);
+    }
+
     for (shards) |*shard| {
+        const buf = try alloc.alloc(u8, maxBlockSize);
         shard.* = .{
-            .arenaState = .{},
+            .buffer = FixedBufferAllocator.init(buf),
         };
+        shardsInited += 1;
     }
 
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
@@ -322,10 +316,7 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     std.debug.assert(self.memTables.items.len == 0);
 
     for (self.shards) |*shard| {
-        shard.deinitBuffered(allocator);
-        shard.lines.deinit(allocator);
-        var arena = shard.arenaState.promote(allocator);
-        arena.deinit();
+        shard.deinit(allocator);
     }
     for (self.diskTables.items) |table| {
         table.release(io);
@@ -476,7 +467,6 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
         try self.memTables.append(alloc, memTable);
 
         shard.flushAtUs = null;
-        shard.size = 0;
         shard.checkpointsLen = 0;
 
         try self.startMemTablesMerge(io, alloc);
@@ -679,7 +669,15 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
     shard.mx.lockUncancelable(io);
     defer shard.mx.unlock(io);
 
-    try shard.appendLines(alloc, lines, sid);
+    shard.appendLines(alloc, lines, sid) catch |err| {
+        switch (err) {
+            Allocator.Error.OutOfMemory => {
+                Logger.log(.warn, "processor: buffer overflow, decrease flush threashold", .{});
+                try self.flushShard(io, alloc, shard);
+                try shard.appendLines(alloc, lines, sid);
+            },
+        }
+    };
 
     if (shard.mustFlush()) {
         try self.flushShard(io, alloc, shard);
@@ -985,7 +983,6 @@ test "flushDataShards non-force respects flush deadline" {
     try recorder.shards[0].lines.append(alloc, line);
     recorder.shards[0].checkpoints[0] = .{ .sid = stableSID(1), .i = 1 };
     recorder.shards[0].checkpointsLen = 1;
-    recorder.shards[0].size = line.fieldsSize();
 
     recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
     try recorder.flushDataShards(io, alloc, false);

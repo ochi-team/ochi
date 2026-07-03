@@ -97,26 +97,26 @@ pub const Processor = struct {
         self.* = undefined;
     }
 
-    pub fn tryPushLine(
+    pub fn tryAppendLine(
         self: *Processor,
         io: Io,
         alloc: Allocator,
         timestampNs: u64,
         fields: []Field,
     ) !void {
-        self.pushLine(io, timestampNs, fields) catch |err| {
+        self.appendLine(io, alloc, timestampNs, fields) catch |err| {
             switch (err) {
                 Allocator.Error.OutOfMemory => {
-                    Logger.log(.warn, "processor: buffer overflow, decrease flush threashold");
+                    Logger.log(.warn, "processor: buffer overflow, decrease flush threashold", .{});
                     try self.flush(io, alloc);
-                    try self.pushLine(io, alloc, timestampNs, fields);
+                    try self.appendLine(io, alloc, timestampNs, fields);
                 },
                 else => return err,
             }
         };
     }
 
-    pub fn pushLine(
+    fn appendLine(
         self: *Processor,
         io: Io,
         alloc: Allocator,

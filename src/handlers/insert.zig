@@ -174,7 +174,7 @@ fn process(
             // as a result we duplicated a lot of data,
             // we have to think how to hold the tags separately in the block
             // or even store them only in a stream index
-            try processor.pushLine(io, ingestAlloc, tsNs, tags.items);
+            try processor.tryAppendLine(io, ingestAlloc, tsNs, tags.items);
 
             // clean value labels, but retain stream labels
             tags.items.len = tagsLen;
