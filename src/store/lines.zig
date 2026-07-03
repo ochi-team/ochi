@@ -255,9 +255,8 @@ pub const Field = struct {
 
 pub const LinesSize = struct {
     size: u16,
-    totalFieldsCount: u16,
 };
-pub const defaultMaxFieldsPerLine: usize = 1000;
+pub const defaultMaxFieldsPerLine: usize = 1024;
 pub const defaultMaxFieldKeySize: usize = 100;
 pub const defaultMaxLineSize: usize = 64 * 1024 - 1;
 // approximate value if the max body size ~4mb and an average small line 128 bytes
@@ -348,34 +347,34 @@ pub const Line = struct {
         return res;
     }
 
-    pub fn rawSizeValidate(self: Line) LinesSizeError!LinesSize {
-        var res: u32 = 0;
-        var totalFieldsCount: u16 = 0;
-        for (self.fields) |field| {
-            if (field.key.len > defaultMaxFieldKeySize) {
-                return error.MaxFieldKeySizeExceeded;
-            }
-
-            res += @intCast(field.key.len);
-            res += @intCast(field.value.len);
-            totalFieldsCount += 1;
-
-            if (totalFieldsCount == defaultMaxFieldsPerLine) {
-                return error.MaxFieldsPerLineExceeded;
-            }
-        }
-
-        if (res > defaultMaxLineSize) {
-            return error.MaxLineSizeExceeded;
-        }
-
-        return .{ .size = @intCast(res), .totalFieldsCount = totalFieldsCount };
-    }
-
     pub fn fieldsSize(self: Line) u32 {
         return sizing.fieldsJsonSize(self);
     }
 };
+
+pub fn rawFieldsSizeValidate(fields: []const Field) LinesSizeError!LinesSize {
+    if (fields.len > defaultMaxFieldsPerLine) {
+        return error.MaxFieldsPerLineExceeded;
+    }
+
+    var res: u32 = 0;
+    for (fields) |field| {
+        if (field.key.len > defaultMaxFieldKeySize) {
+            return error.MaxFieldKeySizeExceeded;
+        }
+
+        res += @intCast(field.key.len);
+        res += @intCast(field.value.len);
+    }
+
+    if (res > defaultMaxLineSize) {
+        return error.MaxLineSizeExceeded;
+    }
+
+    return .{
+        .size = @intCast(res),
+    };
+}
 
 pub fn putJsonArrayLines(jw: *std.json.Stringify, lines: []const Line) !void {
     try jw.beginArray();

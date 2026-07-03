@@ -18,7 +18,7 @@ const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
-const maxBlockSize = @import("store/data/merge.zig").maxBlockSize;
+const maxBlockSize = @import("Consts.zig").maxBlockSize;
 const Runtime = @import("Runtime.zig");
 const Logger = @import("logging");
 

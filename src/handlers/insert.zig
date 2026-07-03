@@ -101,7 +101,7 @@ fn process(
         tags = try std.ArrayList(Field).initCapacity(parseAlloc, labelSize);
     }
 
-    var processor = Processor.empty(ctx.store);
+    var processor = try Processor.init(ctx.allocator, ctx.store);
     defer processor.deinit(ingestAlloc);
 
     // Iterate through each stream

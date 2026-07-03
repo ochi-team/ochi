@@ -14,7 +14,10 @@ const maxCheckpoints = @import("../../DataRecorder.zig").DataShard.maxCheckpoint
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const filenames = @import("../../filenames.zig");
-const maxBlockSize = @import("merge.zig").maxBlockSize;
+
+const Consts = @import("../../Consts.zig");
+
+const maxBlockSize = Consts.maxBlockSize;
 
 // 2mb block size, on merging it takes double amount up to 4mb
 // TODO: benchmark whether 2.5-3kb performs better

@@ -1,14 +1,21 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
 
 const Store = @import("Store.zig").Store;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
+const rawFieldsSizeValidate = @import("store/lines.zig").rawFieldsSizeValidate;
 const copyFields = @import("store/lines.zig").copyFields;
 const encodeTags = @import("store/lines.zig").encodeTags;
 const makeStreamID = @import("store/lines.zig").makeStreamID;
+
+const Consts = @import("Consts.zig");
+
+const maxBlockSize = Consts.maxBlockSize;
+const flushSizeThreshold = Consts.flushSizeThreshold;
 
 const Logger = @import("logging");
 
@@ -23,38 +30,38 @@ fn sortStreamFields(_: void, one: Field, another: Field) bool {
 pub const Processor = struct {
     store: *Store,
 
-    size: u32 = 0,
     lines: std.ArrayList(Line) = .empty,
-    arenaState: std.heap.ArenaAllocator.State = .{},
+    // TODO: buffer lines twice is idiotic,
+    // we have to document why or make it onyl once in a DataShard
+    buffer: FixedBufferAllocator,
     tags: []Field,
     encodedTags: []const u8,
     sid: SID,
 
-    pub fn empty(store: *Store) Processor {
+    pub fn init(alloc: Allocator, store: *Store) !Processor {
+        const buf = try alloc.alloc(u8, maxBlockSize);
+        errdefer alloc.free(buf);
+
         return Processor{
             .store = store,
-            .size = 0,
+            .buffer = FixedBufferAllocator.init(buf),
             .lines = std.ArrayList(Line).empty,
-            .arenaState = .{},
             .tags = &[_]Field{},
             .encodedTags = "",
             .sid = SID{ .tenantID = 0, .id = 0 },
         };
     }
 
-    fn resetBuffered(self: *Processor, alloc: Allocator) void {
-        var arena = self.arenaState.promote(alloc);
+    fn resetBuffered(self: *Processor) void {
         self.lines.clearRetainingCapacity();
-        _ = arena.reset(.retain_capacity);
-        self.arenaState = arena.state;
+        self.buffer.reset();
         // we don't free tags due to arena.reset
         self.tags = &[_]Field{};
-        self.size = 0;
     }
 
     pub fn reinit(
         self: *Processor,
-        alloc: std.mem.Allocator,
+        alloc: Allocator,
         tags: []Field,
         tenantID: u64,
     ) !void {
@@ -70,73 +77,82 @@ pub const Processor = struct {
             alloc.free(self.encodedTags);
             self.encodedTags = "";
         }
-        self.resetBuffered(alloc);
-
-        var arena = self.arenaState.promote(alloc);
-        defer self.arenaState = arena.state;
+        self.resetBuffered();
 
         // TODO: we probably can avoid the copy, the issue is if the Field array grows to much
         // the borrowed slice becomes dangling, so we can shift the time when we borrow,
         // if we can't - document why
-        self.tags = try copyFields(arena.allocator(), tags);
+        self.tags = try copyFields(self.buffer.allocator(), tags);
         self.encodedTags = encodedTags;
         self.sid = streamID;
     }
 
-    pub fn deinit(self: *Processor, alloc: std.mem.Allocator) void {
+    pub fn deinit(self: *Processor, alloc: Allocator) void {
         if (self.encodedTags.len > 0) {
             alloc.free(self.encodedTags);
         }
-        self.resetBuffered(alloc);
+        self.resetBuffered();
         self.lines.deinit(alloc);
-        var arena = self.arenaState.promote(alloc);
-        arena.deinit();
+        alloc.free(self.buffer.buffer);
         self.* = undefined;
+    }
+
+    pub fn tryPushLine(
+        self: *Processor,
+        io: Io,
+        alloc: Allocator,
+        timestampNs: u64,
+        fields: []Field,
+    ) !void {
+        self.pushLine(io, timestampNs, fields) catch |err| {
+            switch (err) {
+                Allocator.Error.OutOfMemory => {
+                    Logger.log(.warn, "processor: buffer overflow, decrease flush threashold");
+                    try self.flush(io, alloc);
+                    try self.pushLine(io, alloc, timestampNs, fields);
+                },
+                else => return err,
+            }
+        };
     }
 
     pub fn pushLine(
         self: *Processor,
         io: Io,
-        alloc: std.mem.Allocator,
+        alloc: Allocator,
         timestampNs: u64,
         fields: []Field,
     ) !void {
-        var arena = self.arenaState.promote(alloc);
-        defer self.arenaState = arena.state;
-        const arenaAlloc = arena.allocator();
-
-        const fieldsCopy = try arenaAlloc.alloc(Field, fields.len);
+        const bufferAlloc = self.buffer.allocator();
+        const fieldsCopy = try bufferAlloc.alloc(Field, fields.len);
         for (fields, 0..) |field, i| {
             fieldsCopy[i] = .{
-                .key = try arenaAlloc.dupe(u8, field.key),
-                .value = try arenaAlloc.dupe(u8, field.value),
+                .key = try bufferAlloc.dupe(u8, field.key),
+                .value = try bufferAlloc.dupe(u8, field.value),
             };
         }
-
         const line = Line{
             .timestampNs = timestampNs,
             .fields = fieldsCopy,
         };
 
-        // TODO: diagnostic fits here to get more error context
-        const size = line.rawSizeValidate() catch |err| {
+        _ = rawFieldsSizeValidate(fields) catch |err| {
             switch (err) {
                 error.MaxFieldsPerLineExceeded => {
-                    Logger.log(.err, "max fields per line exceeded", .{});
+                    Logger.log(.warn, "max fields per line exceeded", .{});
                     return;
                 },
                 error.MaxFieldKeySizeExceeded => {
-                    Logger.log(.err, "max field key size exceeded", .{});
+                    Logger.log(.warn, "max field key size exceeded", .{});
                     return;
                 },
                 error.MaxLineSizeExceeded => {
-                    Logger.log(.err, "max line size exceeded", .{});
+                    Logger.log(.warn, "max line size exceeded", .{});
                     return;
                 },
             }
         };
 
-        self.size += size.size;
         try self.lines.append(alloc, line);
 
         if (self.mustFlush()) {
@@ -144,27 +160,23 @@ pub const Processor = struct {
         }
     }
 
-    // threshold as 90% of a max block size
-    const flushSizeThreshold = 9 * (2 * 1024 * 1024 / 10);
-    // TODO: make size limit configurable
-    // TODO: this threshold is used in DataRecorder too,
-    // make it configurable and extract from both
     pub fn mustFlush(self: *Processor) bool {
-        return self.size >= flushSizeThreshold;
+        return self.buffer.end_index >= flushSizeThreshold;
     }
 
-    pub fn flush(self: *Processor, io: Io, alloc: std.mem.Allocator) !void {
+    pub fn flush(self: *Processor, io: Io, alloc: Allocator) !void {
         try self.store.addLines(io, alloc, self.lines.items, self.tags, self.encodedTags, self.sid);
-        self.resetBuffered(alloc);
+        self.resetBuffered();
     }
 };
 
 const testing = std.testing;
 
 test "Processor.reinit owns stream tags after caller reuses tag storage" {
+    const alloc = testing.allocator;
     var store: Store = undefined;
-    var processor = Processor.empty(&store);
-    defer processor.deinit(testing.allocator);
+    var processor = try Processor.init(alloc, &store);
+    defer processor.deinit(alloc);
 
     var tags = try std.ArrayList(Field).initCapacity(testing.allocator, 2);
     defer tags.deinit(testing.allocator);

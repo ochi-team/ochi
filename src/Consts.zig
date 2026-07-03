@@ -11,3 +11,8 @@ comptime {
     std.debug.assert(dataFlushIntervalUs <= 10 * std.time.us_per_s);
     std.debug.assert(indexFlushIntervalUs <= 10 * std.time.us_per_s);
 }
+
+pub const maxBlockSize = 2 * 1024 * 1024;
+
+// threshold as 90% of a max block size
+pub const flushSizeThreshold = 36 * (maxBlockSize / 40);
