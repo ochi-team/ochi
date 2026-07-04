@@ -88,12 +88,6 @@ pub fn encode(self: *Self, values: []const []const u8, columnValues: *ColumnDict
     return .{ .type = .string, .min = 0, .max = 0 };
 }
 
-fn lens(vals: []const []const u8) usize {
-    var len: usize = 0;
-    for (vals) |v| len += v.len;
-    return len;
-}
-
 fn tryDictEncoding(self: *Self, values: []const []const u8, columnValues: *ColumnDict) !?EncodeValueType {
     const startBufLen = self.buf.items.len;
     const startValuesLen = self.values.items.len;
@@ -562,49 +556,114 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
     }
 }
 
-test "ValuesEncoder fuzz mixed short values" {
-    // This first fuzz group is intentionally small: mixed short values exercise
-    // the full encoder dispatch and verify exact roundtrip for string/dict
-    // results. Numeric, float, IPv4, and timestamp results may canonicalize text
-    // on decode, so dedicated groups should define their own equality rule.
-    //
-    // TODO: Add a canonical unsigned-integer group with no leading plus sign and
-    // no leading zeroes except the value "0"; cover uint8/16/32/64 boundaries.
-    // TODO: Add signed integer groups for min/max i64, negative zero-like text,
-    // plus signs, whitespace, and overflow strings that should fall back.
-    // TODO: Add float64 groups with canonical expected formatting, NaN/Inf
-    // decisions, exponent notation, signed zero, and parse-overflow behavior.
-    // TODO: Add IPv4 groups for every octet boundary, leading zero policy, too
-    // many/few octets, empty octets, trailing dots, and out-of-range octets.
-    // TODO: Add timestamp ISO8601 groups around epoch, leap-day dates, fractional
-    // milliseconds, invalid dates, missing timezone, and unsupported precision.
-    // TODO: Add dict-focused groups for exactly 1..8 unique values, repeated
-    // values, empty strings, max value size, total dict byte limit, and fallback
-    // when dict limits are exceeded.
-    // TODO: Add mixed-type precedence groups to lock in dispatch order, such as
-    // all-digit strings vs timestamps, IPv4-looking floats, and values that make
-    // one parser fail after earlier values succeeded.
-    // TODO: Add all-string fallback groups with binary bytes, long values,
-    // embedded zeroes, UTF-8-looking bytes, and high-bit bytes.
-    // TODO: Add reuse groups that call encode repeatedly on the same encoder and
-    // ColumnDict to catch stale buffer/dict state between columns.
-    // TODO: Add allocation-failure groups with a failing allocator so expected
-    // OutOfMemory paths leave buffers and dict state consistent.
+test "ValuesEncoder fuzz" {
     try std.testing.fuzz({}, fuzzMixedShortValues, .{
         .corpus = &.{
             "",
             "a",
             "b",
+            "0",
             "1",
-            "2",
+            "255",
+            "256",
+            "65535",
+            "65536",
+            "4294967295",
+            "4294967296",
+            "18446744073709551615",
             "001",
             "000022",
             "42.2",
             "44.989898989",
+            "-9223372036854775808",
+            "9223372036854775807",
+            "-0",
+            "+42",
+            "1.5",
+            "2e3",
+            "-0.0",
+            "inf",
+            "-inf",
+            "nan",
+            "1e309",
+            // IPv4 octet boundaries.
+            "0.0.0.0",
+            "0.0.0.1",
+            "0.0.0.255",
+            "0.0.1.0",
+            "0.0.255.0",
+            "0.1.0.0",
+            "0.255.0.0",
+            "1.0.0.0",
             "1.2.3.4",
+            "127.0.0.1",
+            "128.0.0.1",
+            "192.168.0.1",
             "255.255.255.255",
+            // IPv4 leading zero policy.
+            "01.2.3.4",
+            "1.02.3.4",
+            "1.2.003.4",
+            "1.2.3.004",
+            "000.000.000.000",
+            "255.255.255.0255",
+            // IPv4 too many/few octets.
+            "1",
+            "1.2",
+            "1.2.3",
+            "1.2.3.4.5",
+            "1.2.3.4.5.6",
+            // IPv4 empty octets and trailing dots.
+            ".1.2.3",
+            "1..2.3",
+            "1.2..3",
+            "1.2.3.",
+            "1.2.3.4.",
+            // IPv4 out-of-range octets.
+            "256.0.0.0",
+            "0.256.0.0",
+            "0.0.256.0",
+            "0.0.0.256",
+            "999.999.999.999",
+            "-1.2.3.4",
+            "1.-2.3.4",
+            // ISO8601 timestamps around epoch.
+            "1969-12-31T23:59:59.999Z",
+            "1970-01-01T00:00:00.000Z",
+            "1970-01-01T00:00:00.001Z",
             "2011-04-19T03:44:01.000Z",
             "2034-04-19T03:44:01.000123+03:00",
+            // ISO8601 leap-day dates.
+            "2000-02-29T00:00:00.000Z",
+            "2004-02-29T12:34:56.789Z",
+            "1900-02-29T00:00:00.000Z",
+            "2019-02-29T00:00:00.000Z",
+            "2020-02-29T23:59:59.999Z",
+            // ISO8601 fractional milliseconds and unsupported precision.
+            "2011-04-19T03:44:01Z",
+            "2011-04-19T03:44:01.0Z",
+            "2011-04-19T03:44:01.01Z",
+            "2011-04-19T03:44:01.001Z",
+            "2011-04-19T03:44:01.000001Z",
+            "2011-04-19T03:44:01.000000001Z",
+            "2011-04-19T03:44:01.0000000001Z",
+            // ISO8601 invalid dates.
+            "2011-00-19T03:44:01.000Z",
+            "2011-13-19T03:44:01.000Z",
+            "2011-04-00T03:44:01.000Z",
+            "2011-04-31T03:44:01.000Z",
+            "2011-04-19T24:00:00.000Z",
+            "2011-04-19T23:60:00.000Z",
+            "2011-04-19T23:59:60.000Z",
+            // ISO8601 missing timezone.
+            "2011-04-19T03:44:01",
+            "2011-04-19T03:44:01.000",
+            "20240224T154944",
+            // ISO8601 timezone variants.
+            "2011-04-19T03:44:01.000+03:00",
+            "2011-04-19T03:44:01.000-07:30",
+            "2011-04-19T03:44:01.000+0300",
+            "2011-04-19T03:44:01.000+03",
             "@key",
             "ke.y",
             ":key",
@@ -645,7 +704,11 @@ fn fuzzMixedShortValues(_: void, smith: *std.testing.Smith) !void {
     try expectEncodeRoundtrip(io, allocator, values[0..count]);
 }
 
-fn expectEncodeRoundtrip(io: std.Io, allocator: std.mem.Allocator, input: []const []const u8) !void {
+fn expectEncodeRoundtrip(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    input: []const []const u8,
+) !void {
     const encoder = try Self.init(allocator);
     defer encoder.deinit();
 
@@ -672,8 +735,49 @@ fn expectEncodeRoundtrip(io: std.Io, allocator: std.mem.Allocator, input: []cons
                 try std.testing.expectEqualStrings(expected, got);
             }
         },
-        // TODO: implement others
-        else => {},
+        .uint8, .uint16, .uint32, .uint64 => {
+            try std.testing.expectEqual(input.len, decodedValues.len);
+            for (input, decodedValues) |expected, got| {
+                try std.testing.expectEqual(
+                    try std.fmt.parseInt(u64, expected, 10),
+                    try std.fmt.parseInt(u64, got, 10),
+                );
+            }
+        },
+        .int64 => {
+            try std.testing.expectEqual(input.len, decodedValues.len);
+            for (input, decodedValues) |expected, got| {
+                try std.testing.expectEqual(
+                    try std.fmt.parseInt(i64, expected, 10),
+                    try std.fmt.parseInt(i64, got, 10),
+                );
+            }
+        },
+        .float64 => {
+            try std.testing.expectEqual(input.len, decodedValues.len);
+            for (input, decodedValues) |expected, got| {
+                const expectedFloat = try std.fmt.parseFloat(f64, expected);
+                const gotFloat = try std.fmt.parseFloat(f64, got);
+                if (std.math.isNan(expectedFloat)) {
+                    try std.testing.expect(std.math.isNan(gotFloat));
+                } else {
+                    try std.testing.expectEqual(expectedFloat, gotFloat);
+                }
+            }
+        },
+        .ipv4 => {
+            try std.testing.expectEqual(input.len, decodedValues.len);
+            for (input, decodedValues) |expected, got| {
+                try std.testing.expectEqual(try parseIPv4(expected), try parseIPv4(got));
+            }
+        },
+        .timestampIso8601 => {
+            try std.testing.expectEqual(input.len, decodedValues.len);
+            for (input, decodedValues) |expected, got| {
+                try std.testing.expectEqual(parseTimestampISO8601(expected), parseTimestampISO8601(got));
+            }
+        },
+        .unknown => return error.UnknownValueType,
     }
 }
 
