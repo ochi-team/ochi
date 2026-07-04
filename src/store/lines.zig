@@ -52,21 +52,20 @@ pub const SID = struct {
     id: u128,
 
     pub fn order(one: SID, another: SID) std.math.Order {
-        if (one.lessThan(&another)) {
+        if (one.lessThan(another)) {
             return .lt;
-        } else if (one.eql(&another)) {
+        } else if (one.eql(another)) {
             return .eq;
         }
 
         return .gt;
     }
 
-    pub fn eql(self: *const SID, another: *const SID) bool {
+    pub inline fn eql(self: SID, another: SID) bool {
         return self.tenantID == another.tenantID and self.id == another.id;
     }
 
-    // TODO: pass it by value maybe?
-    pub fn lessThan(self: *const SID, another: *const SID) bool {
+    pub inline fn lessThan(self: SID, another: SID) bool {
         return self.tenantID < another.tenantID or
             (self.tenantID == another.tenantID and self.id < another.id);
     }

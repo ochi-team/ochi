@@ -261,7 +261,7 @@ pub fn queryLines(
                 });
             }
 
-            std.sort.pdq(SID, sids.items, {}, sidLessThan);
+            std.sort.pdq(SID, sids.items, {}, SID.lessThan);
 
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
@@ -326,8 +326,4 @@ fn cache(self: *Partition, io: Io, sid: SID) !void {
 
 pub fn lessThan(_: void, one: *Partition, another: *Partition) bool {
     return one.day < another.day;
-}
-
-fn sidLessThan(_: void, one: SID, another: SID) bool {
-    return one.lessThan(&another);
 }

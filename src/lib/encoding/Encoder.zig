@@ -26,7 +26,7 @@ pub fn writeBytes(self: *Self, bytes: []const u8) void {
     @memcpy(slice, bytes[0..]);
 }
 
-pub inline fn writeString(self: *Self, str: []const u8) void {
+pub fn writeString(self: *Self, str: []const u8) void {
     self.writeVarInt(str.len);
     self.writeBytes(str);
 }
@@ -102,7 +102,7 @@ pub fn writeIntBytes(self: *Self, size: usize, value: u64) void {
 }
 
 /// Static helper: Encode an integer to bytes using big-endian (one-shot, no state)
-pub inline fn toBytes(comptime T: type, value: T) [@sizeOf(T)]u8 {
+pub fn toBytes(comptime T: type, value: T) [@sizeOf(T)]u8 {
     var bytes: [@sizeOf(T)]u8 = undefined;
     std.mem.writeInt(T, &bytes, value, .big);
     return bytes;

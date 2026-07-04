@@ -122,7 +122,7 @@ pub const DataShard = struct {
             });
         }
 
-        if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(&sid)) {
+        if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(sid)) {
             shard.checkpoints[shard.checkpointsLen] = .{
                 .sid = sid,
                 .i = @intCast(shard.lines.items.len),

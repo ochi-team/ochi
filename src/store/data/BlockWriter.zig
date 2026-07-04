@@ -120,8 +120,8 @@ fn writeBlock(
 ) !void {
     var isSeenSid = false;
     if (self.sidLast) |sidLast| {
-        std.debug.assert(!sid.lessThan(&sidLast));
-        isSeenSid = sid.eql(&sidLast);
+        std.debug.assert(!sid.lessThan(sidLast));
+        isSeenSid = sid.eql(sidLast);
     }
 
     const hasState = self.sid != null;

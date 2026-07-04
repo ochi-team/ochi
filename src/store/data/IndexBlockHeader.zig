@@ -117,7 +117,7 @@ pub fn readIndexBlockHeaders(
 // have it in release safe also must be vaible
 fn validateIndexBlockHeaders(headers: []const Self) void {
     for (1..headers.len) |i| {
-        std.debug.assert(!headers[i].sid.lessThan(&headers[i - 1].sid));
+        std.debug.assert(!headers[i].sid.lessThan(headers[i - 1].sid));
     }
 }
 

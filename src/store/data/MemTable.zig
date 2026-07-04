@@ -146,10 +146,10 @@ const LineBySidSortContext = struct {
     linesBySid: [][]Line,
 
     pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-        if (ctx.sids[a].lessThan(&ctx.sids[b])) {
+        if (ctx.sids[a].lessThan(ctx.sids[b])) {
             return true;
         }
-        if (ctx.sids[b].lessThan(&ctx.sids[a])) {
+        if (ctx.sids[b].lessThan(ctx.sids[a])) {
             return false;
         }
 
@@ -218,7 +218,7 @@ const LineBySidSortContext = struct {
         var start: usize = 0;
         while (start < ctx.sids.len) {
             var end = start + 1;
-            while (end < ctx.sids.len and ctx.sids[start].eql(&ctx.sids[end])) {
+            while (end < ctx.sids.len and ctx.sids[start].eql(ctx.sids[end])) {
                 end += 1;
             }
 
@@ -620,7 +620,7 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
         var actualBlocksLen: usize = 0;
         while (try blockReader.nextBlock(io, alloc)) {
             try std.testing.expect(actualBlocksLen < actualBlocks.len);
-            try std.testing.expect(blockReader.blockData.sid.eql(&sid));
+            try std.testing.expect(blockReader.blockData.sid.eql(sid));
             actualBlocks[actualBlocksLen] = .{
                 .min = blockReader.blockData.timestampsData.minTimestamp,
                 .max = blockReader.blockData.timestampsData.maxTimestamp,

@@ -164,8 +164,8 @@ pub fn nextBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
 
     // Validate bh
     if (self.sidLast) |sidLast| {
-        std.debug.assert(!bh.sid.lessThan(&sidLast));
-        std.debug.assert(!bh.sid.eql(&sidLast) or th.min >= self.minTimestampLast);
+        std.debug.assert(!bh.sid.lessThan(sidLast));
+        std.debug.assert(!bh.sid.eql(sidLast) or th.min >= self.minTimestampLast);
     }
     self.minTimestampLast = th.min;
     self.sidLast = bh.sid;
@@ -219,10 +219,10 @@ fn nextIndexBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
 }
 
 pub fn blockReaderLessThan(one: *const BlockReader, another: *const BlockReader) bool {
-    const firstIsLess = one.blockData.sid.lessThan(&another.blockData.sid);
+    const firstIsLess = one.blockData.sid.lessThan(another.blockData.sid);
     if (firstIsLess) {
         return true;
-    } else if (one.blockData.sid.eql(&another.blockData.sid)) {
+    } else if (one.blockData.sid.eql(another.blockData.sid)) {
         return one.blockData.timestampsData.minTimestamp < another.blockData.timestampsData.minTimestamp;
     } else {
         // not equal and not firstIsLess then the second is larger

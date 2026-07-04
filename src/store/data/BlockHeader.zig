@@ -196,9 +196,9 @@ pub fn validateBlockHeaders(bhs: []const BlockHeader) void {
         const curr = &bhs[i];
         const prev = &bhs[i - 1];
 
-        std.debug.assert(!curr.sid.lessThan(&prev.sid));
+        std.debug.assert(!curr.sid.lessThan(prev.sid));
 
-        if (!curr.sid.eql(&prev.sid)) {
+        if (!curr.sid.eql(prev.sid)) {
             continue;
         }
 

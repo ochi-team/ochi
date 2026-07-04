@@ -465,7 +465,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
         var sid = sidsToFind[0];
         var indexBlockHeader = indexBlockHeaders[0];
 
-        if (sid.lessThan(&indexBlockHeader.sid)) {
+        if (sid.lessThan(indexBlockHeader.sid)) {
             const n = std.sort.lowerBound(SID, sidsToFind, indexBlockHeader.sid, SID.order);
             if (n == sidsToFind.len) {
                 sidsToFind = sidsToFind[0..0];
@@ -477,7 +477,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
         }
 
         var n: usize = 0;
-        if (indexBlockHeaders[0].sid.lessThan(&sid)) {
+        if (indexBlockHeaders[0].sid.lessThan(sid)) {
             n = std.sort.lowerBound(IndexBlockHeader, indexBlockHeaders, sid, indexBlockHeaderSidLowerBoundOrder);
             // n can be indexBlockHeaders.len,
             // so we make a step back to check the last value
@@ -505,7 +505,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
             n = std.sort.lowerBound(BlockHeader, blockHeadersToRead, sid, blockHeaderSidLowerBoundOrder);
             blockHeadersToRead = blockHeadersToRead[n..];
 
-            while (blockHeadersToRead.len > 0 and blockHeadersToRead[0].sid.eql(&sid)) {
+            while (blockHeadersToRead.len > 0 and blockHeadersToRead[0].sid.eql(sid)) {
                 const blockHeader = blockHeadersToRead[0];
                 blockHeadersToRead = blockHeadersToRead[1..];
 
