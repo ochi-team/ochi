@@ -4,6 +4,10 @@ zig-out/
 zig-pkg/
 bin/
 
+# coverage
+cov/
+kcov/
+
 # agents
 .claude/
 

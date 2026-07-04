@@ -412,6 +412,20 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
                 .values = dictValues,
             },
         },
+        // int64
+        .{
+            .values = &[_][]const u8{ "-12", "989898989898", "1", "2", "3", "4", "5", "6", "7" },
+            .expectedType = .int64,
+            .expectedMin = 18446744073709551604,
+            .expectedMax = 989898989898,
+        },
+        // float
+        .{
+            .values = &[_][]const u8{ "-12.34", "-989898989898", "1", "2", "3", "4", "5", "6", "7" },
+            .expectedType = .float64,
+            .expectedMin = 14009800494020116480,
+            .expectedMax = 4619567317775286272,
+        },
         // uint8 values
         .{
             .values = &[_][]const u8{ "1", "2", "3", "4", "5", "6", "7", "8", "9" },
