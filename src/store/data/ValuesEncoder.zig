@@ -377,6 +377,11 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
     const dictV = [_][]const u8{ "1111", "2222" };
     dictValues.appendSliceAssumeCapacity(&dictV);
 
+    var dictValuesOverflow = try std.ArrayList([]const u8).initCapacity(allocator, 8);
+    defer dictValuesOverflow.deinit(allocator);
+    const dictValuesOverflowV = [_][]const u8{"2424242424242424242424242424242424242424"};
+    dictValuesOverflow.appendSliceAssumeCapacity(&dictValuesOverflowV);
+
     const Case = struct {
         values: []const []const u8,
         expectedType: ColumnType,
@@ -494,6 +499,18 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
             .expectedType = .timestampIso8601,
             .expectedMin = 1303184641000000000,
             .expectedMax = 1303184641008000000,
+        },
+        // int overflow
+        .{
+            .values = &[_][]const u8{
+                "2424242424242424242424242424242424242424",
+            },
+            .expectedType = .dict,
+            .expectedMin = 0,
+            .expectedMax = 0,
+            .expectedDict = .{
+                .values = dictValuesOverflow,
+            },
         },
     };
 
