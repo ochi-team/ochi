@@ -136,7 +136,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                 const test_fn = builtin.test_functions[index];
                 is_fuzz_test = false;
 
-                printTerminal("[{d}/{d}] {s} ", .{ index + 1, builtin.test_functions.len, test_fn.name });
+                printTerminalTestStart(index, test_fn.name);
 
                 // let the build server know we're starting the test now
                 try server.serveStringMessage(.test_started, &.{});
@@ -370,6 +370,29 @@ fn printTerminal(comptime fmt: []const u8, args: anytype) void {
     tty.writeStreamingAll(runner_threaded_io, bytes) catch {};
 }
 
+fn printTerminalColor(
+    comptime fmt: []const u8,
+    args: anytype,
+    color: AnsiColorCodes,
+) void {
+    printTerminal("{s}" ++ fmt ++ "{s}", .{color.toSlice()} ++ args ++ .{AnsiColorCodes.reset.toSlice()});
+}
+
+fn printTerminalTestStart(index: u32, test_name: []const u8) void {
+    printTerminalColor("[{d}/{d}]", .{ index + 1, builtin.test_functions.len }, .cyan);
+
+    var iter = std.mem.splitScalar(u8, test_name, '.');
+    const name = iter.first();
+
+    printTerminalColor("{s}|", .{name}, .green);
+
+    if (iter.next()) |file_name| {
+        printTerminalColor("|{s}|", .{file_name}, .yellow);
+    }
+
+    printTerminalColor("{s} ", .{iter.rest()}, .blue);
+}
+
 fn printTerminalStatus(
     status: std.zig.Server.Message.TestResults.Status,
     elapsed_ns: u64,
@@ -385,18 +408,32 @@ fn printTerminalStatus(
     else
         .{ elapsed, "ns" };
 
-    const status_text = switch (status) {
-        .pass => if (leak_count == 0) "OK" else "LEAK",
-        .skip => "SKIP",
-        .fail => "FAIL",
+    const status_style = switch (status) {
+        .pass => if (leak_count == 0)
+            .{ "OK ", AnsiColorCodes.green }
+        else
+            .{ "LEAK ", AnsiColorCodes.red },
+        .skip => .{ "SKIP ", AnsiColorCodes.bright_yellow },
+        .fail => .{ "FAIL ", AnsiColorCodes.bright_red },
     };
 
+    printTerminalColor("{s}", .{status_style[0]}, status_style[1]);
+
+    const elapsed_color: AnsiColorCodes = if (elapsed_ns >= 1_000_000_000)
+        .bright_red
+    else if (elapsed_ns >= 1_000_000)
+        .bright_magenta
+    else if (elapsed_ns >= 1_000)
+        .bright_cyan
+    else
+        .bright_blue;
+
     if (elapsed_text[0] >= 100 or @round(elapsed_text[0]) == elapsed_text[0]) {
-        printTerminal("{s} ({d:.0}{s})\n", .{ status_text, elapsed_text[0], elapsed_text[1] });
+        printTerminalColor("({d:.0}{s})\n", .{ elapsed_text[0], elapsed_text[1] }, elapsed_color);
     } else if (elapsed_text[0] >= 10) {
-        printTerminal("{s} ({d:.1}{s})\n", .{ status_text, elapsed_text[0], elapsed_text[1] });
+        printTerminalColor("({d:.1}{s})\n", .{ elapsed_text[0], elapsed_text[1] }, elapsed_color);
     } else {
-        printTerminal("{s} ({d:.2}{s})\n", .{ status_text, elapsed_text[0], elapsed_text[1] });
+        printTerminalColor("({d:.2}{s})\n", .{ elapsed_text[0], elapsed_text[1] }, elapsed_color);
     }
 }
 

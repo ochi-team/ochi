@@ -65,6 +65,10 @@ pub const SID = struct {
         return self.tenantID == another.tenantID and self.id == another.id;
     }
 
+    pub fn sortLessThan(_: void, one: SID, another: SID) bool {
+        return one.lessThan(another);
+    }
+
     pub inline fn lessThan(self: SID, another: SID) bool {
         return self.tenantID < another.tenantID or
             (self.tenantID == another.tenantID and self.id < another.id);

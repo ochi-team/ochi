@@ -562,6 +562,121 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
     }
 }
 
+test "ValuesEncoder fuzz mixed short values" {
+    // This first fuzz group is intentionally small: mixed short values exercise
+    // the full encoder dispatch and verify exact roundtrip for string/dict
+    // results. Numeric, float, IPv4, and timestamp results may canonicalize text
+    // on decode, so dedicated groups should define their own equality rule.
+    //
+    // TODO: Add a canonical unsigned-integer group with no leading plus sign and
+    // no leading zeroes except the value "0"; cover uint8/16/32/64 boundaries.
+    // TODO: Add signed integer groups for min/max i64, negative zero-like text,
+    // plus signs, whitespace, and overflow strings that should fall back.
+    // TODO: Add float64 groups with canonical expected formatting, NaN/Inf
+    // decisions, exponent notation, signed zero, and parse-overflow behavior.
+    // TODO: Add IPv4 groups for every octet boundary, leading zero policy, too
+    // many/few octets, empty octets, trailing dots, and out-of-range octets.
+    // TODO: Add timestamp ISO8601 groups around epoch, leap-day dates, fractional
+    // milliseconds, invalid dates, missing timezone, and unsupported precision.
+    // TODO: Add dict-focused groups for exactly 1..8 unique values, repeated
+    // values, empty strings, max value size, total dict byte limit, and fallback
+    // when dict limits are exceeded.
+    // TODO: Add mixed-type precedence groups to lock in dispatch order, such as
+    // all-digit strings vs timestamps, IPv4-looking floats, and values that make
+    // one parser fail after earlier values succeeded.
+    // TODO: Add all-string fallback groups with binary bytes, long values,
+    // embedded zeroes, UTF-8-looking bytes, and high-bit bytes.
+    // TODO: Add reuse groups that call encode repeatedly on the same encoder and
+    // ColumnDict to catch stale buffer/dict state between columns.
+    // TODO: Add allocation-failure groups with a failing allocator so expected
+    // OutOfMemory paths leave buffers and dict state consistent.
+    try std.testing.fuzz({}, fuzzMixedShortValues, .{
+        .corpus = &.{
+            "",
+            "a",
+            "b",
+            "1",
+            "2",
+            "001",
+            "000022",
+            "42.2",
+            "44.989898989",
+            "1.2.3.4",
+            "255.255.255.255",
+            "2011-04-19T03:44:01.000Z",
+            "2034-04-19T03:44:01.000123+03:00",
+            "@key",
+            "ke.y",
+            ":key",
+            "key:",
+            "#key,",
+            "key:42",
+            "&key:42",
+        },
+    });
+}
+
+fn fuzzMixedShortValues(_: void, smith: *std.testing.Smith) !void {
+    @disableInstrumentation();
+
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var storage: [32][64]u8 = undefined;
+    var values: [32][]const u8 = undefined;
+    const count: usize = @intCast(smith.valueRangeAtMost(u8, 0, values.len));
+
+    for (values[0..count], 0..) |*value, i| {
+        const len = smith.sliceWeightedBytes(&storage[i], &.{
+            .rangeAtMost(u8, '0', '9', 4),
+            .rangeAtMost(u8, 'a', 'z', 5),
+            .rangeAtMost(u8, 'A', 'Z', 2),
+            .value(u8, '.', 3),
+            .value(u8, '-', 2),
+            .value(u8, ':', 1),
+            .value(u8, 'T', 1),
+            .value(u8, 'Z', 1),
+            .value(u8, '_', 1),
+            .value(u8, 0, 1),
+        });
+        value.* = storage[i][0..len];
+    }
+
+    try expectEncodeRoundtrip(io, allocator, values[0..count]);
+}
+
+fn expectEncodeRoundtrip(io: std.Io, allocator: std.mem.Allocator, input: []const []const u8) !void {
+    const encoder = try Self.init(allocator);
+    defer encoder.deinit();
+
+    var cv = try ColumnDict.init(allocator);
+    defer cv.deinit(allocator);
+
+    const valueType = try encoder.encode(input, &cv);
+
+    const decoder = try ValuesDecoder.init(allocator);
+    defer decoder.deinit();
+
+    var decodedValues = try allocator.alloc([]const u8, encoder.values.items.len);
+    defer allocator.free(decodedValues);
+    for (encoder.values.items, 0..) |encodedValue, i| {
+        decodedValues[i] = encodedValue;
+    }
+
+    try decoder.decode(io, decodedValues, valueType.type, cv.values.items);
+
+    switch (valueType.type) {
+        .string, .dict => {
+            try std.testing.expectEqual(input.len, decodedValues.len);
+            for (input, decodedValues) |expected, got| {
+                try std.testing.expectEqualStrings(expected, got);
+            }
+        },
+        // TODO: implement others
+        else => {},
+    }
+}
+
 test "ValuesEncoder does not treat bare number as timestamp" {
     const allocator = std.testing.allocator;
 

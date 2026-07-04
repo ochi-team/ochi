@@ -261,7 +261,7 @@ pub fn queryLines(
                 });
             }
 
-            std.sort.pdq(SID, sids.items, {}, SID.lessThan);
+            std.sort.pdq(SID, sids.items, {}, SID.sortLessThan);
 
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
