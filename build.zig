@@ -188,10 +188,8 @@ pub fn build(b: *std.Build) void {
 
     // test command
     const test_step = b.step("test", "run unit tests");
-    const run_unit_tests = b.addSystemCommand(&[_][]const u8{"zig-out/bin/test"});
-    run_unit_tests.step.dependOn(&install_tests.step);
-    const run_encoding_tests = b.addSystemCommand(&[_][]const u8{"zig-out/bin/encoding-test"});
-    run_encoding_tests.step.dependOn(&install_encoding_tests.step);
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    const run_encoding_tests = b.addRunArtifact(encoding_tests);
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_encoding_tests.step);
 

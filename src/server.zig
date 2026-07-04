@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 
 const httpz = @import("httpz");
@@ -39,7 +40,8 @@ fn registerSigtermHandler() void {
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.TERM, &act, null);
-    std.posix.sigaction(std.posix.SIG.INT, &act, null);
+    // skip in tests, otherwise it overrides the basic handler and it can't interrupt tests anymore
+    if (!builtin.is_test) std.posix.sigaction(std.posix.SIG.INT, &act, null);
 }
 
 fn handleSigterm(_: std.posix.SIG) callconv(.c) void {

@@ -124,6 +124,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
             },
 
             .run_test => {
+                const start = std.Io.Timestamp.now(runner_threaded_io, .cpu_process);
                 testing.environ = init.environ;
                 testing.allocator_instance = .{};
                 testing.io_instance = .init(testing.allocator, .{
@@ -134,6 +135,8 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
                 is_fuzz_test = false;
+
+                printTerminal("[{d}/{d}] {s} ", .{ index + 1, builtin.test_functions.len, test_fn.name });
 
                 // let the build server know we're starting the test now
                 try server.serveStringMessage(.test_started, &.{});
@@ -154,6 +157,9 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                 testing.io_instance.deinit();
                 const leak_count = testing.allocator_instance.detectLeaks();
                 testing.allocator_instance.deinitWithoutLeakChecks();
+                const after = std.Io.Timestamp.now(runner_threaded_io, .cpu_process);
+                const elapsed: u64 = @intCast(after.nanoseconds - start.nanoseconds);
+                printTerminalStatus(status, elapsed, leak_count);
                 try server.serveTestResults(.{
                     .index = index,
                     .flags = .{
@@ -351,6 +357,46 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
 
     if (leaks != 0 or log_err_count != 0 or fail_count != 0) {
         printColorLog("One or more test leaks or failures occured\n", .{}, .red);
+    }
+}
+
+fn printTerminal(comptime fmt: []const u8, args: anytype) void {
+    var buf: [2048]u8 = undefined;
+    const bytes = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    const tty = std.Io.Dir.openFileAbsolute(runner_threaded_io, "/dev/tty", .{
+        .mode = .write_only,
+    }) catch return;
+    defer tty.close(runner_threaded_io);
+    tty.writeStreamingAll(runner_threaded_io, bytes) catch {};
+}
+
+fn printTerminalStatus(
+    status: std.zig.Server.Message.TestResults.Status,
+    elapsed_ns: u64,
+    leak_count: usize,
+) void {
+    const elapsed: f64 = @floatFromInt(elapsed_ns);
+    const elapsed_text = if (elapsed >= 1_000_000_000)
+        .{ elapsed / 1_000_000_000, "s" }
+    else if (elapsed >= 1_000_000)
+        .{ elapsed / 1_000_000, "ms" }
+    else if (elapsed >= 1_000)
+        .{ elapsed / 1_000, "us" }
+    else
+        .{ elapsed, "ns" };
+
+    const status_text = switch (status) {
+        .pass => if (leak_count == 0) "OK" else "LEAK",
+        .skip => "SKIP",
+        .fail => "FAIL",
+    };
+
+    if (elapsed_text[0] >= 100 or @round(elapsed_text[0]) == elapsed_text[0]) {
+        printTerminal("{s} ({d:.0}{s})\n", .{ status_text, elapsed_text[0], elapsed_text[1] });
+    } else if (elapsed_text[0] >= 10) {
+        printTerminal("{s} ({d:.1}{s})\n", .{ status_text, elapsed_text[0], elapsed_text[1] });
+    } else {
+        printTerminal("{s} ({d:.2}{s})\n", .{ status_text, elapsed_text[0], elapsed_text[1] });
     }
 }
 
@@ -577,9 +623,6 @@ pub fn fuzz(
                 else => {
                     const stderr = std.debug.lockStderr(&.{}).terminal();
                     p: {
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.writeStackTrace(trace, stderr) catch break :p;
-                        }
                         stderr.writer.print("failed with error.{t}\n", .{err}) catch break :p;
                     }
                     std.process.exit(1);
