@@ -15,10 +15,10 @@ pub const ColumnType = enum(u8) {
     uint16 = 4,
     uint32 = 5,
     uint64 = 6,
-    int64 = 10,
     float64 = 7,
     ipv4 = 8,
     timestampIso8601 = 9,
+    int64 = 10,
 };
 
 pub const ColumnHeader = @This();

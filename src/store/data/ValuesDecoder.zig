@@ -147,7 +147,7 @@ pub fn decode(
             }
         },
         .timestampIso8601 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 24);
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 30);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -230,24 +230,42 @@ fn decodeTimestampISO8601String(self: *Self, io: Io, nsecs: i64) !void {
     const instant = try zeit.instant(io, .{ .source = .{ .unix_nano = nsecs } });
     const time = instant.time();
 
-    // Calculate milliseconds within the second from total nanoseconds
-    const nsecs_in_second = @mod(nsecs, 1_000_000_000);
-    const millis = @divTrunc(@abs(nsecs_in_second), 1_000_000);
+    const nsecsInSecond = @mod(nsecs, 1_000_000_000);
 
     // Cast year to unsigned to avoid '+' prefix in formatting
     const year: u16 = if (time.year >= 0) @intCast(time.year) else 0;
 
     var tmp: [32]u8 = undefined;
-    // TODO: support nanoseconds
-    const str = try std.fmt.bufPrint(&tmp, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z", .{
-        year,
-        time.month,
-        time.day,
-        time.hour,
-        time.minute,
-        time.second,
-        millis,
-    });
+    const str = if (@mod(nsecsInSecond, 1_000_000) == 0)
+        try std.fmt.bufPrint(&tmp, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z", .{
+            year,
+            time.month,
+            time.day,
+            time.hour,
+            time.minute,
+            time.second,
+            @as(u16, @intCast(@divTrunc(nsecsInSecond, 1_000_000))),
+        })
+    else if (@mod(nsecsInSecond, 1_000) == 0)
+        try std.fmt.bufPrint(&tmp, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}Z", .{
+            year,
+            time.month,
+            time.day,
+            time.hour,
+            time.minute,
+            time.second,
+            @as(u32, @intCast(@divTrunc(nsecsInSecond, 1_000))),
+        })
+    else
+        try std.fmt.bufPrint(&tmp, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>9}Z", .{
+            year,
+            time.month,
+            time.day,
+            time.hour,
+            time.minute,
+            time.second,
+            @as(u32, @intCast(nsecsInSecond)),
+        });
     try self.buf.appendSlice(self.allocator, str);
 }
 

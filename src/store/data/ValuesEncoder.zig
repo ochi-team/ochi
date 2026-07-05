@@ -503,10 +503,11 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
                 "2011-04-19T03:44:01.006Z",
                 "2011-04-19T03:44:01.007Z",
                 "2011-04-19T03:44:01.008Z",
+                "2011-04-19T03:44:01.123456789Z",
             },
             .expectedType = .timestampIso8601,
             .expectedMin = 1303184641000000000,
-            .expectedMax = 1303184641008000000,
+            .expectedMax = 1303184641123456789,
         },
         // int overflow
         .{
@@ -577,46 +578,149 @@ fn fuzzMixedShortValues(_: void, smith: *std.testing.Smith) !void {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var storage: [12][12]u8 = undefined;
-    var values: [12][]const u8 = undefined;
-    const count: usize = @intCast(smith.valueRangeAtMost(u8, 0, values.len));
+    var storage: [16][64]u8 = undefined;
+    var values: [16][]const u8 = undefined;
 
-    // const valueType = smith.valueRangeAtMost(ColumnType, ColumnType.string, ColumnType.timestampIso8601);
-    const valueType: ColumnType = .string;
+    const valueTypesLen = 11;
+    try std.testing.expect(@typeInfo(ColumnType).@"enum".fields.len == valueTypesLen);
+
+    const valueType = smith.valueRangeAtMost(ColumnType, @enumFromInt(1), @enumFromInt(valueTypesLen - 1));
+    const count: usize = switch (valueType) {
+        .dict => @intCast(smith.valueRangeAtMost(u8, 1, ColumnDict.maxDictColumnValuesLen)),
+        else => @intCast(smith.valueRangeAtMost(u8, ColumnDict.maxDictColumnValuesLen + 1, values.len)),
+    };
+
     switch (valueType) {
-        .string, .dict => {
+        .string => {
+            const minLen = 32;
             for (values[0..count], 0..) |*value, i| {
-                const len = smith.sliceWeightedBytes(&storage[i], &.{
-                    .rangeAtMost(u8, '0', '9', 4),
-                    .rangeAtMost(u8, 'a', 'z', 5),
-                    .rangeAtMost(u8, 'A', 'Z', 2),
-                    .value(u8, '.', 3),
-                    .value(u8, '-', 2),
-                    .value(u8, ':', 1),
-                    .value(u8, '@', 1),
-                    .value(u8, '#', 1),
-                    .value(u8, '$', 1),
-                    .value(u8, ')', 1),
-                    .value(u8, '\\', 1),
-                    .value(u8, '\\', 1),
-                    .value(u8, 'T', 1),
-                    .value(u8, 'Z', 1),
-                    .value(u8, '_', 1),
-                    .value(u8, 0, 1),
-                });
+                const mark = weightedStringMark(smith);
+                if (mark.pref) {
+                    const len = weightedStringMin(smith, storage[i][1 .. storage[i].len - 1], minLen);
+                    storage[i][0] = mark.char;
+                    storage[i][len + 1] = @intCast(i);
+                    value.* = storage[i][0 .. len + 2];
+                } else {
+                    storage[i][0] = @intCast(i);
+                    const len = weightedStringMin(smith, storage[i][1 .. storage[i].len - 1], minLen);
+                    storage[i][len + 1] = mark.char;
+                    value.* = storage[i][0 .. len + 2];
+                }
+            }
+        },
+        .dict => {
+            for (values[0..count], 0..) |*value, i| {
+                const len = weightedString(smith, storage[i][0..32]);
                 value.* = storage[i][0..len];
             }
         },
-        else => {},
+        .uint8 => {
+            const max = std.math.maxInt(u8) - @as(u8, @intCast(count - 1));
+            const base = smith.valueRangeAtMost(u8, 0, max);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: u8 = @intCast(i);
+                const n = base + diff;
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}", .{n});
+            }
+        },
+        .uint16 => {
+            const max = std.math.maxInt(u16) - @as(u16, @intCast(count - 1));
+            const base = smith.valueRangeAtMost(u16, 256, max);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: u16 = @intCast(i);
+                const n = base + diff;
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}", .{n});
+            }
+        },
+        .uint32 => {
+            const max = std.math.maxInt(u32) - @as(u32, @intCast(count - 1));
+            const base = smith.valueRangeAtMost(u32, 65536, max);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: u32 = @intCast(i);
+                const n = base + diff;
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}", .{n});
+            }
+        },
+        .uint64 => {
+            const max = std.math.maxInt(u64) - @as(u64, @intCast(count - 1));
+            const base = smith.valueRangeAtMost(u64, std.math.maxInt(u32), max);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: u64 = @intCast(i);
+                const n = base + diff;
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}", .{n});
+            }
+        },
+        .int64 => {
+            const max = -@as(i64, @intCast(count));
+            const base = smith.valueRangeAtMost(i64, std.math.minInt(i64), max);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: i64 = @intCast(i);
+                const n = base + diff;
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}", .{n});
+            }
+        },
+        .float64 => {
+            const max = 99999 - @as(i32, @intCast(count - 1));
+            const whole = smith.valueRangeAtMost(i32, -99999, max);
+            const frac = smith.valueRangeAtMost(u32, 0, 99999);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: i32 = @intCast(i);
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}.{d:0>5}", .{ whole + diff, frac });
+            }
+        },
+        .ipv4 => {
+            const a = smith.valueRangeAtMost(u8, 0, 255);
+            const b = smith.valueRangeAtMost(u8, 0, 255);
+            const c = smith.valueRangeAtMost(u8, 0, 255);
+            const baseD = smith.valueRangeAtMost(u8, 0, 255 - @as(u8, @intCast(count - 1)));
+            for (values[0..count], 0..) |*value, i| {
+                const diff: u8 = @intCast(i);
+                const d = baseD + diff;
+                value.* = try std.fmt.bufPrint(&storage[i], "{d}.{d}.{d}.{d}", .{ a, b, c, d });
+            }
+        },
+        .timestampIso8601 => {
+            const year = smith.valueRangeAtMost(i32, 1970, 2200);
+            const month = smith.valueRangeAtMost(u5, 1, 12);
+            const day = smith.valueRangeAtMost(u5, 1, maxDays(year, month));
+            const hour = smith.valueRangeAtMost(u5, 0, 23);
+            const min = smith.valueRangeAtMost(u6, 0, 59);
+            const sec = smith.valueRangeAtMost(u6, 0, 59);
+            const mil = smith.valueRangeAtMost(u10, 0, 999);
+            const mic = smith.valueRangeAtMost(u10, 0, 999);
+            const baseNanos = smith.valueRangeAtMost(u10, 0, 999 - @as(u10, @intCast(count - 1)));
+            const offset = smith.valueRangeAtMost(i32, -14, 14);
+            for (values[0..count], 0..) |*value, i| {
+                const diff: u10 = @intCast(i);
+                const nanos = baseNanos + diff;
+
+                const time = try zeit.instant(io, .{ .source = .{ .time = .{
+                    .year = year,
+                    .month = @enumFromInt(month),
+                    .day = day,
+                    .hour = hour,
+                    .minute = min,
+                    .second = sec,
+                    .millisecond = mil,
+                    .microsecond = mic,
+                    .nanosecond = nanos,
+                    .offset = offset,
+                } } });
+
+                value.* = try time.time().bufPrint(&storage[i], .rfc3339Nano);
+            }
+        },
+        .unknown => unreachable,
     }
 
-    try expectEncodeRoundtrip(io, allocator, values[0..count]);
+    try expectEncodeRoundtrip(io, allocator, values[0..count], valueType);
 }
 
 fn expectEncodeRoundtrip(
     io: std.Io,
     allocator: std.mem.Allocator,
     input: []const []const u8,
+    expectedType: ColumnType,
 ) !void {
     const encoder = try Self.init(allocator);
     defer encoder.deinit();
@@ -625,6 +729,7 @@ fn expectEncodeRoundtrip(
     defer cv.deinit(allocator);
 
     const valueType = try encoder.encode(input, &cv);
+    try std.testing.expectEqual(expectedType, valueType.type);
 
     const decoder = try ValuesDecoder.init(allocator);
     defer decoder.deinit();
@@ -792,4 +897,93 @@ test "ValuesEncoder keeps buffered value slices stable after growth" {
 
     try decoder.decode(io, decodedValues[0..decodedValues.len], valueType.type, cv.values.items);
     try std.testing.expectEqualDeep(&input, decodedValues[0..decodedValues.len]);
+}
+
+fn weightedString(smith: *std.testing.Smith, buf: []u8) usize {
+    return smith.sliceWeightedBytes(buf, &.{
+        .rangeAtMost(u8, '0', '9', 4),
+        .rangeAtMost(u8, 'a', 'z', 5),
+        .rangeAtMost(u8, 'A', 'Z', 2),
+        .value(u8, '.', 3),
+        .value(u8, '-', 2),
+        .value(u8, ':', 1),
+        .value(u8, '@', 1),
+        .value(u8, '#', 1),
+        .value(u8, '$', 1),
+        .value(u8, ')', 1),
+        .value(u8, '\\', 1),
+        .value(u8, '\\', 1),
+        .value(u8, 'T', 1),
+        .value(u8, 'Z', 1),
+        .value(u8, '_', 1),
+        .value(u8, 0, 1),
+    });
+}
+
+fn weightedStringMin(smith: *std.testing.Smith, buf: []u8, minLen: usize) usize {
+    const len = weightedString(smith, buf);
+    if (len >= minLen) return len;
+
+    for (buf[len..minLen]) |*byte| {
+        byte.* = weightedStringChar(smith);
+    }
+    return minLen;
+}
+
+fn weightedStringChar(smith: *std.testing.Smith) u8 {
+    return smith.valueWeighted(u8, &.{
+        .rangeAtMost(u8, '0', '9', 4),
+        .rangeAtMost(u8, 'a', 'z', 5),
+        .rangeAtMost(u8, 'A', 'Z', 2),
+        .value(u8, '.', 3),
+        .value(u8, '-', 2),
+        .value(u8, ':', 1),
+        .value(u8, '@', 1),
+        .value(u8, '#', 1),
+        .value(u8, '$', 1),
+        .value(u8, ')', 1),
+        .value(u8, '\\', 1),
+        .value(u8, '\\', 1),
+        .value(u8, 'T', 1),
+        .value(u8, 'Z', 1),
+        .value(u8, '_', 1),
+        .value(u8, 0, 1),
+    });
+}
+
+fn weightedStringMark(smith: *std.testing.Smith) struct { char: u8, pref: bool } {
+    const val = smith.valueWeighted(u8, &.{
+        .rangeAtMost(u8, 'a', 'z', 5),
+        .rangeAtMost(u8, 'A', 'Z', 2),
+        .value(u8, ':', 1),
+        .value(u8, '@', 1),
+        .value(u8, '#', 1),
+        .value(u8, '$', 1),
+        .value(u8, ')', 1),
+        .value(u8, '\\', 1),
+        .value(u8, '/', 1),
+        .value(u8, '_', 1),
+    });
+    return .{
+        .char = val,
+        .pref = smith.boolWeighted(1, 1),
+    };
+}
+
+fn maxDays(year: i32, month: u5) u5 {
+    return switch (month) {
+        1 => 31,
+        2 => if (zeit.isLeapYear(year)) 29 else 28,
+        3 => 31,
+        4 => 30,
+        5 => 31,
+        6 => 30,
+        7 => 31,
+        8 => 31,
+        9 => 30,
+        10 => 31,
+        11 => 30,
+        12 => 31,
+        else => unreachable,
+    };
 }
