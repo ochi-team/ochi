@@ -63,6 +63,7 @@ pub fn decode(
             }
         },
         .uint8 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 3);
             for (values, 0..) |v, i| {
                 if (v.len < 1) {
                     return error.InvalidValueLength;
@@ -74,6 +75,7 @@ pub fn decode(
             }
         },
         .uint16 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 5);
             for (values, 0..) |v, i| {
                 if (v.len < 2) {
                     return error.InvalidValueLength;
@@ -85,6 +87,7 @@ pub fn decode(
             }
         },
         .uint32 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 10);
             for (values, 0..) |v, i| {
                 if (v.len < 4) {
                     return error.InvalidValueLength;
@@ -96,6 +99,7 @@ pub fn decode(
             }
         },
         .uint64 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 20);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -107,6 +111,7 @@ pub fn decode(
             }
         },
         .int64 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 20);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -118,6 +123,7 @@ pub fn decode(
             }
         },
         .float64 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 64);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -129,6 +135,7 @@ pub fn decode(
             }
         },
         .ipv4 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 15);
             for (values, 0..) |v, i| {
                 if (v.len < 4) {
                     return error.InvalidValueLength;
@@ -140,6 +147,7 @@ pub fn decode(
             }
         },
         .timestampIso8601 => {
+            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 24);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -319,4 +327,99 @@ test "ValuesDecoder.decodeIPv4String" {
     decoder.buf.clearRetainingCapacity();
     decoder.decodeIPv4String(ip2);
     try std.testing.expectEqualStrings("192.168.1.1", decoder.buf.items);
+}
+
+test "ValuesDecoder.decode uint8 grows output buffer" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const decoder = try Self.init(allocator);
+    defer decoder.deinit();
+
+    const encoded = [_][1]u8{
+        .{0},
+        .{9},
+        .{42},
+        .{255},
+    };
+    var values = [_][]const u8{
+        encoded[0][0..],
+        encoded[1][0..],
+        encoded[2][0..],
+        encoded[3][0..],
+    };
+
+    try std.testing.expectEqual(0, decoder.buf.capacity);
+    try decoder.decode(io, values[0..], .uint8, &.{});
+
+    try std.testing.expectEqualDeep(&[_][]const u8{
+        "0",
+        "9",
+        "42",
+        "255",
+    }, values[0..]);
+}
+
+test "ValuesDecoder.decode ipv4 grows output buffer" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const decoder = try Self.init(allocator);
+    defer decoder.deinit();
+
+    const encoded = [_][4]u8{
+        .{ 1, 2, 3, 4 },
+        .{ 192, 168, 1, 1 },
+        .{ 255, 255, 255, 255 },
+    };
+    var values = [_][]const u8{
+        encoded[0][0..],
+        encoded[1][0..],
+        encoded[2][0..],
+    };
+
+    try std.testing.expectEqual(0, decoder.buf.capacity);
+    try decoder.decode(io, values[0..], .ipv4, &.{});
+
+    try std.testing.expectEqualDeep(&[_][]const u8{
+        "1.2.3.4",
+        "192.168.1.1",
+        "255.255.255.255",
+    }, values[0..]);
+}
+
+test "ValuesDecoder.decode dict replaces previous dictionary" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const decoder = try Self.init(allocator);
+    defer decoder.deinit();
+
+    const firstEncoded = [_][1]u8{
+        .{0},
+        .{1},
+    };
+    var firstValues = [_][]const u8{
+        firstEncoded[0][0..],
+        firstEncoded[1][0..],
+    };
+    const firstDict = [_][]const u8{ "alpha", "beta" };
+
+    try decoder.decode(io, firstValues[0..], .dict, &firstDict);
+    try std.testing.expectEqualDeep(&[_][]const u8{ "alpha", "beta" }, firstValues[0..]);
+
+    const secondEncoded = [_][1]u8{
+        .{1},
+        .{0},
+        .{1},
+    };
+    var secondValues = [_][]const u8{
+        secondEncoded[0][0..],
+        secondEncoded[1][0..],
+        secondEncoded[2][0..],
+    };
+    const secondDict = [_][]const u8{ "warn", "error" };
+
+    try decoder.decode(io, secondValues[0..], .dict, &secondDict);
+    try std.testing.expectEqualDeep(&[_][]const u8{ "error", "warn", "error" }, secondValues[0..]);
 }

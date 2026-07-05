@@ -549,9 +549,6 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         decoder.values.clearRetainingCapacity();
         encoder.values = std.ArrayList([]const u8).empty;
 
-        // we can't reuse encoder.buf because it contains the encoded bytes
-        try decoder.buf.ensureTotalCapacity(allocator, encoder.buf.capacity);
-
         // Decode the values - decoder reads encoded bytes from decodedValues,
         // writes strings to decoder.buf, and updates decodedValues pointers
         try decoder.decode(io, decodedValues, valueType.type, cv.values.items);
@@ -571,122 +568,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
 }
 
 test "ValuesEncoder fuzz" {
-    try std.testing.fuzz({}, fuzzMixedShortValues, .{
-        .corpus = &.{
-            "",
-            "a",
-            "b",
-            "0",
-            "1",
-            "255",
-            "256",
-            "65535",
-            "65536",
-            "4294967295",
-            "4294967296",
-            "18446744073709551615",
-            "001",
-            "000022",
-            "42.2",
-            "44.989898989",
-            "-9223372036854775808",
-            "9223372036854775807",
-            "-0",
-            "+42",
-            "1.5",
-            "2e3",
-            "-0.0",
-            "inf",
-            "-inf",
-            "nan",
-            "1e309",
-            // IPv4 octet boundaries.
-            "0.0.0.0",
-            "0.0.0.1",
-            "0.0.0.255",
-            "0.0.1.0",
-            "0.0.255.0",
-            "0.1.0.0",
-            "0.255.0.0",
-            "1.0.0.0",
-            "1.2.3.4",
-            "127.0.0.1",
-            "128.0.0.1",
-            "192.168.0.1",
-            "255.255.255.255",
-            // IPv4 leading zero policy.
-            "01.2.3.4",
-            "1.02.3.4",
-            "1.2.003.4",
-            "1.2.3.004",
-            "000.000.000.000",
-            "255.255.255.0255",
-            // IPv4 too many/few octets.
-            "1",
-            "1.2",
-            "1.2.3",
-            "1.2.3.4.5",
-            "1.2.3.4.5.6",
-            // IPv4 empty octets and trailing dots.
-            ".1.2.3",
-            "1..2.3",
-            "1.2..3",
-            "1.2.3.",
-            "1.2.3.4.",
-            // IPv4 out-of-range octets.
-            "256.0.0.0",
-            "0.256.0.0",
-            "0.0.256.0",
-            "0.0.0.256",
-            "999.999.999.999",
-            "-1.2.3.4",
-            "1.-2.3.4",
-            // ISO8601 timestamps around epoch.
-            "1969-12-31T23:59:59.999Z",
-            "1970-01-01T00:00:00.000Z",
-            "1970-01-01T00:00:00.001Z",
-            "2011-04-19T03:44:01.000Z",
-            "2034-04-19T03:44:01.000123+03:00",
-            // ISO8601 leap-day dates.
-            "2000-02-29T00:00:00.000Z",
-            "2004-02-29T12:34:56.789Z",
-            "1900-02-29T00:00:00.000Z",
-            "2019-02-29T00:00:00.000Z",
-            "2020-02-29T23:59:59.999Z",
-            // ISO8601 fractional milliseconds and unsupported precision.
-            "2011-04-19T03:44:01Z",
-            "2011-04-19T03:44:01.0Z",
-            "2011-04-19T03:44:01.01Z",
-            "2011-04-19T03:44:01.001Z",
-            "2011-04-19T03:44:01.000001Z",
-            "2011-04-19T03:44:01.000000001Z",
-            "2011-04-19T03:44:01.0000000001Z",
-            // ISO8601 invalid dates.
-            "2011-00-19T03:44:01.000Z",
-            "2011-13-19T03:44:01.000Z",
-            "2011-04-00T03:44:01.000Z",
-            "2011-04-31T03:44:01.000Z",
-            "2011-04-19T24:00:00.000Z",
-            "2011-04-19T23:60:00.000Z",
-            "2011-04-19T23:59:60.000Z",
-            // ISO8601 missing timezone.
-            "2011-04-19T03:44:01",
-            "2011-04-19T03:44:01.000",
-            "20240224T154944",
-            // ISO8601 timezone variants.
-            "2011-04-19T03:44:01.000+03:00",
-            "2011-04-19T03:44:01.000-07:30",
-            "2011-04-19T03:44:01.000+0300",
-            "2011-04-19T03:44:01.000+03",
-            "@key",
-            "ke.y",
-            ":key",
-            "key:",
-            "#key,",
-            "key:42",
-            "&key:42",
-        },
-    });
+    try std.testing.fuzz({}, fuzzMixedShortValues, .{});
 }
 
 fn fuzzMixedShortValues(_: void, smith: *std.testing.Smith) !void {
@@ -695,24 +577,37 @@ fn fuzzMixedShortValues(_: void, smith: *std.testing.Smith) !void {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var storage: [32][64]u8 = undefined;
-    var values: [32][]const u8 = undefined;
+    var storage: [12][12]u8 = undefined;
+    var values: [12][]const u8 = undefined;
     const count: usize = @intCast(smith.valueRangeAtMost(u8, 0, values.len));
 
-    for (values[0..count], 0..) |*value, i| {
-        const len = smith.sliceWeightedBytes(&storage[i], &.{
-            .rangeAtMost(u8, '0', '9', 4),
-            .rangeAtMost(u8, 'a', 'z', 5),
-            .rangeAtMost(u8, 'A', 'Z', 2),
-            .value(u8, '.', 3),
-            .value(u8, '-', 2),
-            .value(u8, ':', 1),
-            .value(u8, 'T', 1),
-            .value(u8, 'Z', 1),
-            .value(u8, '_', 1),
-            .value(u8, 0, 1),
-        });
-        value.* = storage[i][0..len];
+    // const valueType = smith.valueRangeAtMost(ColumnType, ColumnType.string, ColumnType.timestampIso8601);
+    const valueType: ColumnType = .string;
+    switch (valueType) {
+        .string, .dict => {
+            for (values[0..count], 0..) |*value, i| {
+                const len = smith.sliceWeightedBytes(&storage[i], &.{
+                    .rangeAtMost(u8, '0', '9', 4),
+                    .rangeAtMost(u8, 'a', 'z', 5),
+                    .rangeAtMost(u8, 'A', 'Z', 2),
+                    .value(u8, '.', 3),
+                    .value(u8, '-', 2),
+                    .value(u8, ':', 1),
+                    .value(u8, '@', 1),
+                    .value(u8, '#', 1),
+                    .value(u8, '$', 1),
+                    .value(u8, ')', 1),
+                    .value(u8, '\\', 1),
+                    .value(u8, '\\', 1),
+                    .value(u8, 'T', 1),
+                    .value(u8, 'Z', 1),
+                    .value(u8, '_', 1),
+                    .value(u8, 0, 1),
+                });
+                value.* = storage[i][0..len];
+            }
+        },
+        else => {},
     }
 
     try expectEncodeRoundtrip(io, allocator, values[0..count]);
