@@ -193,6 +193,17 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_encoding_tests.step);
 
+    const run_cover = b.addSystemCommand(&.{
+        "kcov",
+        "--clean",
+        "--skip-solibs",
+        "--include-pattern=ochi/src",
+        b.pathJoin(&.{ b.install_path, "cov" }),
+    });
+    run_cover.addArtifactArg(run_unit_tests.producer.?);
+    const cover_step = b.step("cover", "Generate test coverage report");
+    cover_step.dependOn(&run_cover.step);
+
     // check command
     const check = b.step("check", "Check if compiles");
     check.dependOn(&exe.step);

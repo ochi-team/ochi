@@ -21,20 +21,6 @@ pub fn deinit(self: TableHeader, alloc: Allocator) void {
     alloc.free(self.lastEntry);
 }
 
-pub fn dupe(self: TableHeader, alloc: Allocator) !TableHeader {
-    const firstEntry = try alloc.dupe(u8, self.firstEntry);
-    errdefer alloc.free(firstEntry);
-    const lastEntry = try alloc.dupe(u8, self.lastEntry);
-    errdefer alloc.free(lastEntry);
-
-    return .{
-        .blocksCount = self.blocksCount,
-        .entriesCount = self.entriesCount,
-        .firstEntry = firstEntry,
-        .lastEntry = lastEntry,
-    };
-}
-
 // TODO: TableHeader could have a static bound value to give a stack buffer
 pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     var fba = std.heap.stackFallback(1024, alloc);
