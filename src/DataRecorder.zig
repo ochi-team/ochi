@@ -23,7 +23,7 @@ const maxBlockSize = @import("Consts.zig").maxBlockSize;
 const Runtime = @import("Runtime.zig");
 const Logger = @import("logging");
 
-const sleepOrStop = @import("stds/async.zig").sleepOrStop;
+const Stop = @import("stds/Stop.zig");
 
 const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
@@ -198,7 +198,7 @@ g: Io.Group = .init,
 // TODO: migrate to io cancelation
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
-stopped: std.atomic.Value(bool) = .init(true),
+stopped: Stop = .{},
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
@@ -265,9 +265,7 @@ pub fn createDir(io: Io, path: []const u8) !void {
 }
 
 pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    self.stopped.store(false, .release);
-
-    errdefer self.stopped.store(true, .release);
+    errdefer self.stopped.stop(io);
 
     for (0..self.concurrency) |_| {
         try self.startDiskTablesMerge(io, alloc);
@@ -285,7 +283,7 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 // TODO: this theoretically is not enough to stop the other jobs form starting,
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    self.stopped.store(true, .release);
+    self.stopped.stop(io);
     defer self.deinit(io, alloc);
 
     // we ignore canceled erorr, we stop anyway
@@ -328,6 +326,7 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     self.memTables.deinit(allocator);
     self.diskTables.deinit(allocator);
     allocator.free(self.shards);
+    self.g.cancel(io);
     allocator.destroy(self);
 }
 
@@ -344,16 +343,16 @@ fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 }
 
 fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
-    while (!self.stopped.load(.acquire)) {
+    while (!self.stopped.isStopped()) {
         self.flushMemTables(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 
-            self.stopped.store(true, .release);
+            self.stopped.stop(io);
             Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
             return;
         };
 
-        sleepOrStop(io, &self.stopped, std.time.ns_per_s);
+        self.stopped.sleepOrStop(io, std.time.ns_per_s);
     }
 }
 
@@ -362,22 +361,22 @@ fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
     // TODO: test it with 1 sec
     const flushInterval = std.time.ns_per_s / 2;
 
-    while (!self.stopped.load(.acquire)) {
+    while (!self.stopped.isStopped()) {
         self.flushDataShards(io, alloc, false) catch |err| {
             if (err == error.Stopped) return;
 
-            self.stopped.store(true, .release);
+            self.stopped.stop(io);
             Logger.log(.err, "failed to run data shards flusher", .{ .err = err });
             return;
         };
 
-        sleepOrStop(io, &self.stopped, flushInterval);
+        self.stopped.sleepOrStop(io, flushInterval);
     }
 
     self.flushDataShards(io, alloc, true) catch |err| {
         if (err == error.Stopped) return;
 
-        self.stopped.store(true, .release);
+        self.stopped.stop(io);
         Logger.log(.err, "failed to run force data shards flusher", .{ .err = err });
         return;
     };
@@ -474,7 +473,7 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) 
 }
 
 pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.load(.acquire)) return;
+    if (self.stopped.isStopped()) return;
 
     errdefer self.g.cancel(io);
 
@@ -482,7 +481,7 @@ pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void
 }
 
 pub fn startMemTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.load(.acquire)) return;
+    if (self.stopped.isStopped()) return;
 
     errdefer self.g.cancel(io);
 
@@ -493,7 +492,7 @@ fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
     self.tablesMerger(io, alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
-        self.stopped.store(true, .release);
+        self.stopped.stop(io);
         Logger.log(.err, "failed to merge disk tables", .{ .err = err });
     };
 }
@@ -502,7 +501,7 @@ fn runMemTableMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
     self.tablesMerger(io, alloc, &self.memTables, &self.memMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
-        self.stopped.store(true, .release);
+        self.stopped.stop(io);
         Logger.log(.err, "failed to merge mem tables", .{ .err = err });
     };
 }
@@ -517,7 +516,7 @@ fn tablesMerger(
     var tablesToMerge = std.ArrayList(*Table).empty;
     defer tablesToMerge.deinit(alloc);
 
-    while (!self.stopped.load(.acquire)) {
+    while (!self.stopped.isStopped()) {
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
@@ -552,7 +551,7 @@ fn mergeTables(
     alloc: Allocator,
     tables: []*Table,
     force: bool,
-    stopped: ?*std.atomic.Value(bool),
+    stopped: ?*const Stop,
 ) !void {
     std.debug.assert(tables.len > 0);
     for (tables) |table| std.debug.assert(table.inMerge);

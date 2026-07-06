@@ -29,6 +29,11 @@ services:
     command: ["/usr/local/bin/ochi"]
     cgroup_parent: ochi.slice
     profiles: ["profile"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2048M
     ports:
       - "9014:9014"
       - "8086:8086"

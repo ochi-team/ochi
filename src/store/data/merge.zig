@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const Stop = @import("../../stds/Stop.zig");
 const Heap = @import("../../stds/heap.zig").Heap;
 
 const sizing = @import("../data/sizing.zig");
@@ -34,7 +35,7 @@ pub fn mergeData(
     alloc: Allocator,
     writer: *TableWriter,
     readers: *std.ArrayList(*BlockReader),
-    stopped: ?*const std.atomic.Value(bool),
+    stopped: ?*const Stop,
 ) !TableHeader {
     defer writer.close(io);
 
@@ -46,7 +47,7 @@ pub fn mergeData(
 
     while (merger.heap.array.items.len > 0) {
         if (stopped) |stop| {
-            if (stop.load(.acquire)) {
+            if (stop.isStopped()) {
                 // TODO: test whether break cleans the resources
                 return error.Stopped;
             }
@@ -455,10 +456,9 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
         const dstMemTable = try MemTable.init(alloc);
         errdefer dstMemTable.deinit(alloc);
-        const stopped: ?*std.atomic.Value(bool) = null;
         const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
         defer streamWriter.deinit(alloc);
-        dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
+        dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, null);
 
         try std.testing.expect(dstMemTable.indexBuf.items.len > 0);
         try std.testing.expect(dstMemTable.metaIndexBuf.items.len > 0);
@@ -604,10 +604,9 @@ test "mergeData multi tenant" {
     const dstMemTable = try MemTable.init(alloc);
     defer dstMemTable.deinit(alloc);
 
-    const stopped: ?*std.atomic.Value(bool) = null;
     const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
     defer streamWriter.deinit(alloc);
-    dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, stopped);
+    dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, null);
 
     try std.testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);
 }

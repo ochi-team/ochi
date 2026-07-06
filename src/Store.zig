@@ -8,7 +8,7 @@ const tracy = @import("tracy");
 
 const fs = @import("fs.zig");
 const Layout = @import("Layout.zig");
-const sleepOrStop = @import("stds/async.zig").sleepOrStop;
+const Stop = @import("stds/Stop.zig");
 
 const StoreMeter = @import("observe/StoreMeter.zig");
 const Logger = @import("logging");
@@ -46,7 +46,7 @@ memBlocksCache: *Cache(*MemBlock),
 meter: StoreMeter,
 
 g: Io.Group = .init,
-stopped: std.atomic.Value(bool) = .init(true),
+stopped: Stop = .{},
 
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
 pathsBuf: std.ArrayList([]const u8) = .empty,
@@ -119,15 +119,14 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
 }
 
 pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
-    self.stopped.store(false, .release);
-    errdefer self.stopped.store(true, .release);
+    errdefer self.stopped.stop(io);
 
     try self.startDiskUsageSampler(io, alloc);
     try self.startCacheEvicter(io);
 }
 
 pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
-    self.stopped.store(true, .release);
+    self.stopped.stop(io);
     self.g.await(io) catch |err| switch (err) {
         error.Canceled => {},
     };
@@ -144,6 +143,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 
     self.streamCache.deinit();
     self.memBlocksCache.deinit();
+    self.g.cancel(io);
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -156,7 +156,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 // TODO: find a way to move the meter to an infra level,
 // and make this meter watching max usage to guard the store to run out of space
 fn startDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) !void {
-    if (self.stopped.load(.acquire)) return;
+    if (self.stopped.isStopped()) return;
 
     errdefer self.g.cancel(io);
     try self.g.concurrent(io, runDiskUsageSampler, .{ self, io, alloc });
@@ -165,14 +165,14 @@ fn startDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) !void {
 fn runDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) void {
     const sampleIntervalNs = 20 * std.time.ns_per_s;
 
-    while (!self.stopped.load(.acquire)) {
+    while (!self.stopped.isStopped()) {
         self.observeDiskUsage(io, alloc);
-        sleepOrStop(io, &self.stopped, sampleIntervalNs);
+        self.stopped.sleepOrStop(io, sampleIntervalNs);
     }
 }
 
 fn startCacheEvicter(self: *Store, io: Io) !void {
-    if (self.stopped.load(.acquire)) return;
+    if (self.stopped.isStopped()) return;
 
     errdefer self.g.cancel(io);
     try self.g.concurrent(io, runCacheEvicter, .{ self, io });
@@ -181,9 +181,9 @@ fn startCacheEvicter(self: *Store, io: Io) !void {
 fn runCacheEvicter(self: *Store, io: Io) void {
     const cleanIntervalNs = 10 * std.time.ns_per_s;
 
-    while (!self.stopped.load(.acquire)) {
-        sleepOrStop(io, &self.stopped, cleanIntervalNs);
-        if (self.stopped.load(.acquire)) break;
+    while (!self.stopped.isStopped()) {
+        self.stopped.sleepOrStop(io, cleanIntervalNs);
+        if (self.stopped.isStopped()) break;
 
         self.streamCache.clean(io);
         self.memBlocksCache.clean(io);

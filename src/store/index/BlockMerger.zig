@@ -9,12 +9,13 @@
 //! - Uses a min-heap for k-way merge, O(n log k) complexity
 //! - Automatically merges consecutive tagToSids records with same prefix (tenant+tag)
 //! - Limited to maxStreamsPerRecord (32) stream IDs per merged tag record
-//! - Can be stopped mid-merge via atomic stopped flag
+//! - Can be stopped mid-merge via Stop
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const Stop = @import("../../stds/Stop.zig");
 const Conf = @import("../../Conf.zig");
 const BlockReader = @import("BlockReader.zig");
 const MemBlock = @import("MemBlock.zig");
@@ -80,7 +81,7 @@ pub fn merge(
     io: Io,
     alloc: Allocator,
     writer: *BlockWriter,
-    stopped: ?*const std.atomic.Value(bool),
+    stopped: ?*const Stop,
 ) !TableHeader {
     var tableHeader = TableHeader{};
     errdefer tableHeader.deinit(alloc);
@@ -92,7 +93,7 @@ pub fn merge(
         }
 
         if (stopped) |s| {
-            if (s.load(.acquire)) return error.Stopped;
+            if (s.isStopped()) return error.Stopped;
         }
 
         const reader = self.heap.array.items[0];
@@ -737,7 +738,8 @@ test "BlockMerger.merge stopped flag" {
     const io = testing.io;
     const maxIndexBlockSize = 1024;
 
-    var stopped = std.atomic.Value(bool).init(true);
+    var stopped = Stop{};
+    stopped.stop(io);
     var readers = try createTestReaders(alloc, &.{&.{ "a", "b", "c" }}, maxIndexBlockSize);
     defer cleanupReaders(alloc, &readers);
 

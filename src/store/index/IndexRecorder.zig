@@ -20,7 +20,7 @@ const merge = @import("../table/merge.zig");
 const swap = @import("../table/swap.zig");
 
 const Conf = @import("../../Conf.zig");
-const sleepOrStop = @import("../../stds/async.zig").sleepOrStop;
+const Stop = @import("../../stds/Stop.zig");
 const Runtime = @import("../../Runtime.zig");
 const Logger = @import("logging");
 
@@ -55,7 +55,7 @@ diskMergeSem: Io.Semaphore,
 memMergeSem: Io.Semaphore,
 
 g: Io.Group = .init,
-stopped: std.atomic.Value(bool) = .init(true),
+stopped: Stop = .{},
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
 // TODO: find an optimal way to handle ingestion rate higher than merge rate
@@ -128,12 +128,7 @@ pub fn createDir(io: Io, path: []const u8) !void {
 }
 
 pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    // the allocator is different from http life cycle,
-    // but shared between all the background jobs
-    // TODO: find a better allocator, perhaps an arena with regular reset
-
-    self.stopped.store(false, .release);
-    errdefer self.stopped.store(true, .release);
+    errdefer self.stopped.stop(io);
 
     // disk tables merge task is different,
     // it doesn't run infinitely, but runs a few merge cycles to process left overs
@@ -153,7 +148,7 @@ pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // Then audit all deinits and use it instead
 // TODO: make using this API instead of directly managing stopped state
 pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    self.stopped.store(true, .release);
+    self.stopped.stop(io);
     defer self.deinit(io, alloc);
 
     // we ignore canceled erorr, we stop anyway
@@ -196,6 +191,7 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     self.entries.deinit(alloc);
     self.blocksToFlush.deinit(alloc);
     self.diskTables.deinit(alloc);
+    self.g.cancel(io);
     self.memTables.deinit(alloc);
     alloc.destroy(self);
 }
@@ -392,7 +388,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
         timedWait(&self.memTablesSem, io, std.time.ns_per_s) catch |err| {
             switch (err) {
                 error.Timeout => {
-                    if (self.stopped.load(.acquire)) {
+                    if (self.stopped.isStopped()) {
                         // TODO: audit all semaphore as a state usage, it can happen
                         // a background task fails and  doesn't post semaphore back
 
@@ -436,7 +432,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
 // it has a specific error handling and stopped signal
 
 pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.load(.acquire)) {
+    if (self.stopped.isStopped()) {
         return;
     }
 
@@ -447,7 +443,7 @@ fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     self.tablesMerger(io, alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
-        self.stopped.store(true, .release);
+        self.stopped.stop(io);
         Logger.log(.err, "failed to run disk tables merger", .{ .err = err });
     };
 }
@@ -460,7 +456,7 @@ fn startMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 
 fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     while (true) {
-        if (self.stopped.load(.acquire)) {
+        if (self.stopped.isStopped()) {
             return;
         }
 
@@ -468,10 +464,10 @@ fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
             if (err == error.Stopped) return;
 
             Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
-            self.stopped.store(true, .release);
+            self.stopped.stop(io);
             return;
         };
-        sleepOrStop(io, &self.stopped, std.time.ns_per_s);
+        self.stopped.sleepOrStop(io, std.time.ns_per_s);
     }
 }
 
@@ -484,25 +480,25 @@ fn startMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 fn runMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     var blocksDestination = std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush) catch {
         Logger.log(.err, "failed to start mem blocks flusher, OOM", .{});
-        self.stopped.store(true, .release);
+        self.stopped.stop(io);
         return;
     };
     defer blocksDestination.deinit(alloc);
 
     while (true) {
-        if (self.stopped.load(.acquire)) {
+        if (self.stopped.isStopped()) {
             return;
         }
 
         self.flushMemEntries(io, alloc, &blocksDestination, false) catch |err| {
             if (err == error.Stopped) return;
 
-            self.stopped.store(true, .release);
+            self.stopped.stop(io);
             Logger.log(.err, "unexpected error on running mem blocks flusher", .{ .err = err });
             return;
         };
         blocksDestination.clearRetainingCapacity();
-        sleepOrStop(io, &self.stopped, std.time.ns_per_s);
+        self.stopped.sleepOrStop(io, std.time.ns_per_s);
     }
 }
 
@@ -516,10 +512,10 @@ fn runCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
     var ticks: u8 = 0;
     while (true) {
         // invalidate every 15 secs, check stopped every 3 secs
-        sleepOrStop(io, &self.stopped, 3 * std.time.ns_per_s);
+        self.stopped.sleepOrStop(io, 3 * std.time.ns_per_s);
         ticks +%= 1;
 
-        if (self.stopped.load(.acquire)) {
+        if (self.stopped.isStopped()) {
             self.invalidateStreamFilterCache();
             return;
         }
@@ -538,7 +534,7 @@ fn runCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
 /// it's not supposed to run at the beginning in backrgound,
 /// we run it only on demand
 pub fn startMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.load(.acquire)) return;
+    if (self.stopped.isStopped()) return;
 
     errdefer self.g.cancel(io);
 
@@ -549,7 +545,7 @@ fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     self.tablesMerger(io, alloc, &self.memTables, &self.memMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
-        self.stopped.store(true, .release);
+        self.stopped.stop(io);
         Logger.log(.err, "failed to merge mem tables", .{ .err = err });
     };
 }
@@ -672,7 +668,7 @@ pub fn mergeTables(
     alloc: Allocator,
     tables: []*Table,
     force: bool,
-    stopped: ?*const std.atomic.Value(bool),
+    stopped: ?*const Stop,
 ) !void {
     std.debug.assert(tables.len > 0);
     for (tables) |table| std.debug.assert(table.inMerge);
@@ -1070,7 +1066,7 @@ test "IndexRecorder background flusher survives load" {
     }
 
     try g.await(io);
-    recorder.stopped.store(true, .release);
+    recorder.stopped.stop(io);
     try recorder.g.await(io);
     try recorder.flushForce(io, alloc);
 
@@ -1134,7 +1130,7 @@ test "IndexRecorder disk table merger survives large load" {
     }
 
     try g.await(io);
-    recorder.stopped.store(true, .release);
+    recorder.stopped.stop(io);
     try recorder.g.await(io);
     try recorder.flushForce(io, alloc);
 
@@ -1200,7 +1196,7 @@ test "IndexRecorder reads free disk space from runtime" {
     try testing.expect(firstSpace > 0);
     try testing.expectEqual(firstSpace, secondSpace);
 
-    recorder.stopped.store(true, .release);
+    recorder.stopped.stop(io);
     defer recorder.deinit(io, alloc);
     try recorder.g.await(io);
 }

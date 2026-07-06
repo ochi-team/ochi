@@ -4,6 +4,8 @@ const Io = std.Io;
 
 const encoding = @import("encoding");
 
+const Stop = @import("../../stds/Stop.zig");
+
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
 
@@ -194,7 +196,7 @@ pub fn mergeBlocks(
     alloc: Allocator,
     writer: *BlockWriter,
     readers: *std.ArrayList(*BlockReader),
-    stopped: ?*const std.atomic.Value(bool),
+    stopped: ?*const Stop,
 ) !TableHeader {
     defer writer.close(io, alloc) catch |err| {
         Logger.log(.err, "failed to close index block writer", .{ .err = err });
