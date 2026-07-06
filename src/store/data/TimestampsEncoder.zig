@@ -1,6 +1,9 @@
 const std = @import("std");
+const Io = std.Io;
 
 const zint = @import("zint");
+const Locked = @import("../../stds/Locked.zig").Locked;
+const Ring = @import("../../stds/Ring.zig").Ring;
 
 pub const EncodingType = enum(u8) {
     // Unedfined means it's not initialized and not expected to be as a real value
@@ -21,6 +24,52 @@ const Self = @This();
 const zType = zint.Zint(u64);
 
 ctx: zint.Ctx,
+
+pub const Pool = struct {
+    const LockedEncoder = Locked(Self);
+
+    encoders: []LockedEncoder,
+    ring: Ring(LockedEncoder),
+
+    pub fn init(allocator: std.mem.Allocator, count: usize) !*Pool {
+        std.debug.assert(count > 0);
+
+        const encoders = try allocator.alloc(LockedEncoder, count);
+        var inited: usize = 0;
+        errdefer {
+            for (encoders[0..inited]) |*encoder| {
+                encoder.val.ctx.deinit(allocator);
+            }
+            allocator.free(encoders);
+        }
+
+        for (encoders) |*encoder| {
+            encoder.* = .{
+                .val = .{ .ctx = try zint.Ctx.init(allocator) },
+            };
+            inited += 1;
+        }
+
+        const pool = try allocator.create(Pool);
+        pool.* = .{
+            .encoders = encoders,
+            .ring = Ring(LockedEncoder).init(encoders),
+        };
+        return pool;
+    }
+
+    pub fn deinit(self: *Pool, allocator: std.mem.Allocator) void {
+        for (self.encoders) |*encoder| {
+            encoder.val.ctx.deinit(allocator);
+        }
+        allocator.free(self.encoders);
+        allocator.destroy(self);
+    }
+
+    pub fn next(self: *Pool) *LockedEncoder {
+        return self.ring.next();
+    }
+};
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
     const ctx = try zint.Ctx.init(allocator);
@@ -50,6 +99,22 @@ pub fn encode(self: *Self, allocator: std.mem.Allocator, tss: []const u64) !Enco
 }
 pub fn decode(self: *Self, dst: []u64, src: []const u8) !void {
     _ = try zType.deltapack_decompress(self.ctx, src, dst);
+}
+
+pub fn encodeWithPool(pool: *Pool, io: Io, allocator: std.mem.Allocator, tss: []const u64) !EncodedTimestamps {
+    const locked = pool.next();
+    locked.mx.lockUncancelable(io);
+    defer locked.mx.unlock(io);
+
+    return locked.val.encode(allocator, tss);
+}
+
+pub fn decodeWithPool(pool: *Pool, io: Io, dst: []u64, src: []const u8) !void {
+    const locked = pool.next();
+    locked.mx.lockUncancelable(io);
+    defer locked.mx.unlock(io);
+
+    return locked.val.decode(dst, src);
 }
 
 test "TimestampsEncoder" {

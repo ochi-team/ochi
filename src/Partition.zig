@@ -17,6 +17,7 @@ const Field = @import("store/lines.zig").Field;
 const Query = @import("query/Query.zig");
 
 const Runtime = @import("Runtime.zig");
+const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
 const fs = @import("fs.zig");
 const Logger = @import("logging");
 
@@ -63,6 +64,7 @@ pub fn open(
     day: u32,
     streamCache: *Cache(void),
     runtime: *Runtime,
+    timestampsEncoders: *TimestampsEncoder.Pool,
 ) !*Partition {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -91,7 +93,7 @@ pub fn open(
     try indexRecorder.start(io, alloc);
     const index = Index.init(indexRecorder);
 
-    const data = try DataRecorder.init(io, alloc, dataPath, runtime);
+    const data = try DataRecorder.init(io, alloc, dataPath, runtime, timestampsEncoders);
     errdefer data.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };

@@ -17,6 +17,7 @@ const Block = @import("../data/Block.zig");
 const Unpacker = @import("../data/Unpacker.zig");
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TableReader = @import("../data/TableReader.zig");
+const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
 
 const Line = @import("../lines.zig").Line;
 const msgKey = @import("../lines.zig").msgKey;
@@ -452,10 +453,10 @@ fn readBuf(dst: []u8, src: []const u8, offset: u64) !usize {
     return n;
 }
 
-pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
+pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.Pool, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
     // TODO: assert sids are sorted
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
-        return self.queryLinesAllBlocks(io, alloc, dst, query);
+        return self.queryLinesAllBlocks(io, alloc, timestampsEncoders, dst, query);
     }
 
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -514,7 +515,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
                     continue;
                 }
 
-                try self.queryBlock(io, alloc, dst, blockHeader, query);
+                try self.queryBlock(io, alloc, timestampsEncoders, dst, blockHeader, query);
             }
 
             if (blockHeadersToRead.len == 0) {
@@ -534,7 +535,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Li
     }
 }
 
-fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayList(Line), query: Query) !void {
+fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.Pool, dst: *std.ArrayList(Line), query: Query) !void {
     for (self.indexBlockHeaders) |indexBlockHeader| {
         if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
             continue;
@@ -553,7 +554,7 @@ fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, dst: *std.ArrayLi
                 continue;
             }
 
-            try self.queryBlock(io, alloc, dst, blockHeader, query);
+            try self.queryBlock(io, alloc, timestampsEncoders, dst, blockHeader, query);
         }
     }
 }
@@ -562,6 +563,7 @@ fn queryBlock(
     self: *const Table,
     io: Io,
     alloc: Allocator,
+    timestampsEncoders: *TimestampsEncoder.Pool,
     dst: *std.ArrayList(Line),
     blockHeader: BlockHeader,
     query: Query,
@@ -601,7 +603,7 @@ fn queryBlock(
     const decoder = try ValuesDecoder.init(alloc);
     defer decoder.deinit();
 
-    const block = try Block.initFromData(io, alloc, &blockData, unpacker, decoder);
+    const block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, unpacker, decoder);
     defer block.deinit(alloc);
 
     var i = dst.items.len;
@@ -699,6 +701,8 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
+    const timestampsEncoders = try TimestampsEncoder.Pool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -718,7 +722,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
@@ -777,6 +781,8 @@ test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
     const io = testing.io;
     const memTable = try MemTable.init(alloc);
+    const timestampsEncoders = try TimestampsEncoder.Pool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -797,7 +803,7 @@ test "fromMem creates proper table from mem table with populated data" {
 
     var lines = [_]Line{ line1, line2 };
 
-    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -842,6 +848,8 @@ test "open reads table from disk" {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
+    const timestampsEncoders = try TimestampsEncoder.Pool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -861,7 +869,7 @@ test "open reads table from disk" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
@@ -970,6 +978,8 @@ test "queryLines" {
     };
 
     const memTable = try MemTable.init(alloc);
+    const timestampsEncoders = try TimestampsEncoder.Pool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
     var sids = [_]SID{ sidBlock, sid1, sid2, sid3, sid5, sidTenantA, sidTenantB };
     var linesBySid = [_][]Line{
         lines[0..3],
@@ -980,7 +990,7 @@ test "queryLines" {
         lines[9..10],
         lines[10..11],
     };
-    try memTable.addLines(io, alloc, sids[0..], linesBySid[0..]);
+    try memTable.addLines(io, alloc, timestampsEncoders, sids[0..], linesBySid[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -1070,7 +1080,7 @@ test "queryLines" {
         const requested = try alloc.dupe(SID, case.requestedSIDs);
         defer alloc.free(requested);
 
-        try table.queryLines(io, alloc, &queried, requested, case.query);
+        try table.queryLines(io, alloc, timestampsEncoders, &queried, requested, case.query);
         try testing.expectEqual(case.expected.len, queried.items.len);
 
         for (case.expected, 0..) |expected, i| {
@@ -1112,7 +1122,9 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     };
 
     const memTable = try MemTable.init(alloc);
-    try memTable.addLinesForSid(io, alloc, sid, lines[0..]);
+    const timestampsEncoders = try TimestampsEncoder.Pool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines[0..]);
 
     const table = try Table.fromMem(alloc, memTable);
     defer table.release(io);
@@ -1124,7 +1136,7 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, timestampsEncoders, &queried, requested[0..], query);
 }
 
 test "queryLines reads disk table fields after open" {
@@ -1159,7 +1171,9 @@ test "queryLines reads disk table fields after open" {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    try memTable.addLinesForSid(io, alloc, sid, lines[0..]);
+    const timestampsEncoders = try TimestampsEncoder.Pool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
@@ -1174,7 +1188,7 @@ test "queryLines reads disk table fields after open" {
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = &statusExpr };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, timestampsEncoders, &queried, requested[0..], query);
     try testing.expectEqual(@as(usize, 1), queried.items.len);
     try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
     try testing.expectEqualSlices(u8, "id", queried.items[0].fields[1].key);
