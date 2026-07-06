@@ -7,6 +7,7 @@ const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
 const lineLessThan = @import("../lines.zig").lineLessThan;
 const fieldLessThan = @import("../lines.zig").fieldLessThan;
+const maxLines = @import("Block.zig").maxLines;
 const SID = @import("../lines.zig").SID;
 
 const TableWriter = @import("TableWriter.zig");
@@ -272,7 +273,7 @@ pub fn addLines(
             // TODO: the tables splits blocks by stream ids,
             // we might want to split them by log level as well,
             // or design another approach to split logs by severity
-            if (blockSize >= maxBlockSize) {
+            if (blockSize >= maxBlockSize or lines[streamI..i].len >= maxLines) {
                 // TODO: since lines by sids are 2 continuous slices and may relate to the same sid
                 // we should rather write them into the same block
                 try blockWriter.writeLines(io, allocator, sid, lines[streamI..i], streamWriter);

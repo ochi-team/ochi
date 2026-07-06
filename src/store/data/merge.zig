@@ -24,7 +24,9 @@ const BlockReader = @import("../data/BlockReader.zig");
 const Unpacker = @import("../data/Unpacker.zig");
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 
-pub const maxBlockSize = 2 * 1024 * 1024;
+const Consts = @import("../../Consts.zig");
+
+const maxBlockSize = Consts.maxBlockSize;
 
 // TODO: rename this crap
 pub fn mergeData(
@@ -149,7 +151,7 @@ pub const StreamMerger = struct {
 
         const totalKeys = blockData.columnsData.items.len + if (blockData.invariantColumns) |invariantCol| invariantCol.len else 0;
 
-        if (!blockData.sid.eql(&self.sid)) {
+        if (!blockData.sid.eql(self.sid)) {
             // it means next stream begins, we have to flush the data
             try self.flushStream(io, alloc, blockWriter, writer);
             self.sid = blockData.sid;
@@ -502,6 +504,48 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     }
 
     try std.testing.expectEqual(expected.len, expectedI);
+}
+
+test "mergeData flushes maxLines for one stream" {
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+    const sid = SID{ .tenantID = 1, .id = 42 };
+
+    const srcMemTable = try MemTable.init(alloc);
+    const srcTable = try Table.fromMem(alloc, srcMemTable);
+    defer srcTable.close(io);
+
+    var lines: [Block.maxLines]Line = undefined;
+    for (0..Block.maxLines) |i| {
+        lines[i] = .{
+            .timestampNs = @intCast(i),
+            .fields = @constCast(&[_]Field{.{ .key = "level", .value = "info" }}),
+        };
+    }
+
+    try srcMemTable.addLinesForSid(io, alloc, sid, &lines);
+
+    var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 1);
+    defer readers.deinit(alloc);
+    try readers.append(alloc, try BlockReader.initFromMemTable(alloc, srcTable));
+
+    const dstMemTable = try MemTable.init(alloc);
+    const dstTable = try Table.fromMem(alloc, dstMemTable);
+    defer dstTable.close(io);
+
+    const streamWriter = try TableWriter.initMem(alloc, dstMemTable);
+    defer streamWriter.deinit(alloc);
+    dstMemTable.tableHeader = try mergeData(io, alloc, streamWriter, &readers, null);
+
+    var mergedReader = try BlockReader.initFromMemTable(alloc, dstTable);
+    defer mergedReader.deinit(alloc);
+
+    var actualRows: usize = 0;
+    while (try mergedReader.nextBlock(io, alloc)) {
+        actualRows += mergedReader.blockData.len;
+    }
+
+    try std.testing.expectEqual(Block.maxLines, actualRows);
 }
 
 test "mergeData multi tenant" {

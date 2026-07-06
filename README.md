@@ -40,16 +40,16 @@ https://ochi.dev/docs/guides/installation/
 - [x] Home made UI
 - [ ] Disk snapshots and recovery
 - [ ] Replication to a secondary mount
+- [ ] aarch64 release target
 - [ ] full support of Loki ingestion protocol (snappy, zstd, protobuf encoding, etc.)
 - [ ] docker-compose with configured datasource to grafana
 - [ ] OTEL collector API support
 - [ ] configuration support
+- [ ] windows devevlopment support
+- [ ] cost analysis
+- [ ] GDPR compliance
 
 ## Goals
-- support majority ingestion protocols (loki, fluentd, syslog, etc)
-- home made UI
-- cost analysis built in
-- GDPR compliance
 - support aarch64 and x86_64 as Tier 1
 - support Windows and POSIX systems for development
 - support only Linux for production workloads (community is free to do whatever)

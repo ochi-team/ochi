@@ -16,14 +16,12 @@ const tracy = @import("tracy");
 
 const sizing = @import("sizing.zig");
 
-pub const maxColumns = 2000;
-// at least 1 line fits a block with a large gap
+pub const maxColumns = 2048;
 // maxLines is a max amount of lines that we can put into a block,
-// it's mostly for sanity check assuming the maxBlockSize
-// TODO: we should log blocks meta data if there are more than 64 * 1024 lines
-// it requires make it as a soft limit,
-// it means every line is less than 32 bytes
-pub const maxLines = 1024 * 1024;
+// assuming the maxBlockSize
+// approximate value if the max body size ~4mb and an average small line 128 bytes
+// the batch size is used in the ingest request, processor arena, data shard buffer
+pub const maxLines: usize = 32 * 1014;
 
 comptime {
     std.debug.assert(@import("../lines.zig").defaultMaxFieldsPerLine * 2 == maxColumns);
@@ -50,7 +48,8 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     };
 
     try b.put(allocator, lines);
-    std.debug.assert(b.timestamps.len <= maxColumns);
+    std.debug.assert(b.timestamps.len <= maxLines);
+    std.debug.assert(b.columns.len <= maxColumns);
     b.sort();
     return b;
 }
@@ -321,9 +320,12 @@ fn sort(self: *Block) void {
     std.sort.pdq(Column, self.getInvariantColumns(), {}, columnLessThan);
 }
 
-// TODO: Investigate if we need to check for unique/duplicated fields keys as well.
+// TODO: investigate if we need to check for unique/duplicated fields keys as well.
 fn areSameFields(lines: []const Line) bool {
+    if (lines[0].fields.len > maxColumns) return false;
+
     if (lines.len < 2) {
+        @branchHint(.unlikely);
         return true;
     }
 
@@ -655,6 +657,52 @@ test "SelfInitMaxColumns" {
 
         try std.testing.expectEqual(case.expectedLen, b.len());
     }
+}
+
+test "initFromLines allows maxLines" {
+    const alloc = std.testing.allocator;
+
+    var lines: [maxLines]Line = undefined;
+    for (0..maxLines) |i| {
+        lines[i] = .{
+            .timestampNs = @intCast(i),
+            .fields = @constCast(&[_]Field{.{ .key = "level", .value = "info" }}),
+        };
+    }
+
+    const b = try Block.initFromLines(alloc, &lines);
+    defer b.deinit(alloc);
+
+    try std.testing.expectEqual(maxLines, b.len());
+    try std.testing.expectEqual(0, b.getColumns().len);
+    try std.testing.expectEqual(1, b.getInvariantColumns().len);
+}
+
+test "initFromLines drops a single invalid row with too many fields" {
+    const alloc = std.testing.allocator;
+
+    const fields = try alloc.alloc(Field, maxColumns + 1);
+    defer {
+        for (fields) |field| {
+            alloc.free(field.key);
+        }
+        alloc.free(fields);
+    }
+
+    for (fields, 0..) |*field, i| {
+        field.* = .{
+            .key = try std.fmt.allocPrint(alloc, "key_{d}", .{i}),
+            .value = "value",
+        };
+    }
+
+    var lines = [_]Line{.{ .timestampNs = 1, .fields = fields }};
+
+    const b = try Block.initFromLines(alloc, &lines);
+    defer b.deinit(alloc);
+
+    try std.testing.expectEqual(0, b.len());
+    try std.testing.expectEqual(0, b.columns.len);
 }
 
 test "Self.put" {

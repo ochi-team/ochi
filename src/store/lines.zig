@@ -260,12 +260,8 @@ pub const LinesSize = struct {
     size: u16,
 };
 pub const defaultMaxFieldsPerLine: usize = 1024;
-pub const defaultMaxFieldKeySize: usize = 100;
-pub const defaultMaxLineSize: usize = 64 * 1024 - 1;
-// approximate value if the max body size ~4mb and an average small line 128 bytes
-// define max amount of lines as 16 * 1024,
-// the batch size is used in the ingest request, processor arena, data shard buffer
-pub const defaultMaxLinesPerBatch: usize = 16 * 1014;
+pub const defaultMaxFieldKeySize: usize = 128;
+pub const defaultMaxLineSize: usize = 32 * 1024 - 1;
 
 pub const LinesSizeError = error{
     MaxFieldsPerLineExceeded,

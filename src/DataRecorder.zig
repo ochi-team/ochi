@@ -8,7 +8,7 @@ const Io = std.Io;
 const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
-const defaultMaxLinesPerBatch = @import("store/lines.zig").defaultMaxLinesPerBatch;
+const maxLines = @import("store/data/Block.zig").maxLines;
 const Query = @import("query/Query.zig");
 const SID = @import("store/lines.zig").SID;
 
@@ -54,7 +54,7 @@ const SidCheckpoint = struct {
 
     comptime {
         // verifies u16 fits enough to have max max lines index
-        std.debug.assert(std.math.maxInt(u16) >= defaultMaxLinesPerBatch);
+        std.debug.assert(std.math.maxInt(u16) >= maxLines);
     }
 };
 
