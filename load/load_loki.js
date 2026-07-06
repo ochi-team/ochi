@@ -17,10 +17,9 @@ const timeout = 20000;
 const ratio = 0;
 
 const cardinalities = {
-  app: 12,
+  app: 4,
   namespace: 4,
-  pod: 8,
-  language: 4,
+  pod: 2,
 };
 
 const KB = 1024;
