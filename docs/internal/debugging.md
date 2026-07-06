@@ -32,3 +32,44 @@ sudo dnf install \
 cmake -B build -S profiler -DCMAKE_BUILD_TYPE=Release -DNO_FILESELECTOR=ON -DLEGACY=ON -DGLFW_BUILD_WAYLAND=OFF -DGLFW_BUILD_X11=ON -DCMAKE_CXX_FLAGS="-DTRACY_NO_FILESELECTOR"
 ```
 - build `cmake --build build`
+
+### profile
+
+trace futex/sleep/fsync/epoll/readv/writev
+
+```sh
+strace -f -ttT -c -o trace.log ./zig-out/bin/ochi
+```
+
+perf sched (threads context switch)
+
+```sh
+perf sched record -g -- ./zig-out/bin/ochi
+```
+
+perf lock contention
+
+```sh
+perf lock record -- ./zig-out/bin/ochi
+```
+
+basic performance stats
+
+```sh
+perf stat -d -d -d -- ./zig-out/bin/ochi
+```
+
+and 
+
+```sh
+time -v ./zig-out/bin/ochi
+```
+
+cache perf
+
+```sh
+sudo perf stat -e cycles,instructions,cache-references,cache-misses,\
+branches,branch-misses,dTLB-loads,dTLB-load-misses \
+-- ./zig-out/bin/ochi
+```
+
