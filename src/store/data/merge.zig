@@ -549,8 +549,7 @@ test "mergeData flushes maxLines for one stream" {
 }
 
 test "mergeData multi tenant" {
-    // TODO: make it testing alloc
-    const alloc = std.heap.page_allocator;
+    const alloc = std.testing.allocator;
     const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{});

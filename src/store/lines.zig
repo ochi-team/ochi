@@ -259,7 +259,7 @@ pub const Field = struct {
 pub const LinesSize = struct {
     size: u16,
 };
-pub const defaultMaxFieldsPerLine: usize = 1024;
+pub const defaultMaxFieldsPerLine: usize = 256;
 pub const defaultMaxFieldKeySize: usize = 128;
 pub const defaultMaxLineSize: usize = 32 * 1024 - 1;
 

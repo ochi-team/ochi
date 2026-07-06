@@ -24,7 +24,7 @@ pub const maxColumns = 2048;
 pub const maxLines: usize = 32 * 1014;
 
 comptime {
-    std.debug.assert(@import("../lines.zig").defaultMaxFieldsPerLine * 2 == maxColumns);
+    std.debug.assert(@import("../lines.zig").defaultMaxFieldsPerLine * 2 <= maxColumns);
 }
 
 fn columnLessThan(_: void, one: Column, another: Column) bool {
@@ -247,9 +247,11 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
     defer columnI.deinit();
     var linesProcessed = lines;
     for (lines, 0..) |line, i| {
-        // TODO: better to move out of the block in order to handle more keys
         const uniqueKeysCount = columnI.count() + line.fields.len;
         if (uniqueKeysCount > maxColumns) {
+            // it means the stream has too large cardinality,
+            // the users must look after the schema they generate
+            // and adjust acordingly
             Logger.log(.warn, "skipping log line, exceeded max allowed unique keys", .{
                 .max = maxColumns,
                 .given = uniqueKeysCount,

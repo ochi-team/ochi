@@ -55,3 +55,18 @@ Then in query we are able to provide tags, same filter but surrounded in curly b
 
 Read more in [query](../loql).
 
+### Limitations
+
+Although Ochi is a schemaless storage it still has to setup the limits.
+
+One of them is a fields cardinality.
+
+In order to keep the resource usage under control currently the max amount of unique field keys currently is 2048.
+Logs producing large amount of field are ignored.
+
+The limit is per stream, it's a sum of all the unique field keys across all the logs in your application.
+
+Pay attention on logging large array fields as `field_0=1 field_1=2`.
+
+Instead consider logging an array of values `fields=[1,2]`.
+
