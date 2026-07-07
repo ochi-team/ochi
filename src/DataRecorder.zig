@@ -15,6 +15,7 @@ const SID = @import("store/lines.zig").SID;
 const MemTable = @import("store/data/MemTable.zig");
 const BlockWriter = @import("store/data/BlockWriter.zig");
 const TableWriter = @import("store/data/TableWriter.zig");
+const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
 const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
@@ -139,7 +140,7 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, io: Io, alloc: Allocator, sem: *Io.Semaphore) !?*Table {
+    fn flush(self: *DataShard, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, sem: *Io.Semaphore) !?*Table {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -163,6 +164,7 @@ pub const DataShard = struct {
         memTable.addLines(
             io,
             alloc,
+            timestampsEncoders,
             sids[0..self.checkpointsLen],
             linesByCheckpoint[0..self.checkpointsLen],
         ) catch |err| {
@@ -202,8 +204,9 @@ stopped: Stop = .{},
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
+timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 
-pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*DataRecorder {
+pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
@@ -254,6 +257,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Dat
         },
         .path = path,
         .runtime = runtime,
+        .timestampsEncoders = timestampsEncoders,
     };
 
     return t;
@@ -459,7 +463,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
 }
 
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) !void {
-    const maybeMemTable = try shard.flush(io, alloc, &self.memMergeSem);
+    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
         self.mxTables.lockUncancelable(io);
         defer self.mxTables.unlock(io);
@@ -610,7 +614,7 @@ fn mergeTables(
         if (tableKind == .mem) {
             const memTable = try MemTable.init(alloc);
             newMemTable = memTable;
-            break :blk try TableWriter.initMem(alloc, memTable);
+            break :blk try TableWriter.initMem(alloc, memTable, self.timestampsEncoders);
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
@@ -620,12 +624,12 @@ fn mergeTables(
                 self.runtime.maxMem,
                 self.runtime.cacheSize,
             );
-            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache);
+            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders);
         }
     };
     defer streamWriter.deinit(alloc);
 
-    const tableHeader = mergeData(io, alloc, streamWriter, &readers, stopped) catch |err| {
+    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
@@ -713,7 +717,7 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
     for (tables.items) |table| {
-        try table.queryLines(io, alloc, &linesDst, sids, query);
+        try table.queryLines(io, alloc, self.timestampsEncoders, &linesDst, sids, query);
     }
 
     return linesDst;
@@ -798,11 +802,11 @@ fn stableLine(ts: u64, variant: usize) Line {
     };
 }
 
-fn createMemTableFromLines(io: Io, alloc: Allocator, sid: SID, lines: []Line) !*Table {
+fn createMemTableFromLines(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, sid: SID, lines: []Line) !*Table {
     const memTable = try MemTable.init(alloc);
     errdefer memTable.deinit(alloc);
 
-    try memTable.addLinesForSid(io, alloc, sid, lines);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines);
     return Table.fromMem(alloc, memTable);
 }
 
@@ -975,7 +979,10 @@ test "flushDataShards non-force respects flush deadline" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
     defer recorder.deinit(io, alloc);
 
     const line = stableLine(1, 0);
@@ -1008,7 +1015,10 @@ test "mergeTables force single mem table creates disk table" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
     defer recorder.deinit(io, alloc);
 
     var lines = [_]Line{
@@ -1016,7 +1026,7 @@ test "mergeTables force single mem table creates disk table" {
         stableLine(2, 1),
         stableLine(3, 2),
     };
-    const table = try createMemTableFromLines(io, alloc, stableSID(1), lines[0..]);
+    const table = try createMemTableFromLines(io, alloc, timestampsEncoders, stableSID(1), lines[0..]);
     errdefer table.close(io);
 
     try recorder.memTables.append(alloc, table);
@@ -1043,7 +1053,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
         defer runtime.deinit(alloc);
 
-        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime);
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        defer timestampsEncoders.deinit(alloc);
+
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
@@ -1063,7 +1076,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
         defer runtime.deinit(alloc);
 
-        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime);
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        defer timestampsEncoders.deinit(alloc);
+
+        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
         defer reopened.deinit(io, alloc);
 
         try testing.expect(reopened.diskTables.items.len > 0);

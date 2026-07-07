@@ -54,7 +54,7 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     return b;
 }
 
-pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
+pub fn initFromData(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "data.Block.initFromData",
@@ -62,12 +62,9 @@ pub fn initFromData(io: Io, alloc: Allocator, data: *BlockData, unpacker: *Unpac
     defer z.end();
     std.debug.assert(data.len <= maxLines);
 
-    const tsEncoder = try TimestampsEncoder.init(alloc);
-    defer tsEncoder.deinit(alloc);
-
     const tss = try alloc.alloc(u64, data.len);
     errdefer alloc.free(tss);
-    try tsEncoder.decode(tss, data.timestampsData.data);
+    try timestampsEncoders.decode(io, tss, data.timestampsData.data);
 
     const firstInvariant: u32 = @intCast(data.columnsData.items.len);
     const invariantColsLen = if (data.invariantColumns) |invariants| invariants.len else 0;
@@ -451,6 +448,9 @@ test "initFromLines and initFromData produce identical blocks" {
     };
 
     for (cases) |case| {
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        defer timestampsEncoders.deinit(alloc);
+
         const blockA = try Block.initFromLines(alloc, case.lines);
         defer blockA.deinit(alloc);
 
@@ -458,7 +458,7 @@ test "initFromLines and initFromData produce identical blocks" {
         const table = try Table.fromMem(alloc, memTable);
         defer table.close(io);
 
-        const writer = try TableWriter.initMem(alloc, memTable);
+        const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders);
         defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
@@ -480,7 +480,7 @@ test "initFromLines and initFromData produce identical blocks" {
         const unpacker = try Unpacker.init(alloc);
         const decoder = try ValuesDecoder.init(alloc);
 
-        const blockB = try Block.initFromData(io, alloc, &bd, unpacker, decoder);
+        const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, unpacker, decoder);
         defer blockB.deinit(alloc);
         defer unpacker.deinit(alloc);
         defer decoder.deinit();

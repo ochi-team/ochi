@@ -26,6 +26,7 @@ const MemBlock = @import("store/index/MemBlock.zig");
 const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
 const Runtime = @import("Runtime.zig");
+const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
 
 pub const Store = @This();
 
@@ -42,6 +43,7 @@ lruPartition: ?*Partition = null,
 /// shared across all partitions, injected from a store to them
 streamCache: *Cache(void),
 memBlocksCache: *Cache(*MemBlock),
+timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 
 meter: StoreMeter,
 
@@ -79,6 +81,9 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const memBlocksCache = try Cache(*MemBlock).init(alloc);
     errdefer memBlocksCache.deinit();
 
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, runtime.cpus);
+    errdefer timestampsEncoders.deinit(alloc);
+
     const meter = StoreMeter.init();
 
     var store: Store = .{
@@ -86,6 +91,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .partitions = partitions,
         .streamCache = streamCache,
         .memBlocksCache = memBlocksCache,
+        .timestampsEncoders = timestampsEncoders,
         .meter = meter,
         .runtime = runtime,
         .conf = conf,
@@ -144,6 +150,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     self.streamCache.deinit();
     self.memBlocksCache.deinit();
     self.g.cancel(io);
+    self.timestampsEncoders.deinit(allocator);
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -563,7 +570,7 @@ fn openPartition(
     try self.partitions.ensureUnusedCapacity(alloc, 1);
     try self.pathsBuf.ensureUnusedCapacity(alloc, 3);
 
-    const partition = try Partition.open(io, alloc, path, indexPath, dataPath, day, self.streamCache, self.runtime);
+    const partition = try Partition.open(io, alloc, path, indexPath, dataPath, day, self.streamCache, self.runtime, self.timestampsEncoders);
 
     self.pathsBuf.appendAssumeCapacity(path);
     self.pathsBuf.appendAssumeCapacity(indexPath);

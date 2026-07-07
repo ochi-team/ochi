@@ -12,6 +12,7 @@ const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
 const Table = @import("../data/Table.zig");
 const BlockData = @import("BlockData.zig").BlockData;
+const TimestampsEncoder = @import("TimestampsEncoder.zig");
 
 pub const BlockReader = @This();
 blocksCount: u32,
@@ -328,7 +329,9 @@ fn testReadBlock(allocator: Allocator, io: Io) !void {
         lines[0..1],
         lines[1..3],
     };
-    try memTable.addLines(io, allocator, sids[0..], linesBySid[0..]);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(allocator, 1);
+    defer timestampsEncoders.deinit(allocator);
+    try memTable.addLines(io, allocator, timestampsEncoders, sids[0..], linesBySid[0..]);
 
     const th = memTable.tableHeader;
     try std.testing.expectEqual(3, th.len);
@@ -418,7 +421,9 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    try memTable.addLinesForSid(io, alloc, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
 
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     memTable.storeToDisk(io, alloc, tablePath) catch |err| {
