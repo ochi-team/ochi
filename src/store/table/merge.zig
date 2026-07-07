@@ -58,7 +58,7 @@ pub fn Merger(
             return window;
         }
 
-        // TODO: the API must nto work with an array, 
+        // TODO: the API must nto work with an array,
         // it must take a slice and return another slice to get rid of expensive sorting
         pub fn selectTablesToMerge(
             tables: *std.ArrayList(T),

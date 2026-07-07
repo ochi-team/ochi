@@ -171,10 +171,9 @@ pub fn decodeIndexWindow(
 ) !void {
     std.debug.assert(index.size <= IndexBlockHeader.maxIndexBlockSize);
 
-    // src is a compressed index buffer, uncompress only the requested window
-    const end = index.offset + index.size;
-    const compressed = src[index.offset..end];
-    const decompressedSize = try encoding.getFrameContentSize(compressed);
+    // src is the compressed index window described by index.
+    std.debug.assert(src.len == index.size);
+    const decompressedSize = try encoding.getFrameContentSize(src);
 
     // TODO: we probably can put it on stack,
     // since index is passed the window must be narrow enough
@@ -183,7 +182,7 @@ pub fn decodeIndexWindow(
 
     const n = try encoding.decompress(
         decompressedBuf,
-        compressed,
+        src,
     );
     const decompressed = decompressedBuf[0..n];
     try BlockHeader.decodeFew(alloc, dst, decompressed);
@@ -348,7 +347,9 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
             .size = windowCase.size,
         };
 
-        try BlockHeader.decodeIndexWindow(alloc, &decoded, indexBuf.items, window);
+        const start: usize = @intCast(windowCase.offset);
+        const end = start + windowCase.size;
+        try BlockHeader.decodeIndexWindow(alloc, &decoded, indexBuf.items[start..end], window);
         try std.testing.expectEqualDeep(windowCase.expected, decoded.items);
     }
 }

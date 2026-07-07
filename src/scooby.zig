@@ -1,3 +1,18 @@
+// Data Debugging
+//
+// scooby inspects files inside a flushed data table without opening the database server.
+// Pass an absolute data table directory from .ochi/partitions/<date>/data/<table-id>.
+//
+// bash
+// TABLE=~/project/.ochi/partitions/07072026/data/18C00FBC6AA0DF4A
+// zig build scooby -- --data:$TABLE --header:metaindex --offset:0 --size:102
+// zig build scooby -- --data:$TABLE --header:index --offset:77915 --size:24714
+//
+//
+// Use metaindex output to find index block offset and size.
+// Use index output to find columnsHeaderOffset, columnsHeaderSize,
+// columnsHeaderIndexOffset, and columnsHeaderIndexSize for deeper column inspection.
+
 const std = @import("std");
 
 const filenames = @import("filenames.zig");
@@ -10,6 +25,11 @@ const ColumnIDGen = @import("store/data/ColumnIDGen.zig");
 const IndexBlockHeader = @import("store/data/IndexBlockHeader.zig");
 const Unpacker = @import("store/data/Unpacker.zig");
 
+/// Selects which physical table file and decoder scooby should use.
+/// These names are intentionally the command-line values accepted by
+/// --header:<name>. Each variant maps to one file inside a flushed data table:
+/// metaindex, index, columnsHeaderIndex, or
+/// columnsHeader
 const HeaderKind = enum {
     metaindex,
     index,
@@ -17,62 +37,30 @@ const HeaderKind = enum {
     columnsHeader,
 };
 
+/// Parsed command-line state.
 const Args = struct {
     data: []const u8 = "",
     header: ?HeaderKind = null,
+    /// offset and size always describe a byte window inside the selected file
     offset: usize = 0,
     size: ?usize = null,
+    /// The optional indexOffset and indexSize are only used when inspecting a
+    /// columnsHeader slice: they point to the companion columnsHeaderIndex slice
+    /// so printed columns can be resolved back to stable column ids and names
     indexOffset: ?usize = null,
     indexSize: ?usize = null,
-    count: ?usize = null,
+    // performs deeper data validation
     validateValues: bool = false,
+    // amount of dict values to unpack dictionary values in the validation
+    count: ?usize = null,
 };
 
-const SafeDecoder = struct {
-    buf: []const u8,
-    offset: usize = 0,
-
-    fn readInt(self: *SafeDecoder, comptime T: type) !T {
-        const size = @sizeOf(T);
-        if (self.offset + size > self.buf.len) return error.UnexpectedEnd;
-        const bytes: [size]u8 = self.buf[self.offset..][0..size].*;
-        self.offset += size;
-        return std.mem.readInt(T, &bytes, .big);
-    }
-
-    fn readBytes(self: *SafeDecoder, len: usize) ![]const u8 {
-        if (self.offset + len > self.buf.len) return error.UnexpectedEnd;
-        const res = self.buf[self.offset .. self.offset + len];
-        self.offset += len;
-        return res;
-    }
-
-    fn readString(self: *SafeDecoder) ![]const u8 {
-        const len = try self.readVarInt();
-        return self.readBytes(len);
-    }
-
-    fn readVarInt(self: *SafeDecoder) !usize {
-        var result: u64 = 0;
-        var shift: u6 = 0;
-
-        for (0..10) |i| {
-            if (self.offset + i >= self.buf.len) return error.UnexpectedEnd;
-            const byte = self.buf[self.offset + i];
-            result |= @as(u64, byte & 0x7f) << shift;
-
-            if ((byte & 0x80) == 0) {
-                self.offset += i + 1;
-                return std.math.cast(usize, result) orelse error.IntOverflow;
-            }
-
-            shift += 7;
-        }
-
-        return error.InvalidLeb128;
-    }
-};
-
+/// Entry point for the data-table inspection CLI.
+///
+/// The command always reads one explicit byte range from one table file. Optional
+/// side files are loaded opportunistically: columnKeys is used to print
+/// human-readable column names, and columnIdxs is loaded only when
+/// --validate-values needs to find the values shard for a dictionary column.
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
@@ -143,6 +131,11 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
+/// Parses the zig build scooby -- ... argument format.
+///
+/// Options intentionally use --name:value instead of separate arguments so they
+/// are easy to copy from logs and shell history. The table path is duplicated
+/// because the process argument iterator owns the original storage.
 fn parseArgs(processArgs: std.process.Args, allocator: std.mem.Allocator) !Args {
     var it = try std.process.Args.Iterator.initAllocator(processArgs, allocator);
     defer it.deinit();
@@ -173,22 +166,42 @@ fn parseArgs(processArgs: std.process.Args, allocator: std.mem.Allocator) !Args 
     return args;
 }
 
+/// Returns the bytes after prefix when an argument matches a --key:value.
+///
+/// No unescaping or trimming is performed. Paths and values are consumed exactly
+/// as the shell passes them to the process.
 fn argValue(arg: []const u8, prefix: []const u8) ?[]const u8 {
     if (!std.mem.startsWith(u8, arg, prefix)) return null;
     return arg[prefix.len..];
 }
 
+/// Prints command-line help and the expected offset workflow.
+///
+/// The help calls out absolute table paths because the implementation uses
+/// openFileAbsolute after joining the table directory with a known file name.
+/// Relative paths currently trip the Zig standard-library assertion before a
+/// normal file-open error can be returned.
 fn usage() void {
     std.debug.print(
         \\usage:
-        \\  zig build scooby -- --data:<table path> --header:metaindex --offset:<offset> --size:<size>
-        \\  zig build scooby -- --data:<table path> --header:index --offset:<offset> --size:<size>
-        \\  zig build scooby -- --data:<table path> --header:columnsHeaderIndex --offset:<offset> --size:<size>
-        \\  zig build scooby -- --data:<table path> --header:columnsHeader --offset:<offset> --size:<size> [--index-offset:<offset> --index-size:<size>] [--count:<rows> --validate-values]
+        \\  zig build scooby -- --data:<absolute table path> --header:metaindex --offset:<offset> --size:<size>
+        \\  zig build scooby -- --data:<absolute table path> --header:index --offset:<offset> --size:<size>
+        \\  zig build scooby -- --data:<absolute table path> --header:columnsHeaderIndex --offset:<offset> --size:<size>
+        \\  zig build scooby -- --data:<absolute table path> --header:columnsHeader --offset:<offset> --size:<size> [--index-offset:<offset> --index-size:<size>] [--count:<rows> --validate-values]
+        \\
+        \\notes:
+        \\  --data must point to a data table directory, for example /path/to/.ochi/partitions/<date>/data/<table-id>
+        \\  for --header:index, use offset and size from the matching metaindex indexBlock record
+        \\  for --header:columnsHeader, use columnsHeaderOffset/columnsHeaderSize from an index block record
+        \\  add --index-offset/--index-size from columnsHeaderIndexOffset/columnsHeaderIndexSize to print column keys
         \\
     , .{});
 }
 
+/// Reads one bounded byte window from a known file inside a data table.
+/// tablePath must be the absolute table directory.
+/// fileName is one of the constants from filenames.zig.
+/// The returned buffer is heap-owned by the caller
 fn readHeaderSlice(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -219,23 +232,17 @@ fn loadColumnIDGen(io: std.Io, allocator: std.mem.Allocator, tablePath: []const 
     const path = try std.fs.path.join(allocator, &.{ tablePath, filenames.columnKeys });
     defer allocator.free(path);
 
-    var file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return err,
-    };
-    defer file.close(io);
-
-    const size = (try file.stat(io)).size;
-    if (size == 0) return try ColumnIDGen.init(allocator);
-
-    const buf = try allocator.alloc(u8, size);
-    defer allocator.free(buf);
-    _ = try file.readPositionalAll(io, buf, 0);
-    return try ColumnIDGen.decode(allocator, buf);
+    return ColumnIDGen.decodeFile(io, allocator, path);
 }
 
+/// Maps a logical column id to the values/bloom shard number that stores it.
 const ColumnIdxs = std.AutoHashMap(u16, u16);
 
+/// Loads columnIdxs for value validation.
+/// Dictionary column headers contain offsets into a values file, but the values
+/// file is selected through the column shard mapping. This function decodes that
+/// mapping and validates that each column id is known in columnKeys, which
+/// prevents later validation output from silently using the wrong file.
 fn loadColumnIdxs(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -261,13 +268,13 @@ fn loadColumnIdxs(
     defer allocator.free(buf);
     _ = try file.readPositionalAll(io, buf, 0);
 
-    var dec = SafeDecoder{ .buf = buf };
-    const count = try dec.readVarInt();
+    var dec = Decoder{ .buf = buf };
+    const count = dec.readVarInt();
     try idxs.ensureTotalCapacity(@intCast(count));
     const keyItems = keys.keyIDs.keys();
     for (0..count) |_| {
-        const colID = try dec.readVarInt();
-        const shardIdx = try dec.readVarInt();
+        const colID = dec.readVarInt();
+        const shardIdx = dec.readVarInt();
         if (colID >= keyItems.len) return error.ColumnIDOutOfRange;
         idxs.putAssumeCapacity(
             std.math.cast(u16, colID) orelse return error.ColumnIDOutOfRange,
@@ -277,12 +284,22 @@ fn loadColumnIdxs(
     return idxs;
 }
 
+/// Decoded view of one columnsHeaderIndex record.
+///
+/// A block header points at both columnsHeader and columnsHeaderIndex.
+/// The header contains column payloads in positional order; this index maps those
+/// positions to stable column ids and byte offsets. Invariant columns are stored
+/// after ordinary columns and have their own id/offset arrays.
 const ColumnsIndex = struct {
     columnsIDs: std.ArrayList(u16),
     columnOffsets: std.ArrayList(u32),
     invariantColumnsIDs: std.ArrayList(u16),
     invariantColumnOffsets: std.ArrayList(u32),
 
+    /// Creates an empty decoded columns index.
+    ///
+    /// The allocator parameter keeps the call site symmetric with deinit and
+    /// decode, even though empty ArrayList values do not allocate.
     fn init(allocator: std.mem.Allocator) ColumnsIndex {
         _ = allocator;
         return .{
@@ -293,6 +310,7 @@ const ColumnsIndex = struct {
         };
     }
 
+    /// Releases all arrays owned by this decoded index.
     fn deinit(self: *ColumnsIndex, allocator: std.mem.Allocator) void {
         self.columnsIDs.deinit(allocator);
         self.columnOffsets.deinit(allocator);
@@ -300,34 +318,45 @@ const ColumnsIndex = struct {
         self.invariantColumnOffsets.deinit(allocator);
     }
 
+    /// Decodes a complete columnsHeaderIndex byte slice.
+    ///
+    /// The format is two back-to-back arrays: ordinary columns followed by
+    /// invariant columns. Each array is decoded by decodeIndexEntries.
     fn decode(allocator: std.mem.Allocator, buf: []const u8) !ColumnsIndex {
         var idx = ColumnsIndex.init(allocator);
         errdefer idx.deinit(allocator);
 
-        var dec = SafeDecoder{ .buf = buf };
+        var dec = Decoder{ .buf = buf };
         try decodeIndexEntries(allocator, &dec, &idx.columnsIDs, &idx.columnOffsets);
         try decodeIndexEntries(allocator, &dec, &idx.invariantColumnsIDs, &idx.invariantColumnOffsets);
         return idx;
     }
 };
 
+/// Decodes one id/offset array from columnsHeaderIndex.
+///
+/// The on-disk form is len followed by len pairs of varints. Ids are cast to
+/// u16 because column ids are stored in that width elsewhere; offsets are cast
+/// to u32 because they address bytes inside a single columns-header record.
 fn decodeIndexEntries(
     allocator: std.mem.Allocator,
-    dec: *SafeDecoder,
+    dec: *Decoder,
     ids: *std.ArrayList(u16),
     offsets: *std.ArrayList(u32),
 ) !void {
-    const len = try dec.readVarInt();
+    const len = dec.readVarInt();
     try ids.ensureTotalCapacity(allocator, len);
     try offsets.ensureTotalCapacity(allocator, len);
     for (0..len) |_| {
-        const id = try dec.readVarInt();
-        const off = try dec.readVarInt();
+        const id = dec.readVarInt();
+        const off = dec.readVarInt();
         ids.appendAssumeCapacity(std.math.cast(u16, id) orelse return error.ColumnIDOutOfRange);
         offsets.appendAssumeCapacity(std.math.cast(u32, off) orelse return error.ColumnOffsetOutOfRange);
     }
 }
 
+/// Prints the contents of a columnsHeaderIndex slice.
+/// When column keys are available, each id is also shown as a field name.
 fn inspectColumnsHeaderIndex(allocator: std.mem.Allocator, buf: []const u8, keys: ?*ColumnIDGen) !void {
     std.debug.print("columnsHeaderIndex bytes={d}\n", .{buf.len});
 
@@ -341,12 +370,16 @@ fn inspectColumnsHeaderIndex(allocator: std.mem.Allocator, buf: []const u8, keys
 
     std.debug.print("invariantColumns len={d}\n", .{idx.invariantColumnsIDs.items.len});
     for (idx.invariantColumnsIDs.items, idx.invariantColumnOffsets.items, 0..) |id, off, i| {
-        printIndexEntry("invariant", i, id, off, keys);
+        printIndexEntry("invariant column", i, id, off, keys);
     }
 
     std.debug.print("consumed={d} remaining=0\n", .{buf.len});
 }
 
+/// Decompresses and prints IndexBlockHeader records from metaindex.
+/// Each record identifies one compressed block inside index. Its offset
+/// is the byte position in index; its size is the compressed byte length
+/// to pass back to scooby --header:index.
 fn inspectMetaindex(allocator: std.mem.Allocator, buf: []const u8) !void {
     std.debug.print("metaindex bytes={d}\n", .{buf.len});
     const headers = try IndexBlockHeader.readIndexBlockHeaders(allocator, buf);
@@ -361,6 +394,11 @@ fn inspectMetaindex(allocator: std.mem.Allocator, buf: []const u8) !void {
     }
 }
 
+/// Decompresses and prints all BlockHeader records in an index block.
+/// The input must be exactly one compressed index block, normally selected from
+/// a metaindex record. The final consumed/remaining line is the quick
+/// integrity check: remaining=0 means the decompressed block was fully parsed as
+/// block headers.
 fn inspectIndex(allocator: std.mem.Allocator, buf: []const u8) !void {
     std.debug.print("index bytes={d}\n", .{buf.len});
     const decompressedSize = try encoding.getFrameContentSize(buf);
@@ -397,6 +435,10 @@ fn inspectIndex(allocator: std.mem.Allocator, buf: []const u8) !void {
     std.debug.print("consumed={d} remaining={d}\n", .{ off, src.len - off });
 }
 
+/// Prints one entry from a decoded columnsHeaderIndex.
+/// kind is only a label (column or invariant). off is the byte offset
+/// inside the matching columnsHeader slice and is useful when checking whether
+/// a suspicious column starts at the expected boundary.
 fn printIndexEntry(kind: []const u8, i: usize, id: u16, off: u32, keys: ?*ColumnIDGen) void {
     std.debug.print("{s}[{d}] id={d} offset={d}", .{ kind, i, id, off });
     if (keyForID(keys, id)) |key| {
@@ -407,6 +449,9 @@ fn printIndexEntry(kind: []const u8, i: usize, id: u16, off: u32, keys: ?*Column
     std.debug.print("\n", .{});
 }
 
+/// Resolves a column id through columnKeys.
+/// Returns null when the side file is missing or the id points beyond the
+/// decoded key list
 fn keyForID(keys: ?*ColumnIDGen, id: u16) ?[]const u8 {
     const gen = keys orelse return null;
     const keyItems = gen.keyIDs.keys();
@@ -414,6 +459,11 @@ fn keyForID(keys: ?*ColumnIDGen, id: u16) ?[]const u8 {
     return keyItems[id];
 }
 
+/// Prints one columnsHeader record and optionally validates dictionary values.
+/// buf is the exact byte slice identified by a BlockHeader's
+/// columnsHeaderOffset and columnsHeaderSize. The optional index is the
+/// matching columnsHeaderIndex slice; without it, the function can still decode
+/// column payloads but cannot print field names or locate values shards.
 fn inspectColumnsHeader(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -425,8 +475,8 @@ fn inspectColumnsHeader(
     count: ?usize,
     validateValues: bool,
 ) !void {
-    var dec = SafeDecoder{ .buf = buf };
-    const headersLen = try dec.readVarInt();
+    var dec = Decoder{ .buf = buf };
+    const headersLen = dec.readVarInt();
     std.debug.print("columnsHeader bytes={d} columns={d}\n", .{ buf.len, headersLen });
 
     for (0..headersLen) |i| {
@@ -449,12 +499,12 @@ fn inspectColumnsHeader(
     }
 
     const invariantLenOffset = dec.offset;
-    const invariantLen = try dec.readVarInt();
+    const invariantLen = dec.readVarInt();
     std.debug.print("invariantColumns offset={d} len={d}\n", .{ invariantLenOffset, invariantLen });
 
     for (0..invariantLen) |i| {
         const start = dec.offset;
-        const value = try dec.readString();
+        const value = dec.readString();
         const key = keyForInvariantIndex(keys, index, i);
         std.debug.print("invariant[{d}] offset={d} len={d}", .{ i, start, value.len });
         if (key) |k| {
@@ -466,29 +516,41 @@ fn inspectColumnsHeader(
     std.debug.print("consumed={d} remaining={d}\n", .{ dec.offset, buf.len - dec.offset });
 }
 
+/// Resolves the human-readable key for ordinary column position i.
 fn keyForColumnIndex(keys: ?*ColumnIDGen, index: ?*const ColumnsIndex, i: usize) ?[]const u8 {
     const idx = index orelse return null;
     if (i >= idx.columnsIDs.items.len) return null;
     return keyForID(keys, idx.columnsIDs.items[i]);
 }
 
+/// Returns the stable column id for ordinary column position i.
+///
+/// This is needed by value validation because the values file shard is keyed by
+/// column id, not by the column's position inside a single header.
 fn columnIDForColumnIndex(index: ?*const ColumnsIndex, i: usize) ?u16 {
     const idx = index orelse return null;
     if (i >= idx.columnsIDs.items.len) return null;
     return idx.columnsIDs.items[i];
 }
 
+/// Resolves the human-readable key for invariant column position i.
 fn keyForInvariantIndex(keys: ?*ColumnIDGen, index: ?*const ColumnsIndex, i: usize) ?[]const u8 {
     const idx = index orelse return null;
     if (i >= idx.invariantColumnsIDs.items.len) return null;
     return keyForID(keys, idx.invariantColumnsIDs.items[i]);
 }
 
+/// Decodes and prints one ordinary column header from columnsHeader.
+/// The first byte selects the column representation. String-like columns only
+/// point at values and bloom ranges; dictionary columns also embed the dictionary
+/// values; numeric columns embed min/max values before their ranges. When
+/// validateValues is true, dictionary value ids are unpacked and compared
+/// against the embedded dictionary.
 fn inspectColumnHeader(
     io: std.Io,
     allocator: std.mem.Allocator,
     tablePath: []const u8,
-    dec: *SafeDecoder,
+    dec: *Decoder,
     i: usize,
     start: usize,
     key: ?[]const u8,
@@ -497,7 +559,7 @@ fn inspectColumnHeader(
     count: ?usize,
     validateValues: bool,
 ) !void {
-    const typeRaw = try dec.readInt(u8);
+    const typeRaw = dec.readInt(u8);
     const columnType: ColumnHeader.ColumnType = @enumFromInt(typeRaw);
 
     std.debug.print("column[{d}] offset={d} type={s}", .{ i, start, @tagName(columnType) });
@@ -508,17 +570,17 @@ fn inspectColumnHeader(
 
     switch (columnType) {
         .string, .unknown => {
-            const valuesOffset = try dec.readVarInt();
-            const valuesSize = try dec.readVarInt();
-            const bloomOffset = try dec.readVarInt();
-            const bloomSize = try dec.readVarInt();
+            const valuesOffset = dec.readVarInt();
+            const valuesSize = dec.readVarInt();
+            const bloomOffset = dec.readVarInt();
+            const bloomSize = dec.readVarInt();
             printValuesAndBloom(valuesOffset, valuesSize, bloomOffset, bloomSize);
         },
         .dict => {
             const dictValues = try inspectDict(allocator, dec);
             defer allocator.free(dictValues);
-            const valuesOffset = try dec.readVarInt();
-            const valuesSize = try dec.readVarInt();
+            const valuesOffset = dec.readVarInt();
+            const valuesSize = dec.readVarInt();
             std.debug.print("  values offset={d} size={d}\n", .{ valuesOffset, valuesSize });
             if (validateValues) {
                 try inspectDictValues(
@@ -536,30 +598,35 @@ fn inspectColumnHeader(
             }
         },
         .uint8 => {
-            const min = try dec.readInt(u8);
-            const max = try dec.readInt(u8);
+            const min = dec.readInt(u8);
+            const max = dec.readInt(u8);
             try inspectNumberColumn(dec, min, max);
         },
         .uint16 => {
-            const min = try dec.readInt(u16);
-            const max = try dec.readInt(u16);
+            const min = dec.readInt(u16);
+            const max = dec.readInt(u16);
             try inspectNumberColumn(dec, min, max);
         },
         .uint32, .ipv4 => {
-            const min = try dec.readInt(u32);
-            const max = try dec.readInt(u32);
+            const min = dec.readInt(u32);
+            const max = dec.readInt(u32);
             try inspectNumberColumn(dec, min, max);
         },
         .uint64, .int64, .float64, .timestampIso8601 => {
-            const min = try dec.readInt(u64);
-            const max = try dec.readInt(u64);
+            const min = dec.readInt(u64);
+            const max = dec.readInt(u64);
             try inspectNumberColumn(dec, min, max);
         },
     }
 }
 
-fn inspectDict(allocator: std.mem.Allocator, dec: *SafeDecoder) ![][]const u8 {
-    const len = try dec.readInt(u8);
+/// Decodes the inline dictionary portion of a dictionary column header.
+/// The returned slice array is owned by the caller, but each string inside it is
+/// borrowed from the inspected columnsHeader buffer. The warnings compare both
+/// dictionary cardinality and string sizes against ColumnDict limits so damaged
+/// dictionaries stand out in the output.
+fn inspectDict(allocator: std.mem.Allocator, dec: *Decoder) ![][]const u8 {
+    const len = dec.readInt(u8);
     std.debug.print("  dict len={d}", .{len});
     if (len > ColumnDict.maxDictColumnValuesLen) {
         std.debug.print(" warning=len exceeds max {d}", .{ColumnDict.maxDictColumnValuesLen});
@@ -572,7 +639,7 @@ fn inspectDict(allocator: std.mem.Allocator, dec: *SafeDecoder) ![][]const u8 {
     var total: usize = 0;
     for (0..len) |i| {
         const valueOffset = dec.offset;
-        const dictValue = try dec.readString();
+        const dictValue = dec.readString();
         values[i] = dictValue;
         total += dictValue.len;
         std.debug.print("  dict[{d}] offset={d} len={d} value=\"{s}\"", .{ i, valueOffset, dictValue.len, dictValue });
@@ -589,6 +656,11 @@ fn inspectDict(allocator: std.mem.Allocator, dec: *SafeDecoder) ![][]const u8 {
     return values;
 }
 
+/// Reads and validates packed dictionary value ids for one dictionary column.
+/// This is an optional deeper check enabled by --validate-values. It requires
+/// --count:<rows> because the unpacker needs the expected row count to rebuild
+/// one value per row. The output summarizes empty ids, ids outside the dictionary,
+/// and per-id counts for the valid range plus a few out-of-range ids.
 fn inspectDictValues(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -667,6 +739,12 @@ fn inspectDictValues(
     }
 }
 
+/// Reads the values byte range referenced by a column header.
+///
+/// The columnsHeader record stores only offset and size; selecting the
+/// physical file requires column identity. The message column, represented by an
+/// empty key, lives in messageValues. Named columns live in sharded
+/// values<N> files selected through columnIdxs.
 fn readValuesSlice(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -706,15 +784,26 @@ fn readValuesSlice(
     return buf;
 }
 
-fn inspectNumberColumn(dec: *SafeDecoder, min: anytype, max: @TypeOf(min)) !void {
-    const valuesOffset = try dec.readVarInt();
-    const valuesSize = try dec.readVarInt();
-    const bloomOffset = try dec.readVarInt();
-    const bloomSize = try dec.readVarInt();
+/// Prints numeric min/max metadata and the shared values/bloom ranges.
+///
+/// The caller has already read min and max at the correct integer width.
+/// Everything after those bounds uses the same varint offset/size layout as
+/// string columns.
+fn inspectNumberColumn(dec: *Decoder, min: anytype, max: @TypeOf(min)) !void {
+    const valuesOffset = dec.readVarInt();
+    const valuesSize = dec.readVarInt();
+    const bloomOffset = dec.readVarInt();
+    const bloomSize = dec.readVarInt();
     std.debug.print("  min={d} max={d}\n", .{ min, max });
     printValuesAndBloom(valuesOffset, valuesSize, bloomOffset, bloomSize);
 }
 
+/// Prints the two external ranges common to most column encodings.
+///
+/// valuesOffset/valuesSize point into a values file. bloomOffset and
+/// bloomSize point into the matching bloom/tokens file and are printed even
+/// when the current investigation only cares about values, because mismatched
+/// ranges are often visible together.
 fn printValuesAndBloom(valuesOffset: usize, valuesSize: usize, bloomOffset: usize, bloomSize: usize) void {
     std.debug.print("  values offset={d} size={d}\n", .{ valuesOffset, valuesSize });
     std.debug.print("  bloom offset={d} size={d}\n", .{ bloomOffset, bloomSize });

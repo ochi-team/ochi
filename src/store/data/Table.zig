@@ -121,17 +121,9 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     const header = try TableHeader.readFile(io, alloc, path);
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
-    const columnKeysContent = try fs.readAll(io, alloc, pathWriter.buffered());
-    defer alloc.free(columnKeysContent);
-    pathWriter.end = 0;
-    var columnIDGen: *ColumnIDGen = blk: {
-        if (columnKeysContent.len > 0) {
-            break :blk try ColumnIDGen.decode(alloc, columnKeysContent);
-        } else {
-            break :blk try ColumnIDGen.init(alloc);
-        }
-    };
+    var columnIDGen = try ColumnIDGen.decodeFile(io, alloc, pathWriter.buffered());
     errdefer columnIDGen.deinit(alloc);
+    pathWriter.end = 0;
 
     var columnIdxs = std.StringHashMapUnmanaged(u16){};
     errdefer columnIdxs.deinit(alloc);
@@ -494,7 +486,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *T
 
         var blockHeaders = std.ArrayList(BlockHeader).empty;
         defer blockHeaders.deinit(alloc);
-        const indexBuffer = try alloc.alloc(u8, indexBlockHeader.size - indexBlockHeader.offset);
+        const indexBuffer = try alloc.alloc(u8, indexBlockHeader.size);
         defer alloc.free(indexBuffer);
         n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
         std.debug.assert(indexBuffer.len == n);
@@ -542,7 +534,7 @@ fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, timestampsEncoder
 
         var blockHeaders = std.ArrayList(BlockHeader).empty;
         defer blockHeaders.deinit(alloc);
-        const indexBuffer = try alloc.alloc(u8, indexBlockHeader.size - indexBlockHeader.offset);
+        const indexBuffer = try alloc.alloc(u8, indexBlockHeader.size);
         defer alloc.free(indexBuffer);
         const n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
         std.debug.assert(indexBuffer.len == n);
@@ -1143,6 +1135,53 @@ test "queryLines" {
             try testing.expectEqualStrings(expected.app, app.?);
         }
     }
+}
+
+test "queryLinesAllBlocks reads later index blocks using size as length" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const streamsCount = 3000;
+    const sids = try alloc.alloc(SID, streamsCount);
+    defer alloc.free(sids);
+    const linesBySid = try alloc.alloc([]Line, streamsCount);
+    defer alloc.free(linesBySid);
+    const lines = try alloc.alloc(Line, streamsCount);
+    defer alloc.free(lines);
+    const fields = try alloc.alloc([2]Field, streamsCount);
+    defer alloc.free(fields);
+
+    for (0..streamsCount) |i| {
+        sids[i] = .{ .id = @intCast(i + 1), .tenantID = 1234 };
+        fields[i] = .{
+            .{ .key = "app", .value = "bulk" },
+            .{ .key = "level", .value = "info" },
+        };
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = fields[i][0..] };
+        linesBySid[i] = lines[i .. i + 1];
+    }
+
+    const memTable = try MemTable.init(alloc);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    try memTable.addLines(io, alloc, timestampsEncoders, sids, linesBySid);
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.release(io);
+
+    try testing.expect(table.indexBlockHeaders.len > 1);
+    try testing.expect(table.indexBlockHeaders[1].offset > table.indexBlockHeaders[1].size);
+
+    var queried = std.ArrayList(Line).empty;
+    defer deinitQueriedLines(alloc, &queried);
+
+    const infoExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "info", .op = .equal } };
+    const query = Query{ .start = 1, .end = streamsCount, .tagsExpr = null, .fieldsExpr = &infoExpr };
+
+    try table.queryLines(io, alloc, timestampsEncoders, &queried, &.{}, query);
+    try testing.expectEqual(streamsCount, queried.items.len);
+    try testing.expectEqual(1, queried.items[0].timestampNs);
+    try testing.expectEqual(streamsCount, queried.items[queried.items.len - 1].timestampNs);
 }
 
 // TODO: test flushed mem table is the same as an opened one,

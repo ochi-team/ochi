@@ -1,7 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const encoding = @import("encoding");
+const fs = @import("../../fs.zig");
 
 const ColumnIDGen = @This();
 
@@ -74,6 +76,19 @@ pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
     }
 
     return encoding.compressAuto(dst, tmpBuf[0..enc.offset]);
+}
+
+pub fn decodeFile(io: Io, alloc: Allocator, path: []const u8) !*ColumnIDGen {
+    const columnKeysContent = try fs.readAll(io, alloc, path);
+    defer alloc.free(columnKeysContent);
+    const columnIDGen: *ColumnIDGen = blk: {
+        if (columnKeysContent.len > 0) {
+            break :blk try ColumnIDGen.decode(alloc, columnKeysContent);
+        } else {
+            break :blk try ColumnIDGen.init(alloc);
+        }
+    };
+    return columnIDGen;
 }
 
 pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
