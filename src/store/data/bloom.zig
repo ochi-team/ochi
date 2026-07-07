@@ -1,5 +1,7 @@
 const std = @import("std");
+
 const Encoder = @import("encoding").Encoder;
+const Logger = @import("logging");
 
 pub const HashTokenizer = struct {
     const Bucket = struct {
@@ -39,7 +41,7 @@ pub const HashTokenizer = struct {
         allocator: std.mem.Allocator,
         values: []const []const u8,
     ) !std.ArrayList(u64) {
-        var dst: std.ArrayList(u64) = try std.ArrayList(u64).initCapacity(allocator, 2);
+        var dst: std.ArrayList(u64) = try .initCapacity(allocator, 2);
         errdefer dst.deinit(allocator);
         for (values, 0..) |val, i| {
             if (i > 0 and std.mem.eql(u8, val, values[i - 1])) {
@@ -49,6 +51,7 @@ pub const HashTokenizer = struct {
             try self.appendToken(allocator, &dst, val);
         }
 
+        Logger.log(.debug, "token values dst", .{ .len = dst.items.len });
         return dst;
     }
 

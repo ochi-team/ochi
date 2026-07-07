@@ -99,8 +99,6 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-// TODO: rename to encodeAlloc, implement 2 methods as replacement: bound and encode.
-// the purpose is to being able to reuse a buffer across encodings
 pub fn encode(self: *Self, allocator: std.mem.Allocator, tss: []const u64) !EncodedTimestamps {
     const len: u32 = @intCast(tss.len);
 

@@ -69,21 +69,19 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
         if (n > maxLen) maxLen = n;
     }
 
-    var stackFba = std.heap.stackFallback(2048, self.allocator);
-    const fba = stackFba.get();
     var interBuf: []u8 = &[_]u8{};
     defer {
-        if (interBuf.len > 0) fba.free(interBuf);
+        if (interBuf.len > 0) self.allocator.free(interBuf);
     }
     const areInvariants = (self.lengths.items.len >= 2) and areNumbersSame(self.lengths.items[0..]);
     const w = pickWidth(maxLen);
     if (areInvariants) {
-        interBuf = try fba.alloc(u8, 1 + w.size);
+        interBuf = try self.allocator.alloc(u8, 1 + w.size);
         var enc = Encoder.init(interBuf);
         enc.writeInt(u8, w.blockInvariant);
         enc.writeIntBytes(w.size, self.lengths.items[0]);
     } else {
-        interBuf = try fba.alloc(u8, 1 + w.size * self.lengths.items.len);
+        interBuf = try self.allocator.alloc(u8, 1 + w.size * self.lengths.items.len);
         var enc = Encoder.init(interBuf);
         _ = enc.writeInt(u8, w.block);
         for (self.lengths.items) |n| _ = enc.writeIntBytes(w.size, n);
@@ -94,7 +92,6 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
     const valuesToPack = if (valuesAreSame) values[0..1] else values;
     const packSum = if (valuesAreSame) values[0].len else lenSum;
 
-    // TODO: perhaps fixed buffer is useful here
     const valuesBuf = try self.allocator.alloc(u8, packSum);
     defer self.allocator.free(valuesBuf);
     var bufOffset: usize = 0;
@@ -113,8 +110,8 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
     errdefer self.allocator.free(result);
 
     // Pack lengths and values into different slices of the same buffer
-    const encodedLensSize = try packBytes(fba, result[0..lensBound], interBuf);
-    const encodedValuesSize = try packBytes(fba, result[encodedLensSize..], valuesBuf);
+    const encodedLensSize = try packBytes(self.allocator, result[0..lensBound], interBuf);
+    const encodedValuesSize = try packBytes(self.allocator, result[encodedLensSize..], valuesBuf);
 
     // Return the exact slice we used (not the whole bound)
     // TODO: benchmark whether the realloc worth it or better to return the entire slice,
