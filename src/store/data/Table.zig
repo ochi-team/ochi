@@ -26,6 +26,7 @@ const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
 const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const Query = @import("../../query/Query.zig");
+const stdsTesting = @import("../../stds/testing.zig");
 
 const catalog = @import("../table/catalog.zig");
 
@@ -71,10 +72,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
         Dir.CreateDirError.PathAlreadyExists => {},
-        else => std.debug.panic(
-            "failed to create a table dir '{s}': {s}",
-            .{ path, @errorName(err) },
-        ),
+        else => |e| return e,
     };
 
     var fba = std.heap.stackFallback(2048, parentAlloc);
@@ -99,6 +97,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
     errdefer {
+        for (tables.items) |table| table.close(io);
         tables.deinit(parentAlloc);
     }
     for (tableNames.items) |tableName| {
@@ -929,6 +928,54 @@ test "open reads table from disk" {
     for (expectedHeaders, table.indexBlockHeaders) |expected, actual| {
         try testing.expectEqualDeep(expected, actual);
     }
+}
+
+fn testOpenAll(io: Io, alloc: Allocator, rootPath: []const u8) !void {
+    var tables = try Table.openAll(io, alloc, rootPath);
+    defer {
+        for (tables.items) |table| table.close(io);
+        tables.deinit(alloc);
+    }
+}
+
+test "openAll handles all io failures" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const table1Path = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
+    defer alloc.free(table1Path);
+    const table2Path = try std.fs.path.join(alloc, &.{ rootPath, "table-2" });
+    defer alloc.free(table2Path);
+
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+
+    var fields = [_]Field{
+        .{ .key = "level", .value = "info" },
+        .{ .key = "app", .value = "seq" },
+    };
+    var lines = [_]Line{.{
+        .timestampNs = 1,
+        .fields = fields[0..],
+    }};
+
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.storeToDisk(io, alloc, table1Path);
+    try memTable.storeToDisk(io, alloc, table2Path);
+
+    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
+    defer alloc.free(tablesFilePath);
+    try fs.writeBufferToFileAtomic(io, tablesFilePath, "[\"table-1\",\"table-2\"]", true);
+
+    try stdsTesting.checkAllIoFailures(io, testOpenAll, .{ alloc, rootPath });
 }
 
 test "queryLines" {
