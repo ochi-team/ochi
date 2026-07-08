@@ -8,6 +8,9 @@ const Io = std.Io;
 const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
+const Field = @import("store/lines.zig").Field;
+const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
+const maxColumns = @import("store/data/Block.zig").maxColumns;
 const maxLines = @import("store/data/Block.zig").maxLines;
 const Query = @import("query/Query.zig");
 const SID = @import("store/lines.zig").SID;
@@ -769,7 +772,7 @@ fn selectTablesInRange(
 }
 
 const testing = std.testing;
-const Field = @import("store/lines.zig").Field;
+const makeUniqueFieldLines = @import("testing/fixtures.zig").makeUniqueFieldLines;
 
 var stableFields = [_][2]Field{
     .{
@@ -1001,6 +1004,60 @@ test "flushDataShards non-force respects flush deadline" {
     try testing.expect(recorder.memTables.items.len > 0);
 
     try recorder.flushForce(io, alloc);
+}
+
+test "DataShard.flush limits block columns per tenant" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+    defer recorder.deinit(io, alloc);
+
+    // tenant 1
+    var tenant1Lines = try makeUniqueFieldLines(alloc, maxColumns + 1, 1);
+    defer deinitLinesFull(alloc, &tenant1Lines);
+    // tenant 2
+    var tenant2Lines = try makeUniqueFieldLines(alloc, maxColumns + 1, 2);
+    defer deinitLinesFull(alloc, &tenant2Lines);
+
+    try recorder.shards[0].appendLines(alloc, tenant1Lines.items, .{ .tenantID = 1, .id = 1 });
+    try recorder.shards[0].appendLines(alloc, tenant2Lines.items, .{ .tenantID = 2, .id = 1 });
+
+    const table = (try recorder.shards[0].flush(
+        io,
+        alloc,
+        timestampsEncoders,
+        &recorder.memMergeSem,
+    )).?;
+    defer table.close(io);
+
+    const blockReader = try BlockReader.initFromMemTable(alloc, table);
+    defer blockReader.deinit(alloc);
+
+    var seenTenants = [_]bool{ false, false };
+    var blocks: usize = 0;
+    while (try blockReader.nextBlock(io, alloc)) {
+        try testing.expectEqual(maxColumns, blockReader.blockData.len);
+        try testing.expectEqual(maxColumns, blockReader.columnsLen());
+        try testing.expect(blockReader.blockData.sid.tenantID == 1 or blockReader.blockData.sid.tenantID == 2);
+
+        seenTenants[blockReader.blockData.sid.tenantID - 1] = true;
+        blocks += 1;
+    }
+
+    try testing.expectEqual(2, blocks);
+    try testing.expectEqualDeep(&[_]bool{ true, true }, &seenTenants);
 }
 
 test "mergeTables force single mem table creates disk table" {

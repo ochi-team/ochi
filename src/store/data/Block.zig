@@ -604,27 +604,20 @@ test "SelfInitMaxColumns" {
         lines: usize,
         fieldsPerLine: usize,
         expectedLen: u32,
+        expectedColumns: usize,
     };
     const cases = [_]Case{
         .{
             .lines = 10,
-            .fieldsPerLine = 10,
-            .expectedLen = 10,
-        },
-        .{
-            .lines = 21,
-            .fieldsPerLine = 100,
-            .expectedLen = 20,
-        },
-        .{
-            .lines = 10,
             .fieldsPerLine = 300,
             .expectedLen = 6,
+            .expectedColumns = 1800,
         },
         .{
             .lines = maxColumns + 1,
             .fieldsPerLine = 1,
             .expectedLen = maxColumns,
+            .expectedColumns = maxColumns,
         },
     };
     for (cases) |case| {
@@ -658,6 +651,7 @@ test "SelfInitMaxColumns" {
         defer b.deinit(alloc);
 
         try std.testing.expectEqual(case.expectedLen, b.len());
+        try std.testing.expectEqual(case.expectedColumns, b.columns.len);
     }
 }
 

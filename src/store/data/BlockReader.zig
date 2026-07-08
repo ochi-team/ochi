@@ -148,6 +148,11 @@ pub fn deinit(self: *BlockReader, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
+pub fn columnsLen(self: *const BlockReader) usize {
+    const invariantColumns = if (self.blockData.invariantColumns) |cols| cols.len else 0;
+    return self.blockData.columnsData.items.len + invariantColumns;
+}
+
 /// nextBlock reads the next block from the reader and puts it into blockData.
 /// Returns false if there are no more blocks.
 /// blockData is valid until the next call to NextBlock().

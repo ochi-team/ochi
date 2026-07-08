@@ -40,7 +40,7 @@ pub const BlockData = struct {
     // TODO: this holds ownership of merge read, either document it's ownership
     // or remove if we migrate ot file read / mmap
     columnsHeaderBuf: []const u8 = "",
-    // TODO: try making it non nullable
+    // TODO: try making it non nullable or document why it must be so
     columnsHeader: ?*ColumnsHeader = null,
     columnsData: std.ArrayList(ColumnData),
     // TODO: consider making it as a Field,

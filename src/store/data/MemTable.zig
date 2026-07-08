@@ -5,8 +5,10 @@ const fs = @import("../../fs.zig");
 
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
+const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const lineLessThan = @import("../lines.zig").lineLessThan;
 const fieldLessThan = @import("../lines.zig").fieldLessThan;
+const maxColumns = @import("Block.zig").maxColumns;
 const maxLines = @import("Block.zig").maxLines;
 const SID = @import("../lines.zig").SID;
 
@@ -385,6 +387,7 @@ const encoding = @import("encoding");
 const Table = @import("Table.zig");
 const BlockReader = @import("BlockReader.zig").BlockReader;
 const sampleSid = SID{ .tenantID = 1234, .id = 1 };
+const makeUniqueFieldLines = @import("../../testing/fixtures.zig").makeUniqueFieldLines;
 
 const SampleLines = struct {
     fields1: [2]Field,
@@ -642,6 +645,52 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
         try std.testing.expectEqual(case.expectedBlocks.len, actualBlocksLen);
         try std.testing.expectEqualDeep(case.expectedBlocks[0..], actualBlocks[0..actualBlocksLen]);
     }
+}
+
+test "addLines limits block columns per tenant" {
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+
+    const tenant1 = 1;
+    var tenant1Lines = try makeUniqueFieldLines(alloc, maxColumns + 1, tenant1);
+    defer deinitLinesFull(alloc, &tenant1Lines);
+    const tenant2 = 2;
+    var tenant2Lines = try makeUniqueFieldLines(alloc, maxColumns + 1, tenant2);
+    defer deinitLinesFull(alloc, &tenant2Lines);
+
+    var sids = [_]SID{
+        .{ .tenantID = tenant1, .id = 1 },
+        .{ .tenantID = tenant2, .id = 1 },
+    };
+    var linesBySid = [_][]Line{ tenant1Lines.items, tenant2Lines.items };
+
+    const memTable = try MemTable.init(alloc);
+    memTable.addLines(io, alloc, timestampsEncoders, sids[0..], linesBySid[0..]) catch |err| {
+        memTable.deinit(alloc);
+        return err;
+    };
+
+    const table = try Table.fromMem(alloc, memTable);
+    defer table.close(io);
+
+    const blockReader = try BlockReader.initFromMemTable(alloc, table);
+    defer blockReader.deinit(alloc);
+
+    var seenTenants = [_]bool{ false, false };
+    var blocks: usize = 0;
+    while (try blockReader.nextBlock(io, alloc)) {
+        try std.testing.expectEqual(maxColumns, blockReader.blockData.len);
+        try std.testing.expectEqual(maxColumns, blockReader.columnsLen());
+        try std.testing.expect(blockReader.blockData.sid.tenantID == 1 or blockReader.blockData.sid.tenantID == 2);
+        seenTenants[blockReader.blockData.sid.tenantID - 1] = true;
+        blocks += 1;
+    }
+
+    try std.testing.expectEqual(2, blocks);
+    try std.testing.expectEqualDeep(&[_]bool{ true, true }, &seenTenants);
 }
 
 const ExpectedSortedLinesChunk = struct {
