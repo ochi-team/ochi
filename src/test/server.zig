@@ -419,44 +419,53 @@ fn expectLoqlSyntaxErrors(alloc: Allocator, client: *OchiClient) !void {
     }
 }
 
-fn expectedLine(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![]Line {
-    if (corpus.ingest.stream != .object) return error.ExpectedStreamObject;
+fn expectedLinesCorpus(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![]Line {
+    var lineCount: usize = 0;
+    for (corpus.ingest.streams) |stream| {
+        lineCount += stream.logs.len;
+    }
 
-    const streamFieldsCount = corpus.ingest.stream.object.count();
-    const expected = try alloc.alloc(Line, corpus.ingest.logs.len);
-    for (corpus.ingest.logs, 0..) |log, logI| {
-        if (log.fields != .object) return error.ExpectedFieldsObject;
+    const expected = try alloc.alloc(Line, lineCount);
+    var logI: usize = 0;
+    for (corpus.ingest.streams) |stream| {
+        if (stream.stream != .object) return error.ExpectedStreamObject;
 
-        const fields = try alloc.alloc(Field, streamFieldsCount + log.fields.object.count() + 1);
-        var fieldI: usize = 0;
+        const streamFieldsCount = stream.stream.object.count();
+        for (stream.logs) |log| {
+            if (log.fields != .object) return error.ExpectedFieldsObject;
 
-        var streamIt = corpus.ingest.stream.object.iterator();
-        while (streamIt.next()) |entry| {
-            const value = switch (entry.value_ptr.*) {
-                .string => |s| s,
-                else => return error.StreamValueMustBeString,
+            const fields = try alloc.alloc(Field, streamFieldsCount + log.fields.object.count() + 1);
+            var fieldI: usize = 0;
+
+            var streamIt = stream.stream.object.iterator();
+            while (streamIt.next()) |entry| {
+                const value = switch (entry.value_ptr.*) {
+                    .string => |s| s,
+                    else => return error.StreamValueMustBeString,
+                };
+                fields[fieldI] = .{ .key = entry.key_ptr.*, .value = value };
+                fieldI += 1;
+            }
+
+            var fieldsIt = log.fields.object.iterator();
+            while (fieldsIt.next()) |entry| {
+                const value = switch (entry.value_ptr.*) {
+                    .string => |s| s,
+                    else => return error.FieldValueMustBeString,
+                };
+                fields[fieldI] = .{ .key = entry.key_ptr.*, .value = value };
+                fieldI += 1;
+            }
+
+            fields[fieldI] = .{ .key = "", .value = log.message };
+            std.sort.pdq(Field, fields, {}, fieldLessThan);
+
+            expected[logI] = .{
+                .timestampNs = try logTimestampNs(nowNs, log.offsetMin),
+                .fields = fields,
             };
-            fields[fieldI] = .{ .key = entry.key_ptr.*, .value = value };
-            fieldI += 1;
+            logI += 1;
         }
-
-        var fieldsIt = log.fields.object.iterator();
-        while (fieldsIt.next()) |entry| {
-            const value = switch (entry.value_ptr.*) {
-                .string => |s| s,
-                else => return error.FieldValueMustBeString,
-            };
-            fields[fieldI] = .{ .key = entry.key_ptr.*, .value = value };
-            fieldI += 1;
-        }
-
-        fields[fieldI] = .{ .key = "", .value = log.message };
-        std.sort.pdq(Field, fields, {}, fieldLessThan);
-
-        expected[logI] = .{
-            .timestampNs = try logTimestampNs(nowNs, log.offsetMin),
-            .fields = fields,
-        };
     }
 
     std.sort.pdq(Line, expected, {}, lineLatestFirst);
@@ -468,19 +477,24 @@ const IngestionLog = struct {
     message: []const u8,
     fields: std.json.Value,
 };
-const IngestCorpus = struct {
-    tenant: u64,
+const IngestStream = struct {
     stream: std.json.Value,
     logs: []IngestionLog,
+};
+const IngestCorpus = struct {
+    tenant: u64,
+    streams: []IngestStream,
 
     fn getMinMaxTimestamps(ingest: *const IngestCorpus, nowNs: u64) !struct { min: u64, max: u64 } {
         var minTs: u64 = std.math.maxInt(u64);
         var maxTs: u64 = 0;
 
-        for (ingest.logs) |log| {
-            const tsNs = try logTimestampNs(nowNs, log.offsetMin);
-            if (tsNs < minTs) minTs = tsNs;
-            if (tsNs > maxTs) maxTs = tsNs;
+        for (ingest.streams) |stream| {
+            for (stream.logs) |log| {
+                const tsNs = try logTimestampNs(nowNs, log.offsetMin);
+                if (tsNs < minTs) minTs = tsNs;
+                if (tsNs > maxTs) maxTs = tsNs;
+            }
         }
 
         return .{ .min = minTs, .max = maxTs };
@@ -675,16 +689,21 @@ test "serverEndToEndViaHTTP" {
     const arenAlloc = corpusArena.allocator();
     for (corpora.items) |corpus| {
         const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
-        const expectedSID = try makeSID(arenAlloc, corpus.ingest.tenant, corpus.ingest.stream);
+        const expectedSIDs = try arenAlloc.alloc(u128, corpus.ingest.streams.len);
+        for (corpus.ingest.streams, 0..) |stream, i| {
+            expectedSIDs[i] = try makeSID(arenAlloc, corpus.ingest.tenant, stream.stream);
+        }
 
         try runCorpus(arenAlloc, &ochiClient, corpus, nowNs);
-        try expectQueryBySIDs(arenAlloc, &ochiClient, corpus, expectedSID, nowNs);
+        try expectQueryBySIDs(arenAlloc, &ochiClient, corpus, expectedSIDs, nowNs);
 
         const gop = try expectedSIDsByTenant.getOrPut(corpus.ingest.tenant);
         if (!gop.found_existing) {
             gop.value_ptr.* = .empty;
         }
-        try appendUniqueSID(alloc, gop.value_ptr, expectedSID);
+        for (expectedSIDs) |expectedSID| {
+            try appendUniqueSID(alloc, gop.value_ptr, expectedSID);
+        }
 
         var it = expectedSIDsByTenant.iterator();
         while (it.next()) |entry| {
@@ -793,23 +812,33 @@ fn appendUniqueSID(alloc: Allocator, sids: *std.ArrayList(u128), sid: u128) !voi
     try sids.append(alloc, sid);
 }
 
-fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, sid: u128, nowNs: u64) !void {
+fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, sids: []const u128, nowNs: u64) !void {
     const tsRange = try corpus.ingest.getMinMaxTimestamps(nowNs);
     const minTs = tsRange.min;
     const maxTs = tsRange.max;
 
-    const body = try std.fmt.allocPrint(
-        alloc,
-        "{{\"start\":{d},\"end\":{d},\"streamIDs\":[{d}]}}",
-        .{ minTs, maxTs, sid },
-    );
-    defer alloc.free(body);
+    var body = std.ArrayList(u8).empty;
+    defer body.deinit(alloc);
+
+    const prefix = try std.fmt.allocPrint(alloc, "{{\"start\":{d},\"end\":{d},\"streamIDs\":[", .{ minTs, maxTs });
+    defer alloc.free(prefix);
+    try body.appendSlice(alloc, prefix);
+
+    for (sids, 0..) |sid, i| {
+        if (i != 0) {
+            try body.append(alloc, ',');
+        }
+        const sidStr = try std.fmt.allocPrint(alloc, "{d}", .{sid});
+        defer alloc.free(sidStr);
+        try body.appendSlice(alloc, sidStr);
+    }
+    try body.appendSlice(alloc, "]}");
 
     var resp = try client.request(
         alloc,
         .POST,
         "/query",
-        body,
+        body.items,
         corpus.ingest.tenant,
         "application/json",
         null,
@@ -826,7 +855,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
     });
     defer parsed.deinit();
 
-    const expected = try expectedLine(alloc, corpus, nowNs);
+    const expected = try expectedLinesCorpus(alloc, corpus, nowNs);
     // TODO: on a first failure it's worth implementing better,
     // iterating over every line, compare fields one by one and log an error,
     // it must take into account the keys might be missing in either
@@ -859,7 +888,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     }
 
     // query all the test cases
-    const expectedLines = try expectedLine(alloc, corpus, nowNs);
+    const expectedLines = try expectedLinesCorpus(alloc, corpus, nowNs);
     for (corpus.queries) |query| {
         client.expectQueryIDs(alloc, query.tenant, query.query, query.match, expectedLines) catch |err| {
             client.logger.log(.err, "failed to match query ids", .{
@@ -874,36 +903,44 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
 }
 
 fn buildIngestBody(alloc: Allocator, ingest: IngestCorpus, nowNs: u64) ![]const u8 {
-    const streamJson = try std.json.Stringify.valueAlloc(alloc, ingest.stream, .{});
-    defer alloc.free(streamJson);
-
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(alloc);
 
-    try buf.appendSlice(alloc, "{\"streams\":[{\"stream\":");
-    try buf.appendSlice(alloc, streamJson);
-    try buf.appendSlice(alloc, ",\"values\":[");
-    for (ingest.logs, 0..) |log, i| {
-        if (i != 0) {
+    try buf.appendSlice(alloc, "{\"streams\":[");
+    for (ingest.streams, 0..) |stream, streamI| {
+        if (streamI != 0) {
             try buf.append(alloc, ',');
         }
 
-        const tsNs = try logTimestampNs(nowNs, log.offsetMin);
+        const streamJson = try std.json.Stringify.valueAlloc(alloc, stream.stream, .{});
+        defer alloc.free(streamJson);
 
-        const fieldsJson = try std.json.Stringify.valueAlloc(alloc, log.fields, .{});
-        defer alloc.free(fieldsJson);
+        try buf.appendSlice(alloc, "{\"stream\":");
+        try buf.appendSlice(alloc, streamJson);
+        try buf.appendSlice(alloc, ",\"values\":[");
+        for (stream.logs, 0..) |log, i| {
+            if (i != 0) {
+                try buf.append(alloc, ',');
+            }
 
-        try buf.appendSlice(alloc, "[\"");
-        const tsString = try std.fmt.allocPrint(alloc, "{d}", .{tsNs});
-        defer alloc.free(tsString);
-        try buf.appendSlice(alloc, tsString);
-        try buf.appendSlice(alloc, "\",\"");
-        try buf.appendSlice(alloc, log.message);
-        try buf.appendSlice(alloc, "\",");
-        try buf.appendSlice(alloc, fieldsJson);
-        try buf.appendSlice(alloc, "]");
+            const tsNs = try logTimestampNs(nowNs, log.offsetMin);
+
+            const fieldsJson = try std.json.Stringify.valueAlloc(alloc, log.fields, .{});
+            defer alloc.free(fieldsJson);
+
+            try buf.appendSlice(alloc, "[\"");
+            const tsString = try std.fmt.allocPrint(alloc, "{d}", .{tsNs});
+            defer alloc.free(tsString);
+            try buf.appendSlice(alloc, tsString);
+            try buf.appendSlice(alloc, "\",\"");
+            try buf.appendSlice(alloc, log.message);
+            try buf.appendSlice(alloc, "\",");
+            try buf.appendSlice(alloc, fieldsJson);
+            try buf.appendSlice(alloc, "]");
+        }
+        try buf.appendSlice(alloc, "]}");
     }
-    try buf.appendSlice(alloc, "]}]}");
+    try buf.appendSlice(alloc, "]}");
 
     return buf.toOwnedSlice(alloc);
 }

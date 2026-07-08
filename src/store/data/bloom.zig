@@ -288,8 +288,8 @@ pub const BloomFilter = struct {
         const hashCount = hashes.len * hashRounds;
         const hashedHashes = try allocator.alloc(u64, hashCount);
         defer allocator.free(hashedHashes);
-        putHashes(hashedHashes, hashes);
 
+        putHashes(hashedHashes, hashes);
         setupBits(bits, hashedHashes);
 
         const s = try allocator.create(BloomFilter);

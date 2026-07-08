@@ -1,26 +1,55 @@
 {
   "tenant": 11,
-  "stream": { "env": "prod", "service": "web" },
-  "logs": [
+  "streams": [
     {
-      "offsetMin": -30,
-      "message": "GET /api/health 200 3ms",
-      "fields": {
-        "id": "web-001",
-        "status": "200",
-        "path": "/api/health",
-        "latency_ms": "3"
-      }
+      "stream": { "env": "prod", "service": "web" },
+      "logs": [
+        {
+          "offsetMin": -30,
+          "message": "GET /api/health 200 3ms",
+          "fields": {
+            "id": "web-001",
+            "status": "200",
+            "path": "/api/health",
+            "latency_ms": "3"
+          }
+        },
+        {
+          "offsetMin": -20,
+          "message": "POST /api/orders 500 timeout",
+          "fields": {
+            "id": "web-002",
+            "status": "500",
+            "path": "/api/orders",
+            "latency_ms": "4820"
+          }
+        }
+      ]
     },
     {
-      "offsetMin": -20,
-      "message": "POST /api/orders 500 timeout",
-      "fields": {
-        "id": "web-002",
-        "status": "500",
-        "path": "/api/orders",
-        "latency_ms": "4820"
-      }
+      "stream": { "env": "prod", "service": "worker" },
+      "logs": [
+        {
+          "offsetMin": -25,
+          "message": "processed queue job",
+          "fields": {
+            "id": "worker-001",
+            "status": "200",
+            "queue": "email",
+            "latency_ms": "39"
+          }
+        },
+        {
+          "offsetMin": -10,
+          "message": "failed queue job",
+          "fields": {
+            "id": "worker-002",
+            "status": "500",
+            "queue": "billing",
+            "latency_ms": "8100"
+          }
+        }
+      ]
     }
   ]
 }

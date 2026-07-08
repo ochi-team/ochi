@@ -49,6 +49,8 @@ data: *DataRecorder,
 /// so the partition doesn't own it
 streamCache: *Cache(void),
 
+// TODO: worth moving it to Arc object, there are already 4 managed types:
+// partition, cache node, index and data tables
 refCounter: std.atomic.Value(u32) = .init(1),
 
 /// Partition is a managed resource by a ref counter,

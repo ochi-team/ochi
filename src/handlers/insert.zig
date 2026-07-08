@@ -7,6 +7,7 @@ const AppContext = @import("../dispatch.zig").AppContext;
 const Store = @import("../Store.zig").Store;
 const Processor = @import("../process.zig").Processor;
 const Field = @import("../store/lines.zig").Field;
+const defaultMaxFieldsPerLine = @import("../store/lines.zig").defaultMaxFieldsPerLine;
 const Params = @import("../process.zig").Params;
 const ApiError = @import("../server/error.zig").ApiError;
 const Compression = @import("../server/compression.zig").Compression;
@@ -67,7 +68,7 @@ fn process(
     data: []const u8,
     params: Params,
 ) !void {
-    // TODO: implement a zero allocation parsing
+    // TODO: implement a zero allocation parsing, we copy the data in the end anyway
 
     const root = try std.json.parseFromSliceLeaky(std.json.Value, parseAlloc, data, .{
         .allocate = .alloc_if_needed,
@@ -81,26 +82,6 @@ fn process(
     var tags: std.ArrayList(Field) = .empty;
     defer tags.deinit(parseAlloc);
 
-    if (streams.array.items.len > 0 and streams.array.items[0] == .object) {
-        const stream = streams.array.items[0].object;
-        // Parse "stream" object (labels) - preallocate for typical label count
-        var labelSize: u16 = 1; // 1 is for msgKey
-        if (stream.get("stream")) |streamObj| {
-            if (streamObj == .object) {
-                labelSize += @intCast(streamObj.object.count());
-            }
-        }
-        if (stream.get("values")) |valuesObj| {
-            if (valuesObj == .array and valuesObj.array.items.len > 0) {
-                const firstLine = valuesObj.array.items[0];
-                if (firstLine == .array and firstLine.array.items.len == 3 and firstLine.array.items[2] == .object) {
-                    labelSize += @intCast(firstLine.array.items[2].object.count());
-                }
-            }
-        }
-        tags = try std.ArrayList(Field).initCapacity(parseAlloc, labelSize);
-    }
-
     var processor = try Processor.init(ctx.allocator, ctx.store);
     defer processor.deinit(ingestAlloc);
 
@@ -108,9 +89,27 @@ fn process(
     for (streams.array.items) |stream| {
         if (stream != .object) return error.StreamNotObject;
 
-        if (stream.object.get("stream")) |streamObj| {
-            if (streamObj != .object) return error.StreamFieldNotObject;
+        {
+            var labelSize: u16 = 1; // 1 is for msgKey
+            if (stream.object.get("stream")) |streamObj| {
+                if (streamObj != .object) return error.StreamFieldNotObject;
+                labelSize += @intCast(streamObj.object.count());
+            }
+            if (stream.object.get("values")) |valuesObj| {
+                if (valuesObj == .array and valuesObj.array.items.len > 0) {
+                    const firstLine = valuesObj.array.items[0];
+                    if (firstLine == .array and firstLine.array.items.len == 3 and
+                        firstLine.array.items[2] == .object)
+                    {
+                        labelSize += @intCast(firstLine.array.items[2].object.count());
+                    }
+                }
+            }
+            if (labelSize > defaultMaxFieldsPerLine) return error.MaxFieldsPerLineExceeded;
+            try tags.ensureTotalCapacity(parseAlloc, labelSize);
+        }
 
+        if (stream.object.get("stream")) |streamObj| {
             var it = streamObj.object.iterator();
             while (it.next()) |entry| {
                 const valueStr = switch (entry.value_ptr.*) {

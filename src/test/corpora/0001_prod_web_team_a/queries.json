@@ -33,13 +33,31 @@
     "description": "prod logs",
     "tenant": 11,
     "query": "[-60m,now] {env=prod}",
-    "match": ["web-002", "web-001"]
+    "match": ["worker-002", "web-002", "worker-001", "web-001"]
   },
   {
     "description": "web logs",
     "tenant": 11,
     "query": "[-60m,now] {service=web}",
     "match": ["web-002", "web-001"]
+  },
+  {
+    "description": "worker logs",
+    "tenant": 11,
+    "query": "[-60m,now] {service=worker}",
+    "match": ["worker-002", "worker-001"]
+  },
+  {
+    "description": "status across multiple streams",
+    "tenant": 11,
+    "query": "[-60m,now] {env=prod} status=500",
+    "match": ["worker-002", "web-002"]
+  },
+  {
+    "description": "worker queue field",
+    "tenant": 11,
+    "query": "[-60m,now] {env=prod AND service=worker} queue=billing",
+    "match": ["worker-002"]
   },
   {
     "description": "both are not equal",
