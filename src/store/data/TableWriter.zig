@@ -442,11 +442,6 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
     ch.type = valueType.type;
     ch.min = valueType.min;
     ch.max = valueType.max;
-    const packer = try Packer.init(allocator);
-    defer packer.deinit();
-    const packedValues = try packer.packValues(valuesEncoder.values.items);
-    defer allocator.free(packedValues);
-    std.debug.assert(packedValues.len <= maxPackedValuesSize);
 
     const bloomBufI = self.getBloomBufferIndex(io, allocator, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
@@ -458,9 +453,17 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
         else => return err,
     };
 
-    ch.size = packedValues.len;
+    var packer = try Packer.init(allocator);
+    defer packer.deinit();
+    var packedBound = try packer.packValuesInterBound(valuesEncoder.values.items);
+    defer packedBound.deinit(allocator);
+    const packBound = packedBound.lensBound + packedBound.valuesBound;
+    std.debug.assert(packBound <= maxPackedValuesSize);
+    const packDst = try bloomValuesBuf.allocSlice(allocator, packBound);
+    const packedCap = try packer.packValues(packDst, packedBound);
     ch.offset = bloomValuesBuf.len();
-    try bloomValuesBuf.appendSlice(io, allocator, packedValues);
+    try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
+    ch.size = packedCap;
 
     const bloomHash = if (valueType.type == .dict) &[_]u8{} else blk: {
         const tokenizer = try HashTokenizer.init(allocator);
