@@ -261,16 +261,6 @@ fn isUnicodeNumber(c: u8) bool {
     return c == 0;
 }
 
-pub fn encodeBloomHashes(allocator: std.mem.Allocator, hashes: []u64) ![]u8 {
-    var bf = try BloomFilter.initHashes(allocator, hashes);
-    defer bf.deinit(allocator);
-
-    const dstSize = bf.bound();
-    const dst = try allocator.alloc(u8, dstSize);
-    bf.encode(dst);
-    return dst;
-}
-
 pub const BloomFilter = struct {
     bits: []u64,
 
