@@ -27,7 +27,7 @@ const ColumnIDGen = @import("ColumnIDGen.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const StreamDestination = @import("StreamDestination.zig").StreamDestination;
 const HashTokenizer = @import("bloom.zig").HashTokenizer;
-const encodeBloomHashes = @import("bloom.zig").encodeBloomHashes;
+const BloomFilter = @import("bloom.zig").BloomFilter;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 
@@ -465,24 +465,25 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
     try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
     ch.size = packedCap;
 
-    const bloomHash = if (valueType.type == .dict) &[_]u8{} else blk: {
+    ch.bloomFilterOffset = bloomTokensBuf.len();
+    const bloomHashCap = if (valueType.type == .dict) 0 else blk: {
         const tokenizer = try HashTokenizer.init(allocator);
         defer tokenizer.deinit(allocator);
 
         var hashes = try tokenizer.tokenizeValues(allocator, col.values);
         defer hashes.deinit(allocator);
 
-        const hashed = try encodeBloomHashes(allocator, hashes.items);
-        break :blk hashed;
+        var bf = try BloomFilter.initHashes(allocator, hashes.items);
+        defer bf.deinit(allocator);
+
+        const dstSize = bf.bound();
+        const dst = try bloomTokensBuf.allocSlice(allocator, dstSize);
+        bf.encode(dst);
+        try bloomTokensBuf.appendAllocated(io, dst, dstSize);
+
+        break :blk dstSize;
     };
-    defer {
-        if (valueType.type != .dict) {
-            allocator.free(bloomHash);
-        }
-    }
-    ch.bloomFilterSize = bloomHash.len;
-    ch.bloomFilterOffset = bloomTokensBuf.len();
-    try bloomTokensBuf.appendSlice(io, allocator, bloomHash);
+    ch.bloomFilterSize = bloomHashCap;
 }
 
 fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
