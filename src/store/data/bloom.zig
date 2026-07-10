@@ -3,29 +3,22 @@ const std = @import("std");
 const Encoder = @import("encoding").Encoder;
 const Logger = @import("logging");
 
-pub const HashTokenizer = struct {
-    const Bucket = struct {
-        value: usize,
-        overflows: std.ArrayList(usize),
-    };
+pub const bucketsSize = 1024;
+pub const Bucket = struct {
+    value: u64,
+    overflows: std.ArrayList(u64),
+};
 
-    buckets: [1024]Bucket,
+pub const HashTokenizer = struct {
+    buckets: []Bucket,
     bitset: std.bit_set.DynamicBitSetUnmanaged,
 
-    pub fn init(allocator: std.mem.Allocator) !*HashTokenizer {
-        const s = try allocator.create(HashTokenizer);
-        var buckets: [1024]Bucket = undefined;
-        for (0..buckets.len) |i| {
-            buckets[i] = Bucket{
-                .value = 0,
-                .overflows = std.ArrayList(usize).empty,
-            };
-        }
-        s.* = HashTokenizer{
+    pub fn init(allocator: std.mem.Allocator, buckets: []Bucket) !HashTokenizer {
+        @memset(buckets, .{ .value = 0, .overflows = .empty });
+        return .{
             .buckets = buckets,
             .bitset = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, buckets.len),
         };
-        return s;
     }
 
     pub fn deinit(self: *HashTokenizer, allocator: std.mem.Allocator) void {
@@ -33,7 +26,6 @@ pub const HashTokenizer = struct {
             self.buckets[i].overflows.deinit(allocator);
         }
         self.bitset.deinit(allocator);
-        allocator.destroy(self);
     }
 
     pub fn tokenizeValues(
@@ -210,7 +202,8 @@ test "tokenizeValues" {
 
     for (cases) |c| {
         const allocator = std.testing.allocator;
-        const tokenizer = try HashTokenizer.init(allocator);
+        var buckets: [bucketsSize]Bucket = undefined;
+        var tokenizer = try HashTokenizer.init(allocator, &buckets);
         defer tokenizer.deinit(allocator);
 
         var tokens = try tokenizer.tokenizeValues(allocator, c.input);
@@ -267,7 +260,7 @@ pub const BloomFilter = struct {
     const bitsPerEntry = 16;
     const hashRounds = 6;
 
-    pub fn initHashes(allocator: std.mem.Allocator, hashes: []u64) !*BloomFilter {
+    pub fn initHashes(allocator: std.mem.Allocator, hashes: []u64) !BloomFilter {
         // +63 to have a gap rounding to upper value
         const len = (hashes.len * bitsPerEntry + 63) / 64;
 
@@ -275,52 +268,37 @@ pub const BloomFilter = struct {
         errdefer allocator.free(bits);
         @memset(bits, 0);
 
-        const hashCount = hashes.len * hashRounds;
-        const hashedHashes = try allocator.alloc(u64, hashCount);
-        defer allocator.free(hashedHashes);
+        setupBits(bits, hashes);
 
-        putHashes(hashedHashes, hashes);
-        setupBits(bits, hashedHashes);
-
-        const s = try allocator.create(BloomFilter);
-        s.* = BloomFilter{
+        return .{
             .bits = bits,
         };
-        return s;
     }
 
     pub fn deinit(self: *BloomFilter, allocator: std.mem.Allocator) void {
         allocator.free(self.bits);
-        allocator.destroy(self);
     }
 
-    fn putHashes(dst: []u64, src: []u64) void {
+    fn setupBits(bits: []u64, src: []u64) void {
         var buf: [8]u8 align(@alignOf(u64)) = undefined;
         const p: *u64 = @ptrCast(&buf);
-        var i: usize = 0;
 
-        for (src) |hash| {
-            p.* = hash;
+        const maxBits = bits.len * 64;
+        for (src) |srcHash| {
+            p.* = srcHash;
 
             inline for (0..hashRounds) |_| {
-                const h = std.hash.XxHash64.hash(0, &buf);
-                dst[i] = h;
-                i += 1;
+                const hash = std.hash.XxHash64.hash(0, &buf);
                 p.* += 1;
-            }
-        }
-    }
 
-    fn setupBits(bits: []u64, hashes: []u64) void {
-        const maxBits = bits.len * 64;
-        for (hashes) |hash| {
-            const idx = hash % maxBits;
-            const i = idx / 64;
-            const bitOrder: u6 = @intCast(idx % 64);
-            const mask: u64 = @as(u64, 1) << bitOrder;
-            const word = bits[i];
-            if (word & mask == 0) {
-                bits[i] = word | mask;
+                const idx = hash % maxBits;
+                const iHash = idx / 64;
+                const bitOrder: u6 = @intCast(idx % 64);
+                const mask: u64 = @as(u64, 1) << bitOrder;
+                const word = bits[iHash];
+                if (word & mask == 0) {
+                    bits[iHash] = word | mask;
+                }
             }
         }
     }
@@ -354,6 +332,10 @@ pub const BloomFilter = struct {
     }
 };
 
+const Decoder = @import("encoding").Decoder;
+
+// TODO: this test is mediocre, we must test a hit rate here >90% to confirm the hash is viable,
+// testing readiability for the data is not very useful
 test "BloomFilter" {
     const allocator = std.testing.allocator;
     const Case = struct {
@@ -392,27 +374,26 @@ test "BloomFilter" {
 
     for (cases) |case| {
         // init
-        var tokenizer = try HashTokenizer.init(allocator);
+        var buckets: [bucketsSize]Bucket = undefined;
+        var tokenizer = try HashTokenizer.init(allocator, &buckets);
         defer tokenizer.deinit(allocator);
         var hashes = try tokenizer.tokenizeValues(allocator, case.tokens);
         defer hashes.deinit(allocator);
 
-        const bf = try BloomFilter.initHashes(allocator, hashes.items);
+        var bf = try BloomFilter.initHashes(allocator, hashes.items);
         defer bf.deinit(allocator);
 
-        // make expected hashes
-        const hashedHashes = try allocator.alloc(u64, BloomFilter.hashRounds * hashes.items.len);
-        defer allocator.free(hashedHashes);
-        BloomFilter.putHashes(hashedHashes, hashes.items);
+        const bufSize = bf.bound();
+        const buf = try allocator.alloc(u8, bufSize);
+        defer allocator.free(buf);
+        bf.encode(buf);
 
         // validate
-        try std.testing.expect(bf.contains(hashedHashes));
+        var dec = Decoder.init(buf);
+        for (bf.bits) |word| {
+            try std.testing.expectEqual(word, dec.readInt(u64));
+        }
         if (case.expectedEncoded) |expected| {
-            const bufSize = bf.bound();
-            const buf = try allocator.alloc(u8, bufSize);
-            defer allocator.free(buf);
-            bf.encode(buf);
-
             try std.testing.expectEqualStrings(expected, buf);
         }
     }

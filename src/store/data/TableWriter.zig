@@ -29,6 +29,8 @@ const ColumnIDGen = @import("ColumnIDGen.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const StreamDestination = @import("StreamDestination.zig").StreamDestination;
 const HashTokenizer = @import("bloom.zig").HashTokenizer;
+const Bucket = @import("bloom.zig").Bucket;
+const bucketsSize = @import("bloom.zig").bucketsSize;
 const BloomFilter = @import("bloom.zig").BloomFilter;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
@@ -483,7 +485,8 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
     });
     ch.bloomFilterOffset = bloomTokensBuf.len();
     const bloomHashCap = if (valueType.type == .dict) 0 else blk: {
-        const tokenizer = try HashTokenizer.init(allocator);
+        var buckets: [bucketsSize]Bucket = undefined;
+        var tokenizer = try HashTokenizer.init(allocator, &buckets);
         defer tokenizer.deinit(allocator);
 
         var hashes = try tokenizer.tokenizeValues(allocator, col.values);
