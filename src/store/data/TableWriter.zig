@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 
+const tracy = @import("tracy");
+
 const ValuesEncoder = @import("ValuesEncoder.zig");
 
 const Block = @import("Block.zig");
@@ -436,12 +438,17 @@ fn writeTimestampsData(
 fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
     ch.key = col.key;
 
+    const z1 = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeColumn.encodeValues",
+    });
     const valuesEncoder = try ValuesEncoder.init(allocator);
     defer valuesEncoder.deinit();
     const valueType = try valuesEncoder.encode(col.values, &ch.dict);
     ch.type = valueType.type;
     ch.min = valueType.min;
     ch.max = valueType.max;
+    defer z1.end();
 
     const bloomBufI = self.getBloomBufferIndex(io, allocator, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
@@ -453,6 +460,10 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
         else => return err,
     };
 
+    const z2 = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeColumn.packValue",
+    });
     var packer = try Packer.init(allocator);
     defer packer.deinit();
     var packedBound = try packer.packValuesInterBound(valuesEncoder.values.items);
@@ -464,7 +475,12 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
     ch.offset = bloomValuesBuf.len();
     try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
     ch.size = packedCap;
+    defer z2.end();
 
+    const z3 = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeColumn.tokenizeValues",
+    });
     ch.bloomFilterOffset = bloomTokensBuf.len();
     const bloomHashCap = if (valueType.type == .dict) 0 else blk: {
         const tokenizer = try HashTokenizer.init(allocator);
@@ -484,6 +500,7 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
         break :blk dstSize;
     };
     ch.bloomFilterSize = bloomHashCap;
+    defer z3.end();
 }
 
 fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
