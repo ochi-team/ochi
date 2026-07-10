@@ -1329,7 +1329,7 @@ test "IndexRecorder large entries write to 3 shards" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
-    defer recorder.deinit(io, alloc);
+    defer recorder.stop(io, alloc) catch unreachable;
 
     try recorder.add(io, alloc, testEntries);
 

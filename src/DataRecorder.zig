@@ -9,6 +9,8 @@ const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
+const defaultMaxFieldValueSize = @import("store/lines.zig").defaultMaxFieldValueSize;
+const validate = @import("store/lines.zig").validate;
 const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const maxColumns = @import("store/data/Block.zig").maxColumns;
 const maxLines = @import("store/data/Block.zig").maxLines;
@@ -91,6 +93,27 @@ pub const DataShard = struct {
     fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line, sid: SID) !void {
         const bufferAlloc = shard.buffer.allocator();
         for (lines) |line| {
+            validate(line.fields) catch |err| {
+                switch (err) {
+                    error.MaxFieldsPerLineExceeded => {
+                        Logger.log(.warn, "DataShard: max fields per line exceeded", .{});
+                        continue;
+                    },
+                    error.MaxFieldKeySizeExceeded => {
+                        Logger.log(.warn, "DataShard: max field key size exceeded", .{});
+                        continue;
+                    },
+                    error.MaxFieldValueSizeExceeded => {
+                        Logger.log(.warn, "DataShard: max field value size exceeded", .{});
+                        continue;
+                    },
+                    error.MaxLineSizeExceeded => {
+                        Logger.log(.warn, "DataShard: max line size exceeded", .{});
+                        continue;
+                    },
+                }
+            };
+
             const prevLine: ?Line = if (shard.lines.items.len > 0)
                 shard.lines.items[shard.lines.items.len - 1]
             else
@@ -970,40 +993,128 @@ test "selectTablesInRange selects overlap and handles gaps" {
     }
 }
 
-test "flushDataShards non-force respects flush deadline" {
+test "DataRecorder.addLines flushes DataShard on automatic triggers" {
     const alloc = testing.allocator;
     const io = testing.io;
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-    defer alloc.free(rootPath);
+    const Trigger = enum {
+        sizeThreshold,
+        checkpointsLimit,
+        deadline,
+        bufferOverflow,
+    };
+    const Case = struct {
+        name: []const u8,
+        trigger: Trigger,
+        expectedFlushed: u64,
+        expectedBuffered: usize,
+    };
 
-    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
-    defer runtime.deinit(alloc);
+    const cases = [_]Case{
+        .{
+            .name = "size threshold",
+            .trigger = .sizeThreshold,
+            .expectedFlushed = flushSizeThreshold / (defaultMaxFieldValueSize) + 4,
+            .expectedBuffered = 0,
+        },
+        .{
+            .name = "checkpoints limit",
+            .trigger = .checkpointsLimit,
+            .expectedFlushed = DataShard.maxCheckpoints,
+            .expectedBuffered = 0,
+        },
+        .{
+            .name = "deadline",
+            .trigger = .deadline,
+            .expectedFlushed = 1,
+            .expectedBuffered = 0,
+        },
+        .{
+            .name = "buffer overflow retry",
+            .trigger = .bufferOverflow,
+            .expectedFlushed = 1,
+            .expectedBuffered = 1,
+        },
+    };
 
-    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
-    defer timestampsEncoders.deinit(alloc);
+    for (cases) |case| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+        defer alloc.free(rootPath);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
-    defer recorder.deinit(io, alloc);
+        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+        defer runtime.deinit(alloc);
 
-    const line = stableLine(1, 0);
-    try recorder.shards[0].lines.append(alloc, line);
-    recorder.shards[0].checkpoints[0] = .{ .sid = stableSID(1), .i = 1 };
-    recorder.shards[0].checkpointsLen = 1;
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        defer timestampsEncoders.deinit(alloc);
 
-    recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
-    try recorder.flushDataShards(io, alloc, false);
-    try testing.expectEqual(@as(usize, 1), recorder.shards[0].lines.items.len);
-    try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+        defer recorder.deinit(io, alloc);
 
-    recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() - std.time.us_per_s;
-    try recorder.flushDataShards(io, alloc, false);
-    try testing.expectEqual(@as(usize, 0), recorder.shards[0].lines.items.len);
-    try testing.expect(recorder.memTables.items.len > 0);
+        switch (case.trigger) {
+            .sizeThreshold => {
+                const valueLen = defaultMaxFieldValueSize;
+                const lineCount = flushSizeThreshold / valueLen + 4;
+                var lines: [lineCount]Line = undefined;
+                var fields: [lineCount]Field = undefined;
+                var values: [lineCount][]u8 = undefined;
+                defer for (values) |value| alloc.free(value);
 
-    try recorder.flushForce(io, alloc);
+                for (0..lineCount) |i| {
+                    const value = try alloc.alloc(u8, valueLen);
+                    @memset(value, 'x');
+                    std.mem.writeInt(usize, value[0..@sizeOf(usize)], i, .little);
+                    values[i] = value;
+
+                    fields[i] = .{
+                        .key = "message",
+                        .value = value,
+                    };
+                    lines[i] = .{
+                        .timestampNs = @intCast(i + 1),
+                        .fields = fields[i .. i + 1],
+                    };
+                }
+
+                try recorder.addLines(io, alloc, &lines, stableSID(1));
+            },
+            .checkpointsLimit => {
+                for (0..DataShard.maxCheckpoints) |i| {
+                    recorder.nextShard.store(0, .release);
+                    var lines = [_]Line{stableLine(@intCast(i + 1), i)};
+                    try recorder.addLines(io, alloc, lines[0..], stableSID(i + 1));
+                }
+            },
+            .deadline => {
+                recorder.nextShard.store(0, .release);
+                var lines = [_]Line{stableLine(1, 0)};
+                try recorder.addLines(io, alloc, lines[0..], stableSID(1));
+
+                try testing.expect(recorder.shards[0].flushAtUs != null);
+                recorder.shards[0].flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() - std.time.us_per_s;
+                try recorder.flushDataShards(io, alloc, false);
+            },
+            .bufferOverflow => {
+                var seedLines = [_]Line{stableLine(1, 0)};
+                try recorder.shards[0].appendLines(alloc, seedLines[0..], stableSID(1));
+
+                const filler = try recorder.shards[0].buffer.allocator().alloc(u8, maxBlockSize - recorder.shards[0].buffer.end_index);
+                @memset(filler, 'x');
+
+                recorder.nextShard.store(0, .release);
+                var retryLines = [_]Line{stableLine(2, 1)};
+                try recorder.addLines(io, alloc, retryLines[0..], stableSID(2));
+            },
+        }
+
+        try testing.expectEqual(case.expectedBuffered, recorder.shards[0].lines.items.len);
+        try testing.expectEqual(case.expectedFlushed, countMemLinesInRecorder(recorder));
+        try testing.expectEqual(0, countDiskLinesInRecorder(recorder));
+        try testing.expectEqual(recorder.memTables.items.len, 1);
+
+        try recorder.flushForce(io, alloc);
+    }
 }
 
 test "DataShard.flush limits block columns per tenant" {
@@ -1123,10 +1234,10 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         try recorder.flushForce(io, alloc);
 
-        try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
+        try testing.expectEqual(0, recorder.memTables.items.len);
         try testing.expect(recorder.diskTables.items.len > 0);
-        try testing.expectEqual(@as(u64, 0), countMemLinesInRecorder(recorder));
-        try testing.expectEqual(@as(u64, inserted), countDiskLinesInRecorder(recorder));
+        try testing.expectEqual(0, countMemLinesInRecorder(recorder));
+        try testing.expectEqual(inserted, countDiskLinesInRecorder(recorder));
     }
 
     {

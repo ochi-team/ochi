@@ -256,16 +256,15 @@ pub const Field = struct {
     }
 };
 
-pub const LinesSize = struct {
-    size: u16,
-};
-pub const defaultMaxFieldsPerLine: usize = 256;
+pub const defaultMaxFieldsPerLine: usize = 512;
 pub const defaultMaxFieldKeySize: usize = 128;
+pub const defaultMaxFieldValueSize: usize = 16 * 1024;
 pub const defaultMaxLineSize: usize = 32 * 1024 - 1;
 
 pub const LinesSizeError = error{
     MaxFieldsPerLineExceeded,
     MaxFieldKeySizeExceeded,
+    MaxFieldValueSizeExceeded,
     MaxLineSizeExceeded,
 };
 
@@ -351,7 +350,7 @@ pub const Line = struct {
     }
 };
 
-pub fn rawFieldsSizeValidate(fields: []const Field) LinesSizeError!LinesSize {
+pub fn validate(fields: []const Field) LinesSizeError!void {
     if (fields.len > defaultMaxFieldsPerLine) {
         return error.MaxFieldsPerLineExceeded;
     }
@@ -361,6 +360,9 @@ pub fn rawFieldsSizeValidate(fields: []const Field) LinesSizeError!LinesSize {
         if (field.key.len > defaultMaxFieldKeySize) {
             return error.MaxFieldKeySizeExceeded;
         }
+        if (field.value.len > defaultMaxFieldValueSize) {
+            return error.MaxFieldValueSizeExceeded;
+        }
 
         res += @intCast(field.key.len);
         res += @intCast(field.value.len);
@@ -369,10 +371,6 @@ pub fn rawFieldsSizeValidate(fields: []const Field) LinesSizeError!LinesSize {
     if (res > defaultMaxLineSize) {
         return error.MaxLineSizeExceeded;
     }
-
-    return .{
-        .size = @intCast(res),
-    };
 }
 
 pub fn putJsonArrayLines(jw: *std.json.Stringify, lines: []const Line) !void {
