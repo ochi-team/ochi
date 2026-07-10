@@ -41,7 +41,7 @@ pub const HashTokenizer = struct {
         allocator: std.mem.Allocator,
         values: []const []const u8,
     ) !std.ArrayList(u64) {
-        var dst: std.ArrayList(u64) = try .initCapacity(allocator, 2);
+        var dst: std.ArrayList(u64) = try .initCapacity(allocator, 128);
         errdefer dst.deinit(allocator);
         for (values, 0..) |val, i| {
             if (i > 0 and std.mem.eql(u8, val, values[i - 1])) {

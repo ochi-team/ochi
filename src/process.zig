@@ -7,7 +7,7 @@ const Store = @import("Store.zig").Store;
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
-const rawFieldsSizeValidate = @import("store/lines.zig").rawFieldsSizeValidate;
+const validate = @import("store/lines.zig").validate;
 const copyFields = @import("store/lines.zig").copyFields;
 const encodeTags = @import("store/lines.zig").encodeTags;
 const makeStreamID = @import("store/lines.zig").makeStreamID;
@@ -136,7 +136,7 @@ pub const Processor = struct {
             .fields = fieldsCopy,
         };
 
-        _ = rawFieldsSizeValidate(fields) catch |err| {
+        validate(fields) catch |err| {
             switch (err) {
                 error.MaxFieldsPerLineExceeded => {
                     Logger.log(.warn, "max fields per line exceeded", .{});
@@ -144,6 +144,10 @@ pub const Processor = struct {
                 },
                 error.MaxFieldKeySizeExceeded => {
                     Logger.log(.warn, "max field key size exceeded", .{});
+                    return;
+                },
+                error.MaxFieldValueSizeExceeded => {
+                    Logger.log(.warn, "DataShard: max field value size exceeded", .{});
                     return;
                 },
                 error.MaxLineSizeExceeded => {
