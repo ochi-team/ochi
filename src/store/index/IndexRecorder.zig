@@ -191,7 +191,6 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     self.entries.deinit(alloc);
     self.blocksToFlush.deinit(alloc);
     self.diskTables.deinit(alloc);
-    self.g.cancel(io);
     self.memTables.deinit(alloc);
     alloc.destroy(self);
 }

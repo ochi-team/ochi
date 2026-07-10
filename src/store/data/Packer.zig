@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Unpacker = @import("Unpacker.zig");
@@ -36,26 +37,35 @@ pub const compressionKindZstd: u8 = 1;
 
 const Self = @This();
 
-allocator: std.mem.Allocator,
+allocator: Allocator,
 lengths: std.ArrayList(u64),
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
-    const e = try allocator.create(Self);
-    e.* = .{
+pub fn init(allocator: Allocator) !Self {
+    return .{
         .allocator = allocator,
         // TODO: reuse a buffer from values encoder,
         // parsed holds same amount of data in case of u64 parsing
         .lengths = std.ArrayList(u64).empty,
     };
-    return e;
 }
 
 pub fn deinit(self: *Self) void {
     self.lengths.deinit(self.allocator);
-    self.allocator.destroy(self);
 }
 
-pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
+const PackBound = struct {
+    lensBuf: []u8,
+    lensBound: usize,
+    valuesBuf: []u8,
+    valuesBound: usize,
+
+    pub fn deinit(self: *PackBound, alloc: Allocator) void {
+        alloc.free(self.lensBuf);
+        alloc.free(self.valuesBuf);
+    }
+};
+
+pub fn packValuesInterBound(self: *Self, values: [][]const u8) !PackBound {
     defer self.lengths.clearRetainingCapacity();
     try self.lengths.ensureUnusedCapacity(self.allocator, values.len);
     var lenSum: usize = 0;
@@ -69,20 +79,20 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
         if (n > maxLen) maxLen = n;
     }
 
-    var interBuf: []u8 = &[_]u8{};
-    defer {
-        if (interBuf.len > 0) self.allocator.free(interBuf);
+    var lensBuf: []u8 = &[_]u8{};
+    errdefer {
+        if (lensBuf.len > 0) self.allocator.free(lensBuf);
     }
     const areInvariants = (self.lengths.items.len >= 2) and areNumbersSame(self.lengths.items[0..]);
     const w = pickWidth(maxLen);
     if (areInvariants) {
-        interBuf = try self.allocator.alloc(u8, 1 + w.size);
-        var enc = Encoder.init(interBuf);
+        lensBuf = try self.allocator.alloc(u8, 1 + w.size);
+        var enc = Encoder.init(lensBuf);
         enc.writeInt(u8, w.blockInvariant);
         enc.writeIntBytes(w.size, self.lengths.items[0]);
     } else {
-        interBuf = try self.allocator.alloc(u8, 1 + w.size * self.lengths.items.len);
-        var enc = Encoder.init(interBuf);
+        lensBuf = try self.allocator.alloc(u8, 1 + w.size * self.lengths.items.len);
+        var enc = Encoder.init(lensBuf);
         _ = enc.writeInt(u8, w.block);
         for (self.lengths.items) |n| _ = enc.writeIntBytes(w.size, n);
     }
@@ -93,7 +103,7 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
     const packSum = if (valuesAreSame) values[0].len else lenSum;
 
     const valuesBuf = try self.allocator.alloc(u8, packSum);
-    defer self.allocator.free(valuesBuf);
+    errdefer self.allocator.free(valuesBuf);
     var bufOffset: usize = 0;
     for (valuesToPack) |value| {
         @memcpy(valuesBuf[bufOffset .. bufOffset + value.len], value);
@@ -101,23 +111,21 @@ pub fn packValues(self: *Self, values: [][]const u8) ![]u8 {
     }
 
     // Calculate bounds for both encoded parts
-    const lensBound = try packBytesBound(interBuf.len);
+    const lensBound = try packBytesBound(lensBuf.len);
     const valuesBound = try packBytesBound(valuesBuf.len);
+    return .{
+        .lensBuf = lensBuf,
+        .lensBound = lensBound,
+        .valuesBuf = valuesBuf,
+        .valuesBound = valuesBound,
+    };
+}
 
-    // Allocate once for both encoded lengths and values
-    const totalBound = lensBound + valuesBound;
-    const result = try self.allocator.alloc(u8, totalBound);
-    errdefer self.allocator.free(result);
-
+pub fn packValues(self: *Self, dst: []u8, bound: PackBound) !usize {
     // Pack lengths and values into different slices of the same buffer
-    const encodedLensSize = try packBytes(self.allocator, result[0..lensBound], interBuf);
-    const encodedValuesSize = try packBytes(self.allocator, result[encodedLensSize..], valuesBuf);
-
-    // Return the exact slice we used (not the whole bound)
-    // TODO: benchmark whether the realloc worth it or better to return the entire slice,
-    // perhaps worth adding a metric on relation of actualSize to result.len
-    const actualSize = encodedLensSize + encodedValuesSize;
-    return self.allocator.realloc(result, actualSize);
+    const encodedLensSize = try packBytes(self.allocator, dst[0..bound.lensBound], bound.lensBuf);
+    const encodedValuesSize = try packBytes(self.allocator, dst[encodedLensSize..], bound.valuesBuf);
+    return encodedLensSize + encodedValuesSize;
 }
 
 fn packBytesBound(srcLen: usize) !usize {
@@ -130,7 +138,7 @@ fn packBytesBound(srcLen: usize) !usize {
     return 1 + Encoder.varIntBound(srcLen) + compressSize;
 }
 
-fn packBytes(fba: std.mem.Allocator, dest: []u8, src: []u8) !usize {
+fn packBytes(fba: Allocator, dest: []u8, src: []u8) !usize {
     if (src.len < 128) {
         // skip compression, up to 127 can be in a single byte to be compatible with leb128
         // 1 compression kind, 1 len, len of the buf
@@ -226,16 +234,18 @@ test "Packer.packValuesRoundtrip" {
     };
 
     for (cases) |case| {
-        const encoder = try Self.init(allocator);
+        var encoder = try Self.init(allocator);
         defer encoder.deinit();
 
+        var packedValues: [1024]u8 = undefined;
         // TODO: audit all constCast usage and get rid of them
-        const packedValues = try encoder.packValues(@constCast(case.strings));
-        defer allocator.free(packedValues);
+        var bound = try encoder.packValuesInterBound(@constCast(case.strings));
+        defer bound.deinit(allocator);
+        const n = try encoder.packValues(&packedValues, bound);
 
         const unpacker = try Unpacker.init(allocator);
         defer unpacker.deinit(allocator);
-        const unpacked = try unpacker.unpackValues(allocator, packedValues, case.strings.len);
+        const unpacked = try unpacker.unpackValues(allocator, packedValues[0..n], case.strings.len);
         defer allocator.free(unpacked);
 
         try std.testing.expectEqual(case.strings.len, unpacked.len);
