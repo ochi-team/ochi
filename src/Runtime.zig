@@ -27,24 +27,11 @@ path: []const u8,
 
 // cpus available
 cpus: u16,
-// http threads available, derived from cpus
-httpThreads: u16,
-// worker threads available, derived from cpus
-workerThreads: u16,
 
 pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) !*Runtime {
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
-    // TODO: create a designated testing runtime and restrict this init to use inside tests
     const cpus = getCpuCount();
-    // 4 is a minimum amount of threads for workers
-    const totalThreads: u16 = @intCast(@max(cpus, 8));
-    // TODO: the numbers must be tuned further to balance between http and workers
-    const workers = totalThreads / 2;
-    // TODO: http threads are not used yet
-    const https = totalThreads - workers;
-
-    std.debug.assert(workers >= 4);
 
     const maxMem = blk: switch (builtin.os.tag) {
         .macos => {
@@ -79,8 +66,6 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, maxCachePortition: f64) 
         .diskSpace = getDiskSpace(path, @intCast(Io.Timestamp.now(io, .real).toMilliseconds())),
         .path = path,
         .cpus = @intCast(cpus),
-        .httpThreads = https,
-        .workerThreads = workers,
     };
     return r;
 }
@@ -132,8 +117,6 @@ fn getCpuCount() usize {
         Logger.log(.warn, "failed to get CPU count, defaulting to 4 threads", .{ .err = err });
         return 4;
     };
-    // TODO: investigate how to spawn it on a machine with 1 cpu
-    if (builtin.is_test) return @max(4, cpus);
     return cpus;
 }
 
