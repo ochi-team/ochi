@@ -366,9 +366,14 @@ pub fn writeBlock(
     defer valuesEncoder.deinit();
     var packer = try Packer.init(allocator);
     defer packer.deinit();
+    const zTokenizer = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeBlock.HashTokenizer",
+    });
     var buckets: [bucketsSize]Bucket = undefined;
     var tokenizer = try HashTokenizer.init(allocator, &buckets);
     defer tokenizer.deinit(allocator);
+    zTokenizer.end();
     z3.end();
     for (columns, 0..) |col, i| {
         try self.writeColumn(
@@ -385,12 +390,7 @@ pub fn writeBlock(
         tokenizer.reset();
     }
 
-    const z4 = tracy.Zone.begin(.{
-        .src = @src(),
-        .name = "TableWriter.writeBlock.prepareEncoders",
-    });
     try self.writeColumnsHeader(io, allocator, columnsHeader, blockHeader);
-    z4.end();
 }
 
 pub fn writeData(
@@ -425,6 +425,11 @@ fn writeTimestamps(
     tsHeader: *TimestampsHeader,
     timestamps: []u64,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeTimestamps",
+    });
+    defer z.end();
     if (timestamps.len == 0) {
         return Error.EmptyTimestamps;
     }
@@ -659,6 +664,11 @@ fn writeColumnsHeader(
     csh: *ColumnsHeader,
     bh: *BlockHeader,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeColumnsHeader",
+    });
+    defer z.end();
     std.debug.assert(csh.headers.len + csh.invariantColumns.len <= Block.maxColumns);
 
     var columnIDs: [Block.maxColumns]u16 = undefined;
