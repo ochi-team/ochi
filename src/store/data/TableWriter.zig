@@ -496,7 +496,7 @@ fn writeColumn(
     ch.type = valueType.type;
     ch.min = valueType.min;
     ch.max = valueType.max;
-    defer z1.end();
+    z1.end();
 
     const bloomBufI = self.getBloomBufferIndex(io, allocator, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
@@ -521,7 +521,7 @@ fn writeColumn(
     ch.offset = bloomValuesBuf.len();
     try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
     ch.size = packedCap;
-    defer z2.end();
+    z2.end();
 
     const z3 = tracy.Zone.begin(.{
         .src = @src(),
@@ -540,7 +540,7 @@ fn writeColumn(
         break :blk dstSize;
     };
     ch.bloomFilterSize = bloomHashCap;
-    defer z3.end();
+    z3.end();
 }
 
 fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
