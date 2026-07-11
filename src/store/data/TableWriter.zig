@@ -522,7 +522,7 @@ fn writeColumn(
     const packBound = packedBound.lensBound + packedBound.valuesBound;
     std.debug.assert(packBound <= maxPackedValuesSize);
     const packDst = try bloomValuesBuf.allocSlice(allocator, packBound);
-    const packedCap = try packer.packValues(packDst, packedBound);
+    const packedCap = try Packer.packValues(packDst, packedBound);
     ch.offset = bloomValuesBuf.len();
     try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
     ch.size = packedCap;

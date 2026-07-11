@@ -125,10 +125,10 @@ pub fn packValuesInterBound(self: *Self, values: [][]const u8) !PackBound {
     };
 }
 
-pub fn packValues(self: *Self, dst: []u8, bound: PackBound) !usize {
+pub fn packValues(dst: []u8, bound: PackBound) !usize {
     // Pack lengths and values into different slices of the same buffer
-    const encodedLensSize = try packBytes(self.allocator, dst[0..bound.lensBound], bound.lensBuf);
-    const encodedValuesSize = try packBytes(self.allocator, dst[encodedLensSize..], bound.valuesBuf);
+    const encodedLensSize = try packBytes(dst[0..bound.lensBound], bound.lensBuf);
+    const encodedValuesSize = try packBytes(dst[encodedLensSize..], bound.valuesBuf);
     return encodedLensSize + encodedValuesSize;
 }
 
@@ -139,10 +139,10 @@ fn packBytesBound(srcLen: usize) !usize {
     }
     const compressSize = try encoding.compressBound(srcLen);
     // 1 byte is a compression kind
-    return 1 + Encoder.varIntBound(srcLen) + compressSize;
+    return 1 + Encoder.varIntBound(compressSize) + compressSize;
 }
 
-fn packBytes(fba: Allocator, dest: []u8, src: []u8) !usize {
+fn packBytes(dest: []u8, src: []u8) !usize {
     if (src.len < 128) {
         // skip compression, up to 127 can be in a single byte to be compatible with leb128
         // 1 compression kind, 1 len, len of the buf
@@ -153,16 +153,19 @@ fn packBytes(fba: Allocator, dest: []u8, src: []u8) !usize {
         return enc.offset;
     }
 
-    const compressSize = try encoding.compressBound(src.len);
-    const compressed = try fba.alloc(u8, compressSize);
-    defer fba.free(compressed);
-    const compressedSize = try encoding.compressAuto(compressed, src);
-
     var enc = Encoder.init(dest);
     // 1 compression kind
     enc.writeInt(u8, compressionKindZstd);
+    const compressSize = try encoding.compressBound(src.len);
+    const compressedOffset = enc.offset + Encoder.varIntBound(compressSize);
+    const compressedSize = try encoding.compressAuto(enc.buf[compressedOffset..][0..compressSize], src);
     enc.writeVarInt(compressedSize);
-    enc.writeBytes(compressed[0..compressedSize]);
+    if (enc.offset != compressedOffset) {
+        // the actual compressed content size is known only after compression,
+        // so we have to move the written data if the variable size doesn't match the expectation
+        std.mem.copyForwards(u8, enc.buf[enc.offset..][0..compressedSize], enc.buf[compressedOffset..][0..compressedSize]);
+    }
+    enc.offset += compressedSize;
     return enc.offset;
 }
 
@@ -241,11 +244,11 @@ test "Packer.packValuesRoundtrip" {
         var encoder = try Self.init(allocator);
         defer encoder.deinit();
 
-        var packedValues: [1024]u8 = undefined;
+        var packedValues: [128 * 1024]u8 = undefined;
         // TODO: audit all constCast usage and get rid of them
         var bound = try encoder.packValuesInterBound(@constCast(case.strings));
         defer bound.deinit(allocator);
-        const n = try encoder.packValues(&packedValues, bound);
+        const n = try packValues(&packedValues, bound);
 
         const unpacker = try Unpacker.init(allocator);
         defer unpacker.deinit(allocator);
