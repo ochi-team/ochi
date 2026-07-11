@@ -256,7 +256,7 @@ test "Packer.packValuesRoundtrip" {
 
         const unpacker = try Unpacker.init(allocator);
         defer unpacker.deinit(allocator);
-        const unpacked = try unpacker.unpackValues(allocator, packedValues[0..n], case.strings.len);
+        const unpacked = try unpacker.unpackValues(std.testing.io, allocator, packedValues[0..n], case.strings.len);
         defer allocator.free(unpacked);
 
         try std.testing.expectEqual(case.strings.len, unpacked.len);

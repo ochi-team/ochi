@@ -1295,7 +1295,9 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = LookupTable.init(alloc, flushedTable, Conf.getConf().app.maxIndexMemBlockSize, cache);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    var lookup = LookupTable.init(alloc, flushedTable, Conf.getConf().app.maxIndexMemBlockSize, cache, compressionPool);
     defer lookup.deinit(alloc);
 
     try lookup.seek(io, alloc, shortValue);

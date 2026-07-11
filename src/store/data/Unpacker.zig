@@ -3,6 +3,8 @@ const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 const Packer = @import("Packer.zig");
 const areNumbersSame = Packer.areNumbersSame;
+const CompressionPool = @import("../CompressionPool.zig");
+const Io = std.Io;
 
 const UnpackError = error{
     InvalidCompressionKind,
@@ -16,10 +18,20 @@ const UnpackError = error{
 const Self = @This();
 // TODO: get rid of collecting garbage
 garbage: std.ArrayList([]u8) = .empty,
+compressionPool: *CompressionPool,
+ownedCompressionPool: ?*CompressionPool = null,
 
 pub fn init(allocator: std.mem.Allocator) !*Self {
+    const compressionPool = try CompressionPool.init(allocator, 1);
+    errdefer compressionPool.deinit(allocator);
+    const s = try initWithCompressionPool(allocator, compressionPool);
+    s.ownedCompressionPool = compressionPool;
+    return s;
+}
+
+pub fn initWithCompressionPool(allocator: std.mem.Allocator, compressionPool: *CompressionPool) !*Self {
     const s = try allocator.create(Self);
-    s.* = .{};
+    s.* = .{ .compressionPool = compressionPool };
     return s;
 }
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
@@ -27,17 +39,20 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         allocator.free(buf);
     }
     self.garbage.deinit(allocator);
+    if (self.ownedCompressionPool) |pool| {
+        pool.deinit(allocator);
+    }
     allocator.destroy(self);
 }
 
-pub fn unpackValues(self: *Self, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
+pub fn unpackValues(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
     var offset: usize = 0;
     // TODO: avoid repeated allocations of the unpacked buffers, both length and buf
-    const lengths = try unpackU64(allocator, encoded, count, &offset);
+    const lengths = try self.unpackU64(io, allocator, encoded, count, &offset);
     defer allocator.free(lengths);
 
     const tail = encoded[offset..];
-    const buf = try unpackBytes(allocator, tail, &offset);
+    const buf = try self.unpackBytes(io, allocator, tail, &offset);
     try self.garbage.append(allocator, buf);
     std.debug.assert(offset == encoded.len);
 
@@ -60,8 +75,8 @@ pub fn unpackValues(self: *Self, allocator: std.mem.Allocator, encoded: []const 
     return res;
 }
 
-pub fn unpackU64(allocator: std.mem.Allocator, encoded: []const u8, count: usize, offset: *usize) ![]u64 {
-    const buf = try unpackBytes(allocator, encoded, offset);
+pub fn unpackU64(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: []const u8, count: usize, offset: *usize) ![]u64 {
+    const buf = try self.unpackBytes(io, allocator, encoded, offset);
     defer allocator.free(buf);
     return unpackU64s(allocator, buf, count);
 }
@@ -156,7 +171,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
     return res;
 }
 
-fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u8 {
+fn unpackBytes(self: *Self, io: Io, allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u8 {
     if (data.len == 0) {
         return UnpackError.InsufficientData;
     }
@@ -190,9 +205,7 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
             const decompressed = try allocator.alloc(u8, decompressedSize);
             errdefer allocator.free(decompressed);
 
-            const dctx = try encoding.createDCtx();
-            defer encoding.freeDCtx(dctx);
-            const actualSize = try encoding.decompress(dctx, decompressed, compressedData);
+            const actualSize = try self.compressionPool.decompress(io, decompressed, compressedData);
             if (actualSize != decompressedSize) {
                 allocator.free(decompressed);
                 return UnpackError.DecompressionFailed;

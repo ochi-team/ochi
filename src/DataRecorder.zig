@@ -669,7 +669,7 @@ fn mergeTables(
     };
     defer streamWriter.deinit(alloc);
 
-    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, streamWriter, &readers, stopped) catch |err| {
+    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, self.compressionPool, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
@@ -757,7 +757,7 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
     for (tables.items) |table| {
-        try table.queryLines(io, alloc, self.timestampsEncoders, &linesDst, sids, query);
+        try table.queryLines(io, alloc, self.timestampsEncoders, self.compressionPool, &linesDst, sids, query);
     }
 
     return linesDst;

@@ -695,7 +695,7 @@ fn inspectDictValues(
     var unpacker = try Unpacker.init(allocator);
     defer unpacker.deinit(allocator);
 
-    const values = unpacker.unpackValues(allocator, packedValues, rowCount) catch |err| {
+    const values = unpacker.unpackValues(io, allocator, packedValues, rowCount) catch |err| {
         std.debug.print("  values validation unpack_error={s} rows={d}\n", .{ @errorName(err), rowCount });
         return;
     };

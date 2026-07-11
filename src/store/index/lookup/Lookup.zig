@@ -43,7 +43,7 @@ pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexReco
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
-        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache);
+        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.compressionPool);
         lookupTables.appendAssumeCapacity(lt);
     }
 
