@@ -335,6 +335,12 @@ pub fn writeBlock(
     block: *Block,
     blockHeader: *BlockHeader,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeBlock",
+    });
+    defer z.end();
+
     block.assert();
     try self.writeTimestamps(io, allocator, &blockHeader.timestampsHeader, block.timestamps);
 
@@ -342,11 +348,20 @@ pub fn writeBlock(
     defer columnsHeader.deinit(allocator);
     const columns = block.getColumns();
 
+    const z2 = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeBlock.allocColBlooms",
+    });
     try self.columnIDGen.keyIDs.ensureUnusedCapacity(allocator, columns.len);
     try self.colIdx.ensureUnusedCapacity(@intCast(columns.len));
     try self.bloomValuesList.ensureUnusedCapacity(allocator, columns.len);
     try self.bloomTokensList.ensureUnusedCapacity(allocator, columns.len);
+    z2.end();
 
+    const z3 = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeBlock.prepareEncoders",
+    });
     var valuesEncoder = try ValuesEncoder.init(allocator);
     defer valuesEncoder.deinit();
     var packer = try Packer.init(allocator);
@@ -354,6 +369,7 @@ pub fn writeBlock(
     var buckets: [bucketsSize]Bucket = undefined;
     var tokenizer = try HashTokenizer.init(allocator, &buckets);
     defer tokenizer.deinit(allocator);
+    z3.end();
     for (columns, 0..) |col, i| {
         try self.writeColumn(
             io,
@@ -369,7 +385,12 @@ pub fn writeBlock(
         tokenizer.reset();
     }
 
+    const z4 = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "TableWriter.writeBlock.prepareEncoders",
+    });
     try self.writeColumnsHeader(io, allocator, columnsHeader, blockHeader);
+    z4.end();
 }
 
 pub fn writeData(
