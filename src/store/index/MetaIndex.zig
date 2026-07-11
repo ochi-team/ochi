@@ -32,6 +32,8 @@ pub fn reset(self: *MetaIndex) void {
 }
 
 // [firstItem.len:firstItem][4:count][8:offset][4:size] = firstItem.len + lenBound + 16
+// TODO: we know the max entry size, so we must implement a bound as a const
+// to give a static buffer size
 pub fn bound(self: *const MetaIndex) usize {
     const firstItemBound = Encoder.varIntBound(self.firstEntry.len);
     return firstItemBound + self.firstEntry.len + 16;

@@ -143,10 +143,9 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     defer alloc.free(encodedBlockHeader);
 
     var bound = try encoding.compressBound(encodedBlockHeader.len);
-    const compressed = try alloc.alloc(u8, bound);
-    defer alloc.free(compressed);
-    var n = try encoding.compressAuto(compressed, encodedBlockHeader);
-    try self.indexBuf.appendSlice(alloc, compressed[0..n]);
+    try self.indexBuf.ensureUnusedCapacity(alloc, bound);
+    var n = try encoding.compressAuto(self.indexBuf.unusedCapacitySlice(), encodedBlockHeader);
+    self.indexBuf.items.len += n;
 
     const metaIndex = MetaIndex{
         .firstEntry = self.blockHeader.firstEntry,
@@ -161,11 +160,9 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
     defer fba.free(encodedMetaIndex);
 
     bound = try encoding.compressBound(encodedMetaIndex.len);
-    const compressedMetaIndex = try alloc.alloc(u8, bound);
-    defer alloc.free(compressedMetaIndex);
-    n = try encoding.compressAuto(compressedMetaIndex, encodedMetaIndex);
-
-    try self.metaindexBuf.appendSlice(alloc, compressedMetaIndex[0..n]);
+    try self.metaindexBuf.ensureUnusedCapacity(alloc, bound);
+    n = try encoding.compressAuto(self.metaindexBuf.unusedCapacitySlice(), encodedMetaIndex);
+    self.metaindexBuf.items.len += n;
 
     const firstEntry = self.tableHeader.firstEntry;
     const lastEntry = self.tableHeader.lastEntry;
