@@ -34,6 +34,7 @@ const bucketsSize = @import("bloom.zig").bucketsSize;
 const BloomFilter = @import("bloom.zig").BloomFilter;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
+const CompressionPool = @import("../CompressionPool.zig");
 
 const maxPackedValuesSize = 8 * 1024 * 1024;
 const bloomValuesMaxShardsCount: u16 = 128;
@@ -67,11 +68,26 @@ nextColI: u16,
 maxColI: u16,
 
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+compressionPool: *CompressionPool,
+ownedCompressionPool: ?*CompressionPool = null,
 
 path: []const u8,
 destinationBuffer: ?*std.ArrayList(u8) = null,
 
 pub fn initMem(allocator: Allocator, memTable: *MemTable, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*TableWriter {
+    const compressionPool = try CompressionPool.init(allocator, 1);
+    errdefer compressionPool.deinit(allocator);
+    const writer = try initMemWithCompressionPool(allocator, memTable, timestampsEncoders, compressionPool);
+    writer.ownedCompressionPool = compressionPool;
+    return writer;
+}
+
+pub fn initMemWithCompressionPool(
+    allocator: Allocator,
+    memTable: *MemTable,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+) !*TableWriter {
     const columnIDGen = try ColumnIDGen.init(allocator);
     errdefer columnIDGen.deinit(allocator);
     var colIdx = std.AutoHashMap(u16, u16).init(allocator);
@@ -115,6 +131,7 @@ pub fn initMem(allocator: Allocator, memTable: *MemTable, timestampsEncoders: *T
         .maxColI = maxCols,
 
         .timestampsEncoders = timestampsEncoders,
+        .compressionPool = compressionPool,
         // path is empty for mem table
         .path = "",
     };
@@ -122,6 +139,21 @@ pub fn initMem(allocator: Allocator, memTable: *MemTable, timestampsEncoders: *T
 }
 
 pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*TableWriter {
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    errdefer compressionPool.deinit(alloc);
+    const writer = try initDiskWithCompressionPool(io, alloc, path, fitsInCache, timestampsEncoders, compressionPool);
+    writer.ownedCompressionPool = compressionPool;
+    return writer;
+}
+
+pub fn initDiskWithCompressionPool(
+    io: Io,
+    alloc: Allocator,
+    path: []const u8,
+    fitsInCache: bool,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+) !*TableWriter {
     std.debug.assert(path.len != 0);
 
     // TODO: implement page cache support
@@ -231,6 +263,7 @@ pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool, t
         .maxColI = bloomValuesMaxShardsCount,
 
         .timestampsEncoders = timestampsEncoders,
+        .compressionPool = compressionPool,
         .path = path,
         .destinationBuffer = destinationBuffer,
     };
@@ -251,6 +284,9 @@ pub fn deinit(self: *TableWriter, allocator: Allocator) void {
     if (self.destinationBuffer) |buf| {
         buf.deinit(allocator);
         allocator.destroy(buf);
+    }
+    if (self.ownedCompressionPool) |pool| {
+        pool.deinit(allocator);
     }
 
     allocator.destroy(self);
@@ -302,7 +338,7 @@ pub fn size(self: *TableWriter) u32 {
 pub fn writeColumnKeys(self: *TableWriter, io: Io, allocator: Allocator) !void {
     const encodingBound = try self.columnIDGen.bound();
     const slice = try self.columnKeysDst.allocSlice(allocator, encodingBound);
-    const offset = try self.columnIDGen.encode(allocator, slice);
+    const offset = try self.columnIDGen.encode(io, self.compressionPool, allocator, slice);
     try self.columnKeysDst.appendAllocated(io, slice, offset);
 }
 
@@ -522,7 +558,7 @@ fn writeColumn(
     const packBound = packedBound.lensBound + packedBound.valuesBound;
     std.debug.assert(packBound <= maxPackedValuesSize);
     const packDst = try bloomValuesBuf.allocSlice(allocator, packBound);
-    const packedCap = try Packer.packValues(packDst, packedBound);
+    const packedCap = try Packer.packValues(self.compressionPool, io, packDst, packedBound);
     ch.offset = bloomValuesBuf.len();
     try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
     ch.size = packedCap;

@@ -251,7 +251,9 @@ fn readIndexBlock(
     const decompressed = try allocator.alloc(u8, decompressedSize);
     errdefer allocator.free(decompressed);
 
-    _ = try encoding.decompress(decompressed, compressed);
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    _ = try encoding.decompress(dctx, decompressed, compressed);
     return decompressed;
 }
 

@@ -13,6 +13,7 @@ const maxLines = @import("Block.zig").maxLines;
 const SID = @import("../lines.zig").SID;
 
 const TableWriter = @import("TableWriter.zig");
+const CompressionPool = @import("../CompressionPool.zig");
 const maxCheckpoints = @import("../../DataRecorder.zig").DataShard.maxCheckpoints;
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
@@ -244,6 +245,21 @@ pub fn addLines(
     sids: []SID,
     linesBySid: [][]Line,
 ) !void {
+    const compressionPool = try CompressionPool.init(allocator, 1);
+    defer compressionPool.deinit(allocator);
+
+    return self.addLinesWithCompressionPool(io, allocator, timestampsEncoders, compressionPool, sids, linesBySid);
+}
+
+pub fn addLinesWithCompressionPool(
+    self: *MemTable,
+    io: Io,
+    allocator: std.mem.Allocator,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    sids: []SID,
+    linesBySid: [][]Line,
+) !void {
     if (sids.len == 0) {
         return Error.EmptySids;
     }
@@ -259,7 +275,7 @@ pub fn addLines(
 
     var blockWriter = try BlockWriter.init(allocator);
     defer blockWriter.deinit(allocator);
-    const streamWriter = try TableWriter.initMem(allocator, self, timestampsEncoders);
+    const streamWriter = try TableWriter.initMemWithCompressionPool(allocator, self, timestampsEncoders, compressionPool);
     defer streamWriter.deinit(allocator);
 
     for (0..sids.len) |k| {
@@ -408,6 +424,20 @@ pub fn addLinesForSid(
     return self.addLines(io, allocator, timestampsEncoders, sids[0..], linesBySid[0..]);
 }
 
+pub fn addLinesForSidWithCompressionPool(
+    self: *MemTable,
+    io: Io,
+    allocator: std.mem.Allocator,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    sid: SID,
+    lines: []Line,
+) !void {
+    var sids = [_]SID{sid};
+    var linesBySid = [_][]Line{lines};
+    return self.addLinesWithCompressionPool(io, allocator, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
+}
+
 fn populateSampleLines(sample: *SampleLines) void {
     sample.fields1 = .{
         .{ .key = "level", .value = "info" },
@@ -484,7 +514,9 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const decompressedSize = try encoding.getFrameContentSize(indexContent);
         const decompressedBuf = try allocator.alloc(u8, decompressedSize);
         defer allocator.free(decompressedBuf);
-        _ = try encoding.decompress(decompressedBuf, indexContent);
+        const dctx = try encoding.createDCtx();
+        defer encoding.freeDCtx(dctx);
+        _ = try encoding.decompress(dctx, decompressedBuf, indexContent);
 
         const decodedBlockHeader = BlockHeader.decode(decompressedBuf);
         const blockHeader = decodedBlockHeader.header;
@@ -510,7 +542,9 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const decompressedSize = try encoding.getFrameContentSize(metaIndexContent);
         const decompressedBuf = try allocator.alloc(u8, decompressedSize);
         defer allocator.free(decompressedBuf);
-        _ = try encoding.decompress(decompressedBuf, metaIndexContent);
+        const dctx = try encoding.createDCtx();
+        defer encoding.freeDCtx(dctx);
+        _ = try encoding.decompress(dctx, decompressedBuf, metaIndexContent);
 
         const decodedIndexBlockHeader = IndexBlockHeader.decode(decompressedBuf);
 

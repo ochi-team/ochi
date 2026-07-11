@@ -190,7 +190,9 @@ fn unpackBytes(allocator: std.mem.Allocator, data: []const u8, offset: *usize) !
             const decompressed = try allocator.alloc(u8, decompressedSize);
             errdefer allocator.free(decompressed);
 
-            const actualSize = try encoding.decompress(decompressed, compressedData);
+            const dctx = try encoding.createDCtx();
+            defer encoding.freeDCtx(dctx);
+            const actualSize = try encoding.decompress(dctx, decompressed, compressedData);
             if (actualSize != decompressedSize) {
                 allocator.free(decompressed);
                 return UnpackError.DecompressionFailed;

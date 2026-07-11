@@ -404,7 +404,9 @@ fn inspectIndex(allocator: std.mem.Allocator, buf: []const u8) !void {
     const decompressedSize = try encoding.getFrameContentSize(buf);
     const decompressed = try allocator.alloc(u8, decompressedSize);
     defer allocator.free(decompressed);
-    const n = try encoding.decompress(decompressed, buf);
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    const n = try encoding.decompress(dctx, decompressed, buf);
     const src = decompressed[0..n];
 
     var off: usize = 0;

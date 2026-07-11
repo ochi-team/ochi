@@ -1,14 +1,21 @@
 // compress
 
-const compress = @import("compress.zig");
+const compress_mod = @import("compress.zig");
 
-pub const compressAuto = compress.compressAuto;
-pub const compressBound = compress.compressBound;
+pub const compressAuto = compress_mod.compressAuto;
+pub const compress = compress_mod.compress;
+pub const compressBound = compress_mod.compressBound;
+pub const createCCtx = compress_mod.createCCtx;
+pub const freeCCtx = compress_mod.freeCCtx;
+pub const createDCtx = compress_mod.createDCtx;
+pub const freeDCtx = compress_mod.freeDCtx;
+pub const CCtx = compress_mod.CCtx;
+pub const DCtx = compress_mod.DCtx;
 
-pub const Error = compress.Error;
+pub const Error = compress_mod.Error;
 
-pub const getFrameContentSize = compress.getFrameContentSize;
-pub const decompress = compress.decompress;
+pub const getFrameContentSize = compress_mod.getFrameContentSize;
+pub const decompress = compress_mod.decompress;
 
 // decode
 

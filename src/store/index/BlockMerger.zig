@@ -425,7 +425,7 @@ test "BlockMerger.mergeBasicScenarios" {
         var memTable = try createTestMemTable(alloc);
         defer memTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(memTable);
+        var writer = try BlockWriter.initFromMemTable(alloc, memTable);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -487,7 +487,7 @@ test "BlockMerger.merge block overflow" {
         var memTable = try createTestMemTable(alloc);
         defer memTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(memTable);
+        var writer = try BlockWriter.initFromMemTable(alloc, memTable);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -537,7 +537,7 @@ test "BlockMerger.merge oversized entries" {
     var memTable = try createTestMemTable(alloc);
     defer memTable.deinit(alloc);
 
-    var writer = BlockWriter.initFromMemTable(memTable);
+    var writer = try BlockWriter.initFromMemTable(alloc, memTable);
     defer writer.deinit(alloc);
 
     var merger = try BlockMerger.init(io, alloc, &readers);
@@ -720,7 +720,7 @@ test "BlockMerger.merge tag records" {
         var memTable = try createTestMemTable(alloc);
         defer memTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(memTable);
+        var writer = try BlockWriter.initFromMemTable(alloc, memTable);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -746,7 +746,7 @@ test "BlockMerger.merge stopped flag" {
     var memTable = try createTestMemTable(alloc);
     defer memTable.deinit(alloc);
 
-    var writer = BlockWriter.initFromMemTable(memTable);
+    var writer = try BlockWriter.initFromMemTable(alloc, memTable);
     defer writer.deinit(alloc);
 
     var merger = try BlockMerger.init(io, alloc, &readers);
@@ -789,7 +789,7 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
         var mergedMemTable = try MemTable.empty(alloc);
         errdefer mergedMemTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(mergedMemTable);
+        var writer = try BlockWriter.initFromMemTable(alloc, mergedMemTable);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);

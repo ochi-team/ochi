@@ -180,10 +180,9 @@ pub fn decodeIndexWindow(
     var decompressedBuf = try alloc.alloc(u8, decompressedSize);
     defer alloc.free(decompressedBuf);
 
-    const n = try encoding.decompress(
-        decompressedBuf,
-        src,
-    );
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    const n = try encoding.decompress(dctx, decompressedBuf, src);
     const decompressed = decompressedBuf[0..n];
     try BlockHeader.decodeFew(alloc, dst, decompressed);
 }
@@ -330,7 +329,9 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
         defer alloc.free(compressed);
 
         windowCase.offset = @intCast(indexBuf.items.len);
-        const n = try encoding.compressAuto(compressed, raw[0..off]);
+        const cctx = try encoding.createCCtx();
+        defer encoding.freeCCtx(cctx);
+        const n = try encoding.compressAuto(cctx, compressed, raw[0..off]);
         windowCase.size = @intCast(n);
         try indexBuf.appendSlice(alloc, compressed[0..n]);
     }

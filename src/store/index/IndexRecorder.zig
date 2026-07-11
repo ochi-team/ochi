@@ -14,6 +14,7 @@ const MemTable = @import("MemTable.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockReader = @import("BlockReader.zig");
 const LookupTable = @import("lookup/LookupTable.zig");
+const CompressionPool = @import("../CompressionPool.zig");
 
 const flush = @import("../table/flush.zig");
 const merge = @import("../table/merge.zig");
@@ -73,12 +74,15 @@ indexCacheKeyVersion: std.atomic.Value(u64) = .init(0),
 mergeIdx: std.atomic.Value(u64),
 path: []const u8,
 runtime: *Runtime,
+compressionPool: *CompressionPool,
 
 pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*IndexRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
     const concurrency = runtime.cpus;
+    const compressionPool = try CompressionPool.init(alloc, concurrency);
+    errdefer compressionPool.deinit(alloc);
 
     const entries = try Entries.init(alloc, concurrency);
     errdefer entries.deinit(alloc);
@@ -110,6 +114,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
         .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real).nanoseconds)),
         .path = path,
         .runtime = runtime,
+        .compressionPool = compressionPool,
         .concurrency = concurrency,
         .diskMergeSem = .{
             .permits = @max(4, concurrency),
@@ -192,6 +197,7 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     self.blocksToFlush.deinit(alloc);
     self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
+    self.compressionPool.deinit(alloc);
     alloc.destroy(self);
 }
 
@@ -719,7 +725,7 @@ pub fn mergeTables(
     var blockWriter: BlockWriter = blk: {
         if (tableKind == .mem) {
             newMemTable = try MemTable.empty(alloc);
-            break :blk BlockWriter.initFromMemTable(newMemTable.?);
+            break :blk BlockWriter.initFromMemTableWithCompressionPool(newMemTable.?, self.compressionPool);
         } else {
             var sourceItemsCount: u64 = 0;
             for (tables) |table| {
@@ -727,7 +733,7 @@ pub fn mergeTables(
             }
             // TODO: test if we can record compressed size and make caching more reliable
             const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable(self.runtime.maxMem, self.runtime.cacheSize);
-            break :blk try BlockWriter.initFromDiskTable(io, destinationTablePath, fitsInCache);
+            break :blk try BlockWriter.initFromDiskTableWithCompressionPool(io, destinationTablePath, fitsInCache, self.compressionPool);
         }
     };
     defer blockWriter.deinit(alloc);

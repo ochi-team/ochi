@@ -322,7 +322,7 @@ fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
     var block = try createTestMemBlock(alloc, &items);
     defer block.deinit(alloc);
 
-    var writer = try BlockWriter.initFromDiskTable(io, tablePath, true);
+    var writer = try BlockWriter.initFromDiskTable(io, alloc, tablePath, true);
     defer writer.deinit(alloc);
     try writer.writeBlock(io, alloc, block);
     try writer.close(io, alloc);

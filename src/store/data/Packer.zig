@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Unpacker = @import("Unpacker.zig");
+const CompressionPool = @import("../CompressionPool.zig");
+const Io = std.Io;
 
 const Width = struct {
     max: u64,
@@ -125,10 +127,10 @@ pub fn packValuesInterBound(self: *Self, values: [][]const u8) !PackBound {
     };
 }
 
-pub fn packValues(dst: []u8, bound: PackBound) !usize {
+pub fn packValues(pool: *CompressionPool, io: Io, dst: []u8, bound: PackBound) !usize {
     // Pack lengths and values into different slices of the same buffer
-    const encodedLensSize = try packBytes(dst[0..bound.lensBound], bound.lensBuf);
-    const encodedValuesSize = try packBytes(dst[encodedLensSize..], bound.valuesBuf);
+    const encodedLensSize = try packBytes(pool, io, dst[0..bound.lensBound], bound.lensBuf);
+    const encodedValuesSize = try packBytes(pool, io, dst[encodedLensSize..], bound.valuesBuf);
     return encodedLensSize + encodedValuesSize;
 }
 
@@ -142,7 +144,7 @@ fn packBytesBound(srcLen: usize) !usize {
     return 1 + Encoder.varIntBound(compressSize) + compressSize;
 }
 
-fn packBytes(dest: []u8, src: []u8) !usize {
+fn packBytes(pool: *CompressionPool, io: Io, dest: []u8, src: []u8) !usize {
     if (src.len < 128) {
         // skip compression, up to 127 can be in a single byte to be compatible with leb128
         // 1 compression kind, 1 len, len of the buf
@@ -158,7 +160,7 @@ fn packBytes(dest: []u8, src: []u8) !usize {
     enc.writeInt(u8, compressionKindZstd);
     const compressSize = try encoding.compressBound(src.len);
     const compressedOffset = enc.offset + Encoder.varIntBound(compressSize);
-    const compressedSize = try encoding.compressAuto(enc.buf[compressedOffset..][0..compressSize], src);
+    const compressedSize = try pool.compressAuto(io, enc.buf[compressedOffset..][0..compressSize], src);
     enc.writeVarInt(compressedSize);
     if (enc.offset != compressedOffset) {
         // the actual compressed content size is known only after compression,
@@ -248,7 +250,9 @@ test "Packer.packValuesRoundtrip" {
         // TODO: audit all constCast usage and get rid of them
         var bound = try encoder.packValuesInterBound(@constCast(case.strings));
         defer bound.deinit(allocator);
-        const n = try packValues(&packedValues, bound);
+        const compressionPool = try CompressionPool.init(allocator, 1);
+        defer compressionPool.deinit(allocator);
+        const n = try packValues(compressionPool, std.testing.io, &packedValues, bound);
 
         const unpacker = try Unpacker.init(allocator);
         defer unpacker.deinit(allocator);

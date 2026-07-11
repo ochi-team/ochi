@@ -3,6 +3,8 @@ const C = @import("c").C;
 const Logger = @import("logging");
 
 pub const Error = error{
+    CompressContextInitFailed,
+    DecompressContextInitFailed,
     DecompressUnknown,
     DecompressInsufficientCapacity,
     DecompressBadChunkAdded,
@@ -17,17 +19,36 @@ pub const Error = error{
 const unknownSize: c_ulonglong = 0xffffffffffffffff;
 const errorSize: c_ulonglong = 0xfffffffffffffffe;
 
-pub fn compressAuto(dst: []u8, src: []const u8) Error!usize {
-    const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
-    return compress(dst, src, level);
+pub const CCtx = *C.ZSTD_CCtx;
+pub const DCtx = *C.ZSTD_DCtx;
+
+pub fn createCCtx() Error!CCtx {
+    return C.ZSTD_createCCtx() orelse Error.CompressContextInitFailed;
 }
 
-pub fn compress(dst: []u8, src: []const u8, level: u8) Error!usize {
-    const res = C.ZSTD_compress(dst.ptr, dst.len, src.ptr, src.len, level);
+pub fn freeCCtx(ctx: CCtx) void {
+    _ = C.ZSTD_freeCCtx(ctx);
+}
+
+pub fn createDCtx() Error!DCtx {
+    return C.ZSTD_createDCtx() orelse Error.DecompressContextInitFailed;
+}
+
+pub fn freeDCtx(ctx: DCtx) void {
+    _ = C.ZSTD_freeDCtx(ctx);
+}
+
+pub fn compressAuto(ctx: CCtx, dst: []u8, src: []const u8) Error!usize {
+    const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
+    return compress(ctx, dst, src, level);
+}
+
+pub fn compress(ctx: CCtx, dst: []u8, src: []const u8, level: u8) Error!usize {
+    const res = C.ZSTD_compressCCtx(ctx, dst.ptr, dst.len, src.ptr, src.len, level);
     if (C.ZSTD_isError(res) == 1) {
         const errCode = C.ZSTD_getErrorCode(res);
         const msg = C.ZSTD_getErrorName(res);
-        Logger.log(.err, "decompress error", .{ .code = errCode, .zstd_msg = std.mem.span(msg) });
+        Logger.log(.err, "compress error", .{ .code = errCode, .zstd_msg = std.mem.span(msg) });
         return handleErrCode(errCode);
     }
     return res;
@@ -59,8 +80,8 @@ pub fn getFrameContentSize(src: []const u8) Error!usize {
     return res;
 }
 
-pub fn decompress(dst: []u8, src: []const u8) Error!usize {
-    const res = C.ZSTD_decompress(dst.ptr, dst.len, src.ptr, src.len);
+pub fn decompress(ctx: DCtx, dst: []u8, src: []const u8) Error!usize {
+    const res = C.ZSTD_decompressDCtx(ctx, dst.ptr, dst.len, src.ptr, src.len);
     if (C.ZSTD_isError(res) == 1) {
         const errCode = C.ZSTD_getErrorCode(res);
         const msg = C.ZSTD_getErrorName(res);

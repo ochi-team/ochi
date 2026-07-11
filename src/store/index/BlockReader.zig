@@ -263,10 +263,9 @@ fn readNextBlockHeaders(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     self.uncompressedBuf.clearRetainingCapacity();
     const uncompressedSize = try encoding.getFrameContentSize(self.compressedBuf.items);
     try self.uncompressedBuf.ensureUnusedCapacity(alloc, uncompressedSize);
-    const bufOffset = try encoding.decompress(
-        self.uncompressedBuf.unusedCapacitySlice(),
-        self.compressedBuf.items,
-    );
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    const bufOffset = try encoding.decompress(dctx, self.uncompressedBuf.unusedCapacitySlice(), self.compressedBuf.items);
     self.uncompressedBuf.items.len = bufOffset;
 
     if (self.blockHeaders.len > 0) alloc.free(self.blockHeaders);

@@ -4,6 +4,7 @@ const Io = std.Io;
 const Dir = Io.Dir;
 
 const encoding = @import("encoding");
+const CompressionPool = @import("../CompressionPool.zig");
 
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
@@ -48,6 +49,8 @@ const Destination = union(enum) {
 const BlockWriter = @This();
 
 destination: Destination,
+compressionPool: *CompressionPool,
+ownedCompressionPool: ?*CompressionPool = null,
 
 bh: BlockHeader = .{ .firstEntry = "", .prefix = "", .encodingType = .plain },
 mi: MetaIndex = .{},
@@ -65,8 +68,16 @@ firstEntryBuf: std.ArrayList(u8) = .empty,
 
 indexBlockOffset: u64 = 0,
 
-pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
+pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !BlockWriter {
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    var writer = initFromMemTableWithCompressionPool(memTable, compressionPool);
+    writer.ownedCompressionPool = compressionPool;
+    return writer;
+}
+
+pub fn initFromMemTableWithCompressionPool(memTable: *MemTable, compressionPool: *CompressionPool) BlockWriter {
     return .{
+        .compressionPool = compressionPool,
         .destination = .{
             .mem = .{
                 .entriesBuf = &memTable.entriesBuf,
@@ -78,7 +89,15 @@ pub fn initFromMemTable(memTable: *MemTable) BlockWriter {
     };
 }
 
-pub fn initFromDiskTable(io: Io, path: []const u8, fitsInCache: bool) !BlockWriter {
+pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !BlockWriter {
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    errdefer compressionPool.deinit(alloc);
+    var writer = try initFromDiskTableWithCompressionPool(io, path, fitsInCache, compressionPool);
+    writer.ownedCompressionPool = compressionPool;
+    return writer;
+}
+
+pub fn initFromDiskTableWithCompressionPool(io: Io, path: []const u8, fitsInCache: bool, compressionPool: *CompressionPool) !BlockWriter {
     // TODO: apply fitsInCache to create a component to write into a file taking OS cache into account
     // if we open separate files for merging
     _ = fitsInCache;
@@ -109,6 +128,7 @@ pub fn initFromDiskTable(io: Io, path: []const u8, fitsInCache: bool) !BlockWrit
     errdefer metaindexFile.close(io);
 
     return .{
+        .compressionPool = compressionPool,
         .destination = .{
             .disk = .{
                 .entriesFile = entriesFile,
@@ -126,10 +146,13 @@ pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
     self.uncompressedMetaindexBuf.deinit(alloc);
     self.compressedBuf.deinit(alloc);
     self.firstEntryBuf.deinit(alloc);
+    if (self.ownedCompressionPool) |pool| {
+        pool.deinit(alloc);
+    }
 }
 
 pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock) !void {
-    const encoded = try block.encode(alloc, &self.entriesBlock);
+    const encoded = try block.encode(io, alloc, self.compressionPool, &self.entriesBlock);
     std.debug.assert(block.memEntries.items.len > 0);
 
     self.bh.firstEntry = encoded.firstEntry;
@@ -219,9 +242,9 @@ fn writeLens(self: *BlockWriter, io: Io, alloc: Allocator, data: []const u8) !vo
 
 fn writeIndexBlock(self: *BlockWriter, io: Io, alloc: Allocator) !usize {
     switch (self.destination) {
-        .mem => |mem| return compressIntoArrayList(alloc, mem.indexBuf, self.uncompressedIndexBlockBuf.items),
+        .mem => |mem| return self.compressIntoArrayList(io, alloc, mem.indexBuf, self.uncompressedIndexBlockBuf.items),
         .disk => |*disk| {
-            const compressed = try self.compressToScratch(alloc, self.uncompressedIndexBlockBuf.items);
+            const compressed = try self.compressToScratch(io, alloc, self.uncompressedIndexBlockBuf.items);
             try disk.indexFile.writeStreamingAll(io, compressed);
             return compressed.len;
         },
@@ -231,28 +254,25 @@ fn writeIndexBlock(self: *BlockWriter, io: Io, alloc: Allocator) !usize {
 fn writeMetaindex(self: *BlockWriter, io: Io, alloc: Allocator) !void {
     switch (self.destination) {
         .mem => |mem| {
-            _ = try compressIntoArrayList(alloc, mem.metaindexBuf, self.uncompressedMetaindexBuf.items);
+            _ = try self.compressIntoArrayList(io, alloc, mem.metaindexBuf, self.uncompressedMetaindexBuf.items);
         },
         .disk => |*disk| {
-            const compressed = try self.compressToScratch(alloc, self.uncompressedMetaindexBuf.items);
+            const compressed = try self.compressToScratch(io, alloc, self.uncompressedMetaindexBuf.items);
             try disk.metaindexFile.writeStreamingAll(io, compressed);
         },
     }
 }
 
-fn compressToScratch(self: *BlockWriter, alloc: Allocator, src: []const u8) ![]const u8 {
+fn compressToScratch(self: *BlockWriter, io: Io, alloc: Allocator, src: []const u8) ![]const u8 {
     self.compressedBuf.clearRetainingCapacity();
-    const n = try compressIntoArrayList(alloc, &self.compressedBuf, src);
+    const n = try self.compressIntoArrayList(io, alloc, &self.compressedBuf, src);
     return self.compressedBuf.items[0..n];
 }
 
-fn compressIntoArrayList(alloc: Allocator, dst: *std.ArrayList(u8), src: []const u8) !usize {
+fn compressIntoArrayList(self: *BlockWriter, io: Io, alloc: Allocator, dst: *std.ArrayList(u8), src: []const u8) !usize {
     const bound = try encoding.compressBound(src.len);
     try dst.ensureUnusedCapacity(alloc, bound);
-    const n = try encoding.compressAuto(
-        dst.unusedCapacitySlice(),
-        src,
-    );
+    const n = try self.compressionPool.compressAuto(io, dst.unusedCapacitySlice(), src);
     dst.items.len += n;
     return n;
 }
@@ -304,7 +324,7 @@ test "BlockWriter disk output matches mem output" {
 
     var memTable = try MemTable.empty(alloc);
     defer memTable.deinit(alloc);
-    var memWriter = BlockWriter.initFromMemTable(memTable);
+    var memWriter = try BlockWriter.initFromMemTable(alloc, memTable);
     defer memWriter.deinit(alloc);
     try memWriter.writeBlock(io, alloc, blockOne);
     try memWriter.writeBlock(io, alloc, blockTwo);
@@ -317,7 +337,7 @@ test "BlockWriter disk output matches mem output" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
     defer alloc.free(tablePath);
 
-    var diskWriter = try BlockWriter.initFromDiskTable(io, tablePath, true);
+    var diskWriter = try BlockWriter.initFromDiskTable(io, alloc, tablePath, true);
     defer diskWriter.deinit(alloc);
     try diskWriter.writeBlock(io, alloc, blockOne);
     try diskWriter.writeBlock(io, alloc, blockTwo);
@@ -346,7 +366,7 @@ test "BlockWriter metaindexBuf may contain multiple records" {
     var memTable = try MemTable.empty(alloc);
     defer memTable.deinit(alloc);
 
-    var writer = BlockWriter.initFromMemTable(memTable);
+    var writer = try BlockWriter.initFromMemTable(alloc, memTable);
     defer writer.deinit(alloc);
 
     var itemsOwned = try std.ArrayList([]u8).initCapacity(alloc, blocksCount);
@@ -403,7 +423,7 @@ test "BlockWriter preserves first metaindex item when reusing source block" {
     var table = try MemTable.empty(alloc);
     defer table.deinit(alloc);
 
-    var writer = BlockWriter.initFromMemTable(table);
+    var writer = try BlockWriter.initFromMemTable(alloc, table);
     defer writer.deinit(alloc);
 
     var block = try MemBlock.init(alloc, .{

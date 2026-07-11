@@ -8,6 +8,8 @@ const MemOrder = @import("../../stds/sort.zig").MemOrder;
 const strings = @import("../../stds/strings.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
+const CompressionPool = @import("../CompressionPool.zig");
+const Io = std.Io;
 
 const EntriesBlock = @import("EntriesBlock.zig");
 const EncodingType = @import("BlockHeader.zig").EncodingType;
@@ -225,7 +227,9 @@ fn assertIsSorted(self: *const MemBlock) void {
 
 pub fn encode(
     self: *MemBlock,
+    io: Io,
     alloc: Allocator,
+    compressionPool: *CompressionPool,
     entriesBlock: *EntriesBlock,
 ) !EncodedMemBlock {
     std.debug.assert(self.memEntries.items.len != 0);
@@ -281,7 +285,7 @@ pub fn encode(
     var bound = try encoding.compressBound(entriesBuf.items.len);
     entriesBlock.entriesBuf.clearRetainingCapacity();
     try entriesBlock.entriesBuf.ensureUnusedCapacity(alloc, bound);
-    entriesBlock.entriesBuf.items.len = try encoding.compressAuto(entriesBlock.entriesBuf.unusedCapacitySlice(), entriesBuf.items);
+    entriesBlock.entriesBuf.items.len = try compressionPool.compressAuto(io, entriesBlock.entriesBuf.unusedCapacitySlice(), entriesBuf.items);
 
     // write lens
     lens.clearRetainingCapacity();
@@ -310,7 +314,7 @@ pub fn encode(
     bound = try encoding.compressBound(lensData.len);
     entriesBlock.lensBuf.clearRetainingCapacity();
     try entriesBlock.lensBuf.ensureUnusedCapacity(alloc, bound);
-    entriesBlock.lensBuf.items.len = try encoding.compressAuto(entriesBlock.lensBuf.unusedCapacitySlice(), lensData);
+    entriesBlock.lensBuf.items.len = try compressionPool.compressAuto(io, entriesBlock.lensBuf.unusedCapacitySlice(), lensData);
 
     // if compressed content is more than 90% of the original size - not worth it
     // TODO: consider tweaking the value up to 80-85%, take a meter to understand why it may happen
@@ -400,7 +404,9 @@ pub fn decode(
     const size = try encoding.getFrameContentSize(entriesBlock.lensBuf.items);
     const decompressedLensBuf = try alloc.alloc(u8, size);
     defer alloc.free(decompressedLensBuf);
-    var n = try encoding.decompress(decompressedLensBuf, entriesBlock.lensBuf.items);
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    var n = try encoding.decompress(dctx, decompressedLensBuf, entriesBlock.lensBuf.items);
 
     // decode prefix lens
     const decodedLens = try alloc.alloc(u64, itemsCount - 1);
@@ -440,7 +446,7 @@ pub fn decode(
     const decompressedItemsSize = try encoding.getFrameContentSize(entriesBlock.entriesBuf.items);
     const decompressedItemsBuf = try alloc.alloc(u8, decompressedItemsSize);
     defer alloc.free(decompressedItemsBuf);
-    n = try encoding.decompress(decompressedItemsBuf, entriesBlock.entriesBuf.items);
+    n = try encoding.decompress(dctx, decompressedItemsBuf, entriesBlock.entriesBuf.items);
 
     try self.memEntries.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
@@ -622,13 +628,16 @@ test "MemBlock.encode/decode plain and zstd cases" {
     };
 
     for (cases) |case| {
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+
         var block = try createTestMemBlock(alloc, case.items);
         defer block.deinit(alloc);
         block.sortData();
 
         var entriesBlock = EntriesBlock{};
         defer entriesBlock.deinit(alloc);
-        const encoded = try block.encode(alloc, &entriesBlock);
+        const encoded = try block.encode(testing.io, alloc, compressionPool, &entriesBlock);
         try testing.expectEqualDeep(case.expectedEncodedBlock, encoded);
 
         var decoded = try MemBlock.init(alloc, .{

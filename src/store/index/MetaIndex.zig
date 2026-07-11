@@ -94,7 +94,9 @@ pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u
     const metaindexBufSize = try encoding.getFrameContentSize(compressed);
     const metaindexBuf = try alloc.alloc(u8, metaindexBufSize);
     defer alloc.free(metaindexBuf);
-    const metaindexLen = try encoding.decompress(metaindexBuf, compressed);
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    const metaindexLen = try encoding.decompress(dctx, metaindexBuf, compressed);
 
     var records = try std.ArrayList(MetaIndex).initCapacity(alloc, @intCast(blocksCount));
     errdefer {
@@ -172,7 +174,9 @@ test "MetaIndex decodeDecompress roundtrip" {
     const compressedBound = try encoding.compressBound(uncompressed.items.len);
     const compressed = try alloc.alloc(u8, compressedBound);
     defer alloc.free(compressed);
-    const compressedLen = try encoding.compressAuto(compressed, uncompressed.items);
+    const cctx = try encoding.createCCtx();
+    defer encoding.freeCCtx(cctx);
+    const compressedLen = try encoding.compressAuto(cctx, compressed, uncompressed.items);
 
     const decoded = try MetaIndex.decodeDecompress(
         alloc,
@@ -228,7 +232,9 @@ test "MetaIndex roundtrip file read/write" {
     const compressedBound = try encoding.compressBound(uncompressed.items.len);
     const compressed = try alloc.alloc(u8, compressedBound);
     defer alloc.free(compressed);
-    const compressedLen = try encoding.compressAuto(compressed, uncompressed.items);
+    const cctx = try encoding.createCCtx();
+    defer encoding.freeCCtx(cctx);
+    const compressedLen = try encoding.compressAuto(cctx, compressed, uncompressed.items);
 
     const metaindexPath = try std.fs.path.join(alloc, &.{ tablePath, filenames.metaindex });
     defer alloc.free(metaindexPath);

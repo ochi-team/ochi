@@ -309,7 +309,9 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
     self.indexBuf.clearRetainingCapacity();
     const indexSize = try encoding.getFrameContentSize(self.compressedIndexBuf.items);
     try self.indexBuf.ensureUnusedCapacity(alloc, indexSize);
-    const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), self.compressedIndexBuf.items);
+    const dctx = try encoding.createDCtx();
+    defer encoding.freeDCtx(dctx);
+    const n = try encoding.decompress(dctx, self.indexBuf.unusedCapacitySlice(), self.compressedIndexBuf.items);
     self.indexBuf.items.len = n;
 
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);

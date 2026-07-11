@@ -21,6 +21,7 @@ const MemTable = @import("store/data/MemTable.zig");
 const BlockWriter = @import("store/data/BlockWriter.zig");
 const TableWriter = @import("store/data/TableWriter.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
+const CompressionPool = @import("store/CompressionPool.zig");
 const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
@@ -166,7 +167,14 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, sem: *Io.Semaphore) !?*Table {
+    fn flush(
+        self: *DataShard,
+        io: Io,
+        alloc: Allocator,
+        timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+        compressionPool: *CompressionPool,
+        sem: *Io.Semaphore,
+    ) !?*Table {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -187,10 +195,11 @@ pub const DataShard = struct {
             sids[i] = checkpoint.sid;
         }
 
-        memTable.addLines(
+        memTable.addLinesWithCompressionPool(
             io,
             alloc,
             timestampsEncoders,
+            compressionPool,
             sids[0..self.checkpointsLen],
             linesByCheckpoint[0..self.checkpointsLen],
         ) catch |err| {
@@ -231,12 +240,15 @@ mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+compressionPool: *CompressionPool,
 
 pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
     const concurrency = runtime.cpus;
+    const compressionPool = try CompressionPool.init(alloc, concurrency);
+    errdefer compressionPool.deinit(alloc);
     std.debug.assert(concurrency != 0);
 
     const shards = try alloc.alloc(DataShard, concurrency);
@@ -284,6 +296,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, times
         .path = path,
         .runtime = runtime,
         .timestampsEncoders = timestampsEncoders,
+        .compressionPool = compressionPool,
     };
 
     return t;
@@ -357,6 +370,7 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     self.diskTables.deinit(allocator);
     allocator.free(self.shards);
     self.g.cancel(io);
+    self.compressionPool.deinit(allocator);
     allocator.destroy(self);
 }
 
@@ -489,7 +503,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
 }
 
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) !void {
-    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, &self.memMergeSem);
+    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
         self.mxTables.lockUncancelable(io);
         defer self.mxTables.unlock(io);
@@ -640,7 +654,7 @@ fn mergeTables(
         if (tableKind == .mem) {
             const memTable = try MemTable.init(alloc);
             newMemTable = memTable;
-            break :blk try TableWriter.initMem(alloc, memTable, self.timestampsEncoders);
+            break :blk try TableWriter.initMemWithCompressionPool(alloc, memTable, self.timestampsEncoders, self.compressionPool);
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
@@ -650,7 +664,7 @@ fn mergeTables(
                 self.runtime.maxMem,
                 self.runtime.cacheSize,
             );
-            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders);
+            break :blk try TableWriter.initDiskWithCompressionPool(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders, self.compressionPool);
         }
     };
     defer streamWriter.deinit(alloc);
@@ -1149,6 +1163,7 @@ test "DataShard.flush limits block columns per tenant" {
         io,
         alloc,
         timestampsEncoders,
+        recorder.compressionPool,
         &recorder.memMergeSem,
     )).?;
     defer table.close(io);
