@@ -186,11 +186,10 @@ fn startCacheEvicter(self: *Store, io: Io) !void {
 }
 
 fn runCacheEvicter(self: *Store, io: Io) void {
-    const cleanIntervalNs = 10 * std.time.ns_per_s;
+    const cleanIntervalNs = 5 * std.time.ns_per_s;
 
     while (!self.stopped.isStopped()) {
         self.stopped.sleepOrStop(io, cleanIntervalNs);
-        if (self.stopped.isStopped()) break;
 
         self.streamCache.clean(io);
         self.memBlocksCache.clean(io);

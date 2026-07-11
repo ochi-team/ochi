@@ -53,6 +53,10 @@ pub fn deinit(self: *Self) void {
     self.lengths.deinit(self.allocator);
 }
 
+pub fn reset(self: *Self) void {
+    self.lengths.clearRetainingCapacity();
+}
+
 const PackBound = struct {
     lensBuf: []u8,
     lensBound: usize,

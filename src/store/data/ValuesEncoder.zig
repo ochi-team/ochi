@@ -29,23 +29,26 @@ values: std.ArrayList([]const u8),
 parsed: std.ArrayList(u64),
 allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
+pub fn init(allocator: std.mem.Allocator) !Self {
     const parsed = std.ArrayList(u64).empty;
-    const e = try allocator.create(Self);
-    e.* = .{
+    return .{
         .buf = .empty,
         .values = .empty,
         .allocator = allocator,
         .parsed = parsed,
     };
-    return e;
 }
 
 pub fn deinit(self: *Self) void {
     self.values.deinit(self.allocator);
     self.buf.deinit(self.allocator);
     self.parsed.deinit(self.allocator);
-    self.allocator.destroy(self);
+}
+
+pub fn reset(self: *Self) void {
+    self.values.clearRetainingCapacity();
+    self.buf.clearRetainingCapacity();
+    self.parsed.clearRetainingCapacity();
 }
 
 pub fn encode(self: *Self, values: []const []const u8, columnValues: *ColumnDict) !EncodeValueType {
@@ -524,7 +527,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
     };
 
     for (cases) |case| {
-        const encoder = try Self.init(allocator);
+        var encoder = try Self.init(allocator);
         defer encoder.deinit();
 
         var cv = try ColumnDict.init(allocator);
@@ -722,7 +725,7 @@ fn expectEncodeRoundtrip(
     input: []const []const u8,
     expectedType: ColumnType,
 ) !void {
-    const encoder = try Self.init(allocator);
+    var encoder = try Self.init(allocator);
     defer encoder.deinit();
 
     var cv = try ColumnDict.init(allocator);
@@ -810,7 +813,7 @@ test "ValuesEncoder does not treat bare number as timestamp" {
         "389",
     };
 
-    const encoder = try Self.init(allocator);
+    var encoder = try Self.init(allocator);
     defer encoder.deinit();
 
     var cv = try ColumnDict.init(allocator);
@@ -851,7 +854,7 @@ test "ValuesEncoder handles dict values shorter than row count" {
     };
 
     for (cases) |case| {
-        const encoder = try Self.init(allocator);
+        var encoder = try Self.init(allocator);
         defer encoder.deinit();
 
         var cv = try ColumnDict.init(allocator);
@@ -877,7 +880,7 @@ test "ValuesEncoder keeps buffered value slices stable after growth" {
         value.* = dictValues[i % dictValues.len];
     }
 
-    const encoder = try Self.init(allocator);
+    var encoder = try Self.init(allocator);
     defer encoder.deinit();
 
     var cv = try ColumnDict.init(allocator);

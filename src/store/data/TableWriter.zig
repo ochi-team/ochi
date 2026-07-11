@@ -347,8 +347,26 @@ pub fn writeBlock(
     try self.bloomValuesList.ensureUnusedCapacity(allocator, columns.len);
     try self.bloomTokensList.ensureUnusedCapacity(allocator, columns.len);
 
+    var valuesEncoder = try ValuesEncoder.init(allocator);
+    defer valuesEncoder.deinit();
+    var packer = try Packer.init(allocator);
+    defer packer.deinit();
+    var buckets: [bucketsSize]Bucket = undefined;
+    var tokenizer = try HashTokenizer.init(allocator, &buckets);
+    defer tokenizer.deinit(allocator);
     for (columns, 0..) |col, i| {
-        try self.writeColumn(io, allocator, col, &columnsHeader.headers[i]);
+        try self.writeColumn(
+            io,
+            allocator,
+            col,
+            &columnsHeader.headers[i],
+            &valuesEncoder,
+            &packer,
+            &tokenizer,
+        );
+        valuesEncoder.reset();
+        packer.reset();
+        tokenizer.reset();
     }
 
     try self.writeColumnsHeader(io, allocator, columnsHeader, blockHeader);
@@ -437,15 +455,22 @@ fn writeTimestampsData(
     try self.timestampsDst.appendSlice(io, alloc, timestampsData.data);
 }
 
-fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch: *ColumnHeader) !void {
+fn writeColumn(
+    self: *TableWriter,
+    io: Io,
+    allocator: Allocator,
+    col: Column,
+    ch: *ColumnHeader,
+    valuesEncoder: *ValuesEncoder,
+    packer: *Packer,
+    tokenizer: *HashTokenizer,
+) !void {
     ch.key = col.key;
 
     const z1 = tracy.Zone.begin(.{
         .src = @src(),
         .name = "TableWriter.writeColumn.encodeValues",
     });
-    const valuesEncoder = try ValuesEncoder.init(allocator);
-    defer valuesEncoder.deinit();
     const valueType = try valuesEncoder.encode(col.values, &ch.dict);
     ch.type = valueType.type;
     ch.min = valueType.min;
@@ -466,8 +491,6 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
         .src = @src(),
         .name = "TableWriter.writeColumn.packValue",
     });
-    var packer = try Packer.init(allocator);
-    defer packer.deinit();
     var packedBound = try packer.packValuesInterBound(valuesEncoder.values.items);
     defer packedBound.deinit(allocator);
     const packBound = packedBound.lensBound + packedBound.valuesBound;
@@ -485,19 +508,12 @@ fn writeColumn(self: *TableWriter, io: Io, allocator: Allocator, col: Column, ch
     });
     ch.bloomFilterOffset = bloomTokensBuf.len();
     const bloomHashCap = if (valueType.type == .dict) 0 else blk: {
-        var buckets: [bucketsSize]Bucket = undefined;
-        var tokenizer = try HashTokenizer.init(allocator, &buckets);
-        defer tokenizer.deinit(allocator);
-
         var hashes = try tokenizer.tokenizeValues(allocator, col.values);
         defer hashes.deinit(allocator);
 
-        var bf = try BloomFilter.initHashes(allocator, hashes.items);
-        defer bf.deinit(allocator);
-
-        const dstSize = bf.bound();
+        const dstSize = BloomFilter.boundHashes(hashes.items);
         const dst = try bloomTokensBuf.allocSlice(allocator, dstSize);
-        bf.encode(dst);
+        BloomFilter.writeBits(dst, hashes.items);
         try bloomTokensBuf.appendAllocated(io, dst, dstSize);
 
         break :blk dstSize;
