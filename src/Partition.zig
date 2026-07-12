@@ -18,6 +18,9 @@ const Query = @import("query/Query.zig");
 
 const Runtime = @import("Runtime.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
+const compression = @import("store/CompressionPool.zig");
+const CompressionPool = compression.CompressionPool;
+const DecompressionPool = compression.DecompressionPool;
 const fs = @import("fs.zig");
 const Logger = @import("logging");
 
@@ -67,6 +70,8 @@ pub fn open(
     streamCache: *Cache(void),
     runtime: *Runtime,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
 ) !*Partition {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -88,14 +93,14 @@ pub fn open(
         try DataRecorder.createDir(io, dataPath);
     }
 
-    const indexRecorder = try IndexRecorder.init(io, alloc, indexPath, runtime);
+    const indexRecorder = try IndexRecorder.initWithPools(io, alloc, indexPath, runtime, compressionPool, decompressionPool);
     errdefer indexRecorder.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop index recorder in partition opening", .{ .err = err });
     };
     try indexRecorder.start(io, alloc);
     const index = Index.init(indexRecorder);
 
-    const data = try DataRecorder.init(io, alloc, dataPath, runtime, timestampsEncoders);
+    const data = try DataRecorder.initWithPools(io, alloc, dataPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
     errdefer data.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };

@@ -13,7 +13,8 @@ const maxLines = @import("Block.zig").maxLines;
 const SID = @import("../lines.zig").SID;
 
 const TableWriter = @import("TableWriter.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 const maxCheckpoints = @import("../../DataRecorder.zig").DataShard.maxCheckpoints;
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");

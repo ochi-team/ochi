@@ -12,7 +12,8 @@ const MemTable = @import("../MemTable.zig");
 const Table = @import("../Table.zig");
 const LookupTable = @import("LookupTable.zig");
 const TagRecordsParser = @import("../TagRecordsParser.zig");
-const CompressionPool = @import("../../CompressionPool.zig");
+const CompressionPool = @import("../../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../../CompressionPool.zig").DecompressionPool;
 const Logger = @import("logging");
 
 const Lookup = @This();
@@ -44,7 +45,7 @@ pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexReco
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
-        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.compressionPool);
+        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool);
         lookupTables.appendAssumeCapacity(lt);
     }
 
@@ -395,17 +396,17 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     };
 
     {
-        const table = try createMemTableFromItems(io, alloc, &tableAItems, recorder.compressionPool);
+        const table = try createMemTableFromItems(io, alloc, &tableAItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createMemTableFromItems(io, alloc, &tableBItems, recorder.compressionPool);
+        const table = try createMemTableFromItems(io, alloc, &tableBItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems, recorder.compressionPool);
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
@@ -485,17 +486,17 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     };
 
     {
-        const table = try createMemTableFromItems(io, alloc, &tableAItems, recorder.compressionPool);
+        const table = try createMemTableFromItems(io, alloc, &tableAItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createMemTableFromItems(io, alloc, &tableBItems, recorder.compressionPool);
+        const table = try createMemTableFromItems(io, alloc, &tableBItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems, recorder.compressionPool);
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
@@ -602,7 +603,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         "tenant-a-stream-0003",
     };
     {
-        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-cache-disk-table", &tableDiskItems, recorder.compressionPool);
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-cache-disk-table", &tableDiskItems, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
@@ -699,7 +700,7 @@ test "Lookup.deinit after scan across multiple table blocks" {
     }
 
     {
-        const table = try createMemTableFromItemsInBlocks(io, alloc, items.items, 200, recorder.compressionPool);
+        const table = try createMemTableFromItemsInBlocks(io, alloc, items.items, 200, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
@@ -754,7 +755,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     }
 
     {
-        const table = try createMemTableFromItems(io, alloc, items.items, recorder.compressionPool);
+        const table = try createMemTableFromItems(io, alloc, items.items, recorder.decompressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }

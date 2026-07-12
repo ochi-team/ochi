@@ -34,7 +34,7 @@ const bucketsSize = @import("bloom.zig").bucketsSize;
 const BloomFilter = @import("bloom.zig").BloomFilter;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
 
 const maxPackedValuesSize = 8 * 1024 * 1024;
 const bloomValuesMaxShardsCount: u16 = 128;

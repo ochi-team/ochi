@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Unpacker = @import("Unpacker.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
 const Io = std.Io;
 
 const Width = struct {

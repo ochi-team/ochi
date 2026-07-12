@@ -14,7 +14,7 @@ const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnDict = @import("ColumnDict.zig");
 const ColumnType = ColumnHeader.ColumnType;
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
 const EncodingType = TimestampsEncoder.EncodingType;
 const TableReader = @import("TableReader.zig");
 

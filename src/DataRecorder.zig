@@ -1,6 +1,7 @@
 // TODO: data and index recorders are both hold a lot in common,
 // we must desine a single component to manage both
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
@@ -21,7 +22,8 @@ const MemTable = @import("store/data/MemTable.zig");
 const BlockWriter = @import("store/data/BlockWriter.zig");
 const TableWriter = @import("store/data/TableWriter.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
-const CompressionPool = @import("store/CompressionPool.zig");
+const CompressionPool = @import("store/CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("store/CompressionPool.zig").DecompressionPool;
 const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
@@ -173,6 +175,7 @@ pub const DataShard = struct {
         alloc: Allocator,
         timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
         compressionPool: *CompressionPool,
+        decompressionPool: *DecompressionPool,
         sem: *Io.Semaphore,
     ) !?*Table {
         if (self.lines.items.len == 0) {
@@ -211,7 +214,7 @@ pub const DataShard = struct {
         sem.post(io);
 
         memTable.flushAtUs = getFlushTime(io);
-        return Table.fromMem(io, alloc, memTable, compressionPool);
+        return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 };
 
@@ -241,14 +244,41 @@ path: []const u8,
 runtime: *Runtime,
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
+decompressionPool: *DecompressionPool,
+ownsCompressionPools: bool = false,
 
-pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*DataRecorder {
+pub fn init(
+    io: Io,
+    alloc: Allocator,
+    path: []const u8,
+    runtime: *Runtime,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+) !*DataRecorder {
+    if (!builtin.is_test) @compileError("use initWithPools outside tests");
+
+    const compressionPool = try CompressionPool.init(alloc, runtime.cpus);
+    errdefer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, runtime.cpus);
+    errdefer decompressionPool.deinit(alloc);
+
+    const recorder = try initWithPools(io, alloc, path, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    recorder.ownsCompressionPools = true;
+    return recorder;
+}
+
+pub fn initWithPools(
+    io: Io,
+    alloc: Allocator,
+    path: []const u8,
+    runtime: *Runtime,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
     const concurrency = runtime.cpus;
-    const compressionPool = try CompressionPool.init(alloc, concurrency);
-    errdefer compressionPool.deinit(alloc);
     std.debug.assert(concurrency != 0);
 
     const shards = try alloc.alloc(DataShard, concurrency);
@@ -269,7 +299,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, times
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    var tables = try Table.openAll(io, alloc, path, compressionPool);
+    var tables = try Table.openAll(io, alloc, path, decompressionPool);
     errdefer {
         for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
@@ -297,6 +327,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, times
         .runtime = runtime,
         .timestampsEncoders = timestampsEncoders,
         .compressionPool = compressionPool,
+        .decompressionPool = decompressionPool,
+        .ownsCompressionPools = false,
     };
 
     return t;
@@ -370,7 +402,10 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     self.diskTables.deinit(allocator);
     allocator.free(self.shards);
     self.g.cancel(io);
-    self.compressionPool.deinit(allocator);
+    if (self.ownsCompressionPools) {
+        self.compressionPool.deinit(allocator);
+        self.decompressionPool.deinit(allocator);
+    }
     allocator.destroy(self);
 }
 
@@ -503,7 +538,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
 }
 
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) !void {
-    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, &self.memMergeSem);
+    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
         self.mxTables.lockUncancelable(io);
         defer self.mxTables.unlock(io);
@@ -632,7 +667,7 @@ fn mergeTables(
         const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
 
-        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.compressionPool);
+        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.decompressionPool);
         errdefer newTable.release(io);
 
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
@@ -640,7 +675,7 @@ fn mergeTables(
         return;
     }
 
-    var readers = try openTableReaders(io, alloc, tables, self.compressionPool);
+    var readers = try openTableReaders(io, alloc, tables, self.decompressionPool);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
@@ -669,7 +704,7 @@ fn mergeTables(
     };
     defer streamWriter.deinit(alloc);
 
-    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, self.compressionPool, streamWriter, &readers, stopped) catch |err| {
+    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, self.decompressionPool, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
@@ -698,7 +733,7 @@ fn mergeTables(
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.compressionPool);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.decompressionPool);
     errdefer openTable.release(io);
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
@@ -757,7 +792,7 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
     for (tables.items) |table| {
-        try table.queryLines(io, alloc, self.timestampsEncoders, self.compressionPool, &linesDst, sids, query);
+        try table.queryLines(io, alloc, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
     }
 
     return linesDst;
@@ -769,24 +804,24 @@ fn openCreatedTable(
     tablePath: []const u8,
     tables: []*Table,
     maybeMemTable: ?*MemTable,
-    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
 ) !*Table {
     if (maybeMemTable) |memTable| {
         memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
-        return Table.fromMem(io, alloc, memTable, compressionPool);
+        return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 
-    return Table.open(io, alloc, tablePath, compressionPool);
+    return Table.open(io, alloc, tablePath, decompressionPool);
 }
 
-fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table, compressionPool: *CompressionPool) !std.ArrayList(*BlockReader) {
+fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table, decompressionPool: *DecompressionPool) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
     errdefer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        const reader = try BlockReader.init(io, alloc, table, compressionPool);
+        const reader = try BlockReader.init(io, alloc, table, decompressionPool);
         readers.appendAssumeCapacity(reader);
     }
 
@@ -1165,6 +1200,7 @@ test "DataShard.flush limits block columns per tenant" {
         alloc,
         timestampsEncoders,
         recorder.compressionPool,
+        recorder.decompressionPool,
         &recorder.memMergeSem,
     )).?;
     defer table.close(io);

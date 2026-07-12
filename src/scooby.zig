@@ -24,7 +24,9 @@ const ColumnHeader = @import("store/data/ColumnHeader.zig");
 const ColumnIDGen = @import("store/data/ColumnIDGen.zig");
 const IndexBlockHeader = @import("store/data/IndexBlockHeader.zig");
 const Unpacker = @import("store/data/Unpacker.zig");
-const CompressionPool = @import("store/CompressionPool.zig");
+const compression = @import("store/CompressionPool.zig");
+const CompressionPool = compression.CompressionPool;
+const DecompressionPool = compression.DecompressionPool;
 
 /// Selects which physical table file and decoder scooby should use.
 /// These names are intentionally the command-line values accepted by
@@ -233,7 +235,7 @@ fn loadColumnIDGen(io: std.Io, allocator: std.mem.Allocator, tablePath: []const 
     const path = try std.fs.path.join(allocator, &.{ tablePath, filenames.columnKeys });
     defer allocator.free(path);
 
-    const compressionPool = try CompressionPool.init(allocator, 1);
+    const compressionPool = try DecompressionPool.init(allocator, 1);
     defer compressionPool.deinit(allocator);
     return ColumnIDGen.decodeFileWithCompressionPool(io, allocator, compressionPool, path);
 }
@@ -385,7 +387,7 @@ fn inspectColumnsHeaderIndex(allocator: std.mem.Allocator, buf: []const u8, keys
 /// to pass back to scooby --header:index.
 fn inspectMetaindex(io: std.Io, allocator: std.mem.Allocator, buf: []const u8) !void {
     std.debug.print("metaindex bytes={d}\n", .{buf.len});
-    const compressionPool = try CompressionPool.init(allocator, 1);
+    const compressionPool = try DecompressionPool.init(allocator, 1);
     defer compressionPool.deinit(allocator);
     const headers = try IndexBlockHeader.readIndexBlockHeaders(io, allocator, compressionPool, buf);
     defer allocator.free(headers);
@@ -409,7 +411,7 @@ fn inspectIndex(io: std.Io, allocator: std.mem.Allocator, buf: []const u8) !void
     const decompressedSize = try encoding.getFrameContentSize(buf);
     const decompressed = try allocator.alloc(u8, decompressedSize);
     defer allocator.free(decompressed);
-    const compressionPool = try CompressionPool.init(allocator, 1);
+    const compressionPool = try DecompressionPool.init(allocator, 1);
     defer compressionPool.deinit(allocator);
     const n = try compressionPool.decompress(io, decompressed, buf);
     const src = decompressed[0..n];
@@ -697,7 +699,7 @@ fn inspectDictValues(
     );
     defer allocator.free(packedValues);
 
-    const compressionPool = try CompressionPool.init(allocator, 1);
+    const compressionPool = try DecompressionPool.init(allocator, 1);
     defer compressionPool.deinit(allocator);
     var unpacker = try Unpacker.initWithCompressionPool(allocator, compressionPool);
     defer unpacker.deinit(allocator);

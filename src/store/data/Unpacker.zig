@@ -3,7 +3,8 @@ const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 const Packer = @import("Packer.zig");
 const areNumbersSame = Packer.areNumbersSame;
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 const Io = std.Io;
 
 const UnpackError = error{
@@ -18,9 +19,9 @@ const UnpackError = error{
 const Self = @This();
 // TODO: get rid of collecting garbage
 garbage: std.ArrayList([]u8) = .empty,
-compressionPool: *CompressionPool,
+compressionPool: *DecompressionPool,
 
-pub fn initWithCompressionPool(allocator: std.mem.Allocator, compressionPool: *CompressionPool) !*Self {
+pub fn initWithCompressionPool(allocator: std.mem.Allocator, compressionPool: *DecompressionPool) !*Self {
     const s = try allocator.create(Self);
     s.* = .{ .compressionPool = compressionPool };
     return s;

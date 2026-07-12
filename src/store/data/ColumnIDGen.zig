@@ -4,7 +4,8 @@ const Io = std.Io;
 
 const encoding = @import("encoding");
 const fs = @import("../../fs.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const ColumnIDGen = @This();
 
@@ -79,7 +80,7 @@ pub fn encode(self: *ColumnIDGen, io: Io, compressionPool: *CompressionPool, all
     return compressionPool.compressAuto(io, dst, tmpBuf[0..enc.offset]);
 }
 
-pub fn decodeFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, path: []const u8) !*ColumnIDGen {
+pub fn decodeFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: anytype, path: []const u8) !*ColumnIDGen {
     const columnKeysContent = try fs.readAll(io, alloc, path);
     defer alloc.free(columnKeysContent);
     const columnIDGen: *ColumnIDGen = blk: {
@@ -92,7 +93,7 @@ pub fn decodeFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: 
     return columnIDGen;
 }
 
-pub fn decodeWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, src: []const u8) !*ColumnIDGen {
+pub fn decodeWithCompressionPool(io: Io, alloc: Allocator, compressionPool: anytype, src: []const u8) !*ColumnIDGen {
     const size = try encoding.getFrameContentSize(src);
 
     const buf = try alloc.alloc(u8, size);

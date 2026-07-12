@@ -25,7 +25,8 @@ const BlockReader = @import("../data/BlockReader.zig");
 const Unpacker = @import("../data/Unpacker.zig");
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const Consts = @import("../../Consts.zig");
 
@@ -36,14 +37,14 @@ pub fn mergeData(
     io: Io,
     alloc: Allocator,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
-    compressionPool: *CompressionPool,
+    decompressionPool: anytype,
     writer: *TableWriter,
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const Stop,
 ) !TableHeader {
     defer writer.close(io);
 
-    var merger = try StreamMerger.init(io, alloc, timestampsEncoders, compressionPool, readers);
+    var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, readers);
     defer merger.deinit(alloc);
 
     const blockWriter = try BlockWriter.init(alloc);
@@ -95,13 +96,13 @@ pub const StreamMerger = struct {
 
     /// init creates a StreamMerger instance from the readers
     /// be aware it mutates readers list inside
-    pub fn init(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, compressionPool: *CompressionPool, readers: *std.ArrayList(*BlockReader)) !StreamMerger {
+    pub fn init(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, decompressionPool: anytype, readers: *std.ArrayList(*BlockReader)) !StreamMerger {
         // TODO: collect metrics and experiment with flat array on 1-3 elements
 
         // TODO: experiment with Loser tree intead of heap:
         // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
 
-        const unpacker = try Unpacker.initWithCompressionPool(alloc, compressionPool);
+        const unpacker = try Unpacker.initWithCompressionPool(alloc, decompressionPool);
         errdefer unpacker.deinit(alloc);
         const decoder = try ValuesDecoder.init(alloc);
         errdefer decoder.deinit();

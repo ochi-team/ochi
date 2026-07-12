@@ -18,7 +18,8 @@ const Unpacker = @import("../data/Unpacker.zig");
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TableReader = @import("../data/TableReader.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const Line = @import("../lines.zig").Line;
 const msgKey = @import("../lines.zig").msgKey;
@@ -68,7 +69,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 refCounter: std.atomic.Value(u32),
 
 // TODO: investigate how we could make a checksum and validate it on opening a table
-pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool: *CompressionPool) !std.ArrayList(*Table) {
+pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, decompressionPool: anytype) !std.ArrayList(*Table) {
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
@@ -105,7 +106,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool
         // don't clean tablePath, Table owns it
         const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
         errdefer parentAlloc.free(tablePath);
-        const table = try Table.open(io, parentAlloc, tablePath, compressionPool);
+        const table = try Table.open(io, parentAlloc, tablePath, decompressionPool);
         tables.appendAssumeCapacity(table);
     }
 
@@ -115,14 +116,14 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool
     return tables;
 }
 
-pub fn open(io: Io, alloc: Allocator, path: []const u8, compressionPool: *CompressionPool) !*Table {
+pub fn open(io: Io, alloc: Allocator, path: []const u8, decompressionPool: anytype) !*Table {
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
     const header = try TableHeader.readFile(io, alloc, path);
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
-    var columnIDGen = try ColumnIDGen.decodeFileWithCompressionPool(io, alloc, compressionPool, pathWriter.buffered());
+    var columnIDGen = try ColumnIDGen.decodeFileWithCompressionPool(io, alloc, decompressionPool, pathWriter.buffered());
     errdefer columnIDGen.deinit(alloc);
     pathWriter.end = 0;
 
@@ -143,7 +144,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8, compressionPool: *Compre
     pathWriter.end = 0;
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     if (metaindexContent.len > 0) {
-        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, compressionPool, metaindexContent);
+        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, decompressionPool, metaindexContent);
     }
     errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
@@ -273,7 +274,7 @@ pub fn close(self: *Table, io: Io) void {
     self.alloc.destroy(self);
 }
 
-pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, compressionPool: *CompressionPool) !*Table {
+pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, decompressionPool: anytype) !*Table {
     std.debug.assert(memTable.size() == memTable.tableHeader.compressedSize);
 
     // TODO: move ownership of the original meta index to the table, not only the buffers,
@@ -281,14 +282,14 @@ pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, compressionPool: *
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     const metaIndexBuf = memTable.metaIndexBuf.items;
     if (metaIndexBuf.len > 0) {
-        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, compressionPool, metaIndexBuf);
+        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, decompressionPool, metaIndexBuf);
     }
     errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
     // TODO: avoid decoding column ids, we can simply assign what we have from the stream writer
     const columnIDGen = blk: {
         if (memTable.columnKeysBuf.items.len > 0) {
-            break :blk try ColumnIDGen.decodeWithCompressionPool(io, alloc, compressionPool, memTable.columnKeysBuf.items);
+            break :blk try ColumnIDGen.decodeWithCompressionPool(io, alloc, decompressionPool, memTable.columnKeysBuf.items);
         } else {
             break :blk try ColumnIDGen.init(alloc);
         }
@@ -445,10 +446,10 @@ fn readBuf(dst: []u8, src: []const u8, offset: u64) !usize {
     return n;
 }
 
-pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, compressionPool: *CompressionPool, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
+pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, decompressionPool: anytype, dst: *std.ArrayList(Line), sids: []SID, query: Query) !void {
     // TODO: assert sids are sorted
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
-        return self.queryLinesAllBlocks(io, alloc, timestampsEncoders, compressionPool, dst, query);
+        return self.queryLinesAllBlocks(io, alloc, timestampsEncoders, decompressionPool, dst, query);
     }
 
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -491,7 +492,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *T
         defer alloc.free(indexBuffer);
         n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
         std.debug.assert(indexBuffer.len == n);
-        try BlockHeader.decodeIndexWindow(io, alloc, compressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
+        try BlockHeader.decodeIndexWindow(io, alloc, decompressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
 
         var blockHeadersToRead = blockHeaders.items;
         while (blockHeadersToRead.len > 0) {
@@ -507,7 +508,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *T
                     continue;
                 }
 
-                try self.queryBlock(io, alloc, timestampsEncoders, compressionPool, dst, blockHeader, query);
+                try self.queryBlock(io, alloc, timestampsEncoders, decompressionPool, dst, blockHeader, query);
             }
 
             if (blockHeadersToRead.len == 0) {
@@ -527,7 +528,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *T
     }
 }
 
-fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, compressionPool: *CompressionPool, dst: *std.ArrayList(Line), query: Query) !void {
+fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, decompressionPool: anytype, dst: *std.ArrayList(Line), query: Query) !void {
     for (self.indexBlockHeaders) |indexBlockHeader| {
         if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
             continue;
@@ -539,14 +540,14 @@ fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, timestampsEncoder
         defer alloc.free(indexBuffer);
         const n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
         std.debug.assert(indexBuffer.len == n);
-        try BlockHeader.decodeIndexWindow(io, alloc, compressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
+        try BlockHeader.decodeIndexWindow(io, alloc, decompressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
 
         for (blockHeaders.items) |blockHeader| {
             if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
                 continue;
             }
 
-            try self.queryBlock(io, alloc, timestampsEncoders, compressionPool, dst, blockHeader, query);
+            try self.queryBlock(io, alloc, timestampsEncoders, decompressionPool, dst, blockHeader, query);
         }
     }
 }
@@ -556,7 +557,7 @@ fn queryBlock(
     io: Io,
     alloc: Allocator,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
-    compressionPool: *CompressionPool,
+    decompressionPool: anytype,
     dst: *std.ArrayList(Line),
     blockHeader: BlockHeader,
     query: Query,
@@ -584,14 +585,14 @@ fn queryBlock(
         colIdx.putAssumeCapacity(colID, entry.value_ptr.*);
     }
 
-    const tableReader: *TableReader = try .init(io, alloc, self, compressionPool);
+    const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
     defer tableReader.deinit(alloc);
 
     var blockData = BlockData.initEmpty();
     defer blockData.deinit(alloc);
     try blockData.readFrom(io, alloc, &blockHeader, tableReader);
 
-    const unpacker = try Unpacker.initWithCompressionPool(alloc, compressionPool);
+    const unpacker = try Unpacker.initWithCompressionPool(alloc, decompressionPool);
     defer unpacker.deinit(alloc);
     const decoder = try ValuesDecoder.init(alloc);
     defer decoder.deinit();

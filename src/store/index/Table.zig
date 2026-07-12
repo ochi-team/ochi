@@ -13,7 +13,8 @@ const DiskTable = @import("DiskTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const MemBlock = @import("MemBlock.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const catalog = @import("../table/catalog.zig");
 
@@ -50,7 +51,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // then readers can retain it
 refCounter: std.atomic.Value(u32),
 
-pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool: *CompressionPool) !std.ArrayList(*Table) {
+pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, decompressionPool: anytype) !std.ArrayList(*Table) {
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
@@ -89,7 +90,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool
         // don't clean tablePath, Table owns it
         const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
         errdefer parentAlloc.free(tablePath);
-        const table = try Table.open(io, parentAlloc, tablePath, compressionPool);
+        const table = try Table.open(io, parentAlloc, tablePath, decompressionPool);
         tables.appendAssumeCapacity(table);
     }
 
@@ -99,11 +100,11 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool
     return tables;
 }
 
-pub fn open(io: Io, alloc: Allocator, path: []const u8, compressionPool: *CompressionPool) !*Table {
+pub fn open(io: Io, alloc: Allocator, path: []const u8, decompressionPool: anytype) !*Table {
     var parsedTableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer parsedTableHeader.deinit(alloc);
 
-    const decodedMetaindex = try MetaIndex.readFileWithCompressionPool(io, alloc, compressionPool, path, parsedTableHeader.blocksCount);
+    const decodedMetaindex = try MetaIndex.readFileWithCompressionPool(io, alloc, decompressionPool, path, parsedTableHeader.blocksCount);
     errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
@@ -183,7 +184,7 @@ pub fn close(self: *Table, io: Io) void {
     self.alloc.destroy(self);
 }
 
-pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, compressionPool: *CompressionPool) !*Table {
+pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, decompressionPool: anytype) !*Table {
     var decodedMetaindex: MetaIndex.DecodedMetaIndex = .{
         .records = &.{},
         .compressedSize = 0,
@@ -195,7 +196,7 @@ pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, compressionPool: *
         decodedMetaindex = try MetaIndex.decodeDecompressWithCompressionPool(
             io,
             alloc,
-            compressionPool,
+            decompressionPool,
             memTable.metaindexBuf.items,
             memTable.tableHeader.blocksCount,
         );

@@ -4,7 +4,7 @@ const Io = std.Io;
 
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
 
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
 // guess based number, might be changed on the practical data

@@ -4,7 +4,7 @@ const Io = std.Io;
 const Dir = Io.Dir;
 
 const encoding = @import("encoding");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
 
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");

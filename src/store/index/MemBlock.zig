@@ -8,7 +8,8 @@ const MemOrder = @import("../../stds/sort.zig").MemOrder;
 const strings = @import("../../stds/strings.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 const Io = std.Io;
 
 const EntriesBlock = @import("EntriesBlock.zig");
@@ -376,7 +377,7 @@ pub fn decode(
     self: *MemBlock,
     io: Io,
     alloc: Allocator,
-    compressionPool: *CompressionPool,
+    decompressionPool: anytype,
     entriesBlock: *EntriesBlock,
     firstItem: []const u8,
     prefix: []const u8,
@@ -406,7 +407,7 @@ pub fn decode(
     const size = try encoding.getFrameContentSize(entriesBlock.lensBuf.items);
     const decompressedLensBuf = try alloc.alloc(u8, size);
     defer alloc.free(decompressedLensBuf);
-    var n = try compressionPool.decompress(io, decompressedLensBuf, entriesBlock.lensBuf.items);
+    var n = try decompressionPool.decompress(io, decompressedLensBuf, entriesBlock.lensBuf.items);
 
     // decode prefix lens
     const decodedLens = try alloc.alloc(u64, itemsCount - 1);
@@ -446,7 +447,7 @@ pub fn decode(
     const decompressedItemsSize = try encoding.getFrameContentSize(entriesBlock.entriesBuf.items);
     const decompressedItemsBuf = try alloc.alloc(u8, decompressedItemsSize);
     defer alloc.free(decompressedItemsBuf);
-    n = try compressionPool.decompress(io, decompressedItemsBuf, entriesBlock.entriesBuf.items);
+    n = try decompressionPool.decompress(io, decompressedItemsBuf, entriesBlock.entriesBuf.items);
 
     try self.memEntries.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);

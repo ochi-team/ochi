@@ -7,7 +7,8 @@ const TableWriter = @import("TableWriter.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const Self = @This();
 
@@ -81,7 +82,7 @@ pub fn decode(buf: []const u8) Self {
 pub fn readIndexBlockHeaders(
     io: Io,
     allocator: Allocator,
-    compressionPool: *CompressionPool,
+    compressionPool: anytype,
     compressed: []const u8,
 ) ![]Self {
     const decompressedSize = try encoding.getFrameContentSize(compressed);

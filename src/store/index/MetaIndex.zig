@@ -8,7 +8,8 @@ const Decoder = encoding.Decoder;
 const Encoder = encoding.Encoder;
 
 const filenames = @import("../../filenames.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const MetaIndex = @This();
 
@@ -68,7 +69,7 @@ pub fn decode(self: *MetaIndex, alloc: Allocator, buf: []u8) !usize {
     return dec.offset;
 }
 
-pub fn readFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn readFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: anytype, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
     var fba = std.heap.stackFallback(256, alloc);
     const fbaAlloc = fba.get();
 
@@ -91,7 +92,7 @@ pub fn readFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *C
     return decodedMetaindex;
 }
 
-pub fn decodeDecompressWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, compressed: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn decodeDecompressWithCompressionPool(io: Io, alloc: Allocator, compressionPool: anytype, compressed: []const u8, blocksCount: u64) !DecodedMetaIndex {
     const metaindexBufSize = try encoding.getFrameContentSize(compressed);
     const metaindexBuf = try alloc.alloc(u8, metaindexBufSize);
     defer alloc.free(metaindexBuf);

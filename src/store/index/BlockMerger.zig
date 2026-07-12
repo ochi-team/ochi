@@ -26,7 +26,7 @@ const IndexKind = @import("Index.zig").IndexKind;
 const TagRecordsMerger = @import("TagRecordsMerger.zig");
 const MemTable = @import("MemTable.zig");
 const Table = @import("Table.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
 
 const Heap = @import("../../stds/heap.zig").Heap;
 

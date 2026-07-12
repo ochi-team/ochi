@@ -19,7 +19,8 @@ const EntriesBlock = @import("EntriesBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockMerger = @import("BlockMerger.zig");
 const Table = @import("Table.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 
 const MemTable = @This();
 
@@ -47,6 +48,16 @@ pub fn empty(alloc: Allocator) !*MemTable {
 
 // TODO: log mem tables buffers size on init
 pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock, compressionPool: *CompressionPool) !*MemTable {
+    return initWithPools(io, alloc, blocks, compressionPool, compressionPool);
+}
+
+pub fn initWithPools(
+    io: Io,
+    alloc: Allocator,
+    blocks: []*MemBlock,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*MemTable {
     var movedBlocks: usize = 0;
     errdefer {
         for (blocks[movedBlocks..]) |block| block.deinit(alloc);
@@ -75,7 +86,7 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock, compressionPool: *Com
 
     for (0..blocks.len) |i| {
         movedBlocks = i + 1;
-        const reader = try BlockReader.initFromMovedMemBlock(alloc, blocks[i], compressionPool);
+        const reader = try BlockReader.initFromMovedMemBlock(alloc, blocks[i], decompressionPool);
         readers.appendAssumeCapacity(reader);
     }
 
@@ -86,13 +97,23 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock, compressionPool: *Com
 }
 
 pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*Table, compressionPool: *CompressionPool) !*MemTable {
+    return mergeMemTablesWithPools(io, alloc, memTables, compressionPool, compressionPool);
+}
+
+pub fn mergeMemTablesWithPools(
+    io: Io,
+    alloc: Allocator,
+    memTables: []*Table,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     defer {
         for (readers.items) |r| r.deinit(alloc);
         readers.deinit(alloc);
     }
     for (memTables) |table| {
-        const reader = try BlockReader.initFromMemTable(io, alloc, table, compressionPool);
+        const reader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);
         readers.appendAssumeCapacity(reader);
     }
     const t = try empty(alloc);

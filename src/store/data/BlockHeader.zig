@@ -11,7 +11,8 @@ const BlockData = @import("BlockData.zig").BlockData;
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
-const CompressionPool = @import("../CompressionPool.zig");
+const CompressionPool = @import("../CompressionPool.zig").CompressionPool;
+const DecompressionPool = @import("../CompressionPool.zig").DecompressionPool;
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 
 pub const TimestampsHeader = struct {
@@ -168,7 +169,7 @@ pub fn decodeFew(
 pub fn decodeIndexWindow(
     io: Io,
     alloc: Allocator,
-    compressionPool: *CompressionPool,
+    compressionPool: anytype,
     dst: *std.ArrayList(BlockHeader),
     src: []const u8,
     index: IndexBlockHeader,
