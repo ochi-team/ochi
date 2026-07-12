@@ -3,11 +3,13 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 
+const Logger = @import("logging");
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 const Encoder = encoding.Encoder;
 
 const filenames = @import("../../filenames.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const MetaIndex = @This();
 
@@ -67,7 +69,13 @@ pub fn decode(self: *MetaIndex, alloc: Allocator, buf: []u8) !usize {
     return dec.offset;
 }
 
-pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn readFile(
+    io: Io,
+    alloc: Allocator,
+    decompressionPool: *DecompressionPool,
+    path: []const u8,
+    blocksCount: u64,
+) !DecodedMetaIndex {
     var fba = std.heap.stackFallback(256, alloc);
     const fbaAlloc = fba.get();
 
@@ -85,16 +93,30 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !D
     // TODO: why does .limited(metaindexStat.size) not work above?
     std.debug.assert(metaindexStat.size == metaindexCompressed.len);
 
-    const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);
+    const decodedMetaindex = try MetaIndex.decodeDecompress(
+        io,
+        alloc,
+        decompressionPool,
+        metaindexCompressed,
+        blocksCount,
+    );
     std.debug.assert(decodedMetaindex.compressedSize == metaindexStat.size);
     return decodedMetaindex;
 }
 
-pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn decodeDecompress(
+    io: Io,
+    alloc: Allocator,
+    decompressionPool: *DecompressionPool,
+    compressed: []const u8,
+    blocksCount: u64,
+) !DecodedMetaIndex {
     const metaindexBufSize = try encoding.getFrameContentSize(compressed);
+    Logger.log(.debug, "decompressing index.metaindex buffer", .{ .size = metaindexBufSize });
+
     const metaindexBuf = try alloc.alloc(u8, metaindexBufSize);
     defer alloc.free(metaindexBuf);
-    const metaindexLen = try encoding.decompress(metaindexBuf, compressed);
+    const metaindexLen = try decompressionPool.decompress(io, metaindexBuf, compressed);
 
     var records = try std.ArrayList(MetaIndex).initCapacity(alloc, @intCast(blocksCount));
     errdefer {
@@ -172,10 +194,16 @@ test "MetaIndex decodeDecompress roundtrip" {
     const compressedBound = try encoding.compressBound(uncompressed.items.len);
     const compressed = try alloc.alloc(u8, compressedBound);
     defer alloc.free(compressed);
-    const compressedLen = try encoding.compressAuto(compressed, uncompressed.items);
+    const cctx = try encoding.createCCtx();
+    defer encoding.freeCCtx(cctx);
+    const compressedLen = try encoding.compressAuto(cctx, compressed, uncompressed.items);
 
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     const decoded = try MetaIndex.decodeDecompress(
+        std.testing.io,
         alloc,
+        decompressionPool,
         compressed[0..compressedLen],
         rec1.blockHeadersCount + rec2.blockHeadersCount,
     );
@@ -228,7 +256,9 @@ test "MetaIndex roundtrip file read/write" {
     const compressedBound = try encoding.compressBound(uncompressed.items.len);
     const compressed = try alloc.alloc(u8, compressedBound);
     defer alloc.free(compressed);
-    const compressedLen = try encoding.compressAuto(compressed, uncompressed.items);
+    const cctx = try encoding.createCCtx();
+    defer encoding.freeCCtx(cctx);
+    const compressedLen = try encoding.compressAuto(cctx, compressed, uncompressed.items);
 
     const metaindexPath = try std.fs.path.join(alloc, &.{ tablePath, filenames.metaindex });
     defer alloc.free(metaindexPath);
@@ -238,9 +268,12 @@ test "MetaIndex roundtrip file read/write" {
     try file.writeStreamingAll(io, compressed[0..compressedLen]);
     try file.sync(io);
 
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     const decoded = try MetaIndex.readFile(
         io,
         alloc,
+        decompressionPool,
         tablePath,
         rec1.blockHeadersCount + rec2.blockHeadersCount,
     );

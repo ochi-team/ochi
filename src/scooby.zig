@@ -24,6 +24,7 @@ const ColumnHeader = @import("store/data/ColumnHeader.zig");
 const ColumnIDGen = @import("store/data/ColumnIDGen.zig");
 const IndexBlockHeader = @import("store/data/IndexBlockHeader.zig");
 const Unpacker = @import("store/data/Unpacker.zig");
+const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 
 /// Selects which physical table file and decoder scooby should use.
 /// These names are intentionally the command-line values accepted by
@@ -82,12 +83,12 @@ pub fn main(init: std.process.Init) !void {
         .metaindex => {
             const buf = try readHeaderSlice(io, allocator, args.data, filenames.metaindex, args.offset, args.size.?);
             defer allocator.free(buf);
-            try inspectMetaindex(allocator, buf);
+            try inspectMetaindex(io, allocator, buf);
         },
         .index => {
             const buf = try readHeaderSlice(io, allocator, args.data, filenames.index, args.offset, args.size.?);
             defer allocator.free(buf);
-            try inspectIndex(allocator, buf);
+            try inspectIndex(io, allocator, buf);
         },
         .columnsHeaderIndex => {
             const buf = try readHeaderSlice(io, allocator, args.data, filenames.columnsHeaderIndex, args.offset, args.size.?);
@@ -232,7 +233,9 @@ fn loadColumnIDGen(io: std.Io, allocator: std.mem.Allocator, tablePath: []const 
     const path = try std.fs.path.join(allocator, &.{ tablePath, filenames.columnKeys });
     defer allocator.free(path);
 
-    return ColumnIDGen.decodeFile(io, allocator, path);
+    const decompressionPool = try DecompressionPool.init(allocator, 1);
+    defer decompressionPool.deinit(allocator);
+    return ColumnIDGen.decodeFile(io, allocator, decompressionPool, path);
 }
 
 /// Maps a logical column id to the values/bloom shard number that stores it.
@@ -380,9 +383,11 @@ fn inspectColumnsHeaderIndex(allocator: std.mem.Allocator, buf: []const u8, keys
 /// Each record identifies one compressed block inside index. Its offset
 /// is the byte position in index; its size is the compressed byte length
 /// to pass back to scooby --header:index.
-fn inspectMetaindex(allocator: std.mem.Allocator, buf: []const u8) !void {
+fn inspectMetaindex(io: std.Io, allocator: std.mem.Allocator, buf: []const u8) !void {
     std.debug.print("metaindex bytes={d}\n", .{buf.len});
-    const headers = try IndexBlockHeader.readIndexBlockHeaders(allocator, buf);
+    const compressionPool = try DecompressionPool.init(allocator, 1);
+    defer compressionPool.deinit(allocator);
+    const headers = try IndexBlockHeader.readIndexBlockHeaders(io, allocator, compressionPool, buf);
     defer allocator.free(headers);
 
     std.debug.print("indexBlockHeaders len={d}\n", .{headers.len});
@@ -399,12 +404,14 @@ fn inspectMetaindex(allocator: std.mem.Allocator, buf: []const u8) !void {
 /// a metaindex record. The final consumed/remaining line is the quick
 /// integrity check: remaining=0 means the decompressed block was fully parsed as
 /// block headers.
-fn inspectIndex(allocator: std.mem.Allocator, buf: []const u8) !void {
+fn inspectIndex(io: std.Io, allocator: std.mem.Allocator, buf: []const u8) !void {
     std.debug.print("index bytes={d}\n", .{buf.len});
     const decompressedSize = try encoding.getFrameContentSize(buf);
     const decompressed = try allocator.alloc(u8, decompressedSize);
     defer allocator.free(decompressed);
-    const n = try encoding.decompress(decompressed, buf);
+    const compressionPool = try DecompressionPool.init(allocator, 1);
+    defer compressionPool.deinit(allocator);
+    const n = try compressionPool.decompress(io, decompressed, buf);
     const src = decompressed[0..n];
 
     var off: usize = 0;
@@ -690,10 +697,12 @@ fn inspectDictValues(
     );
     defer allocator.free(packedValues);
 
-    var unpacker = try Unpacker.init(allocator);
+    const decompressionPool = try DecompressionPool.init(allocator, 1);
+    defer decompressionPool.deinit(allocator);
+    var unpacker = try Unpacker.init(allocator, decompressionPool);
     defer unpacker.deinit(allocator);
 
-    const values = unpacker.unpackValues(allocator, packedValues, rowCount) catch |err| {
+    const values = unpacker.unpackValues(io, allocator, packedValues, rowCount) catch |err| {
         std.debug.print("  values validation unpack_error={s} rows={d}\n", .{ @errorName(err), rowCount });
         return;
     };

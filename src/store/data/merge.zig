@@ -25,23 +25,26 @@ const BlockReader = @import("../data/BlockReader.zig");
 const Unpacker = @import("../data/Unpacker.zig");
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Consts = @import("../../Consts.zig");
 
 const maxBlockSize = Consts.maxBlockSize;
 
-// TODO: rename this crap
+// TODO: rename this crap, wtf is "data"
 pub fn mergeData(
     io: Io,
     alloc: Allocator,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    decompressionPool: *DecompressionPool,
     writer: *TableWriter,
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const Stop,
 ) !TableHeader {
     defer writer.close(io);
 
-    var merger = try StreamMerger.init(io, alloc, timestampsEncoders, readers);
+    var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, readers);
     defer merger.deinit(alloc);
 
     const blockWriter = try BlockWriter.init(alloc);
@@ -93,13 +96,19 @@ pub const StreamMerger = struct {
 
     /// init creates a StreamMerger instance from the readers
     /// be aware it mutates readers list inside
-    pub fn init(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, readers: *std.ArrayList(*BlockReader)) !StreamMerger {
+    pub fn init(
+        io: Io,
+        alloc: Allocator,
+        timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+        decompressionPool: *DecompressionPool,
+        readers: *std.ArrayList(*BlockReader),
+    ) !StreamMerger {
         // TODO: collect metrics and experiment with flat array on 1-3 elements
 
         // TODO: experiment with Loser tree intead of heap:
         // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
 
-        const unpacker = try Unpacker.init(alloc);
+        const unpacker = try Unpacker.init(alloc, decompressionPool);
         errdefer unpacker.deinit(alloc);
         const decoder = try ValuesDecoder.init(alloc);
         errdefer decoder.deinit();
@@ -415,6 +424,10 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     const io = std.testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     const sid = SID{ .tenantID = 1, .id = 42 };
 
     const expected = [_]struct {
@@ -431,10 +444,10 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
     const mergedMemTable = blk: {
         const leftMemTable = try MemTable.init(alloc);
-        const leftTable = try Table.fromMem(alloc, leftMemTable);
+        const leftTable = try Table.fromMem(io, alloc, leftMemTable, decompressionPool);
         defer leftTable.close(io);
         const rightMemTable = try MemTable.init(alloc);
-        const rightTable = try Table.fromMem(alloc, rightMemTable);
+        const rightTable = try Table.fromMem(io, alloc, rightMemTable, decompressionPool);
         defer rightTable.close(io);
 
         var leftFields1 = [_]Field{.{ .key = fieldKey, .value = "left-1" }};
@@ -451,20 +464,20 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
             .{ .timestampNs = 4, .fields = rightFields2[0..] },
         };
 
-        try leftMemTable.addLinesForSid(io, alloc, timestampsEncoders, sid, leftLines[0..]);
-        try rightMemTable.addLinesForSid(io, alloc, timestampsEncoders, sid, rightLines[0..]);
+        try leftMemTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, leftLines[0..]);
+        try rightMemTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, rightLines[0..]);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
 
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftTable));
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(io, alloc, leftTable, decompressionPool));
+        try readers.append(alloc, try BlockReader.initFromMemTable(io, alloc, rightTable, decompressionPool));
 
         const dstMemTable = try MemTable.init(alloc);
         errdefer dstMemTable.deinit(alloc);
-        const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders);
+        const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders, compressionPool);
         defer streamWriter.deinit(alloc);
-        dstMemTable.tableHeader = try mergeData(io, alloc, timestampsEncoders, streamWriter, &readers, null);
+        dstMemTable.tableHeader = try mergeData(io, alloc, timestampsEncoders, decompressionPool, streamWriter, &readers, null);
 
         try std.testing.expect(dstMemTable.indexBuf.items.len > 0);
         try std.testing.expect(dstMemTable.metaIndexBuf.items.len > 0);
@@ -474,13 +487,13 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
         break :blk dstMemTable;
     };
-    const mergedTable = try Table.fromMem(alloc, mergedMemTable);
+    const mergedTable = try Table.fromMem(io, alloc, mergedMemTable, decompressionPool);
     defer mergedTable.close(io);
 
-    var mergedReader = try BlockReader.initFromMemTable(alloc, mergedTable);
+    var mergedReader = try BlockReader.initFromMemTable(io, alloc, mergedTable, decompressionPool);
     defer mergedReader.deinit(alloc);
 
-    const unpacker = try Unpacker.init(alloc);
+    const unpacker = try Unpacker.init(alloc, decompressionPool);
     defer unpacker.deinit(alloc);
     const decoder = try ValuesDecoder.init(alloc);
     defer decoder.deinit();
@@ -517,10 +530,14 @@ test "mergeData flushes maxLines for one stream" {
     const io = std.testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     const sid = SID{ .tenantID = 1, .id = 42 };
 
     const srcMemTable = try MemTable.init(alloc);
-    const srcTable = try Table.fromMem(alloc, srcMemTable);
+    const srcTable = try Table.fromMem(io, alloc, srcMemTable, decompressionPool);
     defer srcTable.close(io);
 
     var lines: [Block.maxLines]Line = undefined;
@@ -531,21 +548,34 @@ test "mergeData flushes maxLines for one stream" {
         };
     }
 
-    try srcMemTable.addLinesForSid(io, alloc, timestampsEncoders, sid, &lines);
+    try srcMemTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, &lines);
 
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 1);
     defer readers.deinit(alloc);
-    try readers.append(alloc, try BlockReader.initFromMemTable(alloc, srcTable));
+    try readers.append(alloc, try BlockReader.initFromMemTable(io, alloc, srcTable, decompressionPool));
 
     const dstMemTable = try MemTable.init(alloc);
-    const dstTable = try Table.fromMem(alloc, dstMemTable);
+    const dstTable = try Table.fromMem(io, alloc, dstMemTable, decompressionPool);
     defer dstTable.close(io);
 
-    const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders);
+    const streamWriter = try TableWriter.initMem(
+        alloc,
+        dstMemTable,
+        timestampsEncoders,
+        compressionPool,
+    );
     defer streamWriter.deinit(alloc);
-    dstMemTable.tableHeader = try mergeData(io, alloc, timestampsEncoders, streamWriter, &readers, null);
+    dstMemTable.tableHeader = try mergeData(
+        io,
+        alloc,
+        timestampsEncoders,
+        decompressionPool,
+        streamWriter,
+        &readers,
+        null,
+    );
 
-    var mergedReader = try BlockReader.initFromMemTable(alloc, dstTable);
+    var mergedReader = try BlockReader.initFromMemTable(io, alloc, dstTable, decompressionPool);
     defer mergedReader.deinit(alloc);
 
     var actualRows: usize = 0;
@@ -561,6 +591,10 @@ test "mergeData multi tenant" {
     const io = std.testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -602,21 +636,41 @@ test "mergeData multi tenant" {
             .fields = fields[0..],
         }};
 
-        try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .tenantID = tenantID, .id = 1 }, lines[0..]);
+        try memTable.addLinesForSid(
+            io,
+            alloc,
+            timestampsEncoders,
+            compressionPool,
+            .{ .tenantID = tenantID, .id = 1 },
+            lines[0..],
+        );
         try memTable.storeToDisk(io, alloc, tablePath);
 
-        const table = try Table.open(io, alloc, tablePath);
+        const table = try Table.open(io, alloc, tablePath, decompressionPool);
         try tables.append(alloc, table);
-        const reader = try BlockReader.initFromDiskTable(io, alloc, table);
+        const reader = try BlockReader.initFromDiskTable(io, alloc, table, decompressionPool);
         try readers.append(alloc, reader);
     }
 
     const dstMemTable = try MemTable.init(alloc);
     defer dstMemTable.deinit(alloc);
 
-    const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders);
+    const streamWriter = try TableWriter.initMem(
+        alloc,
+        dstMemTable,
+        timestampsEncoders,
+        compressionPool,
+    );
     defer streamWriter.deinit(alloc);
-    dstMemTable.tableHeader = try mergeData(io, alloc, timestampsEncoders, streamWriter, &readers, null);
+    dstMemTable.tableHeader = try mergeData(
+        io,
+        alloc,
+        timestampsEncoders,
+        decompressionPool,
+        streamWriter,
+        &readers,
+        null,
+    );
 
     try std.testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);
 }

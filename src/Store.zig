@@ -27,6 +27,8 @@ const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
 const Runtime = @import("Runtime.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
+const CompressionPool = @import("store/compression/CompressionPool.zig");
+const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 
 pub const Store = @This();
 
@@ -44,6 +46,8 @@ lruPartition: ?*Partition = null,
 streamCache: *Cache(void),
 memBlocksCache: *Cache(*MemBlock),
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+compressionPool: *CompressionPool,
+decompressionPool: *DecompressionPool,
 
 meter: StoreMeter,
 
@@ -84,6 +88,12 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, runtime.cpus);
     errdefer timestampsEncoders.deinit(alloc);
 
+    const compressionPool = try CompressionPool.init(alloc, runtime.cpus);
+    errdefer compressionPool.deinit(alloc);
+
+    const decompressionPool = try DecompressionPool.init(alloc, runtime.cpus);
+    errdefer decompressionPool.deinit(alloc);
+
     const meter = StoreMeter.init();
 
     var store: Store = .{
@@ -92,6 +102,8 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .streamCache = streamCache,
         .memBlocksCache = memBlocksCache,
         .timestampsEncoders = timestampsEncoders,
+        .compressionPool = compressionPool,
+        .decompressionPool = decompressionPool,
         .meter = meter,
         .runtime = runtime,
         .conf = conf,
@@ -151,6 +163,8 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     self.memBlocksCache.deinit();
     self.g.cancel(io);
     self.timestampsEncoders.deinit(allocator);
+    self.compressionPool.deinit(allocator);
+    self.decompressionPool.deinit(allocator);
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -569,7 +583,19 @@ fn openPartition(
     try self.partitions.ensureUnusedCapacity(alloc, 1);
     try self.pathsBuf.ensureUnusedCapacity(alloc, 3);
 
-    const partition = try Partition.open(io, alloc, path, indexPath, dataPath, day, self.streamCache, self.runtime, self.timestampsEncoders);
+    const partition = try Partition.open(
+        io,
+        alloc,
+        path,
+        indexPath,
+        dataPath,
+        day,
+        self.streamCache,
+        self.runtime,
+        self.timestampsEncoders,
+        self.compressionPool,
+        self.decompressionPool,
+    );
 
     self.pathsBuf.appendAssumeCapacity(path);
     self.pathsBuf.appendAssumeCapacity(indexPath);

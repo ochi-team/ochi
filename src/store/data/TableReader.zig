@@ -8,6 +8,8 @@ const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
 const Table = @import("../data/Table.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 // TODO: check maybe i don't need allocator.create
 pub const TableReader = @This();
@@ -27,18 +29,18 @@ colIdx: *std.AutoHashMap(u16, u16),
 ownsBuffers: bool = false,
 ownsMetadata: bool = false,
 
-pub fn init(io: Io, allocator: Allocator, table: *const Table) !*TableReader {
+pub fn init(io: Io, allocator: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*TableReader {
     switch (table.inner) {
-        .mem => return initFromMem(allocator, table),
-        .disk => return initFromDisk(io, allocator, table),
+        .mem => return initFromMem(io, allocator, table, decompressionPool),
+        .disk => return initFromDisk(io, allocator, table, decompressionPool),
     }
 }
 
-pub fn initFromMem(allocator: Allocator, table: *const Table) !*TableReader {
+pub fn initFromMem(io: Io, allocator: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*TableReader {
     const memTable = table.inner.mem;
     // TODO: this could be taken from a stream writer theoretically
     const columnIDGen = if (memTable.columnKeysBuf.items.len > 0)
-        try ColumnIDGen.decode(allocator, memTable.columnKeysBuf.items)
+        try ColumnIDGen.decode(io, allocator, decompressionPool, memTable.columnKeysBuf.items)
     else
         try ColumnIDGen.init(allocator);
     errdefer columnIDGen.deinit(allocator);
@@ -68,7 +70,7 @@ pub fn initFromMem(allocator: Allocator, table: *const Table) !*TableReader {
 // - manage different fadvise for different descriptors
 // also benchmark against mmap since it requires only reading
 // - based on it reimplement totalBytesRead
-fn initFromDisk(io: Io, alloc: Allocator, table: *const Table) !*TableReader {
+fn initFromDisk(io: Io, alloc: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*TableReader {
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
@@ -90,7 +92,7 @@ fn initFromDisk(io: Io, alloc: Allocator, table: *const Table) !*TableReader {
 
     var columnIDGen: *ColumnIDGen = undefined;
     if (columnsKeysBuf.len > 0) {
-        columnIDGen = try ColumnIDGen.decode(alloc, columnsKeysBuf);
+        columnIDGen = try ColumnIDGen.decode(io, alloc, decompressionPool, columnsKeysBuf);
     } else {
         columnIDGen = try ColumnIDGen.init(alloc);
     }

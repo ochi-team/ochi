@@ -26,6 +26,8 @@ const IndexKind = @import("Index.zig").IndexKind;
 const TagRecordsMerger = @import("TagRecordsMerger.zig");
 const MemTable = @import("MemTable.zig");
 const Table = @import("Table.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Heap = @import("../../stds/heap.zig").Heap;
 
@@ -322,6 +324,7 @@ fn createTestReaders(
     alloc: Allocator,
     blocksData: []const []const []const u8,
     maxIndexBlockSize: u32,
+    decompressionPool: *DecompressionPool,
 ) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, blocksData.len);
     errdefer {
@@ -332,7 +335,7 @@ fn createTestReaders(
     }
     for (blocksData) |blockData| {
         const block = try createTestMemBlock(alloc, blockData, maxIndexBlockSize);
-        const reader = try BlockReader.initFromMovedMemBlock(alloc, block);
+        const reader = try BlockReader.initFromMovedMemBlock(alloc, block, decompressionPool);
         errdefer reader.deinit(alloc);
         try readers.append(alloc, reader);
     }
@@ -389,6 +392,10 @@ test "BlockMerger.mergeBasicScenarios" {
     const alloc = testing.allocator;
     const io = testing.io;
     const maxIndexBlockSize = 1024;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const Case = struct {
         blocks: []const []const []const u8,
@@ -419,13 +426,13 @@ test "BlockMerger.mergeBasicScenarios" {
     };
 
     for (cases) |case| {
-        var readers = try createTestReaders(alloc, case.blocks, maxIndexBlockSize);
+        var readers = try createTestReaders(alloc, case.blocks, maxIndexBlockSize, decompressionPool);
         defer cleanupReaders(alloc, &readers);
 
         var memTable = try createTestMemTable(alloc);
         defer memTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(memTable);
+        var writer = BlockWriter.initFromMemTable(memTable, compressionPool);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -442,6 +449,10 @@ test "BlockMerger.merge block overflow" {
     const alloc = testing.allocator;
     const io = testing.io;
     const maxIndexBlockSize = 1024;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const Case = struct {
         entryCount: usize,
@@ -481,13 +492,13 @@ test "BlockMerger.merge block overflow" {
             largeEntries[mid..],
         };
 
-        var readers = try createTestReaders(alloc, &blocks, maxIndexBlockSize);
+        var readers = try createTestReaders(alloc, &blocks, maxIndexBlockSize, decompressionPool);
         defer cleanupReaders(alloc, &readers);
 
         var memTable = try createTestMemTable(alloc);
         defer memTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(memTable);
+        var writer = BlockWriter.initFromMemTable(memTable, compressionPool);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -504,6 +515,10 @@ test "BlockMerger.merge oversized entries" {
     const alloc = testing.allocator;
     const io = testing.io;
     const maxIndexBlockSize = 1024;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const OversizedCase = struct {
         index: usize,
@@ -531,13 +546,13 @@ test "BlockMerger.merge oversized entries" {
         mixedEntries.items[mid..],
     };
 
-    var readers = try createTestReaders(alloc, &mixedBlocks, maxIndexBlockSize);
+    var readers = try createTestReaders(alloc, &mixedBlocks, maxIndexBlockSize, decompressionPool);
     defer cleanupReaders(alloc, &readers);
 
     var memTable = try createTestMemTable(alloc);
     defer memTable.deinit(alloc);
 
-    var writer = BlockWriter.initFromMemTable(memTable);
+    var writer = BlockWriter.initFromMemTable(memTable, compressionPool);
     defer writer.deinit(alloc);
 
     var merger = try BlockMerger.init(io, alloc, &readers);
@@ -551,6 +566,10 @@ test "BlockMerger.merge oversized entries" {
 test "BlockMerger.merge tag records" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const tag = Field{ .key = "env", .value = "prod" };
 
@@ -714,13 +733,13 @@ test "BlockMerger.merge tag records" {
             alloc.free(entries);
         }
 
-        var readers = try createTestReaders(alloc, &.{entries}, case.maxIndexBlockSize);
+        var readers = try createTestReaders(alloc, &.{entries}, case.maxIndexBlockSize, decompressionPool);
         defer cleanupReaders(alloc, &readers);
 
         var memTable = try createTestMemTable(alloc);
         defer memTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(memTable);
+        var writer = BlockWriter.initFromMemTable(memTable, compressionPool);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -737,16 +756,20 @@ test "BlockMerger.merge stopped flag" {
     const alloc = testing.allocator;
     const io = testing.io;
     const maxIndexBlockSize = 1024;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     var stopped = Stop{};
     stopped.stop(io);
-    var readers = try createTestReaders(alloc, &.{&.{ "a", "b", "c" }}, maxIndexBlockSize);
+    var readers = try createTestReaders(alloc, &.{&.{ "a", "b", "c" }}, maxIndexBlockSize, decompressionPool);
     defer cleanupReaders(alloc, &readers);
 
     var memTable = try createTestMemTable(alloc);
     defer memTable.deinit(alloc);
 
-    var writer = BlockWriter.initFromMemTable(memTable);
+    var writer = BlockWriter.initFromMemTable(memTable, compressionPool);
     defer writer.deinit(alloc);
 
     var merger = try BlockMerger.init(io, alloc, &readers);
@@ -760,6 +783,10 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     const alloc = testing.allocator;
     const io = testing.io;
     const maxIndexBlockSize = 1024;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const leftItems = [_][]const u8{ "a1", "c1", "e1" };
     const rightItems = [_][]const u8{ "b1", "d1", "f1" };
@@ -772,24 +799,24 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
     // memTable is defined out of the block to ensure the source blocks are gone
     const memTable = blk: {
         var leftBlocks = [_]*MemBlock{leftBlock};
-        const leftMemTable = try MemTable.init(io, alloc, &leftBlocks);
-        var leftTable = try Table.fromMem(alloc, leftMemTable);
+        const leftMemTable = try MemTable.init(io, alloc, &leftBlocks, compressionPool, decompressionPool);
+        var leftTable = try Table.fromMem(io, alloc, leftMemTable, decompressionPool);
         defer leftTable.close(io);
 
         var rightBlocks = [_]*MemBlock{rightBlock};
-        const rightMemTable = try MemTable.init(io, alloc, &rightBlocks);
-        var rightTable = try Table.fromMem(alloc, rightMemTable);
+        const rightMemTable = try MemTable.init(io, alloc, &rightBlocks, compressionPool, decompressionPool);
+        var rightTable = try Table.fromMem(io, alloc, rightMemTable, decompressionPool);
         defer rightTable.close(io);
 
         var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 2);
         defer readers.deinit(alloc);
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, leftTable));
-        try readers.append(alloc, try BlockReader.initFromMemTable(alloc, rightTable));
+        try readers.append(alloc, try BlockReader.initFromMemTable(io, alloc, leftTable, decompressionPool));
+        try readers.append(alloc, try BlockReader.initFromMemTable(io, alloc, rightTable, decompressionPool));
 
         var mergedMemTable = try MemTable.empty(alloc);
         errdefer mergedMemTable.deinit(alloc);
 
-        var writer = BlockWriter.initFromMemTable(mergedMemTable);
+        var writer = BlockWriter.initFromMemTable(mergedMemTable, compressionPool);
         defer writer.deinit(alloc);
 
         var merger = try BlockMerger.init(io, alloc, &readers);
@@ -807,10 +834,10 @@ test "BlockMerger.merge keeps merged memtable buffers alive after merger deinit"
 
         break :blk mergedMemTable;
     };
-    var table = try Table.fromMem(alloc, memTable);
+    var table = try Table.fromMem(io, alloc, memTable, decompressionPool);
     defer table.close(io);
 
-    var mergedReader = try BlockReader.initFromMemTable(alloc, table);
+    var mergedReader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);
     defer mergedReader.deinit(alloc);
 
     var expectedI: usize = 0;

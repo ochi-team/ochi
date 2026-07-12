@@ -13,6 +13,8 @@ const DiskTable = @import("DiskTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const MemBlock = @import("MemBlock.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const catalog = @import("../table/catalog.zig");
 
@@ -49,7 +51,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // then readers can retain it
 refCounter: std.atomic.Value(u32),
 
-pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
+pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, decompressionPool: *DecompressionPool) !std.ArrayList(*Table) {
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
@@ -88,7 +90,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         // don't clean tablePath, Table owns it
         const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
         errdefer parentAlloc.free(tablePath);
-        const table = try Table.open(io, parentAlloc, tablePath);
+        const table = try Table.open(io, parentAlloc, tablePath, decompressionPool);
         tables.appendAssumeCapacity(table);
     }
 
@@ -98,11 +100,11 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     return tables;
 }
 
-pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
+pub fn open(io: Io, alloc: Allocator, path: []const u8, decompressionPool: *DecompressionPool) !*Table {
     var parsedTableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer parsedTableHeader.deinit(alloc);
 
-    const decodedMetaindex = try MetaIndex.readFile(io, alloc, path, parsedTableHeader.blocksCount);
+    const decodedMetaindex = try MetaIndex.readFile(io, alloc, decompressionPool, path, parsedTableHeader.blocksCount);
     errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
@@ -182,7 +184,7 @@ pub fn close(self: *Table, io: Io) void {
     self.alloc.destroy(self);
 }
 
-pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
+pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, decompressionPool: *DecompressionPool) !*Table {
     var decodedMetaindex: MetaIndex.DecodedMetaIndex = .{
         .records = &.{},
         .compressedSize = 0,
@@ -192,7 +194,9 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     // then we can remove this dumb condition
     if (!builtin.is_test or memTable.metaindexBuf.items.len > 0) {
         decodedMetaindex = try MetaIndex.decodeDecompress(
+            io,
             alloc,
+            decompressionPool,
             memTable.metaindexBuf.items,
             memTable.tableHeader.blocksCount,
         );
@@ -318,11 +322,14 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
 }
 
 fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+
     const items = [_][]const u8{ "alpha", "beta", "omega" };
     var block = try createTestMemBlock(alloc, &items);
     defer block.deinit(alloc);
 
-    var writer = try BlockWriter.initFromDiskTable(io, tablePath, true);
+    var writer = try BlockWriter.initFromDiskTable(io, tablePath, true, compressionPool);
     defer writer.deinit(alloc);
     try writer.writeBlock(io, alloc, block);
     try writer.close(io, alloc);
@@ -350,15 +357,17 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
 
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     try createTestTableDir(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
-    const table1 = try Table.open(io, alloc, table1Path);
+    const table1 = try Table.open(io, alloc, table1Path, decompressionPool);
     table1.release(io);
     try Dir.accessAbsolute(io, tablePath, .{});
 
     const table2Path = try alloc.dupe(u8, tablePath);
-    const table2 = try Table.open(io, alloc, table2Path);
+    const table2 = try Table.open(io, alloc, table2Path, decompressionPool);
     table2.toRemove.store(true, .release);
     table2.release(io);
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablePath, .{}));
@@ -379,9 +388,11 @@ test "release fromMem does not affect filesystem path" {
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, sentinelPath, .{}));
     try Dir.createDirAbsolute(io, sentinelPath, .default_dir);
 
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     const memTable = try MemTable.empty(alloc);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
     // eve if set we expect it to keep the created path when disk == null,
     // so close must not delete it
     table.toRemove.store(true, .release);
@@ -398,14 +409,18 @@ test "release fromMem does not affect filesystem path" {
 test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const items = [_][]const u8{ "item-c", "item-a", "item-b" };
     const block = try createTestMemBlock(alloc, &items);
 
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(io, alloc, blocks[0..]);
+    const memTable = try MemTable.init(io, alloc, blocks[0..], compressionPool, decompressionPool);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
     defer table.release(io);
 
     try testing.expect(table.inner == .mem);
@@ -423,7 +438,9 @@ test "fromMem creates proper table from mem table with populated data" {
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, buf[0..i]);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
+        std.testing.io,
         alloc,
+        decompressionPool,
         memTable.metaindexBuf.items,
         memTable.tableHeader.blocksCount,
     );
@@ -447,10 +464,12 @@ test "open reads table from disk" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     defer alloc.free(tablePath);
 
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     try createTestTableDir(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
-    const table = try Table.open(io, alloc, tablePathOwned);
+    const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);
     defer table.release(io);
 
     try testing.expect(table.inner == .disk);
@@ -478,7 +497,9 @@ test "open reads table from disk" {
     try testing.expectEqualSlices(u8, expectedLens, buf[0..n]);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
+        io,
         alloc,
+        decompressionPool,
         expectedMetaindexCompressed,
         table.tableHeader().blocksCount,
     );
@@ -509,7 +530,9 @@ fn testOpenAllFreesCatalogTableNamesOnError(alloc: Allocator, io: Io) !void {
     defer alloc.free(tablesFilePath);
     try fs.writeBufferToFileAtomic(io, tablesFilePath, "[\"table-a\",\"table-b\"]", true);
 
-    const res = Table.openAll(io, alloc, rootPath);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+    const res = Table.openAll(io, alloc, rootPath, decompressionPool);
     try testing.expectError(error.TableDoesNotExist, res);
 }
 
@@ -541,5 +564,7 @@ test "openAll frees spilled catalog table names on error" {
 
     try fs.writeBufferToFileAtomic(io, tablesFilePath, content.items, true);
 
-    try testing.expectError(error.TableDoesNotExist, Table.openAll(io, alloc, rootPath));
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+    try testing.expectError(error.TableDoesNotExist, Table.openAll(io, alloc, rootPath, decompressionPool));
 }

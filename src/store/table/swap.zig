@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const merge = @import("merge.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 pub fn Swapper(
     comptime Self: type,
@@ -80,26 +82,28 @@ const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
 const IndexRecorder = @import("../index/IndexRecorder.zig");
 
-fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
+fn createSizedMemTable(alloc: Allocator, decompressionPool: *DecompressionPool, size: usize) !*Table {
     const memTable = try MemTable.empty(alloc);
     errdefer memTable.deinit(alloc);
 
     try memTable.entriesBuf.resize(alloc, size);
 
-    return Table.fromMem(alloc, memTable);
+    return Table.fromMem(testing.io, alloc, memTable, decompressionPool);
 }
 
 test "removeTables removes exact pointers" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
-    const one = try createSizedMemTable(alloc, 100);
+    const one = try createSizedMemTable(alloc, decompressionPool, 100);
     defer one.close(io);
 
-    const two = try createSizedMemTable(alloc, 100);
+    const two = try createSizedMemTable(alloc, decompressionPool, 100);
     defer two.close(io);
 
-    const three = try createSizedMemTable(alloc, 100);
+    const three = try createSizedMemTable(alloc, decompressionPool, 100);
     defer three.close(io);
 
     const swapper = Swapper(IndexRecorder, Table);

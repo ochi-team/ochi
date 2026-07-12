@@ -4,6 +4,8 @@ const Io = std.Io;
 
 const Table = @import("../index/Table.zig");
 const MemTable = @import("../index/MemTable.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
 // guess based number, might be changed on the practical data
@@ -233,6 +235,8 @@ const MemBlock = @import("../index/MemBlock.zig");
 test "selectTablesToMerge moves selected window to the beginning and returns edge" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const Case = struct {
         sizes: []const u16,
@@ -284,7 +288,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
         for (case.sizes) |size| {
             const table = try MemTable.empty(alloc);
             try table.entriesBuf.resize(alloc, size);
-            const t = try Table.fromMem(alloc, table);
+            const t = try Table.fromMem(io, alloc, table, decompressionPool);
             tables.appendAssumeCapacity(t);
         }
 
@@ -308,15 +312,17 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
     }
 }
 
-fn createSizedMemTable(alloc: Allocator, size: usize) !*Table {
+fn createSizedMemTable(alloc: Allocator, decompressionPool: *DecompressionPool, size: usize) !*Table {
     const memTable = try MemTable.empty(alloc);
     try memTable.entriesBuf.resize(alloc, size);
-    return Table.fromMem(alloc, memTable);
+    return Table.fromMem(testing.io, alloc, memTable, decompressionPool);
 }
 
 test "filterTablesToMerge marks only selected tables inMerge" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
     const sizes = [_]u16{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 };
     var tables = try std.ArrayList(*Table).initCapacity(alloc, sizes.len);
@@ -325,7 +331,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
         tables.deinit(alloc);
     }
     for (sizes) |size| {
-        const table = try createSizedMemTable(alloc, size);
+        const table = try createSizedMemTable(alloc, decompressionPool, size);
         tables.appendAssumeCapacity(table);
     }
 
@@ -343,15 +349,21 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     }
 }
 
-fn createDiskTableFromItems(io: Io, alloc: Allocator, tablePath: []const u8, items: []const []const u8) !*Table {
-    const memTable = try createMemTableFromItems(io, alloc, items);
+fn createDiskTableFromItems(io: Io, alloc: Allocator, tablePath: []const u8, items: []const []const u8, compressionPool: *CompressionPool) !*Table {
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const memTable = try createMemTableFromItems(io, alloc, items, compressionPool);
     defer memTable.close(io);
     const mem = memTable.inner.mem;
     try mem.storeToDisk(io, alloc, tablePath);
-    return Table.open(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, decompressionPool);
 }
 
-fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) !*Table {
+fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8, compressionPool: *CompressionPool) !*Table {
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
     var block = try MemBlock.init(alloc, .{
@@ -363,17 +375,21 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
         try testing.expect(ok);
     }
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(io, alloc, &blocks);
-    return Table.fromMem(alloc, memTable);
+    const memTable = try MemTable.init(io, alloc, &blocks, compressionPool, decompressionPool);
+    return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
 test "getDestinationTableKind rules" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
-    const small1 = try createSizedMemTable(alloc, 256);
+    const small1 = try createSizedMemTable(alloc, decompressionPool, 256);
     defer small1.close(io);
-    const small2 = try createSizedMemTable(alloc, 512);
+    const small2 = try createSizedMemTable(alloc, decompressionPool, 512);
     defer small2.close(io);
 
     var bothSmall = [_]*Table{ small1, small2 };
@@ -383,7 +399,7 @@ test "getDestinationTableKind rules" {
     try testing.expectEqual(TableKind.mem, merger.getDestinationTableKind(bothSmall[0..], false, maxInmemoryTableSize));
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(bothSmall[0..], true, maxInmemoryTableSize));
 
-    const large = try createSizedMemTable(alloc, @intCast(maxInmemoryTableSize + 1));
+    const large = try createSizedMemTable(alloc, decompressionPool, @intCast(maxInmemoryTableSize + 1));
     defer large.close(io);
     var onlyLarge = [_]*Table{large};
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(onlyLarge[0..], false, maxInmemoryTableSize));
@@ -394,7 +410,7 @@ test "getDestinationTableKind rules" {
     defer alloc.free(rootPath);
     const diskPath = try std.fs.path.join(alloc, &.{ rootPath, "disk-tbl" });
     errdefer alloc.free(diskPath);
-    const disk = try createDiskTableFromItems(io, alloc, diskPath, &.{ "a", "b", "c" });
+    const disk = try createDiskTableFromItems(io, alloc, diskPath, &.{ "a", "b", "c" }, compressionPool);
     defer disk.close(io);
     var mixed = [_]*Table{ small1, disk };
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(mixed[0..], false, maxInmemoryTableSize));

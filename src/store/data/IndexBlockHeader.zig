@@ -7,6 +7,8 @@ const TableWriter = @import("TableWriter.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Self = @This();
 
@@ -37,7 +39,7 @@ pub fn writeIndexBlock(
     const compressBound = try encoding.compressBound(indexBlockBuf.items.len);
     const compressed = try streamWriter.indexDst.allocSlice(allocator, compressBound);
 
-    const offset = try encoding.compressAuto(compressed, indexBlockBuf.items);
+    const offset = try streamWriter.compressionPool.compressAuto(io, compressed, indexBlockBuf.items);
     const len = streamWriter.indexDst.len();
     try streamWriter.indexDst.appendAllocated(io, compressed, offset);
 
@@ -78,7 +80,9 @@ pub fn decode(buf: []const u8) Self {
 }
 
 pub fn readIndexBlockHeaders(
+    io: Io,
     allocator: Allocator,
+    decompressionPool: *DecompressionPool,
     compressed: []const u8,
 ) ![]Self {
     const decompressedSize = try encoding.getFrameContentSize(compressed);
@@ -86,10 +90,7 @@ pub fn readIndexBlockHeaders(
     var decompressedBuf = try allocator.alloc(u8, decompressedSize);
     defer allocator.free(decompressedBuf);
 
-    const n = try encoding.decompress(
-        decompressedBuf,
-        compressed,
-    );
+    const n = try decompressionPool.decompress(io, decompressedBuf, compressed);
     const decompressed = decompressedBuf[0..n];
 
     std.debug.assert(decompressed.len % encodeExpectedSize == 0);

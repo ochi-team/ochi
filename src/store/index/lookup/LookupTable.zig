@@ -10,6 +10,8 @@ const BlockHeader = @import("../BlockHeader.zig");
 const MetaIndex = @import("../MetaIndex.zig");
 const EntriesBlock = @import("../EntriesBlock.zig");
 const strings = @import("../../../stds/strings.zig");
+const CompressionPool = @import("../../compression/CompressionPool.zig");
+const DecompressionPool = @import("../../compression/DecompressionPool.zig");
 
 const LookupTable = @This();
 
@@ -26,6 +28,7 @@ fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
 
 table: *Table,
 memBlocksCache: *Cache(*MemBlock),
+decompressionPool: *DecompressionPool,
 longAllocator: Allocator,
 maxMemBlockSize: u32,
 // blockHeadersOwned always keeps the base allocation we must free.
@@ -49,10 +52,11 @@ memBlockPin: ?Cache(*MemBlock).Pinned,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock)) LookupTable {
+pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock), decompressionPool: *DecompressionPool) LookupTable {
     return .{
         .table = table,
         .memBlocksCache = cache,
+        .decompressionPool = decompressionPool,
         .longAllocator = longAlloc,
         .maxMemBlockSize = maxMemBlockSize,
 
@@ -309,7 +313,7 @@ fn readBlockHeaders(self: *LookupTable, io: Io, alloc: Allocator, metaIndex: Met
     self.indexBuf.clearRetainingCapacity();
     const indexSize = try encoding.getFrameContentSize(self.compressedIndexBuf.items);
     try self.indexBuf.ensureUnusedCapacity(alloc, indexSize);
-    const n = try encoding.decompress(self.indexBuf.unusedCapacitySlice(), self.compressedIndexBuf.items);
+    const n = try self.decompressionPool.decompress(io, self.indexBuf.unusedCapacitySlice(), self.compressedIndexBuf.items);
     self.indexBuf.items.len = n;
 
     return BlockHeader.decodeMany(alloc, self.indexBuf.items, metaIndex.blockHeadersCount);
@@ -367,7 +371,9 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
     self.entriesBlock.lensBuf.items.len = blockHeader.lensBlockSize;
 
     try memBlock.decode(
+        io,
         alloc,
+        self.decompressionPool,
         &self.entriesBlock,
         blockHeader.firstEntry,
         blockHeader.prefix,

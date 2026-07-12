@@ -21,6 +21,8 @@ const MemTable = @import("store/data/MemTable.zig");
 const BlockWriter = @import("store/data/BlockWriter.zig");
 const TableWriter = @import("store/data/TableWriter.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
+const CompressionPool = @import("store/compression/CompressionPool.zig");
+const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
@@ -64,6 +66,7 @@ const SidCheckpoint = struct {
     }
 };
 
+// TODO: move datashard to its file
 pub const DataShard = struct {
     // state
 
@@ -166,7 +169,15 @@ pub const DataShard = struct {
 
     // flush sends all the data to a mem Table,
     // is not a thread safe, assumes the shard is locked
-    fn flush(self: *DataShard, io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, sem: *Io.Semaphore) !?*Table {
+    fn flush(
+        self: *DataShard,
+        io: Io,
+        alloc: Allocator,
+        timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+        compressionPool: *CompressionPool,
+        decompressionPool: *DecompressionPool,
+        sem: *Io.Semaphore,
+    ) !?*Table {
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -191,6 +202,7 @@ pub const DataShard = struct {
             io,
             alloc,
             timestampsEncoders,
+            compressionPool,
             sids[0..self.checkpointsLen],
             linesByCheckpoint[0..self.checkpointsLen],
         ) catch |err| {
@@ -202,7 +214,7 @@ pub const DataShard = struct {
         sem.post(io);
 
         memTable.flushAtUs = getFlushTime(io);
-        return Table.fromMem(alloc, memTable);
+        return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 };
 
@@ -231,8 +243,18 @@ mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+compressionPool: *CompressionPool,
+decompressionPool: *DecompressionPool,
 
-pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*DataRecorder {
+pub fn init(
+    io: Io,
+    alloc: Allocator,
+    path: []const u8,
+    runtime: *Runtime,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
@@ -257,7 +279,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, times
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    var tables = try Table.openAll(io, alloc, path);
+    var tables = try Table.openAll(io, alloc, path, decompressionPool);
     errdefer {
         for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
@@ -284,6 +306,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, times
         .path = path,
         .runtime = runtime,
         .timestampsEncoders = timestampsEncoders,
+        .compressionPool = compressionPool,
+        .decompressionPool = decompressionPool,
     };
 
     return t;
@@ -489,7 +513,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
 }
 
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) !void {
-    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, &self.memMergeSem);
+    const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
         self.mxTables.lockUncancelable(io);
         defer self.mxTables.unlock(io);
@@ -618,7 +642,7 @@ fn mergeTables(
         const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
 
-        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
+        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.decompressionPool);
         errdefer newTable.release(io);
 
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
@@ -626,7 +650,7 @@ fn mergeTables(
         return;
     }
 
-    var readers = try openTableReaders(io, alloc, tables);
+    var readers = try openTableReaders(io, alloc, tables, self.decompressionPool);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
@@ -640,7 +664,7 @@ fn mergeTables(
         if (tableKind == .mem) {
             const memTable = try MemTable.init(alloc);
             newMemTable = memTable;
-            break :blk try TableWriter.initMem(alloc, memTable, self.timestampsEncoders);
+            break :blk try TableWriter.initMem(alloc, memTable, self.timestampsEncoders, self.compressionPool);
         } else {
             var sourceCompressedSizeTotal: u64 = 0;
             for (tables) |table| {
@@ -650,12 +674,12 @@ fn mergeTables(
                 self.runtime.maxMem,
                 self.runtime.cacheSize,
             );
-            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders);
+            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders, self.compressionPool);
         }
     };
     defer streamWriter.deinit(alloc);
 
-    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, streamWriter, &readers, stopped) catch |err| {
+    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, self.decompressionPool, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
@@ -684,7 +708,7 @@ fn mergeTables(
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.decompressionPool);
     errdefer openTable.release(io);
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
@@ -743,7 +767,7 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
     for (tables.items) |table| {
-        try table.queryLines(io, alloc, self.timestampsEncoders, &linesDst, sids, query);
+        try table.queryLines(io, alloc, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
     }
 
     return linesDst;
@@ -755,23 +779,24 @@ fn openCreatedTable(
     tablePath: []const u8,
     tables: []*Table,
     maybeMemTable: ?*MemTable,
+    decompressionPool: *DecompressionPool,
 ) !*Table {
     if (maybeMemTable) |memTable| {
         memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
-        return Table.fromMem(alloc, memTable);
+        return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 
-    return Table.open(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, decompressionPool);
 }
 
-fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table, decompressionPool: *DecompressionPool) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
     errdefer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        const reader = try BlockReader.init(io, alloc, table);
+        const reader = try BlockReader.init(io, alloc, table, decompressionPool);
         readers.appendAssumeCapacity(reader);
     }
 
@@ -828,12 +853,14 @@ fn stableLine(ts: u64, variant: usize) Line {
     };
 }
 
-fn createMemTableFromLines(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, sid: SID, lines: []Line) !*Table {
+fn createMemTableFromLines(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, compressionPool: *CompressionPool, sid: SID, lines: []Line) !*Table {
     const memTable = try MemTable.init(alloc);
     errdefer memTable.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines);
-    return Table.fromMem(alloc, memTable);
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines);
+    return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
 fn countMemLinesInRecorder(recorder: *DataRecorder) u64 {
@@ -1048,8 +1075,12 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
 
         const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
         defer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
 
-        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
         defer recorder.deinit(io, alloc);
 
         switch (case.trigger) {
@@ -1131,8 +1162,12 @@ test "DataShard.flush limits block columns per tenant" {
 
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
 
     // tenant 1
@@ -1149,11 +1184,13 @@ test "DataShard.flush limits block columns per tenant" {
         io,
         alloc,
         timestampsEncoders,
+        recorder.compressionPool,
+        recorder.decompressionPool,
         &recorder.memMergeSem,
     )).?;
     defer table.close(io);
 
-    const blockReader = try BlockReader.initFromMemTable(alloc, table);
+    const blockReader = try BlockReader.initFromMemTable(io, alloc, table, recorder.decompressionPool);
     defer blockReader.deinit(alloc);
 
     var seenTenants = [_]bool{ false, false };
@@ -1185,8 +1222,12 @@ test "mergeTables force single mem table creates disk table" {
 
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
 
     var lines = [_]Line{
@@ -1194,7 +1235,7 @@ test "mergeTables force single mem table creates disk table" {
         stableLine(2, 1),
         stableLine(3, 2),
     };
-    const table = try createMemTableFromLines(io, alloc, timestampsEncoders, stableSID(1), lines[0..]);
+    const table = try createMemTableFromLines(io, alloc, timestampsEncoders, recorder.compressionPool, stableSID(1), lines[0..]);
     errdefer table.close(io);
 
     try recorder.memTables.append(alloc, table);
@@ -1223,8 +1264,12 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
         defer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
 
-        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
@@ -1246,8 +1291,12 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
         defer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
 
-        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders);
+        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
         defer reopened.deinit(io, alloc);
 
         try testing.expect(reopened.diskTables.items.len > 0);

@@ -14,6 +14,8 @@ const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 const ColumnDict = @import("ColumnDict.zig");
 const ColumnType = ColumnHeader.ColumnType;
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const EncodingType = TimestampsEncoder.EncodingType;
 const TableReader = @import("TableReader.zig");
 
@@ -332,12 +334,16 @@ test "BlockData readFrom populates columnsData and invariantColumns" {
         sample.lines[2],
     };
 
+    const compressionPool = try CompressionPool.init(allocator, 1);
+    defer compressionPool.deinit(allocator);
+    const decompressionPool = try DecompressionPool.init(allocator, 1);
+    defer decompressionPool.deinit(allocator);
     const memTable = try MemTable.init(allocator);
-    const table = try Table.fromMem(allocator, memTable);
+    const table = try Table.fromMem(io, allocator, memTable, decompressionPool);
     defer table.close(io);
-    try memTable.addLinesForSid(io, allocator, timestampsEncoders, .{ .id = 1, .tenantID = 1111 }, lines[0..]);
+    try memTable.addLinesForSid(io, allocator, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1111 }, lines[0..]);
 
-    const blockReader = try BlockReader.initFromMemTable(allocator, table);
+    const blockReader = try BlockReader.initFromMemTable(io, allocator, table, decompressionPool);
     defer blockReader.deinit(allocator);
 
     // Read first block, which should populate BlockData.

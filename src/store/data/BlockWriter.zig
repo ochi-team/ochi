@@ -223,7 +223,7 @@ fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter
 fn writeIndexBlockHeaders(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter) !void {
     const bound = try encoding.compressBound(self.metaIndexBuf.items.len);
     const slice = try tableWriter.metaindexDst.allocSlice(allocator, bound);
-    const offset = try encoding.compressAuto(slice, self.metaIndexBuf.items);
+    const offset = try tableWriter.compressionPool.compressAuto(io, slice, self.metaIndexBuf.items);
 
     try tableWriter.metaindexDst.appendAllocated(io, slice, offset);
 }

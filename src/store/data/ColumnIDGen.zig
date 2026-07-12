@@ -4,6 +4,8 @@ const Io = std.Io;
 
 const encoding = @import("encoding");
 const fs = @import("../../fs.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const ColumnIDGen = @This();
 
@@ -55,7 +57,7 @@ pub fn bound(self: *ColumnIDGen) !usize {
 }
 
 // [10:len][keys]
-pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
+pub fn encode(self: *ColumnIDGen, io: Io, compressionPool: *CompressionPool, alloc: Allocator, dst: []u8) !usize {
     // TODO: consider interning strings to a list instead of collecting them from the map keys
 
     const keys = self.keyIDs.keys();
@@ -75,34 +77,34 @@ pub fn encode(self: *ColumnIDGen, alloc: Allocator, dst: []u8) !usize {
         enc.writeString(key);
     }
 
-    return encoding.compressAuto(dst, tmpBuf[0..enc.offset]);
+    return compressionPool.compressAuto(io, dst, tmpBuf[0..enc.offset]);
 }
 
-pub fn decodeFile(io: Io, alloc: Allocator, path: []const u8) !*ColumnIDGen {
+pub fn decodeFile(io: Io, alloc: Allocator, decompressionPool: *DecompressionPool, path: []const u8) !*ColumnIDGen {
     const columnKeysContent = try fs.readAll(io, alloc, path);
     defer alloc.free(columnKeysContent);
     const columnIDGen: *ColumnIDGen = blk: {
         if (columnKeysContent.len > 0) {
-            break :blk try ColumnIDGen.decode(alloc, columnKeysContent);
+            break :blk try decode(io, alloc, decompressionPool, columnKeysContent);
         } else {
-            break :blk try ColumnIDGen.init(alloc);
+            break :blk try init(alloc);
         }
     };
     return columnIDGen;
 }
 
-pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
+pub fn decode(io: Io, alloc: Allocator, decompressionPool: *DecompressionPool, src: []const u8) !*ColumnIDGen {
     const size = try encoding.getFrameContentSize(src);
 
     const buf = try alloc.alloc(u8, size);
     errdefer alloc.free(buf);
-    const offset = try encoding.decompress(buf, src);
+    const offset = try decompressionPool.decompress(io, buf, src);
 
     const genSize = encoding.Decoder.readVarIntFromBuf(buf);
     const keysBuf = buf[genSize.offset..offset];
     var dec = encoding.Decoder.init(keysBuf);
 
-    const gen = try ColumnIDGen.init(alloc);
+    const gen = try init(alloc);
     errdefer gen.deinit(alloc);
 
     try gen.keyIDs.ensureUnusedCapacity(alloc, @intCast(genSize.value));
@@ -141,7 +143,7 @@ pub fn decodeColumnIdxs(columnIDGen: *ColumnIDGen, alloc: Allocator, src: []cons
 
 test "ColumnIDGen" {
     const alloc = std.testing.allocator;
-    const gener = try ColumnIDGen.init(alloc);
+    const gener = try init(alloc);
     defer gener.deinit(alloc);
 
     const keys = &[_][]const u8{ "key1", "key2", "", "_--=" };
@@ -159,9 +161,13 @@ test "ColumnIDGen" {
     const encodeBound = try gener.bound();
     const encoded = try alloc.alloc(u8, encodeBound);
     defer alloc.free(encoded);
-    const offset = try gener.encode(alloc, encoded);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+    const offset = try gener.encode(std.testing.io, compressionPool, alloc, encoded);
 
-    const generDecoded = try ColumnIDGen.decode(alloc, encoded[0..offset]);
+    const generDecoded = try decode(std.testing.io, alloc, decompressionPool, encoded[0..offset]);
     defer generDecoded.deinit(alloc);
 
     try std.testing.expectEqual(gener.keyIDs.count(), generDecoded.keyIDs.count());

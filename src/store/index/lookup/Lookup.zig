@@ -12,6 +12,8 @@ const MemTable = @import("../MemTable.zig");
 const Table = @import("../Table.zig");
 const LookupTable = @import("LookupTable.zig");
 const TagRecordsParser = @import("../TagRecordsParser.zig");
+const CompressionPool = @import("../../compression/CompressionPool.zig");
+const DecompressionPool = @import("../../compression/DecompressionPool.zig");
 const Logger = @import("logging");
 
 const Lookup = @This();
@@ -43,7 +45,7 @@ pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexReco
     var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
     errdefer lookupTables.deinit(alloc);
     for (tables.items) |t| {
-        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache);
+        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool);
         lookupTables.appendAssumeCapacity(lt);
     }
 
@@ -214,7 +216,10 @@ fn nextBlock(self: *Lookup, io: Io, alloc: Allocator) !bool {
 
 const testing = std.testing;
 
-fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) !*Table {
+fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8, compressionPool: *CompressionPool) !*Table {
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
 
@@ -228,10 +233,10 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
     }
 
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(io, alloc, &blocks);
+    const memTable = try MemTable.init(io, alloc, &blocks, compressionPool, decompressionPool);
     errdefer memTable.deinit(alloc);
 
-    return Table.fromMem(alloc, memTable);
+    return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
 fn createMemTableFromItemsInBlocks(
@@ -239,7 +244,11 @@ fn createMemTableFromItemsInBlocks(
     alloc: Allocator,
     items: []const []const u8,
     entriesPerBlock: usize,
+    compressionPool: *CompressionPool,
 ) !*Table {
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
     std.debug.assert(entriesPerBlock > 0);
 
     var blocks = std.ArrayList(*MemBlock).empty;
@@ -269,11 +278,11 @@ fn createMemTableFromItemsInBlocks(
     }
 
     const movedBlocks = blocks.items;
-    const memTable = try MemTable.init(io, alloc, movedBlocks);
+    const memTable = try MemTable.init(io, alloc, movedBlocks, compressionPool, decompressionPool);
     errdefer memTable.deinit(alloc);
     blocks.items.len = 0;
 
-    return Table.fromMem(alloc, memTable);
+    return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
 fn createDiskTableFromItems(
@@ -282,15 +291,19 @@ fn createDiskTableFromItems(
     rootPath: []const u8,
     tableName: []const u8,
     items: []const []const u8,
+    compressionPool: *CompressionPool,
 ) !*Table {
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
     errdefer alloc.free(tablePath);
 
-    const memTable = try createMemTableFromItems(io, alloc, items);
+    const memTable = try createMemTableFromItems(io, alloc, items, compressionPool);
     defer memTable.close(io);
     try memTable.inner.mem.storeToDisk(io, alloc, tablePath);
 
-    return Table.open(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, decompressionPool);
 }
 
 test "Lookup.findFirstByPrefix returns null on empty recorder" {
@@ -305,7 +318,12 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -338,7 +356,12 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -370,7 +393,12 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -392,17 +420,17 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     };
 
     {
-        const table = try createMemTableFromItems(io, alloc, &tableAItems);
+        const table = try createMemTableFromItems(io, alloc, &tableAItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createMemTableFromItems(io, alloc, &tableBItems);
+        const table = try createMemTableFromItems(io, alloc, &tableBItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems);
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
@@ -460,7 +488,12 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -482,17 +515,17 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     };
 
     {
-        const table = try createMemTableFromItems(io, alloc, &tableAItems);
+        const table = try createMemTableFromItems(io, alloc, &tableAItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createMemTableFromItems(io, alloc, &tableBItems);
+        const table = try createMemTableFromItems(io, alloc, &tableBItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
     {
-        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems);
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-disk-table", &tableDiskItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
@@ -588,7 +621,12 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -599,7 +637,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         "tenant-a-stream-0003",
     };
     {
-        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-cache-disk-table", &tableDiskItems);
+        const table = try createDiskTableFromItems(io, alloc, rootPath, "lookup-cache-disk-table", &tableDiskItems, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.diskTables.append(alloc, table);
     }
@@ -677,7 +715,12 @@ test "Lookup.deinit after scan across multiple table blocks" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -696,7 +739,7 @@ test "Lookup.deinit after scan across multiple table blocks" {
     }
 
     {
-        const table = try createMemTableFromItemsInBlocks(io, alloc, items.items, 200);
+        const table = try createMemTableFromItemsInBlocks(io, alloc, items.items, 200, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }
@@ -728,7 +771,12 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.stopped.stop(io);
     try recorder.g.await(io);
@@ -751,7 +799,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     }
 
     {
-        const table = try createMemTableFromItems(io, alloc, items.items);
+        const table = try createMemTableFromItems(io, alloc, items.items, recorder.compressionPool);
         errdefer table.close(io);
         try recorder.memTables.append(alloc, table);
     }

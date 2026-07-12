@@ -10,6 +10,8 @@ const Unpacker = @import("Unpacker.zig");
 const ValuesDecoder = @import("ValuesDecoder.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const Table = @import("../data/Table.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const Logger = @import("logging");
 
 const tracy = @import("tracy");
@@ -74,7 +76,7 @@ pub fn initFromData(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEnc
         const colData = &data.columnsData.items[i];
         var col = &columns[i];
         col.key = colData.key;
-        col.values = try unpacker.unpackValues(alloc, colData.bloomValues, data.len);
+        col.values = try unpacker.unpackValues(io, alloc, colData.bloomValues, data.len);
         try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
     }
 
@@ -450,15 +452,19 @@ test "initFromLines and initFromData produce identical blocks" {
     for (cases) |case| {
         const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
         defer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
 
         const blockA = try Block.initFromLines(alloc, case.lines);
         defer blockA.deinit(alloc);
 
         const memTable = try MemTable.init(alloc);
-        const table = try Table.fromMem(alloc, memTable);
+        const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
         defer table.close(io);
 
-        const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders);
+        const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders, compressionPool);
         defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
@@ -477,7 +483,7 @@ test "initFromLines and initFromData produce identical blocks" {
         defer bd.deinit(alloc);
         try bd.readFrom(io, alloc, &bh, &sr);
 
-        const unpacker = try Unpacker.init(alloc);
+        const unpacker = try Unpacker.init(alloc, decompressionPool);
         const decoder = try ValuesDecoder.init(alloc);
 
         const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, unpacker, decoder);

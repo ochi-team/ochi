@@ -14,6 +14,8 @@ const MemTable = @import("MemTable.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockReader = @import("BlockReader.zig");
 const LookupTable = @import("lookup/LookupTable.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const flush = @import("../table/flush.zig");
 const merge = @import("../table/merge.zig");
@@ -73,8 +75,17 @@ indexCacheKeyVersion: std.atomic.Value(u64) = .init(0),
 mergeIdx: std.atomic.Value(u64),
 path: []const u8,
 runtime: *Runtime,
+compressionPool: *CompressionPool,
+decompressionPool: *DecompressionPool,
 
-pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*IndexRecorder {
+pub fn init(
+    io: Io,
+    alloc: Allocator,
+    path: []const u8,
+    runtime: *Runtime,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*IndexRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
 
@@ -92,7 +103,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    var tables = try Table.openAll(io, alloc, path);
+    var tables = try Table.openAll(io, alloc, path, decompressionPool);
     errdefer {
         for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
@@ -110,6 +121,8 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime) !*Ind
         .mergeIdx = .init(@intCast(Io.Timestamp.now(io, .real).nanoseconds)),
         .path = path,
         .runtime = runtime,
+        .compressionPool = compressionPool,
+        .decompressionPool = decompressionPool,
         .concurrency = concurrency,
         .diskMergeSem = .{
             .permits = @max(4, concurrency),
@@ -279,8 +292,8 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
         const head = tail[0..offset];
         tail = tail[offset..];
 
-        const memTable = try MemTable.init(io, alloc, head);
-        const t = try Table.fromMem(alloc, memTable);
+        const memTable = try MemTable.init(io, alloc, head, self.compressionPool, self.decompressionPool);
+        const t = try Table.fromMem(io, alloc, memTable, self.decompressionPool);
         memTables.appendAssumeCapacity(t);
     }
 
@@ -293,7 +306,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
     // it requires another way to handle mem tables semaphore,
     // but might reduce the load on merging small tables
     while (memTables.items.len > 1) {
-        try mergeMemTables(io, alloc, &memTables);
+        try self.mergeMemTables(io, alloc, &memTables);
 
         for (memTables.items) |table| {
             if (table.size >= maxSize) {
@@ -315,7 +328,7 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
 /// merges mem tables to a bigger size ones
 /// requires same Allocator that's used to create them,
 /// because it deinits the merged ones
-fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
+fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     // TODO: run merging job in parallel and benchmark whether it doesn't hurt general throughput
 
     // TODO: take a metric to understand if capacity is enough for regular case
@@ -346,11 +359,11 @@ fn mergeMemTables(io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !
         }
 
         // TODO: I don't need it, we already have merging from []*Table, replace it
-        const res = try MemTable.mergeMemTables(io, alloc, memToMerge.items);
+        const res = try MemTable.mergeMemTables(io, alloc, memToMerge.items, self.compressionPool, self.decompressionPool);
         memToMerge.clearRetainingCapacity();
 
         for (toMerge) |t| t.close(io);
-        const t = try Table.fromMem(alloc, res);
+        const t = try Table.fromMem(io, alloc, res, self.decompressionPool);
         try mergedTables.append(fbaAlloc, t);
     }
 
@@ -701,13 +714,13 @@ pub fn mergeTables(
     if (force and tables.len == 1 and tables[0].inner == .mem) {
         const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
-        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
+        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.decompressionPool);
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
     }
 
-    var readers = try openTableReaders(io, alloc, tables);
+    var readers = try openTableReaders(io, alloc, tables, self.decompressionPool);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
@@ -719,7 +732,7 @@ pub fn mergeTables(
     var blockWriter: BlockWriter = blk: {
         if (tableKind == .mem) {
             newMemTable = try MemTable.empty(alloc);
-            break :blk BlockWriter.initFromMemTable(newMemTable.?);
+            break :blk BlockWriter.initFromMemTable(newMemTable.?, self.compressionPool);
         } else {
             var sourceItemsCount: u64 = 0;
             for (tables) |table| {
@@ -727,7 +740,7 @@ pub fn mergeTables(
             }
             // TODO: test if we can record compressed size and make caching more reliable
             const fitsInCache = sourceItemsCount <= maxItemsPerCachedTable(self.runtime.maxMem, self.runtime.cacheSize);
-            break :blk try BlockWriter.initFromDiskTable(io, destinationTablePath, fitsInCache);
+            break :blk try BlockWriter.initFromDiskTable(io, destinationTablePath, fitsInCache, self.compressionPool);
         }
     };
     defer blockWriter.deinit(alloc);
@@ -768,7 +781,7 @@ pub fn mergeTables(
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.decompressionPool);
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
 }
@@ -780,7 +793,7 @@ fn maxItemsPerCachedTable(maxMem: u64, cacheSize: u64) u64 {
     return @max(restMem / (6 * blocksInMemTable), merge.minMemTableSize);
 }
 
-fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table, decompressionPool: *DecompressionPool) !std.ArrayList(*BlockReader) {
     // TODO: take a meter of average readers amount and put them on stack if small enough (<= 16)
     // same for data
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
@@ -790,10 +803,10 @@ fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*
     }
     for (tables) |table| {
         if (table.inner == .mem) {
-            const reader = try BlockReader.initFromMemTable(alloc, table);
+            const reader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);
             readers.appendAssumeCapacity(reader);
         } else if (table.inner == .disk) {
-            const reader = try BlockReader.initFromDiskTable(io, alloc, table);
+            const reader = try BlockReader.initFromDiskTable(io, alloc, table, decompressionPool);
             readers.appendAssumeCapacity(reader);
         } else {
             std.debug.panic("expected mem or disk table", .{});
@@ -809,18 +822,24 @@ fn openCreatedTable(
     tablePath: []const u8,
     tables: []*Table,
     maybeMemTable: ?*MemTable,
+    decompressionPool: *DecompressionPool,
 ) !*Table {
     if (maybeMemTable) |memTable| {
         memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
-        return Table.fromMem(alloc, memTable);
+        return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 
-    return Table.open(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, decompressionPool);
 }
 
 const testing = std.testing;
 
 fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) !*Table {
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
     var total: u32 = 0;
     for (items) |item| total += @intCast(item.len);
     var block = try MemBlock.init(alloc, .{
@@ -832,8 +851,8 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
         try testing.expect(ok);
     }
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(io, alloc, &blocks);
-    return Table.fromMem(alloc, memTable);
+    const memTable = try MemTable.init(io, alloc, &blocks, compressionPool, decompressionPool);
+    return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
 fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
@@ -868,7 +887,12 @@ test "flushMemEntries non-force respects flush deadline" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
 
     var block = try MemBlock.init(alloc, .{
@@ -908,7 +932,12 @@ test "mergeTables force single mem table creates disk table" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
@@ -936,7 +965,12 @@ test "IndexRecorder add and reopen preserves item count" {
         const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
         defer runtime.deinit(alloc);
 
-        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
+
+        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
@@ -956,7 +990,12 @@ test "IndexRecorder add and reopen preserves item count" {
         const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
         defer runtime.deinit(alloc);
 
-        const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
+
+        const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
         defer reopened.deinit(io, alloc);
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
@@ -1037,9 +1076,14 @@ test "IndexRecorder background flusher survives load" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     runtime.cpus = 4;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     recorder.maxMemBlockSize = 256;
     try recorder.start(io, alloc);
     defer recorder.stop(io, alloc) catch |err| {
@@ -1084,9 +1128,14 @@ test "IndexRecorder disk table merger survives large load" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     runtime.cpus = 4;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     recorder.maxMemBlockSize = 4 * 1024;
     try recorder.start(io, alloc);
     defer recorder.stop(io, alloc) catch |err| {
@@ -1148,9 +1197,14 @@ test "IndexRecorder flushForce skips oversized-only input without crash" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     runtime.cpus = 1;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = 64;
 
@@ -1183,7 +1237,12 @@ test "IndexRecorder reads free disk space from runtime" {
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     var batch = [_][]const u8{stableItems[1]};
 
     try recorder.add(io, alloc, &batch);
@@ -1214,9 +1273,14 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     runtime.cpus = 3;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
@@ -1257,9 +1321,14 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     runtime.cpus = 3;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     try testing.expectEqual(recorder.entries.shards.len, runtime.cpus);
 
     for (0..runtime.cpus) |_| {
@@ -1279,7 +1348,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     try recorder.stop(io, alloc);
     // after deinit we can't validate the blocks are empty, but can read the files
 
-    var tables = try Table.openAll(io, alloc, rootPath);
+    var tables = try Table.openAll(io, alloc, rootPath, decompressionPool);
     try testing.expectEqual(tables.items.len, 1);
     defer {
         for (tables.items) |table| table.release(io);
@@ -1289,7 +1358,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = LookupTable.init(alloc, flushedTable, Conf.getConf().app.maxIndexMemBlockSize, cache);
+    var lookup = LookupTable.init(alloc, flushedTable, Conf.getConf().app.maxIndexMemBlockSize, cache, decompressionPool);
     defer lookup.deinit(alloc);
 
     try lookup.seek(io, alloc, shortValue);
@@ -1324,9 +1393,14 @@ test "IndexRecorder large entries write to 3 shards" {
 
     const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
     defer runtime.deinit(alloc);
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
     runtime.cpus = 3;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
     defer recorder.stop(io, alloc) catch unreachable;
 

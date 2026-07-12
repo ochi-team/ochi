@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 
+const Logger = @import("logging");
+
 // a global tmp file counter in order to create unique file names suffixes
 var tmpFileNum = std.atomic.Value(u64).init(0);
 
@@ -104,6 +106,9 @@ pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
 
     const dst = try alloc.alloc(u8, size);
     errdefer alloc.free(dst);
+    Logger.log(.debug, "read full file", .{
+        .size = size,
+    });
 
     _ = try file.readPositionalAll(io, dst, 0);
     return dst;

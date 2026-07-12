@@ -19,6 +19,8 @@ const EntriesBlock = @import("EntriesBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const BlockMerger = @import("BlockMerger.zig");
 const Table = @import("Table.zig");
+const CompressionPool = @import("../compression/CompressionPool.zig");
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const MemTable = @This();
 
@@ -45,7 +47,13 @@ pub fn empty(alloc: Allocator) !*MemTable {
 }
 
 // TODO: log mem tables buffers size on init
-pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
+pub fn init(
+    io: Io,
+    alloc: Allocator,
+    blocks: []*MemBlock,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*MemTable {
     var movedBlocks: usize = 0;
     errdefer {
         for (blocks[movedBlocks..]) |block| block.deinit(alloc);
@@ -67,38 +75,44 @@ pub fn init(io: Io, alloc: Allocator, blocks: []*MemBlock) !*MemTable {
         defer b.deinit(alloc);
 
         const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
-        try t.setup(alloc, b, flushAtUs);
+        try t.setup(io, alloc, b, flushAtUs, compressionPool);
         std.debug.assert(t.metaindexBuf.items.len > 0);
         return t;
     }
 
     for (0..blocks.len) |i| {
         movedBlocks = i + 1;
-        const reader = try BlockReader.initFromMovedMemBlock(alloc, blocks[i]);
+        const reader = try BlockReader.initFromMovedMemBlock(alloc, blocks[i], decompressionPool);
         readers.appendAssumeCapacity(reader);
     }
 
     const flushAtUs = Io.Timestamp.now(io, .real).toMicroseconds() + std.time.us_per_s;
-    try t.mergeIntoMemTable(io, alloc, &readers, flushAtUs);
+    try t.mergeIntoMemTable(io, alloc, &readers, flushAtUs, compressionPool);
     std.debug.assert(t.metaindexBuf.items.len > 0);
     return t;
 }
 
-pub fn mergeMemTables(io: Io, alloc: Allocator, memTables: []*Table) !*MemTable {
+pub fn mergeMemTables(
+    io: Io,
+    alloc: Allocator,
+    memTables: []*Table,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+) !*MemTable {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, memTables.len);
     defer {
         for (readers.items) |r| r.deinit(alloc);
         readers.deinit(alloc);
     }
     for (memTables) |table| {
-        const reader = try BlockReader.initFromMemTable(alloc, table);
+        const reader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);
         readers.appendAssumeCapacity(reader);
     }
     const t = try empty(alloc);
     errdefer t.deinit(alloc);
 
     const flushToDiskAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, memTables);
-    try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs);
+    try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs, compressionPool);
     return t;
 }
 
@@ -111,14 +125,21 @@ pub fn deinit(self: *MemTable, alloc: Allocator) void {
     alloc.destroy(self);
 }
 
-fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !void {
+fn setup(
+    self: *MemTable,
+    io: Io,
+    alloc: Allocator,
+    block: *MemBlock,
+    flushAtUs: i64,
+    compressionPool: *CompressionPool,
+) !void {
     block.sortData();
     self.flushAtUs = flushAtUs;
     self.tableHeader.deinit(alloc);
 
     var entriesBlock = EntriesBlock{};
     defer entriesBlock.deinit(alloc);
-    const encodedBlock = try block.encode(alloc, &entriesBlock);
+    const encodedBlock = try block.encode(io, alloc, compressionPool, &entriesBlock);
     self.blockHeader.firstEntry = encodedBlock.firstEntry;
     self.blockHeader.prefix = encodedBlock.prefix;
     self.blockHeader.entriesCount = encodedBlock.itemsCount;
@@ -144,7 +165,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
 
     var bound = try encoding.compressBound(encodedBlockHeader.len);
     try self.indexBuf.ensureUnusedCapacity(alloc, bound);
-    var n = try encoding.compressAuto(self.indexBuf.unusedCapacitySlice(), encodedBlockHeader);
+    var n = try compressionPool.compressAuto(io, self.indexBuf.unusedCapacitySlice(), encodedBlockHeader);
     self.indexBuf.items.len += n;
 
     const metaIndex = MetaIndex{
@@ -161,7 +182,7 @@ fn setup(self: *MemTable, alloc: Allocator, block: *MemBlock, flushAtUs: i64) !v
 
     bound = try encoding.compressBound(encodedMetaIndex.len);
     try self.metaindexBuf.ensureUnusedCapacity(alloc, bound);
-    n = try encoding.compressAuto(self.metaindexBuf.unusedCapacitySlice(), encodedMetaIndex);
+    n = try compressionPool.compressAuto(io, self.metaindexBuf.unusedCapacitySlice(), encodedMetaIndex);
     self.metaindexBuf.items.len += n;
 
     const firstEntry = self.tableHeader.firstEntry;
@@ -178,10 +199,11 @@ fn mergeIntoMemTable(
     alloc: Allocator,
     readers: *std.ArrayList(*BlockReader),
     flushAtUs: i64,
+    compressionPool: *CompressionPool,
 ) !void {
     self.flushAtUs = flushAtUs;
 
-    var writer = BlockWriter.initFromMemTable(self);
+    var writer = BlockWriter.initFromMemTable(self, compressionPool);
     defer writer.deinit(alloc);
     self.tableHeader.deinit(alloc);
     self.tableHeader = try mergeBlocks(io, alloc, &writer, readers, null);
