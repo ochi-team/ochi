@@ -39,8 +39,8 @@ pub fn freeDCtx(ctx: DCtx) void {
 }
 
 pub fn compressAuto(ctx: CCtx, dst: []u8, src: []const u8) Error!usize {
-    const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
-    return compress(ctx, dst, src, level);
+    // const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
+    return compress(ctx, dst, src, 1);
 }
 
 pub fn compress(ctx: CCtx, dst: []u8, src: []const u8, level: u8) Error!usize {
