@@ -254,7 +254,7 @@ test "Packer.packValuesRoundtrip" {
         defer compressionPool.deinit(allocator);
         const n = try packValues(compressionPool, std.testing.io, &packedValues, bound);
 
-        const unpacker = try Unpacker.init(allocator);
+        const unpacker = try Unpacker.initWithCompressionPool(allocator, compressionPool);
         defer unpacker.deinit(allocator);
         const unpacked = try unpacker.unpackValues(std.testing.io, allocator, packedValues[0..n], case.strings.len);
         defer allocator.free(unpacked);

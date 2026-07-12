@@ -68,7 +68,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 refCounter: std.atomic.Value(u32),
 
 // TODO: investigate how we could make a checksum and validate it on opening a table
-pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(*Table) {
+pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, compressionPool: *CompressionPool) !std.ArrayList(*Table) {
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
         // TODO: if the foler already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
@@ -105,7 +105,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
         // don't clean tablePath, Table owns it
         const tablePath = try std.fs.path.join(parentAlloc, &.{ path, tableName });
         errdefer parentAlloc.free(tablePath);
-        const table = try Table.open(io, parentAlloc, tablePath);
+        const table = try Table.open(io, parentAlloc, tablePath, compressionPool);
         tables.appendAssumeCapacity(table);
     }
 
@@ -115,14 +115,14 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8) !std.ArrayList(
     return tables;
 }
 
-pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
+pub fn open(io: Io, alloc: Allocator, path: []const u8, compressionPool: *CompressionPool) !*Table {
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
     const header = try TableHeader.readFile(io, alloc, path);
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
-    var columnIDGen = try ColumnIDGen.decodeFile(io, alloc, pathWriter.buffered());
+    var columnIDGen = try ColumnIDGen.decodeFileWithCompressionPool(io, alloc, compressionPool, pathWriter.buffered());
     errdefer columnIDGen.deinit(alloc);
     pathWriter.end = 0;
 
@@ -143,7 +143,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8) !*Table {
     pathWriter.end = 0;
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     if (metaindexContent.len > 0) {
-        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaindexContent);
+        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, compressionPool, metaindexContent);
     }
     errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
@@ -273,7 +273,7 @@ pub fn close(self: *Table, io: Io) void {
     self.alloc.destroy(self);
 }
 
-pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
+pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, compressionPool: *CompressionPool) !*Table {
     std.debug.assert(memTable.size() == memTable.tableHeader.compressedSize);
 
     // TODO: move ownership of the original meta index to the table, not only the buffers,
@@ -281,14 +281,14 @@ pub fn fromMem(alloc: Allocator, memTable: *MemTable) !*Table {
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     const metaIndexBuf = memTable.metaIndexBuf.items;
     if (metaIndexBuf.len > 0) {
-        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(alloc, metaIndexBuf);
+        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, compressionPool, metaIndexBuf);
     }
     errdefer if (indexBlockHeaders.len > 0) alloc.free(indexBlockHeaders);
 
     // TODO: avoid decoding column ids, we can simply assign what we have from the stream writer
     const columnIDGen = blk: {
         if (memTable.columnKeysBuf.items.len > 0) {
-            break :blk try ColumnIDGen.decode(alloc, memTable.columnKeysBuf.items);
+            break :blk try ColumnIDGen.decodeWithCompressionPool(io, alloc, compressionPool, memTable.columnKeysBuf.items);
         } else {
             break :blk try ColumnIDGen.init(alloc);
         }
@@ -491,7 +491,7 @@ pub fn queryLines(self: *Table, io: Io, alloc: Allocator, timestampsEncoders: *T
         defer alloc.free(indexBuffer);
         n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
         std.debug.assert(indexBuffer.len == n);
-        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, indexBuffer, indexBlockHeader);
+        try BlockHeader.decodeIndexWindow(io, alloc, compressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
 
         var blockHeadersToRead = blockHeaders.items;
         while (blockHeadersToRead.len > 0) {
@@ -539,7 +539,7 @@ fn queryLinesAllBlocks(self: *Table, io: Io, alloc: Allocator, timestampsEncoder
         defer alloc.free(indexBuffer);
         const n = try self.readIndex(io, indexBuffer, indexBlockHeader.offset);
         std.debug.assert(indexBuffer.len == n);
-        try BlockHeader.decodeIndexWindow(alloc, &blockHeaders, indexBuffer, indexBlockHeader);
+        try BlockHeader.decodeIndexWindow(io, alloc, compressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
 
         for (blockHeaders.items) |blockHeader| {
             if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
@@ -584,7 +584,7 @@ fn queryBlock(
         colIdx.putAssumeCapacity(colID, entry.value_ptr.*);
     }
 
-    const tableReader: *TableReader = try .init(io, alloc, self);
+    const tableReader: *TableReader = try .init(io, alloc, self, compressionPool);
     defer tableReader.deinit(alloc);
 
     var blockData = BlockData.initEmpty();
@@ -696,6 +696,8 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     defer memTable.deinit(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -715,16 +717,16 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
-    const table1 = try Table.open(io, alloc, table1Path);
+    const table1 = try Table.open(io, alloc, table1Path, compressionPool);
     table1.release(io);
     try Dir.accessAbsolute(io, tablePath, .{});
 
     const table2Path = try alloc.dupe(u8, tablePath);
-    const table2 = try Table.open(io, alloc, table2Path);
+    const table2 = try Table.open(io, alloc, table2Path, compressionPool);
     table2.toRemove.store(true, .release);
     table2.release(io);
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, tablePath, .{}));
@@ -745,9 +747,11 @@ test "release fromMem does not affect filesystem path" {
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, sentinelPath, .{}));
     try Dir.createDirAbsolute(io, sentinelPath, .default_dir);
 
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
     const memTable = try MemTable.init(alloc);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     // eve if set we expect it to keep the created path when disk == null,
     // so close must not delete it
     table.toRemove.store(true, .release);
@@ -776,6 +780,8 @@ test "fromMem creates proper table from mem table with populated data" {
     const memTable = try MemTable.init(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -796,9 +802,9 @@ test "fromMem creates proper table from mem table with populated data" {
 
     var lines = [_]Line{ line1, line2 };
 
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     defer table.release(io);
 
     var indexBuf: [128]u8 = undefined;
@@ -843,6 +849,8 @@ test "open reads table from disk" {
     defer memTable.deinit(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -862,11 +870,11 @@ test "open reads table from disk" {
     };
 
     var lines = [_]Line{ line1, line2 };
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
-    const table = try Table.open(io, alloc, tablePathOwned);
+    const table = try Table.open(io, alloc, tablePathOwned, compressionPool);
     defer table.release(io);
 
     try testing.expect(table.inner == .disk);
@@ -914,7 +922,9 @@ test "open reads table from disk" {
     try testing.expect(table.columnIdxs.count() > 0);
 
     const expectedHeaders = try IndexBlockHeader.readIndexBlockHeaders(
+        io,
         alloc,
+        compressionPool,
         memTable.metaIndexBuf.items,
     );
     defer if (expectedHeaders.len > 0) alloc.free(expectedHeaders);
@@ -924,8 +934,8 @@ test "open reads table from disk" {
     }
 }
 
-fn testOpenAll(io: Io, alloc: Allocator, rootPath: []const u8) !void {
-    var tables = try Table.openAll(io, alloc, rootPath);
+fn testOpenAll(io: Io, alloc: Allocator, rootPath: []const u8, compressionPool: *CompressionPool) !void {
+    var tables = try Table.openAll(io, alloc, rootPath, compressionPool);
     defer {
         for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
@@ -951,6 +961,8 @@ test "openAll handles all io failures" {
     defer memTable.deinit(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var fields = [_]Field{
         .{ .key = "level", .value = "info" },
@@ -961,7 +973,7 @@ test "openAll handles all io failures" {
         .fields = fields[0..],
     }};
 
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
     try memTable.storeToDisk(io, alloc, table1Path);
     try memTable.storeToDisk(io, alloc, table2Path);
 
@@ -969,7 +981,7 @@ test "openAll handles all io failures" {
     defer alloc.free(tablesFilePath);
     try fs.writeBufferToFileAtomic(io, tablesFilePath, "[\"table-1\",\"table-2\"]", true);
 
-    try stdsTesting.checkAllIoFailures(io, testOpenAll, .{ alloc, rootPath });
+    try stdsTesting.checkAllIoFailures(io, testOpenAll, .{ alloc, rootPath, compressionPool });
 }
 
 test "queryLines" {
@@ -1021,6 +1033,8 @@ test "queryLines" {
     const memTable = try MemTable.init(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
     var sids = [_]SID{ sidBlock, sid1, sid2, sid3, sid5, sidTenantA, sidTenantB };
     var linesBySid = [_][]Line{
         lines[0..3],
@@ -1031,9 +1045,9 @@ test "queryLines" {
         lines[9..10],
         lines[10..11],
     };
-    try memTable.addLines(io, alloc, timestampsEncoders, sids[0..], linesBySid[0..]);
+    try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     defer table.release(io);
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
@@ -1111,8 +1125,6 @@ test "queryLines" {
 
     var queried = std.ArrayList(Line).empty;
     defer deinitQueriedLines(alloc, &queried);
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
 
     for (cases) |case| {
         for (queried.items) |line| {
@@ -1168,9 +1180,11 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     const memTable = try MemTable.init(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
-    try memTable.addLines(io, alloc, timestampsEncoders, sids, linesBySid);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids, linesBySid);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     defer table.release(io);
 
     try testing.expect(table.indexBlockHeaders.len > 1);
@@ -1178,9 +1192,6 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
 
     var queried = std.ArrayList(Line).empty;
     defer deinitQueriedLines(alloc, &queried);
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
-
     const infoExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "info", .op = .equal } };
     const query = Query{ .start = 1, .end = streamsCount, .tagsExpr = null, .fieldsExpr = &infoExpr };
 
@@ -1216,15 +1227,15 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     const memTable = try MemTable.init(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines[0..]);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, sid, lines[0..]);
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     defer table.release(io);
 
     var queried = std.ArrayList(Line).empty;
     defer deinitLinesFull(alloc, &queried);
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
@@ -1267,17 +1278,17 @@ test "queryLines reads disk table fields after open" {
     defer memTable.deinit(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines[0..]);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, sid, lines[0..]);
     try memTable.storeToDisk(io, alloc, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
-    const table = try Table.open(io, alloc, tablePathOwned);
+    const table = try Table.open(io, alloc, tablePathOwned, compressionPool);
     defer table.release(io);
 
     var queried = std.ArrayList(Line).empty;
     defer deinitQueriedLines(alloc, &queried);
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
     const statusExpr: Query.FilterExpression = .{ .predicate = .{ .key = "status", .value = "200", .op = .equal } };

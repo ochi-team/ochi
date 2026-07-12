@@ -10,6 +10,7 @@ const Unpacker = @import("Unpacker.zig");
 const ValuesDecoder = @import("ValuesDecoder.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const Table = @import("../data/Table.zig");
+const CompressionPool = @import("../CompressionPool.zig");
 const Logger = @import("logging");
 
 const tracy = @import("tracy");
@@ -450,15 +451,17 @@ test "initFromLines and initFromData produce identical blocks" {
     for (cases) |case| {
         const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
         defer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
 
         const blockA = try Block.initFromLines(alloc, case.lines);
         defer blockA.deinit(alloc);
 
         const memTable = try MemTable.init(alloc);
-        const table = try Table.fromMem(alloc, memTable);
+        const table = try Table.fromMem(io, alloc, memTable, compressionPool);
         defer table.close(io);
 
-        const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders);
+        const writer = try TableWriter.initMemWithCompressionPool(alloc, memTable, timestampsEncoders, compressionPool);
         defer writer.deinit(alloc);
 
         var bh = BlockHeader.initFromBlock(blockA, sid);
@@ -477,7 +480,7 @@ test "initFromLines and initFromData produce identical blocks" {
         defer bd.deinit(alloc);
         try bd.readFrom(io, alloc, &bh, &sr);
 
-        const unpacker = try Unpacker.init(alloc);
+        const unpacker = try Unpacker.initWithCompressionPool(alloc, compressionPool);
         const decoder = try ValuesDecoder.init(alloc);
 
         const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, unpacker, decoder);

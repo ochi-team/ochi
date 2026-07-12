@@ -8,6 +8,7 @@ const Decoder = encoding.Decoder;
 const Encoder = encoding.Encoder;
 
 const filenames = @import("../../filenames.zig");
+const CompressionPool = @import("../CompressionPool.zig");
 
 const MetaIndex = @This();
 
@@ -67,7 +68,7 @@ pub fn decode(self: *MetaIndex, alloc: Allocator, buf: []u8) !usize {
     return dec.offset;
 }
 
-pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn readFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, path: []const u8, blocksCount: u64) !DecodedMetaIndex {
     var fba = std.heap.stackFallback(256, alloc);
     const fbaAlloc = fba.get();
 
@@ -85,18 +86,16 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8, blocksCount: u64) !D
     // TODO: why does .limited(metaindexStat.size) not work above?
     std.debug.assert(metaindexStat.size == metaindexCompressed.len);
 
-    const decodedMetaindex = try MetaIndex.decodeDecompress(alloc, metaindexCompressed, blocksCount);
+    const decodedMetaindex = try MetaIndex.decodeDecompressWithCompressionPool(io, alloc, compressionPool, metaindexCompressed, blocksCount);
     std.debug.assert(decodedMetaindex.compressedSize == metaindexStat.size);
     return decodedMetaindex;
 }
 
-pub fn decodeDecompress(alloc: Allocator, compressed: []const u8, blocksCount: u64) !DecodedMetaIndex {
+pub fn decodeDecompressWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, compressed: []const u8, blocksCount: u64) !DecodedMetaIndex {
     const metaindexBufSize = try encoding.getFrameContentSize(compressed);
     const metaindexBuf = try alloc.alloc(u8, metaindexBufSize);
     defer alloc.free(metaindexBuf);
-    const dctx = try encoding.createDCtx();
-    defer encoding.freeDCtx(dctx);
-    const metaindexLen = try encoding.decompress(dctx, metaindexBuf, compressed);
+    const metaindexLen = try compressionPool.decompress(io, metaindexBuf, compressed);
 
     var records = try std.ArrayList(MetaIndex).initCapacity(alloc, @intCast(blocksCount));
     errdefer {
@@ -178,8 +177,12 @@ test "MetaIndex decodeDecompress roundtrip" {
     defer encoding.freeCCtx(cctx);
     const compressedLen = try encoding.compressAuto(cctx, compressed, uncompressed.items);
 
-    const decoded = try MetaIndex.decodeDecompress(
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decoded = try MetaIndex.decodeDecompressWithCompressionPool(
+        std.testing.io,
         alloc,
+        compressionPool,
         compressed[0..compressedLen],
         rec1.blockHeadersCount + rec2.blockHeadersCount,
     );
@@ -244,9 +247,12 @@ test "MetaIndex roundtrip file read/write" {
     try file.writeStreamingAll(io, compressed[0..compressedLen]);
     try file.sync(io);
 
-    const decoded = try MetaIndex.readFile(
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decoded = try MetaIndex.readFileWithCompressionPool(
         io,
         alloc,
+        compressionPool,
         tablePath,
         rec1.blockHeadersCount + rec2.blockHeadersCount,
     );

@@ -13,6 +13,7 @@ const EntriesBlock = @import("EntriesBlock.zig");
 const TableHeader = @import("TableHeader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 const Logger = @import("logging");
+const CompressionPool = @import("../CompressionPool.zig");
 
 const BlockReader = @This();
 
@@ -21,6 +22,7 @@ block: *MemBlock,
 ownsStorage: bool = false,
 tableHeader: TableHeader,
 table: *const Table,
+compressionPool: *CompressionPool,
 
 // state
 
@@ -56,7 +58,7 @@ itemsRead: usize = 0,
 firstItemChecked: bool = false,
 
 /// Takes ownership of block.
-pub fn initFromMovedMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
+pub fn initFromMovedMemBlock(alloc: Allocator, block: *MemBlock, compressionPool: *CompressionPool) !*BlockReader {
     errdefer block.deinit(alloc);
     std.debug.assert(block.memEntries.items.len > 0);
     block.sortData();
@@ -70,15 +72,18 @@ pub fn initFromMovedMemBlock(alloc: Allocator, block: *MemBlock) !*BlockReader {
         .currentI = 0,
         .isRead = false,
         .table = undefined,
+        .compressionPool = compressionPool,
     };
     return r;
 }
 
-pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
+pub fn initFromMemTable(io: Io, alloc: Allocator, table: *const Table, compressionPool: *CompressionPool) !*BlockReader {
     const memTable = table.inner.mem;
     std.debug.assert(memTable.tableHeader.blocksCount > 0);
-    const metaIndexRecords = try MetaIndex.decodeDecompress(
+    const metaIndexRecords = try MetaIndex.decodeDecompressWithCompressionPool(
+        io,
         alloc,
+        compressionPool,
         memTable.metaindexBuf.items,
         memTable.tableHeader.blocksCount,
     );
@@ -101,6 +106,7 @@ pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
         .metaIndexRecords = metaIndexRecords.records,
         .tableHeader = memTable.tableHeader,
         .table = table,
+        .compressionPool = compressionPool,
         .currentI = 0,
         .isRead = false,
     };
@@ -110,12 +116,12 @@ pub fn initFromMemTable(alloc: Allocator, table: *const Table) !*BlockReader {
     return r;
 }
 
-pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockReader {
+pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table, compressionPool: *CompressionPool) !*BlockReader {
     const path = table.path;
     const tableHeader = try TableHeader.readFile(io, alloc, path);
     errdefer tableHeader.deinit(alloc);
 
-    const metaIndex = try MetaIndex.readFile(io, alloc, path, tableHeader.blocksCount);
+    const metaIndex = try MetaIndex.readFileWithCompressionPool(io, alloc, compressionPool, path, tableHeader.blocksCount);
     errdefer {
         for (metaIndex.records) |*index| {
             index.deinit(alloc);
@@ -138,6 +144,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table) !*BlockR
         .metaIndexRecords = metaIndex.records,
         .tableHeader = tableHeader,
         .table = table,
+        .compressionPool = compressionPool,
         .currentI = 0,
         .isRead = false,
     };
@@ -218,7 +225,9 @@ pub fn next(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     self.entriesBlock.lensBuf.items.len = self.blockHeader.lensBlockSize;
 
     try self.block.decode(
+        io,
         alloc,
+        self.compressionPool,
         &self.entriesBlock,
         self.blockHeader.firstEntry,
         self.blockHeader.prefix,
@@ -263,9 +272,7 @@ fn readNextBlockHeaders(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     self.uncompressedBuf.clearRetainingCapacity();
     const uncompressedSize = try encoding.getFrameContentSize(self.compressedBuf.items);
     try self.uncompressedBuf.ensureUnusedCapacity(alloc, uncompressedSize);
-    const dctx = try encoding.createDCtx();
-    defer encoding.freeDCtx(dctx);
-    const bufOffset = try encoding.decompress(dctx, self.uncompressedBuf.unusedCapacitySlice(), self.compressedBuf.items);
+    const bufOffset = try self.compressionPool.decompress(io, self.uncompressedBuf.unusedCapacitySlice(), self.compressedBuf.items);
     self.uncompressedBuf.items.len = bufOffset;
 
     if (self.blockHeaders.len > 0) alloc.free(self.blockHeaders);
@@ -370,6 +377,8 @@ fn allocIndexedItem(alloc: Allocator, index: usize, totalLen: usize) ![]u8 {
 
 test "BlockReader.blockReaderLessThan compares items correctly" {
     const alloc = testing.allocator;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const items1 = [_][]const u8{ "apple", "banana", "cherry" };
     const items2 = [_][]const u8{ "apricot", "blueberry", "date" };
@@ -377,10 +386,10 @@ test "BlockReader.blockReaderLessThan compares items correctly" {
     const block1 = try createTestMemBlock(alloc, &items1);
     const block2 = try createTestMemBlock(alloc, &items2);
 
-    var reader1 = try BlockReader.initFromMovedMemBlock(alloc, block1);
+    var reader1 = try BlockReader.initFromMovedMemBlock(alloc, block1, compressionPool);
     defer reader1.deinit(alloc);
 
-    var reader2 = try BlockReader.initFromMovedMemBlock(alloc, block2);
+    var reader2 = try BlockReader.initFromMovedMemBlock(alloc, block2, compressionPool);
     defer reader2.deinit(alloc);
 
     // After sorting, "apple" < "apricot"
@@ -392,12 +401,14 @@ test "BlockReader.blockReaderLessThan compares items correctly" {
 
 test "BlockReader.current returns correct item at currentI" {
     const alloc = testing.allocator;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const items = [_][]const u8{ "first", "second", "third" };
 
     const block = try createTestMemBlock(alloc, &items);
 
-    var reader = try BlockReader.initFromMovedMemBlock(alloc, block);
+    var reader = try BlockReader.initFromMovedMemBlock(alloc, block, compressionPool);
     defer reader.deinit(alloc);
 
     // After sorting, test that current() returns the item at currentI
@@ -418,6 +429,8 @@ test "BlockReader.current returns correct item at currentI" {
 test "BlockReader.initFromMemTable reads items" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const Case = struct {
         name: []const u8,
@@ -532,16 +545,16 @@ test "BlockReader.initFromMemTable reads items" {
             if (case.useMultiBlock) {
                 block2 = try createTestMemBlockWithMax(alloc, block2_items, itemsTotalSize(block2_items) + 16);
                 var blocks = [_]*MemBlock{ block1, block2.? };
-                break :blk try MemTable.init(io, alloc, blocks[0..]);
+                break :blk try MemTable.init(io, alloc, blocks[0..], compressionPool);
             } else {
                 var blocks = [_]*MemBlock{block1};
-                break :blk try MemTable.init(io, alloc, blocks[0..]);
+                break :blk try MemTable.init(io, alloc, blocks[0..], compressionPool);
             }
         };
-        const table = try Table.fromMem(alloc, memTable);
+        const table = try Table.fromMem(io, alloc, memTable, compressionPool);
         defer table.close(io);
 
-        var reader = try BlockReader.initFromMemTable(alloc, table);
+        var reader = try BlockReader.initFromMemTable(io, alloc, table, compressionPool);
         defer reader.deinit(alloc);
 
         if (case.useMultiBlock) {
@@ -571,6 +584,8 @@ test "BlockReader.initFromMemTable reads items" {
 test "BlockReader.next returns InvalidIndexBlockRange on empty index buffer with non-empty metaindex" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const items = [_][]const u8{
         "item-0",
@@ -581,11 +596,11 @@ test "BlockReader.next returns InvalidIndexBlockRange on empty index buffer with
     const block = try createTestMemBlock(alloc, &items);
 
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(io, alloc, &blocks);
-    const table = try Table.fromMem(alloc, memTable);
+    const memTable = try MemTable.init(io, alloc, &blocks, compressionPool);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     defer table.close(io);
 
-    var reader = try BlockReader.initFromMemTable(alloc, table);
+    var reader = try BlockReader.initFromMemTable(io, alloc, table, compressionPool);
     defer reader.deinit(alloc);
 
     try testing.expect(reader.metaIndexRecords.len > 0);
@@ -599,6 +614,8 @@ test "BlockReader.next returns InvalidIndexBlockRange on empty index buffer with
 test "BlockReader.initFromDiskTable decodes blocks without null crash" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -614,15 +631,15 @@ test "BlockReader.initFromDiskTable decodes blocks without null crash" {
     const block = try createTestMemBlock(alloc, &items);
 
     var blocks = [_]*MemBlock{block};
-    const memTable = try MemTable.init(io, alloc, &blocks);
+    const memTable = try MemTable.init(io, alloc, &blocks, compressionPool);
     defer memTable.deinit(alloc);
 
     try memTable.storeToDisk(io, alloc, tablePath);
 
-    const diskTable = try Table.open(io, alloc, tablePath);
+    const diskTable = try Table.open(io, alloc, tablePath, compressionPool);
     defer diskTable.close(io);
 
-    var reader = try BlockReader.initFromDiskTable(io, alloc, diskTable);
+    var reader = try BlockReader.initFromDiskTable(io, alloc, diskTable, compressionPool);
     defer reader.deinit(alloc);
 
     const hasNext = try reader.next(io, alloc);

@@ -370,7 +370,9 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
     self.entriesBlock.lensBuf.items.len = blockHeader.lensBlockSize;
 
     try memBlock.decode(
+        io,
         alloc,
+        self.compressionPool,
         &self.entriesBlock,
         blockHeader.firstEntry,
         blockHeader.prefix,

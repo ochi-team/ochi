@@ -211,7 +211,7 @@ pub const DataShard = struct {
         sem.post(io);
 
         memTable.flushAtUs = getFlushTime(io);
-        return Table.fromMem(alloc, memTable);
+        return Table.fromMem(io, alloc, memTable, compressionPool);
     }
 };
 
@@ -269,7 +269,7 @@ pub fn init(io: Io, alloc: Allocator, path: []const u8, runtime: *Runtime, times
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
 
-    var tables = try Table.openAll(io, alloc, path);
+    var tables = try Table.openAll(io, alloc, path, compressionPool);
     errdefer {
         for (tables.items) |table| table.close(io);
         tables.deinit(alloc);
@@ -632,7 +632,7 @@ fn mergeTables(
         const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
 
-        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null);
+        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.compressionPool);
         errdefer newTable.release(io);
 
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
@@ -640,7 +640,7 @@ fn mergeTables(
         return;
     }
 
-    var readers = try openTableReaders(io, alloc, tables);
+    var readers = try openTableReaders(io, alloc, tables, self.compressionPool);
     defer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
@@ -698,7 +698,7 @@ fn mergeTables(
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.compressionPool);
     errdefer openTable.release(io);
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
@@ -769,23 +769,24 @@ fn openCreatedTable(
     tablePath: []const u8,
     tables: []*Table,
     maybeMemTable: ?*MemTable,
+    compressionPool: *CompressionPool,
 ) !*Table {
     if (maybeMemTable) |memTable| {
         memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
-        return Table.fromMem(alloc, memTable);
+        return Table.fromMem(io, alloc, memTable, compressionPool);
     }
 
-    return Table.open(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, compressionPool);
 }
 
-fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table) !std.ArrayList(*BlockReader) {
+fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table, compressionPool: *CompressionPool) !std.ArrayList(*BlockReader) {
     var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
     errdefer {
         for (readers.items) |reader| reader.deinit(alloc);
         readers.deinit(alloc);
     }
     for (tables) |table| {
-        const reader = try BlockReader.init(io, alloc, table);
+        const reader = try BlockReader.init(io, alloc, table, compressionPool);
         readers.appendAssumeCapacity(reader);
     }
 
@@ -842,12 +843,12 @@ fn stableLine(ts: u64, variant: usize) Line {
     };
 }
 
-fn createMemTableFromLines(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, sid: SID, lines: []Line) !*Table {
+fn createMemTableFromLines(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, compressionPool: *CompressionPool, sid: SID, lines: []Line) !*Table {
     const memTable = try MemTable.init(alloc);
     errdefer memTable.deinit(alloc);
 
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, sid, lines);
-    return Table.fromMem(alloc, memTable);
+    try memTable.addLinesForSidWithCompressionPool(io, alloc, timestampsEncoders, compressionPool, sid, lines);
+    return Table.fromMem(io, alloc, memTable, compressionPool);
 }
 
 fn countMemLinesInRecorder(recorder: *DataRecorder) u64 {
@@ -1168,7 +1169,7 @@ test "DataShard.flush limits block columns per tenant" {
     )).?;
     defer table.close(io);
 
-    const blockReader = try BlockReader.initFromMemTable(alloc, table);
+    const blockReader = try BlockReader.initFromMemTable(io, alloc, table, recorder.compressionPool);
     defer blockReader.deinit(alloc);
 
     var seenTenants = [_]bool{ false, false };
@@ -1209,7 +1210,7 @@ test "mergeTables force single mem table creates disk table" {
         stableLine(2, 1),
         stableLine(3, 2),
     };
-    const table = try createMemTableFromLines(io, alloc, timestampsEncoders, stableSID(1), lines[0..]);
+    const table = try createMemTableFromLines(io, alloc, timestampsEncoders, recorder.compressionPool, stableSID(1), lines[0..]);
     errdefer table.close(io);
 
     try recorder.memTables.append(alloc, table);

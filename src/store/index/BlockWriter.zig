@@ -50,7 +50,6 @@ const BlockWriter = @This();
 
 destination: Destination,
 compressionPool: *CompressionPool,
-ownedCompressionPool: ?*CompressionPool = null,
 
 bh: BlockHeader = .{ .firstEntry = "", .prefix = "", .encodingType = .plain },
 mi: MetaIndex = .{},
@@ -68,13 +67,6 @@ firstEntryBuf: std.ArrayList(u8) = .empty,
 
 indexBlockOffset: u64 = 0,
 
-pub fn initFromMemTable(alloc: Allocator, memTable: *MemTable) !BlockWriter {
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    var writer = initFromMemTableWithCompressionPool(memTable, compressionPool);
-    writer.ownedCompressionPool = compressionPool;
-    return writer;
-}
-
 pub fn initFromMemTableWithCompressionPool(memTable: *MemTable, compressionPool: *CompressionPool) BlockWriter {
     return .{
         .compressionPool = compressionPool,
@@ -87,14 +79,6 @@ pub fn initFromMemTableWithCompressionPool(memTable: *MemTable, compressionPool:
             },
         },
     };
-}
-
-pub fn initFromDiskTable(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool) !BlockWriter {
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    errdefer compressionPool.deinit(alloc);
-    var writer = try initFromDiskTableWithCompressionPool(io, path, fitsInCache, compressionPool);
-    writer.ownedCompressionPool = compressionPool;
-    return writer;
 }
 
 pub fn initFromDiskTableWithCompressionPool(io: Io, path: []const u8, fitsInCache: bool, compressionPool: *CompressionPool) !BlockWriter {
@@ -146,9 +130,6 @@ pub fn deinit(self: *BlockWriter, alloc: Allocator) void {
     self.uncompressedMetaindexBuf.deinit(alloc);
     self.compressedBuf.deinit(alloc);
     self.firstEntryBuf.deinit(alloc);
-    if (self.ownedCompressionPool) |pool| {
-        pool.deinit(alloc);
-    }
 }
 
 pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock) !void {
@@ -305,6 +286,8 @@ pub fn readTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: 
 test "BlockWriter disk output matches mem output" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const blockOneItems = [_][]const u8{
         "item-a3",
@@ -324,7 +307,7 @@ test "BlockWriter disk output matches mem output" {
 
     var memTable = try MemTable.empty(alloc);
     defer memTable.deinit(alloc);
-    var memWriter = try BlockWriter.initFromMemTable(alloc, memTable);
+    var memWriter = BlockWriter.initFromMemTableWithCompressionPool(memTable, compressionPool);
     defer memWriter.deinit(alloc);
     try memWriter.writeBlock(io, alloc, blockOne);
     try memWriter.writeBlock(io, alloc, blockTwo);
@@ -337,7 +320,7 @@ test "BlockWriter disk output matches mem output" {
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
     defer alloc.free(tablePath);
 
-    var diskWriter = try BlockWriter.initFromDiskTable(io, alloc, tablePath, true);
+    var diskWriter = try BlockWriter.initFromDiskTableWithCompressionPool(io, tablePath, true, compressionPool);
     defer diskWriter.deinit(alloc);
     try diskWriter.writeBlock(io, alloc, blockOne);
     try diskWriter.writeBlock(io, alloc, blockTwo);
@@ -362,11 +345,13 @@ test "BlockWriter metaindexBuf may contain multiple records" {
     const alloc = testing.allocator;
     const io = testing.io;
     const blocksCount: usize = 1400;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var memTable = try MemTable.empty(alloc);
     defer memTable.deinit(alloc);
 
-    var writer = try BlockWriter.initFromMemTable(alloc, memTable);
+    var writer = BlockWriter.initFromMemTableWithCompressionPool(memTable, compressionPool);
     defer writer.deinit(alloc);
 
     var itemsOwned = try std.ArrayList([]u8).initCapacity(alloc, blocksCount);
@@ -396,8 +381,10 @@ test "BlockWriter metaindexBuf may contain multiple records" {
     }
     try writer.close(io, alloc);
 
-    const decoded = try MetaIndex.decodeDecompress(
+    const decoded = try MetaIndex.decodeDecompressWithCompressionPool(
+        io,
         alloc,
+        compressionPool,
         memTable.metaindexBuf.items,
         @intCast(blocksCount),
     );
@@ -419,11 +406,13 @@ test "BlockWriter metaindexBuf may contain multiple records" {
 test "BlockWriter preserves first metaindex item when reusing source block" {
     const alloc = testing.allocator;
     const io = testing.io;
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var table = try MemTable.empty(alloc);
     defer table.deinit(alloc);
 
-    var writer = try BlockWriter.initFromMemTable(alloc, table);
+    var writer = BlockWriter.initFromMemTableWithCompressionPool(table, compressionPool);
     defer writer.deinit(alloc);
 
     var block = try MemBlock.init(alloc, .{
@@ -445,7 +434,7 @@ test "BlockWriter preserves first metaindex item when reusing source block" {
 
     try writer.close(io, alloc);
 
-    const decoded = try MetaIndex.decodeDecompress(alloc, table.metaindexBuf.items, 2);
+    const decoded = try MetaIndex.decodeDecompressWithCompressionPool(io, alloc, compressionPool, table.metaindexBuf.items, 2);
     defer {
         for (decoded.records) |*rec| rec.deinit(alloc);
         if (decoded.records.len > 0) alloc.free(decoded.records);

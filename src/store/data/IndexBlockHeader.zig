@@ -7,6 +7,7 @@ const TableWriter = @import("TableWriter.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
+const CompressionPool = @import("../CompressionPool.zig");
 
 const Self = @This();
 
@@ -78,7 +79,9 @@ pub fn decode(buf: []const u8) Self {
 }
 
 pub fn readIndexBlockHeaders(
+    io: Io,
     allocator: Allocator,
+    compressionPool: *CompressionPool,
     compressed: []const u8,
 ) ![]Self {
     const decompressedSize = try encoding.getFrameContentSize(compressed);
@@ -86,9 +89,7 @@ pub fn readIndexBlockHeaders(
     var decompressedBuf = try allocator.alloc(u8, decompressedSize);
     defer allocator.free(decompressedBuf);
 
-    const dctx = try encoding.createDCtx();
-    defer encoding.freeDCtx(dctx);
-    const n = try encoding.decompress(dctx, decompressedBuf, compressed);
+    const n = try compressionPool.decompress(io, decompressedBuf, compressed);
     const decompressed = decompressedBuf[0..n];
 
     std.debug.assert(decompressed.len % encodeExpectedSize == 0);

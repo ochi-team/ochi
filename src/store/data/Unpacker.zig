@@ -19,15 +19,6 @@ const Self = @This();
 // TODO: get rid of collecting garbage
 garbage: std.ArrayList([]u8) = .empty,
 compressionPool: *CompressionPool,
-ownedCompressionPool: ?*CompressionPool = null,
-
-pub fn init(allocator: std.mem.Allocator) !*Self {
-    const compressionPool = try CompressionPool.init(allocator, 1);
-    errdefer compressionPool.deinit(allocator);
-    const s = try initWithCompressionPool(allocator, compressionPool);
-    s.ownedCompressionPool = compressionPool;
-    return s;
-}
 
 pub fn initWithCompressionPool(allocator: std.mem.Allocator, compressionPool: *CompressionPool) !*Self {
     const s = try allocator.create(Self);
@@ -39,9 +30,6 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         allocator.free(buf);
     }
     self.garbage.deinit(allocator);
-    if (self.ownedCompressionPool) |pool| {
-        pool.deinit(allocator);
-    }
     allocator.destroy(self);
 }
 

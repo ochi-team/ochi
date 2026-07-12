@@ -69,18 +69,9 @@ maxColI: u16,
 
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
-ownedCompressionPool: ?*CompressionPool = null,
 
 path: []const u8,
 destinationBuffer: ?*std.ArrayList(u8) = null,
-
-pub fn initMem(allocator: Allocator, memTable: *MemTable, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*TableWriter {
-    const compressionPool = try CompressionPool.init(allocator, 1);
-    errdefer compressionPool.deinit(allocator);
-    const writer = try initMemWithCompressionPool(allocator, memTable, timestampsEncoders, compressionPool);
-    writer.ownedCompressionPool = compressionPool;
-    return writer;
-}
 
 pub fn initMemWithCompressionPool(
     allocator: Allocator,
@@ -136,14 +127,6 @@ pub fn initMemWithCompressionPool(
         .path = "",
     };
     return w;
-}
-
-pub fn initDisk(io: Io, alloc: Allocator, path: []const u8, fitsInCache: bool, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool) !*TableWriter {
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    errdefer compressionPool.deinit(alloc);
-    const writer = try initDiskWithCompressionPool(io, alloc, path, fitsInCache, timestampsEncoders, compressionPool);
-    writer.ownedCompressionPool = compressionPool;
-    return writer;
 }
 
 pub fn initDiskWithCompressionPool(
@@ -285,10 +268,6 @@ pub fn deinit(self: *TableWriter, allocator: Allocator) void {
         buf.deinit(allocator);
         allocator.destroy(buf);
     }
-    if (self.ownedCompressionPool) |pool| {
-        pool.deinit(allocator);
-    }
-
     allocator.destroy(self);
 }
 
@@ -750,6 +729,8 @@ test "writeBlock and writeData produce identical buffer output" {
     const io = std.testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var fields1 = [_]Field{
         .{ .key = "app", .value = "seq" },
@@ -771,10 +752,10 @@ test "writeBlock and writeData produce identical buffer output" {
 
     // Writer 1: encode via writeBlock
     const memTable1 = try MemTable.init(alloc);
-    const table1 = try Table.fromMem(alloc, memTable1);
+    const table1 = try Table.fromMem(io, alloc, memTable1, compressionPool);
     defer table1.close(io);
 
-    const writer1 = try TableWriter.initMem(alloc, memTable1, timestampsEncoders);
+    const writer1 = try TableWriter.initMemWithCompressionPool(alloc, memTable1, timestampsEncoders, compressionPool);
     defer writer1.deinit(alloc);
 
     const block = try Block.initFromLines(alloc, &lines);
@@ -801,7 +782,7 @@ test "writeBlock and writeData produce identical buffer output" {
     // Writer 2: re-encode the same data via writeData
     const memTable2 = try MemTable.init(alloc);
     defer memTable2.deinit(alloc);
-    const writer2 = try TableWriter.initMem(alloc, memTable2, timestampsEncoders);
+    const writer2 = try TableWriter.initMemWithCompressionPool(alloc, memTable2, timestampsEncoders, compressionPool);
     defer writer2.deinit(alloc);
 
     var bh2 = BlockHeader.initFromData(&bd, sid);
@@ -836,6 +817,8 @@ test "writeBlock with many columns does not overflow columns header index buffer
     const io = std.testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     var fields = [_]Field{
         .{ .key = "k01", .value = "v1" },
@@ -858,7 +841,7 @@ test "writeBlock with many columns does not overflow columns header index buffer
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
-    const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders);
+    const writer = try TableWriter.initMemWithCompressionPool(alloc, memTable, timestampsEncoders, compressionPool);
     defer writer.deinit(alloc);
 
     const block = try Block.initFromLines(alloc, &lines);

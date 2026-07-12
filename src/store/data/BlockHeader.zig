@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const encoding = @import("encoding");
 
@@ -10,6 +11,7 @@ const BlockData = @import("BlockData.zig").BlockData;
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 const IndexBlockHeader = @import("IndexBlockHeader.zig");
+const CompressionPool = @import("../CompressionPool.zig");
 const EncodingType = @import("TimestampsEncoder.zig").EncodingType;
 
 pub const TimestampsHeader = struct {
@@ -164,7 +166,9 @@ pub fn decodeFew(
 }
 
 pub fn decodeIndexWindow(
+    io: Io,
     alloc: Allocator,
+    compressionPool: *CompressionPool,
     dst: *std.ArrayList(BlockHeader),
     src: []const u8,
     index: IndexBlockHeader,
@@ -180,9 +184,7 @@ pub fn decodeIndexWindow(
     var decompressedBuf = try alloc.alloc(u8, decompressedSize);
     defer alloc.free(decompressedBuf);
 
-    const dctx = try encoding.createDCtx();
-    defer encoding.freeDCtx(dctx);
-    const n = try encoding.decompress(dctx, decompressedBuf, src);
+    const n = try compressionPool.decompress(io, decompressedBuf, src);
     const decompressed = decompressedBuf[0..n];
     try BlockHeader.decodeFew(alloc, dst, decompressed);
 }
@@ -312,6 +314,8 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
         .{ .offset = 0, .size = 0, .expected = headers[1..2] },
         .{ .offset = 0, .size = 0, .expected = headers[2..3] },
     };
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     for (&windowCases) |*windowCase| {
         const rawLen = windowCase.expected.len * BlockHeader.encodeExpectedSize;
@@ -329,9 +333,7 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
         defer alloc.free(compressed);
 
         windowCase.offset = @intCast(indexBuf.items.len);
-        const cctx = try encoding.createCCtx();
-        defer encoding.freeCCtx(cctx);
-        const n = try encoding.compressAuto(cctx, compressed, raw[0..off]);
+        const n = try compressionPool.compressAuto(std.testing.io, compressed, raw[0..off]);
         windowCase.size = @intCast(n);
         try indexBuf.appendSlice(alloc, compressed[0..n]);
     }
@@ -350,7 +352,7 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
 
         const start: usize = @intCast(windowCase.offset);
         const end = start + windowCase.size;
-        try BlockHeader.decodeIndexWindow(alloc, &decoded, indexBuf.items[start..end], window);
+        try BlockHeader.decodeIndexWindow(std.testing.io, alloc, compressionPool, &decoded, indexBuf.items[start..end], window);
         try std.testing.expectEqualDeep(windowCase.expected, decoded.items);
     }
 }

@@ -242,12 +242,10 @@ pub fn addLines(
     io: Io,
     allocator: std.mem.Allocator,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
     sids: []SID,
     linesBySid: [][]Line,
 ) !void {
-    const compressionPool = try CompressionPool.init(allocator, 1);
-    defer compressionPool.deinit(allocator);
-
     return self.addLinesWithCompressionPool(io, allocator, timestampsEncoders, compressionPool, sids, linesBySid);
 }
 
@@ -416,12 +414,13 @@ pub fn addLinesForSid(
     io: Io,
     allocator: std.mem.Allocator,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
     sid: SID,
     lines: []Line,
 ) !void {
     var sids = [_]SID{sid};
     var linesBySid = [_][]Line{lines};
-    return self.addLines(io, allocator, timestampsEncoders, sids[0..], linesBySid[0..]);
+    return self.addLines(io, allocator, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
 }
 
 pub fn addLinesForSidWithCompressionPool(
@@ -494,7 +493,9 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
 
     const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
-    try memTable.addLinesForSid(io, allocator, timestampsEncoders, sampleSid, lines[0..]);
+    const compressionPool = try CompressionPool.init(allocator, 1);
+    defer compressionPool.deinit(allocator);
+    try memTable.addLinesForSidWithCompressionPool(io, allocator, timestampsEncoders, compressionPool, sampleSid, lines[0..]);
 
     const timestampsContent = memTable.timestampsBuf.items;
     const indexContent = memTable.indexBuf.items;
@@ -514,9 +515,7 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const decompressedSize = try encoding.getFrameContentSize(indexContent);
         const decompressedBuf = try allocator.alloc(u8, decompressedSize);
         defer allocator.free(decompressedBuf);
-        const dctx = try encoding.createDCtx();
-        defer encoding.freeDCtx(dctx);
-        _ = try encoding.decompress(dctx, decompressedBuf, indexContent);
+        _ = try compressionPool.decompress(io, decompressedBuf, indexContent);
 
         const decodedBlockHeader = BlockHeader.decode(decompressedBuf);
         const blockHeader = decodedBlockHeader.header;
@@ -542,9 +541,7 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const decompressedSize = try encoding.getFrameContentSize(metaIndexContent);
         const decompressedBuf = try allocator.alloc(u8, decompressedSize);
         defer allocator.free(decompressedBuf);
-        const dctx = try encoding.createDCtx();
-        defer encoding.freeDCtx(dctx);
-        _ = try encoding.decompress(dctx, decompressedBuf, metaIndexContent);
+        _ = try compressionPool.decompress(io, decompressedBuf, metaIndexContent);
 
         const decodedIndexBlockHeader = IndexBlockHeader.decode(decompressedBuf);
 
@@ -575,7 +572,9 @@ test "addLinesErrorOnEmpty" {
     defer memTable.deinit(std.testing.allocator);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(std.testing.allocator, 1);
     defer timestampsEncoders.deinit(std.testing.allocator);
-    const err = memTable.addLinesForSid(std.testing.io, std.testing.allocator, timestampsEncoders, sampleSid, lines[0..]);
+    const compressionPool = try CompressionPool.init(std.testing.allocator, 1);
+    defer compressionPool.deinit(std.testing.allocator);
+    const err = memTable.addLinesForSidWithCompressionPool(std.testing.io, std.testing.allocator, timestampsEncoders, compressionPool, sampleSid, lines[0..]);
     try std.testing.expectError(Error.EmptyLines, err);
 }
 
@@ -595,11 +594,14 @@ test "addLines error on empty lines chunk" {
     defer memTable.deinit(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const err = memTable.addLines(
         std.testing.io,
         alloc,
         timestampsEncoders,
+        compressionPool,
         sids[0..],
         linesBySid[0..],
     );
@@ -631,6 +633,8 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
     const io = std.testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
     const sid = SID{ .tenantID = 1, .id = 1 };
 
     for (cases) |case| {
@@ -655,13 +659,13 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
         var memTableOwned = true;
         defer if (memTableOwned) memTable.deinit(alloc);
 
-        try memTable.addLines(io, alloc, timestampsEncoders, sids[0..], linesBySid[0..]);
+        try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
 
-        const table = try Table.fromMem(alloc, memTable);
+        const table = try Table.fromMem(io, alloc, memTable, compressionPool);
         memTableOwned = false;
         defer table.close(io);
 
-        const blockReader = try BlockReader.initFromMemTable(alloc, table);
+        const blockReader = try BlockReader.initFromMemTable(io, alloc, table, compressionPool);
         defer blockReader.deinit(alloc);
 
         var actualBlocks: [2]ExpectedBlock = undefined;
@@ -687,6 +691,8 @@ test "addLines limits block columns per tenant" {
 
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const tenant1 = 1;
     var tenant1Lines = try makeUniqueFieldLines(alloc, maxColumns + 1, tenant1);
@@ -702,15 +708,15 @@ test "addLines limits block columns per tenant" {
     var linesBySid = [_][]Line{ tenant1Lines.items, tenant2Lines.items };
 
     const memTable = try MemTable.init(alloc);
-    memTable.addLines(io, alloc, timestampsEncoders, sids[0..], linesBySid[0..]) catch |err| {
+    memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]) catch |err| {
         memTable.deinit(alloc);
         return err;
     };
 
-    const table = try Table.fromMem(alloc, memTable);
+    const table = try Table.fromMem(io, alloc, memTable, compressionPool);
     defer table.close(io);
 
-    const blockReader = try BlockReader.initFromMemTable(alloc, table);
+    const blockReader = try BlockReader.initFromMemTable(io, alloc, table, compressionPool);
     defer blockReader.deinit(alloc);
 
     var seenTenants = [_]bool{ false, false };
@@ -1039,6 +1045,8 @@ test "tableHeader timestamp range matches all index blocks" {
     defer memTable.deinit(alloc);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
 
     const lineCount = 2200;
     var lines = try alloc.alloc(Line, lineCount);
@@ -1058,10 +1066,11 @@ test "tableHeader timestamp range matches all index blocks" {
         linesBySid[i] = lines[i .. i + 1];
     }
 
-    try memTable.addLines(io, alloc, timestampsEncoders, sids, linesBySid);
-
+    try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids, linesBySid);
     const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
+        io,
         alloc,
+        compressionPool,
         memTable.metaIndexBuf.items,
     );
     defer alloc.free(indexBlockHeaders);
@@ -1105,8 +1114,10 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     defer memTable.deinit(allocator);
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(allocator, 1);
     defer timestampsEncoders.deinit(allocator);
+    const compressionPool = try CompressionPool.init(allocator, 1);
+    defer compressionPool.deinit(allocator);
 
-    try memTable.addLinesForSid(io, allocator, timestampsEncoders, sampleSid, lines[0..]);
+    try memTable.addLinesForSidWithCompressionPool(io, allocator, timestampsEncoders, compressionPool, sampleSid, lines[0..]);
     try memTable.storeToDisk(io, allocator, flushPath);
 
     const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnKeys });

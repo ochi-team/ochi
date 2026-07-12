@@ -79,12 +79,12 @@ pub fn encode(self: *ColumnIDGen, io: Io, compressionPool: *CompressionPool, all
     return compressionPool.compressAuto(io, dst, tmpBuf[0..enc.offset]);
 }
 
-pub fn decodeFile(io: Io, alloc: Allocator, path: []const u8) !*ColumnIDGen {
+pub fn decodeFileWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, path: []const u8) !*ColumnIDGen {
     const columnKeysContent = try fs.readAll(io, alloc, path);
     defer alloc.free(columnKeysContent);
     const columnIDGen: *ColumnIDGen = blk: {
         if (columnKeysContent.len > 0) {
-            break :blk try ColumnIDGen.decode(alloc, columnKeysContent);
+            break :blk try ColumnIDGen.decodeWithCompressionPool(io, alloc, compressionPool, columnKeysContent);
         } else {
             break :blk try ColumnIDGen.init(alloc);
         }
@@ -92,14 +92,12 @@ pub fn decodeFile(io: Io, alloc: Allocator, path: []const u8) !*ColumnIDGen {
     return columnIDGen;
 }
 
-pub fn decode(alloc: Allocator, src: []const u8) !*ColumnIDGen {
+pub fn decodeWithCompressionPool(io: Io, alloc: Allocator, compressionPool: *CompressionPool, src: []const u8) !*ColumnIDGen {
     const size = try encoding.getFrameContentSize(src);
 
     const buf = try alloc.alloc(u8, size);
     errdefer alloc.free(buf);
-    const dctx = try encoding.createDCtx();
-    defer encoding.freeDCtx(dctx);
-    const offset = try encoding.decompress(dctx, buf, src);
+    const offset = try compressionPool.decompress(io, buf, src);
 
     const genSize = encoding.Decoder.readVarIntFromBuf(buf);
     const keysBuf = buf[genSize.offset..offset];
@@ -166,7 +164,7 @@ test "ColumnIDGen" {
     defer compressionPool.deinit(alloc);
     const offset = try gener.encode(std.testing.io, compressionPool, alloc, encoded);
 
-    const generDecoded = try ColumnIDGen.decode(alloc, encoded[0..offset]);
+    const generDecoded = try ColumnIDGen.decodeWithCompressionPool(std.testing.io, alloc, compressionPool, encoded[0..offset]);
     defer generDecoded.deinit(alloc);
 
     try std.testing.expectEqual(gener.keyIDs.count(), generDecoded.keyIDs.count());

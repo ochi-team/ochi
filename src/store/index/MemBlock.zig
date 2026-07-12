@@ -374,7 +374,9 @@ fn encodePlain(self: *MemBlock, alloc: Allocator, entriesBlock: *EntriesBlock) !
 
 pub fn decode(
     self: *MemBlock,
+    io: Io,
     alloc: Allocator,
+    compressionPool: *CompressionPool,
     entriesBlock: *EntriesBlock,
     firstItem: []const u8,
     prefix: []const u8,
@@ -404,9 +406,7 @@ pub fn decode(
     const size = try encoding.getFrameContentSize(entriesBlock.lensBuf.items);
     const decompressedLensBuf = try alloc.alloc(u8, size);
     defer alloc.free(decompressedLensBuf);
-    const dctx = try encoding.createDCtx();
-    defer encoding.freeDCtx(dctx);
-    var n = try encoding.decompress(dctx, decompressedLensBuf, entriesBlock.lensBuf.items);
+    var n = try compressionPool.decompress(io, decompressedLensBuf, entriesBlock.lensBuf.items);
 
     // decode prefix lens
     const decodedLens = try alloc.alloc(u64, itemsCount - 1);
@@ -446,7 +446,7 @@ pub fn decode(
     const decompressedItemsSize = try encoding.getFrameContentSize(entriesBlock.entriesBuf.items);
     const decompressedItemsBuf = try alloc.alloc(u8, decompressedItemsSize);
     defer alloc.free(decompressedItemsBuf);
-    n = try encoding.decompress(dctx, decompressedItemsBuf, entriesBlock.entriesBuf.items);
+    n = try compressionPool.decompress(io, decompressedItemsBuf, entriesBlock.entriesBuf.items);
 
     try self.memEntries.ensureUnusedCapacity(alloc, itemsCount);
     try self.buf.ensureUnusedCapacity(alloc, dataLen);
@@ -645,7 +645,7 @@ test "MemBlock.encode/decode plain and zstd cases" {
             .blocksCountHint = case.items.len,
         });
         defer decoded.deinit(alloc);
-        try decoded.decode(alloc, &entriesBlock, encoded.firstEntry, encoded.prefix, encoded.itemsCount, encoded.encodingType);
+        try decoded.decode(testing.io, alloc, compressionPool, &entriesBlock, encoded.firstEntry, encoded.prefix, encoded.itemsCount, encoded.encodingType);
 
         try testing.expectEqualStrings(block.prefix, decoded.prefix);
         try testing.expectEqualStrings(block.prefix, case.expectedEncodedBlock.prefix);
