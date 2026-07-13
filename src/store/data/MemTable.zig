@@ -648,14 +648,13 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
         var sids = [_]SID{ sid, sid };
         var linesBySid = [_][]Line{ firstChunk[0..], secondChunk[0..] };
 
-        const memTable = try MemTable.init(alloc);
-        var memTableOwned = true;
-        defer if (memTableOwned) memTable.deinit(alloc);
+        const table = t: {
+            const memTable = try MemTable.init(alloc);
+            errdefer memTable.deinit(alloc);
+            try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
 
-        try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
-
-        const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
-        memTableOwned = false;
+            break :t try Table.fromMem(io, alloc, memTable, decompressionPool);
+        };
         defer table.close(io);
 
         const blockReader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);

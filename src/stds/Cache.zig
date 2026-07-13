@@ -111,16 +111,16 @@ pub fn Cache(comptime V: type) type {
             }
             errdefer _ = self.map.remove(k);
 
-            var valueOwned = true;
-            errdefer if (valueOwned and V != void) value.deinit(self.alloc);
-
-            const node = try self.alloc.create(Node);
-            node.* = .{
-                .key = k,
-                .value = value,
-                .list = .active,
+            const node = n: {
+                errdefer if (V != void) value.deinit(self.alloc);
+                const node = try self.alloc.create(Node);
+                node.* = .{
+                    .key = k,
+                    .value = value,
+                    .list = .active,
+                };
+                break :n node;
             };
-            valueOwned = false;
             errdefer node.release(self.alloc);
 
             gop.value_ptr.* = node;
@@ -151,16 +151,17 @@ pub fn Cache(comptime V: type) type {
             errdefer self.alloc.free(k);
 
             const value = try action(ctx);
-            var valueOwned = true;
-            errdefer if (valueOwned and V != void) value.deinit(self.alloc);
+            const node = n: {
+                errdefer if (V != void) value.deinit(self.alloc);
 
-            const node = try self.alloc.create(Node);
-            node.* = .{
-                .key = k,
-                .value = value,
-                .list = .active,
+                const node = try self.alloc.create(Node);
+                node.* = .{
+                    .key = k,
+                    .value = value,
+                    .list = .active,
+                };
+                break :n node;
             };
-            valueOwned = false;
             errdefer node.release(self.alloc);
 
             try self.map.put(k, node);

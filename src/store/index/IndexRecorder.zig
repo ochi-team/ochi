@@ -141,8 +141,6 @@ pub fn createDir(io: Io, path: []const u8) !void {
 }
 
 pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.stopped.stop(io);
-
     // disk tables merge task is different,
     // it doesn't run infinitely, but runs a few merge cycles to process left overs
     // from the previous launches

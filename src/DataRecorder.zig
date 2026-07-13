@@ -319,8 +319,6 @@ pub fn createDir(io: Io, path: []const u8) !void {
 }
 
 pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.stopped.stop(io);
-
     for (0..self.concurrency) |_| {
         try self.startDiskTablesMerge(io, alloc);
     }
