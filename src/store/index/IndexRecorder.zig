@@ -943,6 +943,8 @@ test "mergeTables force single mem table creates disk table" {
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
     try testing.expect(recorder.diskTables.items[0].inner == .disk);
+
+    try recorder.stop(io, alloc);
 }
 
 test "IndexRecorder add and reopen preserves item count" {
