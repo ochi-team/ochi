@@ -384,35 +384,37 @@ const MemTable = @import("MemTable.zig");
 const TableReader = @import("TableReader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 
+const testing = std.testing;
+
 fn expectEqualBlocks(a: *const Block, b: *const Block) !void {
-    try std.testing.expectEqualSlices(u64, a.timestamps, b.timestamps);
-    try std.testing.expectEqual(a.firstInvariant, b.firstInvariant);
+    try testing.expectEqualSlices(u64, a.timestamps, b.timestamps);
+    try testing.expectEqual(a.firstInvariant, b.firstInvariant);
 
     const colsA = a.getColumns();
     const colsB = b.getColumns();
-    try std.testing.expectEqual(colsA.len, colsB.len);
+    try testing.expectEqual(colsA.len, colsB.len);
     for (colsA, colsB) |ca, cb| {
-        try std.testing.expectEqualStrings(ca.key, cb.key);
-        try std.testing.expectEqual(ca.values.len, cb.values.len);
+        try testing.expectEqualStrings(ca.key, cb.key);
+        try testing.expectEqual(ca.values.len, cb.values.len);
         for (ca.values, cb.values) |va, vb| {
-            try std.testing.expectEqualStrings(va, vb);
+            try testing.expectEqualStrings(va, vb);
         }
     }
 
     const invariantA = a.getInvariantColumns();
     const invariantB = b.getInvariantColumns();
-    try std.testing.expectEqual(invariantA.len, invariantB.len);
+    try testing.expectEqual(invariantA.len, invariantB.len);
     for (invariantA, invariantB) |ca, cb| {
-        try std.testing.expectEqualStrings(ca.key, cb.key);
-        try std.testing.expectEqual(ca.values.len, 1);
-        try std.testing.expectEqual(cb.values.len, 1);
-        try std.testing.expectEqualStrings(ca.values[0], cb.values[0]);
+        try testing.expectEqualStrings(ca.key, cb.key);
+        try testing.expectEqual(ca.values.len, 1);
+        try testing.expectEqual(cb.values.len, 1);
+        try testing.expectEqualStrings(ca.values[0], cb.values[0]);
     }
 }
 
 test "initFromLines and initFromData produce identical blocks" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     const sid = SID{ .id = 1, .tenantID = 1111 };
 
@@ -499,13 +501,13 @@ test "initFromLines and initFromData produce identical blocks" {
             gatheredLines.deinit(alloc);
         }
         try blockA.gatherLines(alloc, &gatheredLines);
-        try std.testing.expectEqual(case.lines.len, gatheredLines.items.len);
+        try testing.expectEqual(case.lines.len, gatheredLines.items.len);
         for (case.lines, gatheredLines.items) |origLine, gatheredLine| {
-            try std.testing.expectEqual(origLine.timestampNs, gatheredLine.timestampNs);
-            try std.testing.expectEqual(origLine.fields.len, gatheredLine.fields.len);
+            try testing.expectEqual(origLine.timestampNs, gatheredLine.timestampNs);
+            try testing.expectEqual(origLine.fields.len, gatheredLine.fields.len);
             for (origLine.fields, gatheredLine.fields) |of, gf| {
-                try std.testing.expectEqualStrings(of.key, gf.key);
-                try std.testing.expectEqualStrings(of.value, gf.value);
+                try testing.expectEqualStrings(of.key, gf.key);
+                try testing.expectEqualStrings(of.value, gf.value);
             }
         }
     }
@@ -531,7 +533,7 @@ test "areSameFields: happy path" {
         },
     };
 
-    try std.testing.expectEqual(true, areSameFields(&lines));
+    try testing.expectEqual(true, areSameFields(&lines));
 }
 
 test "areSameFields: unhappy path" {
@@ -554,7 +556,7 @@ test "areSameFields: unhappy path" {
         },
     };
 
-    try std.testing.expectEqual(false, areSameFields(&lines));
+    try testing.expectEqual(false, areSameFields(&lines));
 }
 
 test "areSameValuesWithinColumn: happy path" {
@@ -577,8 +579,8 @@ test "areSameValuesWithinColumn: happy path" {
         },
     };
 
-    try std.testing.expectEqual(true, canBeSavedAsInvariant(&lines, 0));
-    try std.testing.expectEqual(true, canBeSavedAsInvariant(&lines, 1));
+    try testing.expectEqual(true, canBeSavedAsInvariant(&lines, 0));
+    try testing.expectEqual(true, canBeSavedAsInvariant(&lines, 1));
 }
 
 test "areSameValuesWithinColumn: unhappy path" {
@@ -601,8 +603,8 @@ test "areSameValuesWithinColumn: unhappy path" {
         },
     };
 
-    try std.testing.expectEqual(false, canBeSavedAsInvariant(&lines, 0));
-    try std.testing.expectEqual(true, canBeSavedAsInvariant(&lines, 1));
+    try testing.expectEqual(false, canBeSavedAsInvariant(&lines, 0));
+    try testing.expectEqual(true, canBeSavedAsInvariant(&lines, 1));
 }
 
 test "SelfInitMaxColumns" {
@@ -627,7 +629,7 @@ test "SelfInitMaxColumns" {
         },
     };
     for (cases) |case| {
-        const alloc = std.testing.allocator;
+        const alloc = testing.allocator;
         const lines = try alloc.alloc(Line, case.lines);
 
         var keyNum: usize = 0;
@@ -656,13 +658,13 @@ test "SelfInitMaxColumns" {
         const b = try Block.initFromLines(alloc, lines);
         defer b.deinit(alloc);
 
-        try std.testing.expectEqual(case.expectedLen, b.len());
-        try std.testing.expectEqual(case.expectedColumns, b.columns.len);
+        try testing.expectEqual(case.expectedLen, b.len());
+        try testing.expectEqual(case.expectedColumns, b.columns.len);
     }
 }
 
 test "initFromLines allows maxLines" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     var lines: [maxLines]Line = undefined;
     for (0..maxLines) |i| {
@@ -675,13 +677,13 @@ test "initFromLines allows maxLines" {
     const b = try Block.initFromLines(alloc, &lines);
     defer b.deinit(alloc);
 
-    try std.testing.expectEqual(maxLines, b.len());
-    try std.testing.expectEqual(0, b.getColumns().len);
-    try std.testing.expectEqual(1, b.getInvariantColumns().len);
+    try testing.expectEqual(maxLines, b.len());
+    try testing.expectEqual(0, b.getColumns().len);
+    try testing.expectEqual(1, b.getInvariantColumns().len);
 }
 
 test "initFromLines drops a single invalid row with too many fields" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     const fields = try alloc.alloc(Field, maxColumns + 1);
     defer {
@@ -703,12 +705,12 @@ test "initFromLines drops a single invalid row with too many fields" {
     const b = try Block.initFromLines(alloc, &lines);
     defer b.deinit(alloc);
 
-    try std.testing.expectEqual(0, b.len());
-    try std.testing.expectEqual(0, b.columns.len);
+    try testing.expectEqual(0, b.len());
+    try testing.expectEqual(0, b.columns.len);
 }
 
 test "Self.put" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     const Case = struct {
         lines: []Line,
@@ -950,26 +952,26 @@ test "Self.put" {
         defer block.deinit(allocator);
 
         for (case.expectedTimestamps, 0..) |expectedTs, i| {
-            try std.testing.expectEqual(expectedTs, block.timestamps[i]);
+            try testing.expectEqual(expectedTs, block.timestamps[i]);
         }
 
         const actualCols = block.getColumns();
-        try std.testing.expectEqual(case.expectedCols.len, actualCols.len);
+        try testing.expectEqual(case.expectedCols.len, actualCols.len);
         for (case.expectedCols, 0..) |expectedCol, i| {
-            try std.testing.expectEqualStrings(expectedCol.key, actualCols[i].key);
-            try std.testing.expectEqual(expectedCol.values.len, actualCols[i].values.len);
+            try testing.expectEqualStrings(expectedCol.key, actualCols[i].key);
+            try testing.expectEqual(expectedCol.values.len, actualCols[i].values.len);
             for (expectedCol.values, 0..) |expectedVal, j| {
-                try std.testing.expectEqualStrings(expectedVal, actualCols[i].values[j]);
+                try testing.expectEqualStrings(expectedVal, actualCols[i].values[j]);
             }
         }
 
         const actualInvariants = block.getInvariantColumns();
-        try std.testing.expectEqual(case.expectedInvariants.len, actualInvariants.len);
+        try testing.expectEqual(case.expectedInvariants.len, actualInvariants.len);
         for (case.expectedInvariants, 0..) |expectedInvariant, i| {
-            try std.testing.expectEqualStrings(expectedInvariant.key, actualInvariants[i].key);
-            try std.testing.expectEqual(expectedInvariant.values.len, actualInvariants[i].values.len);
+            try testing.expectEqualStrings(expectedInvariant.key, actualInvariants[i].key);
+            try testing.expectEqual(expectedInvariant.values.len, actualInvariants[i].values.len);
             for (expectedInvariant.values, 0..) |expectedVal, j| {
-                try std.testing.expectEqualStrings(expectedVal, actualInvariants[i].values[j]);
+                try testing.expectEqualStrings(expectedVal, actualInvariants[i].values[j]);
             }
         }
     }

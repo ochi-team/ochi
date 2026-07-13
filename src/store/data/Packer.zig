@@ -188,10 +188,12 @@ fn areValuesSame(values: []const []const u8) bool {
     return true;
 }
 
+const testing = std.testing;
+
 // TODO: there must be more properties besides rount-trippness,
 // e.g. size of the output is less
 test "Packer.packValuesRoundtrip" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     const Case = struct {
         strings: []const []const u8,
@@ -255,16 +257,16 @@ test "Packer.packValuesRoundtrip" {
         defer compressionPool.deinit(allocator);
         const decompressionPool = try DecompressionPool.init(allocator, 1);
         defer decompressionPool.deinit(allocator);
-        const n = try packValues(compressionPool, std.testing.io, &packedValues, bound);
+        const n = try packValues(compressionPool, testing.io, &packedValues, bound);
 
         const unpacker = try Unpacker.init(allocator, decompressionPool);
         defer unpacker.deinit(allocator);
-        const unpacked = try unpacker.unpackValues(std.testing.io, allocator, packedValues[0..n], case.strings.len);
+        const unpacked = try unpacker.unpackValues(testing.io, allocator, packedValues[0..n], case.strings.len);
         defer allocator.free(unpacked);
 
-        try std.testing.expectEqual(case.strings.len, unpacked.len);
+        try testing.expectEqual(case.strings.len, unpacked.len);
         for (case.strings, unpacked) |original, decoded| {
-            try std.testing.expectEqualStrings(original, decoded);
+            try testing.expectEqualStrings(original, decoded);
         }
     }
 }

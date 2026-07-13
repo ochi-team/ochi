@@ -275,8 +275,10 @@ fn mergeLines(dst: *std.ArrayList(Line), left: []const Line, right: []const Line
     }
 }
 
+const testing = std.testing;
+
 test "mergeLines" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
     const Case = struct {
         left: []const Line,
         right: []const Line,
@@ -415,13 +417,13 @@ test "mergeLines" {
         defer merged.deinit(alloc);
 
         mergeLines(&merged, case.left, case.right);
-        try std.testing.expectEqualDeep(case.expected, merged.items);
+        try testing.expectEqualDeep(case.expected, merged.items);
     }
 }
 
 test "mergeData keeps merged memtable buffers alive after source memtables deinit" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);
@@ -479,11 +481,11 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         defer streamWriter.deinit(alloc);
         dstMemTable.tableHeader = try mergeData(io, alloc, timestampsEncoders, decompressionPool, streamWriter, &readers, null);
 
-        try std.testing.expect(dstMemTable.indexBuf.items.len > 0);
-        try std.testing.expect(dstMemTable.metaIndexBuf.items.len > 0);
-        try std.testing.expect(dstMemTable.columnsHeaderIndexBuf.items.len > 0);
-        try std.testing.expect(dstMemTable.columnsHeaderBuf.items.len > 0);
-        try std.testing.expect(dstMemTable.timestampsBuf.items.len > 0);
+        try testing.expect(dstMemTable.indexBuf.items.len > 0);
+        try testing.expect(dstMemTable.metaIndexBuf.items.len > 0);
+        try testing.expect(dstMemTable.columnsHeaderIndexBuf.items.len > 0);
+        try testing.expect(dstMemTable.columnsHeaderBuf.items.len > 0);
+        try testing.expect(dstMemTable.timestampsBuf.items.len > 0);
 
         break :blk dstMemTable;
     };
@@ -513,21 +515,21 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         try block.gatherLines(alloc, &lines);
 
         for (lines.items) |line| {
-            try std.testing.expect(expectedI < expected.len);
-            try std.testing.expectEqual(expected[expectedI].timestampNs, line.timestampNs);
-            try std.testing.expectEqual(@as(usize, 1), line.fields.len);
-            try std.testing.expectEqualStrings(fieldKey, line.fields[0].key);
-            try std.testing.expectEqualStrings(expected[expectedI].value, line.fields[0].value);
+            try testing.expect(expectedI < expected.len);
+            try testing.expectEqual(expected[expectedI].timestampNs, line.timestampNs);
+            try testing.expectEqual(@as(usize, 1), line.fields.len);
+            try testing.expectEqualStrings(fieldKey, line.fields[0].key);
+            try testing.expectEqualStrings(expected[expectedI].value, line.fields[0].value);
             expectedI += 1;
         }
     }
 
-    try std.testing.expectEqual(expected.len, expectedI);
+    try testing.expectEqual(expected.len, expectedI);
 }
 
 test "mergeData flushes maxLines for one stream" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);
@@ -583,12 +585,12 @@ test "mergeData flushes maxLines for one stream" {
         actualRows += mergedReader.blockData.len;
     }
 
-    try std.testing.expectEqual(Block.maxLines, actualRows);
+    try testing.expectEqual(Block.maxLines, actualRows);
 }
 
 test "mergeData multi tenant" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);
@@ -596,7 +598,7 @@ test "mergeData multi tenant" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
@@ -672,5 +674,5 @@ test "mergeData multi tenant" {
         null,
     );
 
-    try std.testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);
+    try testing.expectEqual(@as(u32, tenantIDs.len), dstMemTable.tableHeader.len);
 }

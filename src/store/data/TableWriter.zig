@@ -719,6 +719,7 @@ fn writeColumnsHeader(
 }
 
 const testing = std.testing;
+
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
 const SID = @import("../lines.zig").SID;
@@ -727,7 +728,7 @@ const TableReader = @import("TableReader.zig");
 test "writeBlock and writeData produce identical buffer output" {
     const alloc = testing.allocator;
     // TODO: intrument custom io to catch resource leaks, e.g. not closed files
-    const io = std.testing.io;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);
@@ -817,7 +818,7 @@ test "writeBlock and writeData produce identical buffer output" {
 
 test "writeBlock with many columns does not overflow columns header index buffer" {
     const alloc = testing.allocator;
-    const io = std.testing.io;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);

@@ -196,17 +196,17 @@ test "Entries.shardIdxOverflow" {
     const e = try Entries.init(alloc, 4);
     defer e.deinit(alloc);
     e.shardIdx = .init(std.math.maxInt(usize));
-    try std.testing.expectEqual(e.shardIdx.load(.acquire), std.math.maxInt(usize));
+    try testing.expectEqual(e.shardIdx.load(.acquire), std.math.maxInt(usize));
 
     _ = e.next();
-    try std.testing.expectEqual(e.shardIdx.load(.acquire), 0);
+    try testing.expectEqual(e.shardIdx.load(.acquire), 0);
 
     // it fetches the value first, then increments,
     // therefore on it returns zero's shard and has value 1
     const shard = e.next();
     const firstShard = &e.shards[0];
-    try std.testing.expectEqual(e.shardIdx.load(.acquire), 1);
-    try std.testing.expectEqual(shard, firstShard);
+    try testing.expectEqual(e.shardIdx.load(.acquire), 1);
+    try testing.expectEqual(shard, firstShard);
 }
 
 test "EntriesShard.add" {

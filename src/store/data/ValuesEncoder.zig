@@ -365,10 +365,11 @@ fn parseIPv4(s: []const u8) !u32 {
 }
 
 const ValuesDecoder = @import("ValuesDecoder.zig");
+const testing = std.testing;
 
 test "ValuesEncoder.encodeAndDecodeRoundtrip" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
     var dictValues = try std.ArrayList([]const u8).initCapacity(allocator, 8);
     defer dictValues.deinit(allocator);
     const dictV = [_][]const u8{ "1111", "2222" };
@@ -534,9 +535,9 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         defer cv.deinit(allocator);
 
         const valueType = try encoder.encode(case.values, &cv);
-        try std.testing.expectEqual(case.expectedType, valueType.type);
-        try std.testing.expectEqual(case.expectedMin, valueType.min);
-        try std.testing.expectEqual(case.expectedMax, valueType.max);
+        try testing.expectEqual(case.expectedType, valueType.type);
+        try testing.expectEqual(case.expectedMin, valueType.min);
+        try testing.expectEqual(case.expectedMax, valueType.max);
 
         const decoder = try ValuesDecoder.init(allocator);
         defer decoder.deinit();
@@ -559,33 +560,33 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
 
         // Compare decoded values with original values
         const expected = if (case.values.len == 0) &[_][]const u8{} else case.values;
-        try std.testing.expectEqual(expected.len, decodedValues.len);
+        try testing.expectEqual(expected.len, decodedValues.len);
         for (expected, decodedValues) |exp, got| {
-            try std.testing.expectEqualStrings(exp, got);
+            try testing.expectEqualStrings(exp, got);
         }
         if (case.expectedDict) |expectedDict| {
-            try std.testing.expectEqualDeep(expectedDict.values.items, cv.values.items);
+            try testing.expectEqualDeep(expectedDict.values.items, cv.values.items);
         } else {
-            try std.testing.expect(cv.values.items.len == 0);
+            try testing.expect(cv.values.items.len == 0);
         }
     }
 }
 
 test "ValuesEncoder fuzz" {
-    try std.testing.fuzz({}, fuzzMixedShortValues, .{});
+    try testing.fuzz({}, fuzzMixedShortValues, .{});
 }
 
-fn fuzzMixedShortValues(_: void, smith: *std.testing.Smith) !void {
+fn fuzzMixedShortValues(_: void, smith: *testing.Smith) !void {
     @disableInstrumentation();
 
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
 
     var storage: [16][64]u8 = undefined;
     var values: [16][]const u8 = undefined;
 
     const valueTypesLen = 11;
-    try std.testing.expect(@typeInfo(ColumnType).@"enum".fields.len == valueTypesLen);
+    try testing.expect(@typeInfo(ColumnType).@"enum".fields.len == valueTypesLen);
 
     const valueType = smith.valueRangeAtMost(ColumnType, @enumFromInt(1), @enumFromInt(valueTypesLen - 1));
     const count: usize = switch (valueType) {
@@ -732,7 +733,7 @@ fn expectEncodeRoundtrip(
     defer cv.deinit(allocator);
 
     const valueType = try encoder.encode(input, &cv);
-    try std.testing.expectEqual(expectedType, valueType.type);
+    try testing.expectEqual(expectedType, valueType.type);
 
     const decoder = try ValuesDecoder.init(allocator);
     defer decoder.deinit();
@@ -747,51 +748,51 @@ fn expectEncodeRoundtrip(
 
     switch (valueType.type) {
         .string, .dict => {
-            try std.testing.expectEqual(input.len, decodedValues.len);
+            try testing.expectEqual(input.len, decodedValues.len);
             for (input, decodedValues) |expected, got| {
-                try std.testing.expectEqualStrings(expected, got);
+                try testing.expectEqualStrings(expected, got);
             }
         },
         .uint8, .uint16, .uint32, .uint64 => {
-            try std.testing.expectEqual(input.len, decodedValues.len);
+            try testing.expectEqual(input.len, decodedValues.len);
             for (input, decodedValues) |expected, got| {
-                try std.testing.expectEqual(
+                try testing.expectEqual(
                     try std.fmt.parseInt(u64, expected, 10),
                     try std.fmt.parseInt(u64, got, 10),
                 );
             }
         },
         .int64 => {
-            try std.testing.expectEqual(input.len, decodedValues.len);
+            try testing.expectEqual(input.len, decodedValues.len);
             for (input, decodedValues) |expected, got| {
-                try std.testing.expectEqual(
+                try testing.expectEqual(
                     try std.fmt.parseInt(i64, expected, 10),
                     try std.fmt.parseInt(i64, got, 10),
                 );
             }
         },
         .float64 => {
-            try std.testing.expectEqual(input.len, decodedValues.len);
+            try testing.expectEqual(input.len, decodedValues.len);
             for (input, decodedValues) |expected, got| {
                 const expectedFloat = try std.fmt.parseFloat(f64, expected);
                 const gotFloat = try std.fmt.parseFloat(f64, got);
                 if (std.math.isNan(expectedFloat)) {
-                    try std.testing.expect(std.math.isNan(gotFloat));
+                    try testing.expect(std.math.isNan(gotFloat));
                 } else {
-                    try std.testing.expectEqual(expectedFloat, gotFloat);
+                    try testing.expectEqual(expectedFloat, gotFloat);
                 }
             }
         },
         .ipv4 => {
-            try std.testing.expectEqual(input.len, decodedValues.len);
+            try testing.expectEqual(input.len, decodedValues.len);
             for (input, decodedValues) |expected, got| {
-                try std.testing.expectEqual(try parseIPv4(expected), try parseIPv4(got));
+                try testing.expectEqual(try parseIPv4(expected), try parseIPv4(got));
             }
         },
         .timestampIso8601 => {
-            try std.testing.expectEqual(input.len, decodedValues.len);
+            try testing.expectEqual(input.len, decodedValues.len);
             for (input, decodedValues) |expected, got| {
-                try std.testing.expectEqual(parseTimestampISO8601(expected), parseTimestampISO8601(got));
+                try testing.expectEqual(parseTimestampISO8601(expected), parseTimestampISO8601(got));
             }
         },
         .unknown => return error.UnknownValueType,
@@ -799,7 +800,7 @@ fn expectEncodeRoundtrip(
 }
 
 test "ValuesEncoder does not treat bare number as timestamp" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     const values = [_][]const u8{
         "2011-04-19T03:44:01.000Z",
@@ -820,14 +821,14 @@ test "ValuesEncoder does not treat bare number as timestamp" {
     defer cv.deinit(allocator);
 
     const valueType = try encoder.encode(&values, &cv);
-    try std.testing.expectEqual(.string, valueType.type);
-    try std.testing.expectEqual(0, valueType.min);
-    try std.testing.expectEqual(0, valueType.max);
-    try std.testing.expectEqualDeep(&values, encoder.values.items);
+    try testing.expectEqual(.string, valueType.type);
+    try testing.expectEqual(0, valueType.min);
+    try testing.expectEqual(0, valueType.max);
+    try testing.expectEqualDeep(&values, encoder.values.items);
 }
 
 test "ValuesEncoder handles dict values shorter than row count" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     const Case = struct {
         values: []const []const u8,
@@ -861,18 +862,18 @@ test "ValuesEncoder handles dict values shorter than row count" {
         defer cv.deinit(allocator);
 
         const valueType = try encoder.encode(case.values, &cv);
-        try std.testing.expectEqual(.dict, valueType.type);
-        try std.testing.expectEqualDeep(case.expectedDict, cv.values.items);
-        try std.testing.expectEqual(case.expectedIndexes.len, encoder.values.items.len);
+        try testing.expectEqual(.dict, valueType.type);
+        try testing.expectEqualDeep(case.expectedDict, cv.values.items);
+        try testing.expectEqual(case.expectedIndexes.len, encoder.values.items.len);
         for (case.expectedIndexes, encoder.values.items) |expectedIdx, encodedValue| {
-            try std.testing.expectEqualSlices(u8, &[_]u8{expectedIdx}, encodedValue);
+            try testing.expectEqualSlices(u8, &[_]u8{expectedIdx}, encodedValue);
         }
     }
 }
 
 test "ValuesEncoder keeps buffered value slices stable after growth" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
 
     var input: [ColumnDict.maxDictColumnValuesLen * 4][]const u8 = undefined;
     const dictValues = [_][]const u8{ "error", "", "warn", "info" };
@@ -887,8 +888,8 @@ test "ValuesEncoder keeps buffered value slices stable after growth" {
     defer cv.deinit(allocator);
 
     const valueType = try encoder.encode(&input, &cv);
-    try std.testing.expectEqual(.dict, valueType.type);
-    try std.testing.expectEqualDeep(&dictValues, cv.values.items);
+    try testing.expectEqual(.dict, valueType.type);
+    try testing.expectEqualDeep(&dictValues, cv.values.items);
 
     var decodedValues: [ColumnDict.maxDictColumnValuesLen * 4][]const u8 = undefined;
     for (encoder.values.items, 0..) |encodedValue, i| {
@@ -899,10 +900,10 @@ test "ValuesEncoder keeps buffered value slices stable after growth" {
     defer decoder.deinit();
 
     try decoder.decode(io, decodedValues[0..decodedValues.len], valueType.type, cv.values.items);
-    try std.testing.expectEqualDeep(&input, decodedValues[0..decodedValues.len]);
+    try testing.expectEqualDeep(&input, decodedValues[0..decodedValues.len]);
 }
 
-fn weightedString(smith: *std.testing.Smith, buf: []u8) usize {
+fn weightedString(smith: *testing.Smith, buf: []u8) usize {
     return smith.sliceWeightedBytes(buf, &.{
         .rangeAtMost(u8, '0', '9', 4),
         .rangeAtMost(u8, 'a', 'z', 5),
@@ -923,7 +924,7 @@ fn weightedString(smith: *std.testing.Smith, buf: []u8) usize {
     });
 }
 
-fn weightedStringMin(smith: *std.testing.Smith, buf: []u8, minLen: usize) usize {
+fn weightedStringMin(smith: *testing.Smith, buf: []u8, minLen: usize) usize {
     const len = weightedString(smith, buf);
     if (len >= minLen) return len;
 
@@ -933,7 +934,7 @@ fn weightedStringMin(smith: *std.testing.Smith, buf: []u8, minLen: usize) usize 
     return minLen;
 }
 
-fn weightedStringChar(smith: *std.testing.Smith) u8 {
+fn weightedStringChar(smith: *testing.Smith) u8 {
     return smith.valueWeighted(u8, &.{
         .rangeAtMost(u8, '0', '9', 4),
         .rangeAtMost(u8, 'a', 'z', 5),
@@ -954,7 +955,7 @@ fn weightedStringChar(smith: *std.testing.Smith) u8 {
     });
 }
 
-fn weightedStringMark(smith: *std.testing.Smith) struct { char: u8, pref: bool } {
+fn weightedStringMark(smith: *testing.Smith) struct { char: u8, pref: bool } {
     const val = smith.valueWeighted(u8, &.{
         .rangeAtMost(u8, 'a', 'z', 5),
         .rangeAtMost(u8, 'A', 'Z', 2),

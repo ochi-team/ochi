@@ -287,8 +287,10 @@ fn decodeTimestampISO8601(v: []const u8) i64 {
     return @bitCast(n);
 }
 
+const testing = std.testing;
+
 test "ValuesDecoder.decodeUint8String" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     const decoder = try Self.init(allocator);
     defer decoder.deinit();
 
@@ -297,39 +299,39 @@ test "ValuesDecoder.decodeUint8String" {
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(0);
-    try std.testing.expectEqualStrings("0", decoder.buf.items);
+    try testing.expectEqualStrings("0", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(9);
-    try std.testing.expectEqualStrings("9", decoder.buf.items);
+    try testing.expectEqualStrings("9", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(42);
-    try std.testing.expectEqualStrings("42", decoder.buf.items);
+    try testing.expectEqualStrings("42", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(99);
-    try std.testing.expectEqualStrings("99", decoder.buf.items);
+    try testing.expectEqualStrings("99", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(100);
-    try std.testing.expectEqualStrings("100", decoder.buf.items);
+    try testing.expectEqualStrings("100", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(199);
-    try std.testing.expectEqualStrings("199", decoder.buf.items);
+    try testing.expectEqualStrings("199", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(200);
-    try std.testing.expectEqualStrings("200", decoder.buf.items);
+    try testing.expectEqualStrings("200", decoder.buf.items);
 
     decoder.buf.clearRetainingCapacity();
     decoder.decodeUint8String(255);
-    try std.testing.expectEqualStrings("255", decoder.buf.items);
+    try testing.expectEqualStrings("255", decoder.buf.items);
 }
 
 test "ValuesDecoder.decodeIPv4String" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     const decoder = try Self.init(allocator);
     defer decoder.deinit();
 
@@ -339,17 +341,17 @@ test "ValuesDecoder.decodeIPv4String" {
     const ip: u32 = (1 << 24) | (2 << 16) | (3 << 8) | 4;
     decoder.buf.clearRetainingCapacity();
     decoder.decodeIPv4String(ip);
-    try std.testing.expectEqualStrings("1.2.3.4", decoder.buf.items);
+    try testing.expectEqualStrings("1.2.3.4", decoder.buf.items);
 
     const ip2: u32 = (192 << 24) | (168 << 16) | (1 << 8) | 1;
     decoder.buf.clearRetainingCapacity();
     decoder.decodeIPv4String(ip2);
-    try std.testing.expectEqualStrings("192.168.1.1", decoder.buf.items);
+    try testing.expectEqualStrings("192.168.1.1", decoder.buf.items);
 }
 
 test "ValuesDecoder.decode uint8 grows output buffer" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
 
     const decoder = try Self.init(allocator);
     defer decoder.deinit();
@@ -367,10 +369,10 @@ test "ValuesDecoder.decode uint8 grows output buffer" {
         encoded[3][0..],
     };
 
-    try std.testing.expectEqual(0, decoder.buf.capacity);
+    try testing.expectEqual(0, decoder.buf.capacity);
     try decoder.decode(io, values[0..], .uint8, &.{});
 
-    try std.testing.expectEqualDeep(&[_][]const u8{
+    try testing.expectEqualDeep(&[_][]const u8{
         "0",
         "9",
         "42",
@@ -379,8 +381,8 @@ test "ValuesDecoder.decode uint8 grows output buffer" {
 }
 
 test "ValuesDecoder.decode ipv4 grows output buffer" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
 
     const decoder = try Self.init(allocator);
     defer decoder.deinit();
@@ -396,10 +398,10 @@ test "ValuesDecoder.decode ipv4 grows output buffer" {
         encoded[2][0..],
     };
 
-    try std.testing.expectEqual(0, decoder.buf.capacity);
+    try testing.expectEqual(0, decoder.buf.capacity);
     try decoder.decode(io, values[0..], .ipv4, &.{});
 
-    try std.testing.expectEqualDeep(&[_][]const u8{
+    try testing.expectEqualDeep(&[_][]const u8{
         "1.2.3.4",
         "192.168.1.1",
         "255.255.255.255",
@@ -407,8 +409,8 @@ test "ValuesDecoder.decode ipv4 grows output buffer" {
 }
 
 test "ValuesDecoder.decode dict replaces previous dictionary" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
 
     const decoder = try Self.init(allocator);
     defer decoder.deinit();
@@ -424,7 +426,7 @@ test "ValuesDecoder.decode dict replaces previous dictionary" {
     const firstDict = [_][]const u8{ "alpha", "beta" };
 
     try decoder.decode(io, firstValues[0..], .dict, &firstDict);
-    try std.testing.expectEqualDeep(&[_][]const u8{ "alpha", "beta" }, firstValues[0..]);
+    try testing.expectEqualDeep(&[_][]const u8{ "alpha", "beta" }, firstValues[0..]);
 
     const secondEncoded = [_][1]u8{
         .{1},
@@ -439,5 +441,5 @@ test "ValuesDecoder.decode dict replaces previous dictionary" {
     const secondDict = [_][]const u8{ "warn", "error" };
 
     try decoder.decode(io, secondValues[0..], .dict, &secondDict);
-    try std.testing.expectEqualDeep(&[_][]const u8{ "error", "warn", "error" }, secondValues[0..]);
+    try testing.expectEqualDeep(&[_][]const u8{ "error", "warn", "error" }, secondValues[0..]);
 }

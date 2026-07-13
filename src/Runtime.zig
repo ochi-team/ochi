@@ -126,9 +126,9 @@ test "getFreeDiskSpace returns same positive value" {
     const r = try Runtime.init(testing.io, testing.allocator, ".", 0.5);
     defer r.deinit(testing.allocator);
 
-    const first = r.getFreeDiskSpace(std.testing.io);
-    const second = r.getFreeDiskSpace(std.testing.io);
+    const first = r.getFreeDiskSpace(testing.io);
+    const second = r.getFreeDiskSpace(testing.io);
 
-    try std.testing.expect(first > 0);
-    try std.testing.expectEqual(first, second);
+    try testing.expect(first > 0);
+    try testing.expectEqual(first, second);
 }

@@ -34,20 +34,22 @@ pub fn projectIsFormatted(io: Io, alloc: Allocator) !bool {
     };
 }
 
+const testing = std.testing;
+
 test gitHasNoMergeCommits {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     const noMergeCommits = try gitHasNoMergeCommits(io, alloc);
-    try std.testing.expect(noMergeCommits);
+    try testing.expect(noMergeCommits);
 }
 
 test "projectIsFormatted" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     const isFormatted = try projectIsFormatted(io, alloc);
-    try std.testing.expect(isFormatted);
+    try testing.expect(isFormatted);
 }
 
 // TODO: add linter

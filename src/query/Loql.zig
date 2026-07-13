@@ -418,11 +418,11 @@ test "translateQuery" {
 
         const filter = loql.translateQuery(allocator, &reporter, case.query, now);
         if (case.expectedErr) |err| {
-            try std.testing.expectError(err, filter);
+            try testing.expectError(err, filter);
         }
         if (case.expected) |expected| {
-            try std.testing.expectEqualDeep(try filter, expected);
+            try testing.expectEqualDeep(try filter, expected);
         }
-        try std.testing.expectEqualSlices(ErrorReporter.SyntaxError, reporter.syntaxErrors(), case.expectedReports);
+        try testing.expectEqualSlices(ErrorReporter.SyntaxError, reporter.syntaxErrors(), case.expectedReports);
     }
 }

@@ -186,9 +186,9 @@ test "parseTimestampISO8601 requires complete in-range timestamps" {
     for (cases) |case| {
         const actual = parseTimestampISO8601(case.value);
         if (case.expected) |expected| {
-            try std.testing.expectEqual(expected, actual.?);
+            try testing.expectEqual(expected, actual.?);
         } else {
-            try std.testing.expectEqual(null, actual);
+            try testing.expectEqual(null, actual);
         }
     }
 }

@@ -122,6 +122,8 @@ fn validateIndexBlockHeaders(headers: []const Self) void {
     }
 }
 
+const testing = std.testing;
+
 test "IndexBlockHeaderEncode" {
     const Case = struct {
         header: Self,
@@ -164,9 +166,9 @@ test "IndexBlockHeaderEncode" {
     for (cases) |case| {
         var encodeBuf: [encodeExpectedSize]u8 = undefined;
         const offset = case.header.encode(&encodeBuf);
-        try std.testing.expectEqual(case.expectedLen, offset);
+        try testing.expectEqual(case.expectedLen, offset);
 
         const h = Self.decode(encodeBuf[0..offset]);
-        try std.testing.expectEqualDeep(case.header, h);
+        try testing.expectEqualDeep(case.header, h);
     }
 }

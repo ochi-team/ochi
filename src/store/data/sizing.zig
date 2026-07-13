@@ -74,8 +74,10 @@ fn keyValSize(key: []const u8, val: []const u8) u32 {
     return @intCast(lineSurroundSize + keySize + val.len);
 }
 
+const testing = std.testing;
+
 test "sizingBlockAndFieldsMatch" {
-    const io = std.testing.io;
+    const io = testing.io;
     const Field = @import("../lines.zig").Field;
 
     var sameField1 = [_]Field{
@@ -169,7 +171,7 @@ test "sizingBlockAndFieldsMatch" {
         },
     };
     for (cases) |case| {
-        const alloc = std.testing.allocator;
+        const alloc = testing.allocator;
 
         var fieldsSize: u32 = 0;
         for (case.lines) |line| {
@@ -180,7 +182,7 @@ test "sizingBlockAndFieldsMatch" {
         defer block.deinit(alloc);
         const blockSize = block.size();
 
-        try std.testing.expectEqual(fieldsSize, blockSize);
+        try testing.expectEqual(fieldsSize, blockSize);
 
         // Verify size matches actual JSON serialization
         var totalJsonSize: u32 = 0;
@@ -208,6 +210,6 @@ test "sizingBlockAndFieldsMatch" {
             totalJsonSize += @intCast(writer.written().len + 1);
         }
 
-        try std.testing.expectEqual(blockSize, totalJsonSize);
+        try testing.expectEqual(blockSize, totalJsonSize);
     }
 }

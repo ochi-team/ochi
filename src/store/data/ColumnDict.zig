@@ -74,69 +74,71 @@ pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !Self {
     };
 }
 
-test "setReturnsNullOnExceedingMaxColumnValueSize" {
-    var cv = try Self.init(std.testing.allocator);
-    defer cv.deinit(std.testing.allocator);
+const testing = std.testing;
 
-    const oversized_value = try std.testing.allocator.alloc(u8, maxDictColumnValueSize + 1);
-    defer std.testing.allocator.free(oversized_value);
+test "setReturnsNullOnExceedingMaxColumnValueSize" {
+    var cv = try Self.init(testing.allocator);
+    defer cv.deinit(testing.allocator);
+
+    const oversized_value = try testing.allocator.alloc(u8, maxDictColumnValueSize + 1);
+    defer testing.allocator.free(oversized_value);
 
     const result = cv.set(oversized_value);
-    try std.testing.expect(result == null);
+    try testing.expect(result == null);
 }
 
 test "setReturnsNullOnExceedingTotalValueSize" {
-    var cv = try Self.init(std.testing.allocator);
-    defer cv.deinit(std.testing.allocator);
+    var cv = try Self.init(testing.allocator);
+    defer cv.deinit(testing.allocator);
 
-    const v1 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    const v2 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    const v3 = try std.testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    defer std.testing.allocator.free(v1);
-    defer std.testing.allocator.free(v2);
-    defer std.testing.allocator.free(v3);
+    const v1 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
+    const v2 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
+    const v3 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
+    defer testing.allocator.free(v1);
+    defer testing.allocator.free(v2);
+    defer testing.allocator.free(v3);
 
     // fill with some data
     @memset(v1, 'a');
     const r1 = cv.set(v1);
-    try std.testing.expect(r1 != null);
+    try testing.expect(r1 != null);
 
     @memset(v2, 'b');
     const r2 = cv.set(v2);
-    try std.testing.expect(r2 != null);
+    try testing.expect(r2 != null);
 
     // this should fail
     @memset(v3, 'c');
     const r3 = cv.set(v3);
-    try std.testing.expect(r3 == null);
+    try testing.expect(r3 == null);
 }
 
 test "setReturnsNullOnExceedingTotalValuesLen" {
-    var cv = try Self.init(std.testing.allocator);
-    defer cv.deinit(std.testing.allocator);
+    var cv = try Self.init(testing.allocator);
+    defer cv.deinit(testing.allocator);
 
     var testValues: [8][]const u8 = undefined;
     for (0..8) |i| {
-        testValues[i] = try std.testing.allocator.dupe(u8, &[_]u8{@intCast(i)});
+        testValues[i] = try testing.allocator.dupe(u8, &[_]u8{@intCast(i)});
     }
     defer {
         for (0..8) |i| {
-            std.testing.allocator.free(testValues[i]);
+            testing.allocator.free(testValues[i]);
         }
     }
 
     // fill with some data
     for (0..8) |i| {
         const r = cv.set(testValues[i]);
-        try std.testing.expect(r != null);
+        try testing.expect(r != null);
     }
 
     const r = cv.set("1a");
-    try std.testing.expect(r == null);
+    try testing.expect(r == null);
 }
 
 test "ColumnDictEncode" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     const Case = struct {
         values: []const []const u8,
@@ -183,6 +185,6 @@ test "ColumnDictEncode" {
         defer decoded.deinit(alloc);
 
         // Verify - now we can use expectEqualDeep since capacity is consistent
-        try std.testing.expectEqualDeep(dict, decoded);
+        try testing.expectEqualDeep(dict, decoded);
     }
 }

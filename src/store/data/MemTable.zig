@@ -446,12 +446,14 @@ fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return file_reader.interface.allocRemaining(allocator, .unlimited);
 }
 
+const testing = std.testing;
+
 // TODO: test everything using checkAllAllocationFailures
 // TODO: test everything using checkAllIoFailures or something
 // TODO: make sure we test fallback allocators either as failabable with capacity 1
 // and capacity 16k+, audit all of them and perhaps get rid of some
 test "addLines" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testAddLines, .{std.testing.io});
+    try testing.checkAllAllocationFailures(testing.allocator, testAddLines, .{testing.io});
 }
 
 fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
@@ -498,7 +500,7 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         defer timestampsEncoder.deinit(allocator);
         try timestampsEncoder.decode(dst[0..], timestampsContent);
 
-        try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 2 }, &dst);
+        try testing.expectEqualSlices(u64, &[_]u64{ 1, 2 }, &dst);
     }
 
     // Validate block header
@@ -512,22 +514,22 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const blockHeader = decodedBlockHeader.header;
 
         // TODO: compare all the fields in one expect
-        try std.testing.expectEqual(1234, blockHeader.sid.tenantID);
-        try std.testing.expectEqual(1, blockHeader.sid.id);
-        try std.testing.expectEqual(140, blockHeader.size);
-        try std.testing.expectEqual(2, blockHeader.len);
+        try testing.expectEqual(1234, blockHeader.sid.tenantID);
+        try testing.expectEqual(1, blockHeader.sid.id);
+        try testing.expectEqual(140, blockHeader.size);
+        try testing.expectEqual(2, blockHeader.len);
 
-        try std.testing.expectEqual(0, blockHeader.timestampsHeader.offset);
-        try std.testing.expectEqual(17, blockHeader.timestampsHeader.size);
-        try std.testing.expectEqual(1, blockHeader.timestampsHeader.min);
-        try std.testing.expectEqual(2, blockHeader.timestampsHeader.max);
-        try std.testing.expectEqual(EncodingType.ZDeltapack, blockHeader.timestampsHeader.encodingType);
+        try testing.expectEqual(0, blockHeader.timestampsHeader.offset);
+        try testing.expectEqual(17, blockHeader.timestampsHeader.size);
+        try testing.expectEqual(1, blockHeader.timestampsHeader.min);
+        try testing.expectEqual(2, blockHeader.timestampsHeader.max);
+        try testing.expectEqual(EncodingType.ZDeltapack, blockHeader.timestampsHeader.encodingType);
     }
 
     // validate meta index
     {
         const metaIndexContent = memTable.metaIndexBuf.items;
-        try std.testing.expect(metaIndexContent.len > 0);
+        try testing.expect(metaIndexContent.len > 0);
 
         const decompressedSize = try encoding.getFrameContentSize(metaIndexContent);
         const decompressedBuf = try allocator.alloc(u8, decompressedSize);
@@ -537,12 +539,12 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const decodedIndexBlockHeader = IndexBlockHeader.decode(decompressedBuf);
 
         // TODO: compare all the fields in one expect
-        try std.testing.expectEqual(1234, decodedIndexBlockHeader.sid.tenantID);
-        try std.testing.expectEqual(1, decodedIndexBlockHeader.sid.id);
-        try std.testing.expectEqual(1, decodedIndexBlockHeader.minTs);
-        try std.testing.expectEqual(2, decodedIndexBlockHeader.maxTs);
-        try std.testing.expectEqual(0, decodedIndexBlockHeader.offset);
-        try std.testing.expectEqual(@as(u64, @intCast(indexContent.len)), decodedIndexBlockHeader.size);
+        try testing.expectEqual(1234, decodedIndexBlockHeader.sid.tenantID);
+        try testing.expectEqual(1, decodedIndexBlockHeader.sid.id);
+        try testing.expectEqual(1, decodedIndexBlockHeader.minTs);
+        try testing.expectEqual(2, decodedIndexBlockHeader.maxTs);
+        try testing.expectEqual(0, decodedIndexBlockHeader.offset);
+        try testing.expectEqual(@as(u64, @intCast(indexContent.len)), decodedIndexBlockHeader.size);
     }
 
     // validate bloom filters
@@ -550,27 +552,27 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
         const messageBloomTokensContent = memTable.messageBloomTokensBuf.items;
         const messageBloomValuesContent = memTable.messageBloomValuesBuf.items;
 
-        try std.testing.expectEqual(0, messageBloomTokensContent.len);
-        try std.testing.expectEqual(0, messageBloomValuesContent.len);
-        try std.testing.expectEqual(0, memTable.bloomTokensBuf.items.len);
-        try std.testing.expect(memTable.bloomValuesBuf.items.len > 0);
+        try testing.expectEqual(0, messageBloomTokensContent.len);
+        try testing.expectEqual(0, messageBloomValuesContent.len);
+        try testing.expectEqual(0, memTable.bloomTokensBuf.items.len);
+        try testing.expect(memTable.bloomValuesBuf.items.len > 0);
     }
 }
 
 test "addLinesErrorOnEmpty" {
     var lines = [_]Line{};
-    const memTable = try MemTable.init(std.testing.allocator);
-    defer memTable.deinit(std.testing.allocator);
-    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(std.testing.allocator, 1);
-    defer timestampsEncoders.deinit(std.testing.allocator);
-    const compressionPool = try CompressionPool.init(std.testing.allocator, 1);
-    defer compressionPool.deinit(std.testing.allocator);
-    const err = memTable.addLinesForSid(std.testing.io, std.testing.allocator, timestampsEncoders, compressionPool, sampleSid, lines[0..]);
-    try std.testing.expectError(Error.EmptyLines, err);
+    const memTable = try MemTable.init(testing.allocator);
+    defer memTable.deinit(testing.allocator);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(testing.allocator, 1);
+    defer timestampsEncoders.deinit(testing.allocator);
+    const compressionPool = try CompressionPool.init(testing.allocator, 1);
+    defer compressionPool.deinit(testing.allocator);
+    const err = memTable.addLinesForSid(testing.io, testing.allocator, timestampsEncoders, compressionPool, sampleSid, lines[0..]);
+    try testing.expectError(Error.EmptyLines, err);
 }
 
 test "addLines error on empty lines chunk" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
     const sid = SID{ .tenantID = 1, .id = 1 };
     var fields = [_]Field{.{ .key = "msg", .value = "one" }};
     var lines = [_]Line{.{
@@ -589,14 +591,14 @@ test "addLines error on empty lines chunk" {
     defer compressionPool.deinit(alloc);
 
     const err = memTable.addLines(
-        std.testing.io,
+        testing.io,
         alloc,
         timestampsEncoders,
         compressionPool,
         sids[0..],
         linesBySid[0..],
     );
-    try std.testing.expectError(Error.EmptyLines, err);
+    try testing.expectError(Error.EmptyLines, err);
 }
 
 test "addLines reorders duplicate SID chunk lines by timestamp" {
@@ -620,8 +622,8 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
         },
     };
 
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);
@@ -663,8 +665,8 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
         var actualBlocks: [2]ExpectedBlock = undefined;
         var actualBlocksLen: usize = 0;
         while (try blockReader.nextBlock(io, alloc)) {
-            try std.testing.expect(actualBlocksLen < actualBlocks.len);
-            try std.testing.expect(blockReader.blockData.sid.eql(sid));
+            try testing.expect(actualBlocksLen < actualBlocks.len);
+            try testing.expect(blockReader.blockData.sid.eql(sid));
             actualBlocks[actualBlocksLen] = .{
                 .min = blockReader.blockData.timestampsData.minTimestamp,
                 .max = blockReader.blockData.timestampsData.maxTimestamp,
@@ -672,14 +674,14 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
             actualBlocksLen += 1;
         }
 
-        try std.testing.expectEqual(case.expectedBlocks.len, actualBlocksLen);
-        try std.testing.expectEqualDeep(case.expectedBlocks[0..], actualBlocks[0..actualBlocksLen]);
+        try testing.expectEqual(case.expectedBlocks.len, actualBlocksLen);
+        try testing.expectEqualDeep(case.expectedBlocks[0..], actualBlocks[0..actualBlocksLen]);
     }
 }
 
 test "addLines limits block columns per tenant" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
@@ -716,15 +718,15 @@ test "addLines limits block columns per tenant" {
     var seenTenants = [_]bool{ false, false };
     var blocks: usize = 0;
     while (try blockReader.nextBlock(io, alloc)) {
-        try std.testing.expectEqual(maxColumns, blockReader.blockData.len);
-        try std.testing.expectEqual(maxColumns, blockReader.columnsLen());
-        try std.testing.expect(blockReader.blockData.sid.tenantID == 1 or blockReader.blockData.sid.tenantID == 2);
+        try testing.expectEqual(maxColumns, blockReader.blockData.len);
+        try testing.expectEqual(maxColumns, blockReader.columnsLen());
+        try testing.expect(blockReader.blockData.sid.tenantID == 1 or blockReader.blockData.sid.tenantID == 2);
         seenTenants[blockReader.blockData.sid.tenantID - 1] = true;
         blocks += 1;
     }
 
-    try std.testing.expectEqual(2, blocks);
-    try std.testing.expectEqualDeep(&[_]bool{ true, true }, &seenTenants);
+    try testing.expectEqual(2, blocks);
+    try testing.expectEqualDeep(&[_]bool{ true, true }, &seenTenants);
 }
 
 const ExpectedSortedLinesChunk = struct {
@@ -744,14 +746,14 @@ fn expectLineBySidSortResult(
     linesBySid: [][]Line,
     expected: []const ExpectedSortedLinesChunk,
 ) !void {
-    try std.testing.expectEqual(expected.len, sids.len);
-    try std.testing.expectEqual(expected.len, linesBySid.len);
+    try testing.expectEqual(expected.len, sids.len);
+    try testing.expectEqual(expected.len, linesBySid.len);
 
     for (expected, 0..) |chunk, i| {
-        try std.testing.expectEqualDeep(chunk.sid, sids[i]);
-        try std.testing.expectEqual(chunk.timestamps.len, linesBySid[i].len);
+        try testing.expectEqualDeep(chunk.sid, sids[i]);
+        try testing.expectEqual(chunk.timestamps.len, linesBySid[i].len);
         for (chunk.timestamps, 0..) |timestamp, lineI| {
-            try std.testing.expectEqual(timestamp, linesBySid[i][lineI].timestampNs);
+            try testing.expectEqual(timestamp, linesBySid[i][lineI].timestampNs);
         }
     }
 }
@@ -1028,12 +1030,12 @@ test "LineBySidSortContext.sort handles sid and timestamp extremes" {
 }
 
 test "flushToDisk writes buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testFlushToDisk, .{std.testing.io});
+    try testing.checkAllAllocationFailures(testing.allocator, testFlushToDisk, .{testing.io});
 }
 
 test "tableHeader timestamp range matches all index blocks" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
@@ -1071,7 +1073,7 @@ test "tableHeader timestamp range matches all index blocks" {
     );
     defer alloc.free(indexBlockHeaders);
 
-    try std.testing.expect(indexBlockHeaders.len > 1);
+    try testing.expect(indexBlockHeaders.len > 1);
 
     var minTs = indexBlockHeaders[0].minTs;
     var maxTs = indexBlockHeaders[0].maxTs;
@@ -1080,8 +1082,8 @@ test "tableHeader timestamp range matches all index blocks" {
         maxTs = @max(maxTs, header.maxTs);
     }
 
-    try std.testing.expectEqual(minTs, memTable.tableHeader.minTimestamp);
-    try std.testing.expectEqual(maxTs, memTable.tableHeader.maxTimestamp);
+    try testing.expectEqual(minTs, memTable.tableHeader.minTimestamp);
+    try testing.expectEqual(maxTs, memTable.tableHeader.maxTimestamp);
 }
 
 fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
@@ -1096,7 +1098,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
         sample.lines[1],
     };
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const basePath = try tmp.dir.realPathFileAlloc(io, ".", allocator);
@@ -1146,53 +1148,53 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
 
     const columnKeysContent = try readFileAll(io, allocator, columnKeysPath);
     defer allocator.free(columnKeysContent);
-    try std.testing.expectEqualSlices(u8, memTable.columnKeysBuf.items, columnKeysContent);
+    try testing.expectEqualSlices(u8, memTable.columnKeysBuf.items, columnKeysContent);
 
     const columnIdxsContent = try readFileAll(io, allocator, columnIdxsPath);
     defer allocator.free(columnIdxsContent);
-    try std.testing.expectEqualSlices(u8, memTable.columnIdxsBuf.items, columnIdxsContent);
+    try testing.expectEqualSlices(u8, memTable.columnIdxsBuf.items, columnIdxsContent);
 
     const metaindexContent = try readFileAll(io, allocator, metaindexPath);
     defer allocator.free(metaindexContent);
-    try std.testing.expectEqualSlices(u8, memTable.metaIndexBuf.items, metaindexContent);
+    try testing.expectEqualSlices(u8, memTable.metaIndexBuf.items, metaindexContent);
 
     const indexContent = try readFileAll(io, allocator, indexPath);
     defer allocator.free(indexContent);
-    try std.testing.expectEqualSlices(u8, memTable.indexBuf.items, indexContent);
+    try testing.expectEqualSlices(u8, memTable.indexBuf.items, indexContent);
 
     const columnsHeaderIndexContent = try readFileAll(io, allocator, columnsHeaderIndexPath);
     defer allocator.free(columnsHeaderIndexContent);
-    try std.testing.expectEqualSlices(u8, memTable.columnsHeaderIndexBuf.items, columnsHeaderIndexContent);
+    try testing.expectEqualSlices(u8, memTable.columnsHeaderIndexBuf.items, columnsHeaderIndexContent);
 
     const columnsHeaderContent = try readFileAll(io, allocator, columnsHeaderPath);
     defer allocator.free(columnsHeaderContent);
-    try std.testing.expectEqualSlices(u8, memTable.columnsHeaderBuf.items, columnsHeaderContent);
+    try testing.expectEqualSlices(u8, memTable.columnsHeaderBuf.items, columnsHeaderContent);
 
     const timestampsContent = try readFileAll(io, allocator, timestampsPath);
     defer allocator.free(timestampsContent);
-    try std.testing.expectEqualSlices(u8, memTable.timestampsBuf.items, timestampsContent);
+    try testing.expectEqualSlices(u8, memTable.timestampsBuf.items, timestampsContent);
 
     const msgBloomTokensContent = try readFileAll(io, allocator, messageBloomTokensPath);
     defer allocator.free(msgBloomTokensContent);
-    try std.testing.expectEqualSlices(u8, memTable.messageBloomTokensBuf.items, msgBloomTokensContent);
+    try testing.expectEqualSlices(u8, memTable.messageBloomTokensBuf.items, msgBloomTokensContent);
 
     const msgBloomValuesContent = try readFileAll(io, allocator, messageBloomValuesPath);
     defer allocator.free(msgBloomValuesContent);
-    try std.testing.expectEqualSlices(u8, memTable.messageBloomValuesBuf.items, msgBloomValuesContent);
+    try testing.expectEqualSlices(u8, memTable.messageBloomValuesBuf.items, msgBloomValuesContent);
 
     const bloomTokensPath = try filenames.writeBloomFilePath(&pathBuf, flushPath, filenames.bloomTokens, 0);
     const bloomTokensContent = try readFileAll(io, allocator, bloomTokensPath);
     defer allocator.free(bloomTokensContent);
-    try std.testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, bloomTokensContent);
+    try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, bloomTokensContent);
 
     const bloomValuesPath = try filenames.writeBloomFilePath(&pathBuf, flushPath, filenames.bloomValues, 0);
     const bloomValuesContent = try readFileAll(io, allocator, bloomValuesPath);
     defer allocator.free(bloomValuesContent);
-    try std.testing.expectEqualSlices(u8, memTable.bloomValuesBuf.items, bloomValuesContent);
+    try testing.expectEqualSlices(u8, memTable.bloomValuesBuf.items, bloomValuesContent);
 
     const metadataContent = try readFileAll(io, allocator, metadataPath);
     defer allocator.free(metadataContent);
-    try std.testing.expect(metadataContent.len > 0);
+    try testing.expect(metadataContent.len > 0);
 
-    try std.testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(io, allocator, flushPath));
+    try testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(io, allocator, flushPath));
 }

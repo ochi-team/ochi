@@ -32,8 +32,9 @@ pub const Compression = enum(u8) {
     }
 };
 
+const testing = std.testing;
+
 test "Snappy Uncompress valid input" {
-    const testing = std.testing;
     const allocator = testing.allocator;
 
     const cases = [_][]const u8{
@@ -58,10 +59,10 @@ test "Snappy Uncompress valid input" {
 }
 
 test "Snappy Uncompress invalid input" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     const bad = [_]u8{ 0xde, 0xad, 0xbe, 0xef };
 
-    try std.testing.expectError(
+    try testing.expectError(
         error.invalid_input,
         Compression.snappy.uncompress(allocator, &bad),
     );

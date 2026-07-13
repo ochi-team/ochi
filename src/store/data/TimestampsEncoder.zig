@@ -115,8 +115,10 @@ pub fn decode(self: *Self, dst: []u64, src: []const u8) !void {
     _ = try zType.deltapack_decompress(self.ctx, src, dst);
 }
 
+const testing = std.testing;
+
 test "TimestampsEncoder" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
     const Case = struct {
         input: []const u64,
     };
@@ -134,11 +136,11 @@ test "TimestampsEncoder" {
 
         const res = try enc.encode(alloc, case.input);
         defer alloc.free(res.buf);
-        try std.testing.expectEqual(EncodingType.ZDeltapack, res.encodingType);
+        try testing.expectEqual(EncodingType.ZDeltapack, res.encodingType);
 
         const dst = try alloc.alloc(u64, case.input.len);
         defer alloc.free(dst);
         try enc.decode(dst, res.buf[0..res.offset]);
-        try std.testing.expectEqualSlices(u64, dst, case.input);
+        try testing.expectEqualSlices(u64, dst, case.input);
     }
 }

@@ -120,8 +120,10 @@ fn decodeColumnDescs(dec: *Decoder, ids: *std.ArrayList(u16), offsets: *std.Arra
     }
 }
 
+const testing = std.testing;
+
 test "encode columns and invariantColumns" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testEncode, .{});
+    try testing.checkAllAllocationFailures(testing.allocator, testEncode, .{});
 }
 
 fn testEncode(allocator: std.mem.Allocator) !void {
@@ -194,16 +196,16 @@ fn testEncode(allocator: std.mem.Allocator) !void {
 
         decoded.decode(buf[0..written]);
 
-        try std.testing.expectEqual(case.columns.len, decoded.columnsIDs.items.len);
-        try std.testing.expectEqual(case.invariantColumns.len, decoded.invariantColumnsIDs.items.len);
+        try testing.expectEqual(case.columns.len, decoded.columnsIDs.items.len);
+        try testing.expectEqual(case.invariantColumns.len, decoded.invariantColumnsIDs.items.len);
 
         for (case.columns, 0..) |entry, i| {
-            try std.testing.expectEqual(entry.id, decoded.columnID(i));
-            try std.testing.expectEqual(entry.offset, decoded.columnOffset(i));
+            try testing.expectEqual(entry.id, decoded.columnID(i));
+            try testing.expectEqual(entry.offset, decoded.columnOffset(i));
         }
         for (case.invariantColumns, 0..) |entry, i| {
-            try std.testing.expectEqual(entry.id, decoded.invariantColumnID(i));
-            try std.testing.expectEqual(entry.offset, decoded.invariantColumnOffset(i));
+            try testing.expectEqual(entry.id, decoded.invariantColumnID(i));
+            try testing.expectEqual(entry.offset, decoded.invariantColumnOffset(i));
         }
     }
 }

@@ -438,7 +438,7 @@ test "fromMem creates proper table from mem table with populated data" {
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, buf[0..i]);
 
     const expectedMetaindex = try MetaIndex.decodeDecompress(
-        std.testing.io,
+        testing.io,
         alloc,
         decompressionPool,
         memTable.metaindexBuf.items,

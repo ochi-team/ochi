@@ -141,8 +141,10 @@ pub fn decodeColumnIdxs(columnIDGen: *ColumnIDGen, alloc: Allocator, src: []cons
     return columnIdxs;
 }
 
+const testing = std.testing;
+
 test "ColumnIDGen" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
     const gener = try init(alloc);
     defer gener.deinit(alloc);
 
@@ -150,12 +152,12 @@ test "ColumnIDGen" {
     try gener.keyIDs.ensureUnusedCapacity(alloc, keys.len);
     for (0..keys.len) |i| {
         const id = gener.genIDAssumeCapacity(keys[i]);
-        try std.testing.expectEqual(i, id);
+        try testing.expectEqual(i, id);
     }
 
     for (0..keys.len) |i| {
         const id = gener.keyIDs.get(keys[i]).?;
-        try std.testing.expectEqual(i, id);
+        try testing.expectEqual(i, id);
     }
 
     const encodeBound = try gener.bound();
@@ -165,15 +167,15 @@ test "ColumnIDGen" {
     defer compressionPool.deinit(alloc);
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
-    const offset = try gener.encode(std.testing.io, compressionPool, alloc, encoded);
+    const offset = try gener.encode(testing.io, compressionPool, alloc, encoded);
 
-    const generDecoded = try decode(std.testing.io, alloc, decompressionPool, encoded[0..offset]);
+    const generDecoded = try decode(testing.io, alloc, decompressionPool, encoded[0..offset]);
     defer generDecoded.deinit(alloc);
 
-    try std.testing.expectEqual(gener.keyIDs.count(), generDecoded.keyIDs.count());
+    try testing.expectEqual(gener.keyIDs.count(), generDecoded.keyIDs.count());
     for (gener.keyIDs.keys()) |key| {
         const value = gener.keyIDs.get(key);
         const decodedValue = generDecoded.keyIDs.get(key);
-        try std.testing.expectEqual(value, decodedValue);
+        try testing.expectEqual(value, decodedValue);
     }
 }

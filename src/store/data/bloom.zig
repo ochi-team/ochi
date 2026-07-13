@@ -184,6 +184,8 @@ pub const HashTokenizer = struct {
     }
 };
 
+const testing = std.testing;
+
 test "tokenizeValues" {
     const Case = struct {
         input: []const []const u8,
@@ -209,7 +211,7 @@ test "tokenizeValues" {
     };
 
     for (cases) |c| {
-        const allocator = std.testing.allocator;
+        const allocator = testing.allocator;
         var buckets: [bucketsSize]Bucket = undefined;
         var tokenizer = try HashTokenizer.init(allocator, &buckets);
         defer tokenizer.deinit(allocator);
@@ -217,7 +219,7 @@ test "tokenizeValues" {
         var tokens = try tokenizer.tokenizeValues(allocator, c.input);
         defer tokens.deinit(allocator);
 
-        try std.testing.expectEqualSlices(u64, c.expected, tokens.items);
+        try testing.expectEqualSlices(u64, c.expected, tokens.items);
     }
 }
 
@@ -311,7 +313,7 @@ const Decoder = @import("encoding").Decoder;
 // TODO: this test is mediocre, we must test a hit rate here >90% to confirm the hash is viable,
 // testing readiability for the data is not very useful
 test "BloomFilter" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     const Case = struct {
         tokens: []const []const u8,
         expectedEncoded: ?[]const u8,
@@ -359,7 +361,7 @@ test "BloomFilter" {
         BloomFilter.writeBits(buf, hashes.items);
 
         if (case.expectedEncoded) |expected| {
-            try std.testing.expectEqualStrings(expected, buf);
+            try testing.expectEqualStrings(expected, buf);
         }
     }
 }

@@ -128,16 +128,18 @@ pub fn deleteTreeAbsolute(io: Io, absolute_path: []const u8) !void {
     return dir.deleteTree(io, std.fs.path.basename(absolute_path));
 }
 
+const testing = std.testing;
+
 test "pathExists returns true for existing paths and false for missing path" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     const Case = struct {
         path: []const u8,
         expected: bool,
     };
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "nested");
@@ -164,14 +166,14 @@ test "pathExists returns true for existing paths and false for missing path" {
 
     for (cases) |case| {
         const actual = try pathExists(io, case.path);
-        try std.testing.expectEqual(case.expected, actual);
+        try testing.expectEqual(case.expected, actual);
     }
 }
 
 test "syncPathAndParentDir fsync file and parent directory" {
-    const io = std.testing.io;
+    const io = testing.io;
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const file_name = "test.txt";
@@ -181,29 +183,29 @@ test "syncPathAndParentDir fsync file and parent directory" {
         try f.writeStreamingAll(io, "hello");
     }
 
-    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
-    defer std.testing.allocator.free(abs_path);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, testing.allocator);
+    defer testing.allocator.free(abs_path);
 
     try syncPathAndParentDir(io, abs_path);
 }
 
 test "syncPathAndParentDir fsync directory and parent directory" {
-    const io = std.testing.io;
+    const io = testing.io;
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "nested");
-    const abs_path = try tmp.dir.realPathFileAlloc(io, "nested", std.testing.allocator);
-    defer std.testing.allocator.free(abs_path);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, "nested", testing.allocator);
+    defer testing.allocator.free(abs_path);
 
     try syncPathAndParentDir(io, abs_path);
 }
 
 test "readAll reads full file content from tmp directory" {
-    const io = std.testing.io;
+    const io = testing.io;
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const file_name = "read-all.txt";
@@ -215,37 +217,37 @@ test "readAll reads full file content from tmp directory" {
         try f.writeStreamingAll(io, content);
     }
 
-    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, std.testing.allocator);
-    defer std.testing.allocator.free(abs_path);
+    const abs_path = try tmp.dir.realPathFileAlloc(io, file_name, testing.allocator);
+    defer testing.allocator.free(abs_path);
 
-    const actual = try readAll(std.testing.io, std.testing.allocator, abs_path);
-    defer std.testing.allocator.free(actual);
+    const actual = try readAll(testing.io, testing.allocator, abs_path);
+    defer testing.allocator.free(actual);
 
-    try std.testing.expectEqualStrings(content, actual);
+    try testing.expectEqualStrings(content, actual);
 }
 
 test "writeBufferValToFileAtomicWritesAndOverwritesAtomically" {
-    const io = std.testing.io;
+    const io = testing.io;
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmpPath);
-    const absPath = try std.fs.path.join(std.testing.allocator, &.{ tmpPath, "atomic.txt" });
-    defer std.testing.allocator.free(absPath);
+    const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmpPath);
+    const absPath = try std.fs.path.join(testing.allocator, &.{ tmpPath, "atomic.txt" });
+    defer testing.allocator.free(absPath);
 
     {
         try writeBufferToFileAtomic(io, absPath, "first", false);
-        const actual = try readAll(std.testing.io, std.testing.allocator, absPath);
-        defer std.testing.allocator.free(actual);
-        try std.testing.expectEqualStrings("first", actual);
+        const actual = try readAll(testing.io, testing.allocator, absPath);
+        defer testing.allocator.free(actual);
+        try testing.expectEqualStrings("first", actual);
     }
 
     {
         try writeBufferToFileAtomic(io, absPath, "second", true);
-        const actual = try readAll(std.testing.io, std.testing.allocator, absPath);
-        defer std.testing.allocator.free(actual);
-        try std.testing.expectEqualStrings("second", actual);
+        const actual = try readAll(testing.io, testing.allocator, absPath);
+        defer testing.allocator.free(actual);
+        try testing.expectEqualStrings("second", actual);
     }
 }

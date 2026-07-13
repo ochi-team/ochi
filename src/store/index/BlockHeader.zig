@@ -118,6 +118,8 @@ pub fn compareToKey(key: []const u8, header: BlockHeader) std.math.Order {
     };
 }
 
+const testing = std.testing;
+
 test "BlockHeader encode/decode" {
     const Case = struct {
         bh: BlockHeader,
@@ -178,7 +180,7 @@ test "BlockHeader encode/decode" {
         },
     };
 
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     for (cases) |case| {
         const size = case.bh.bound();
@@ -188,12 +190,12 @@ test "BlockHeader encode/decode" {
         case.bh.encode(buf);
         const decoded = BlockHeader.decode(buf);
 
-        try std.testing.expectEqualDeep(case.bh, decoded.blockHeader);
+        try testing.expectEqualDeep(case.bh, decoded.blockHeader);
     }
 }
 
 test "BlockHeader decodeMany" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
 
     const headers = [_]BlockHeader{
         .{
@@ -243,8 +245,8 @@ test "BlockHeader decodeMany" {
     const decoded = try decodeMany(allocator, buf, headers.len);
     defer allocator.free(decoded);
 
-    try std.testing.expectEqual(headers.len, decoded.len);
+    try testing.expectEqual(headers.len, decoded.len);
     for (headers, decoded) |expected, actual| {
-        try std.testing.expectEqualDeep(expected, actual);
+        try testing.expectEqualDeep(expected, actual);
     }
 }

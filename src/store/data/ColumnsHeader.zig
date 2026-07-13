@@ -167,8 +167,10 @@ pub fn decode(
     return ch;
 }
 
+const testing = std.testing;
+
 test "ColumnsHeaderEncode" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     // Create ColumnIDGen and populate it with test keys
     const columnIDGen = try ColumnIDGen.init(alloc);
@@ -275,13 +277,13 @@ test "ColumnsHeaderEncode" {
     defer decodedHeader.deinit(alloc);
 
     // Verify using deep comparison
-    try std.testing.expectEqual(headers.len, decodedHeader.headers.len);
+    try testing.expectEqual(headers.len, decodedHeader.headers.len);
     for (headers, decodedHeader.headers) |orig, decoded| {
-        try std.testing.expectEqualDeep(orig, decoded);
+        try testing.expectEqualDeep(orig, decoded);
     }
 
-    try std.testing.expectEqual(invariantColumns.len, decodedHeader.invariantColumns.len);
+    try testing.expectEqual(invariantColumns.len, decodedHeader.invariantColumns.len);
     for (invariantColumns, decodedHeader.invariantColumns) |orig, decoded| {
-        try std.testing.expectEqualDeep(orig, decoded);
+        try testing.expectEqualDeep(orig, decoded);
     }
 }

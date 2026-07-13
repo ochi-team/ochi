@@ -110,9 +110,11 @@ pub const StreamDestination = union(Tag) {
     }
 };
 
+const testing = std.testing;
+
 test "StreamDestination buffer destination" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
     var buf = try std.ArrayList(u8).initCapacity(alloc, 8);
     defer buf.deinit(alloc);
@@ -122,18 +124,18 @@ test "StreamDestination buffer destination" {
     try dst.appendSlice(io, alloc, "abc");
     try dst.appendSlice(io, alloc, "1234");
 
-    try std.testing.expectEqual(7, dst.len());
+    try testing.expectEqual(7, dst.len());
 
     const all = try dst.readAll(io, alloc);
     defer alloc.free(all);
-    try std.testing.expectEqualStrings("abc1234", all);
+    try testing.expectEqualStrings("abc1234", all);
 }
 
 test "StreamDestination file destination" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
@@ -150,11 +152,11 @@ test "StreamDestination file destination" {
     const res = "hello-world";
     try dst.appendSlice(io, alloc, "hello");
     try dst.appendSlice(io, alloc, "-world");
-    try std.testing.expectEqual(res.len, dst.len());
+    try testing.expectEqual(res.len, dst.len());
 
     const all = try dst.readAll(io, alloc);
     defer alloc.free(all);
-    try std.testing.expectEqualStrings(res, all);
+    try testing.expectEqualStrings(res, all);
 
     var verify = try Dir.openFileAbsolute(io, filePath, .{});
     defer verify.close(io);
@@ -162,5 +164,5 @@ test "StreamDestination file destination" {
     var verify_reader = file.reader(io, &.{});
     const onDisk = try verify_reader.interface.allocRemaining(alloc, .unlimited);
     defer alloc.free(onDisk);
-    try std.testing.expectEqualStrings(res, onDisk);
+    try testing.expectEqualStrings(res, onDisk);
 }

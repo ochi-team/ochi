@@ -28,7 +28,6 @@ const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
 const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const Query = @import("../../query/Query.zig");
-const stdsTesting = @import("../../stds/testing.zig");
 
 const catalog = @import("../table/catalog.zig");
 
@@ -697,6 +696,7 @@ pub fn lessThan(_: void, one: *Table, another: *Table) bool {
 }
 
 const testing = std.testing;
+const stesting = @import("../../stds/testing.zig");
 
 test "release keeps table unless toRemove is set, then removes table dir" {
     const alloc = testing.allocator;
@@ -1007,7 +1007,7 @@ test "openAll handles all io failures" {
 
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
-    try stdsTesting.checkAllIoFailures(io, testOpenAll, .{ alloc, rootPath, decompressionPool });
+    try stesting.checkAllIoFailures(io, testOpenAll, .{ alloc, rootPath, decompressionPool });
 }
 
 test "queryLines" {
@@ -1186,14 +1186,10 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     const io = testing.io;
 
     const streamsCount = 3000;
-    const sids = try alloc.alloc(SID, streamsCount);
-    defer alloc.free(sids);
-    const linesBySid = try alloc.alloc([]Line, streamsCount);
-    defer alloc.free(linesBySid);
-    const lines = try alloc.alloc(Line, streamsCount);
-    defer alloc.free(lines);
-    const fields = try alloc.alloc([2]Field, streamsCount);
-    defer alloc.free(fields);
+    var sids: [streamsCount]SID = undefined;
+    var linesBySid: [streamsCount][]Line = undefined;
+    var lines: [streamsCount]Line = undefined;
+    var fields: [streamsCount][2]Field = undefined;
 
     for (0..streamsCount) |i| {
         sids[i] = .{ .id = @intCast(i + 1), .tenantID = 1234 };
@@ -1212,7 +1208,7 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     defer compressionPool.deinit(alloc);
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
-    try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, sids, linesBySid);
+    try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, &sids, &linesBySid);
 
     const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
     defer table.release(io);
@@ -1220,7 +1216,7 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     try testing.expect(table.indexBlockHeaders.len > 1);
     try testing.expect(table.indexBlockHeaders[1].offset > table.indexBlockHeaders[1].size);
 
-    var queried = std.ArrayList(Line).empty;
+    var queried = try std.ArrayList(Line).initCapacity(alloc, streamsCount);
     defer deinitQueriedLines(alloc, &queried);
     const infoExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "info", .op = .equal } };
     const query = Query{ .start = 1, .end = streamsCount, .tagsExpr = null, .fieldsExpr = &infoExpr };
@@ -1236,8 +1232,8 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
 // and do the same with index tables (probably already done)
 
 test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
-    const alloc = std.testing.allocator;
-    const io: Io = std.testing.io;
+    const alloc = testing.allocator;
+    const io: Io = testing.io;
 
     const sid = SID{ .id = 1, .tenantID = 1234 };
 

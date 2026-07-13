@@ -57,8 +57,10 @@ pub fn decodeAsInvariant(dec: *Decoder, allocator: std.mem.Allocator, comptime d
     };
 }
 
+const testing = std.testing;
+
 test "Self.encodeAsInvariant" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     const Case = struct {
         key: []const u8,
@@ -99,10 +101,10 @@ test "Self.encodeAsInvariant" {
 
             // Verify
             if (toEncodeKey) {
-                try std.testing.expectEqualStrings(case.key, decoded.key);
+                try testing.expectEqualStrings(case.key, decoded.key);
             }
-            try std.testing.expectEqual(1, decoded.values.len);
-            try std.testing.expectEqualStrings(case.value, decoded.values[0]);
+            try testing.expectEqual(1, decoded.values.len);
+            try testing.expectEqualStrings(case.value, decoded.values[0]);
         }
     }
 }

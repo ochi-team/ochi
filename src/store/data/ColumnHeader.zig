@@ -227,8 +227,10 @@ fn valuesAndBloomBound(self: *const ColumnHeader) usize {
     return self.valuesBound() + self.bloomBound();
 }
 
+const testing = std.testing;
+
 test "ColumnHeaderEncode" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     const Case = struct {
         header: ColumnHeader,
@@ -424,6 +426,6 @@ test "ColumnHeaderEncode" {
         defer decoded.dict.deinit(alloc);
 
         // Verify using deep comparison
-        try std.testing.expectEqualDeep(case.header, decoded);
+        try testing.expectEqualDeep(case.header, decoded);
     }
 }

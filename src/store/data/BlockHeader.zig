@@ -210,8 +210,10 @@ pub fn validateBlockHeaders(bhs: []const BlockHeader) void {
     }
 }
 
+const testing = std.testing;
+
 test "BlockHeader encode/decode and decodeIndexWindow" {
-    const alloc = std.testing.allocator;
+    const alloc = testing.allocator;
 
     const Case = struct {
         header: BlockHeader,
@@ -291,11 +293,11 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
     for (cases, 0..) |case, i| {
         var encodeBuf: [BlockHeader.encodeExpectedSize]u8 = undefined;
         const offset = case.header.encode(&encodeBuf);
-        try std.testing.expectEqual(case.expectedLen, offset);
+        try testing.expectEqual(case.expectedLen, offset);
 
         const decoded = BlockHeader.decode(encodeBuf[0..offset]);
-        try std.testing.expectEqual(offset, decoded.offset);
-        try std.testing.expectEqualDeep(case.header, decoded.header);
+        try testing.expectEqual(offset, decoded.offset);
+        try testing.expectEqualDeep(case.header, decoded.header);
 
         headers[i] = case.header;
     }
@@ -336,7 +338,7 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
         defer alloc.free(compressed);
 
         windowCase.offset = @intCast(indexBuf.items.len);
-        const n = try compressionPool.compressAuto(std.testing.io, compressed, raw[0..off]);
+        const n = try compressionPool.compressAuto(testing.io, compressed, raw[0..off]);
         windowCase.size = @intCast(n);
         try indexBuf.appendSlice(alloc, compressed[0..n]);
     }
@@ -355,7 +357,7 @@ test "BlockHeader encode/decode and decodeIndexWindow" {
 
         const start: usize = @intCast(windowCase.offset);
         const end = start + windowCase.size;
-        try BlockHeader.decodeIndexWindow(std.testing.io, alloc, decompressionPool, &decoded, indexBuf.items[start..end], window);
-        try std.testing.expectEqualDeep(windowCase.expected, decoded.items);
+        try BlockHeader.decodeIndexWindow(testing.io, alloc, decompressionPool, &decoded, indexBuf.items[start..end], window);
+        try testing.expectEqualDeep(windowCase.expected, decoded.items);
     }
 }

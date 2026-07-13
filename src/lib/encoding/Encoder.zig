@@ -108,8 +108,10 @@ pub fn toBytes(comptime T: type, value: T) [@sizeOf(T)]u8 {
     return bytes;
 }
 
+const testing = std.testing;
+
 test "Encoder.writeIntBytes" {
-    var allocator = std.testing.allocator;
+    var allocator = testing.allocator;
     const Case = struct {
         type: type,
         value: u64,
@@ -136,7 +138,7 @@ test "Encoder.writeIntBytes" {
         var enc2 = Self.init(buf2);
         enc1.writeInt(case.type, case.value);
         enc2.writeIntBytes(@sizeOf(case.type), case.value);
-        try std.testing.expectEqualSlices(u8, buf1, buf2);
+        try testing.expectEqualSlices(u8, buf1, buf2);
     }
 }
 
@@ -161,13 +163,13 @@ test "Encoder.writeVarUint64" {
     };
 
     for (cases) |case| {
-        const allocator = std.testing.allocator;
+        const allocator = testing.allocator;
         const bound = Self.varIntBound(case.value);
         const buf = try allocator.alloc(u8, bound);
         defer allocator.free(buf);
 
         var enc = Self.init(buf);
         enc.writeVarInt(case.value);
-        try std.testing.expectEqualSlices(u8, case.expected, buf[0..enc.offset]);
+        try testing.expectEqualSlices(u8, case.expected, buf[0..enc.offset]);
     }
 }

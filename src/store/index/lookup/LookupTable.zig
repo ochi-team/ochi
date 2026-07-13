@@ -382,6 +382,8 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
     );
 }
 
+const testing = std.testing;
+
 test "lowerBoundBySuffix" {
     const Case = struct {
         name: []const u8,
@@ -456,17 +458,17 @@ test "lowerBoundBySuffix" {
     };
 
     for (cases) |case| {
-        var block = try MemBlock.init(std.testing.allocator, .{
+        var block = try MemBlock.init(testing.allocator, .{
             .maxMemBlockSize = 64,
             .blocksCountHint = case.items.len,
         });
-        defer block.deinit(std.testing.allocator);
+        defer block.deinit(testing.allocator);
         for (case.items) |item| {
-            try std.testing.expect(block.add(item));
+            try testing.expect(block.add(item));
         }
 
         const actual = lowerBoundBySuffix(block, block.memEntries.items, case.key, case.prefixLen);
-        try std.testing.expectEqual(case.expected, actual);
+        try testing.expectEqual(case.expected, actual);
     }
 }
 
@@ -475,5 +477,5 @@ test "memBlocksCacheKeyBuf" {
     memBlocksCacheKeyBuf(&buf, .{ .tableAddr = 42, .offset = 53 });
 
     const expected: [16]u8 = .{ 42, 0, 0, 0, 0, 0, 0, 0, 53, 0, 0, 0, 0, 0, 0, 0 };
-    try std.testing.expectEqualStrings(&expected, &buf);
+    try testing.expectEqualStrings(&expected, &buf);
 }

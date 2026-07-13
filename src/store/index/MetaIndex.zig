@@ -201,7 +201,7 @@ test "MetaIndex decodeDecompress roundtrip" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
     const decoded = try MetaIndex.decodeDecompress(
-        std.testing.io,
+        testing.io,
         alloc,
         decompressionPool,
         compressed[0..compressedLen],

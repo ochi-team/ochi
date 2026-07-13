@@ -223,7 +223,7 @@ pub const OchiClient = struct {
             "snappy",
         );
         defer resp.deinit(alloc);
-        std.testing.expectEqual(200, resp.statusCode) catch |err| {
+        testing.expectEqual(200, resp.statusCode) catch |err| {
             client.logger.log(.err, "ingest request failed", .{ .body = resp.body });
             return err;
         };
@@ -236,7 +236,7 @@ pub const OchiClient = struct {
     ) !void {
         var resp = try client.request(alloc, .POST, "/flush", "", tenant, "", null);
         defer resp.deinit(alloc);
-        try std.testing.expectEqual(200, resp.statusCode);
+        try testing.expectEqual(200, resp.statusCode);
     }
 
     pub fn expectQueryIDs(
@@ -249,7 +249,7 @@ pub const OchiClient = struct {
     ) !void {
         var resp = try client.request(alloc, .POST, "/query", query, tenant, "application/loql", null);
         defer resp.deinit(alloc);
-        std.testing.expectEqual(200, resp.statusCode) catch |err| {
+        testing.expectEqual(200, resp.statusCode) catch |err| {
             client.logger.log(.err, "query request failed", .{ .body = resp.body });
             return err;
         };
@@ -268,9 +268,9 @@ pub const OchiClient = struct {
         }
 
         // assert ids
-        try std.testing.expectEqual(expectedIDs.len, fetchedIDs.items.len);
+        try testing.expectEqual(expectedIDs.len, fetchedIDs.items.len);
         for (expectedIDs, fetchedIDs.items) |expectedID, fetchedID| {
-            try std.testing.expectEqualStrings(expectedID, fetchedID);
+            try testing.expectEqualStrings(expectedID, fetchedID);
         }
 
         // get the matching line,
@@ -290,7 +290,7 @@ pub const OchiClient = struct {
     ) !void {
         var resp = try client.request(alloc, .POST, "/query", query, tenant, "application/loql", null);
         defer resp.deinit(alloc);
-        std.testing.expectEqual(400, resp.statusCode) catch |err| {
+        testing.expectEqual(400, resp.statusCode) catch |err| {
             client.logger.log(.err, "query syntax request returned unexpected status", .{
                 .body = resp.body,
                 .status = resp.statusCode,
@@ -303,12 +303,12 @@ pub const OchiClient = struct {
         });
         defer parsed.deinit();
 
-        try std.testing.expectEqualStrings("QUERY_SYNTAX", parsed.value.code);
-        try std.testing.expectEqualDeep(expectedLocs, parsed.value.meta.locs);
+        try testing.expectEqualStrings("QUERY_SYNTAX", parsed.value.code);
+        try testing.expectEqualDeep(expectedLocs, parsed.value.meta.locs);
     }
 
     fn expectResponseLines(client: *const OchiClient, expected: []const Line, actual: []const std.json.Value) !void {
-        try std.testing.expectEqual(expected.len, actual.len);
+        try testing.expectEqual(expected.len, actual.len);
         for (expected, actual) |expectedLineValue, actualLineValue| {
             expectResponseLine(expectedLineValue, actualLineValue) catch |err| {
                 var expectedBuffer: [4096]u8 = undefined;
@@ -340,14 +340,14 @@ fn expectResponseLine(expected: Line, actual: std.json.Value) !void {
     }
 
     const timestamp = responseObjectString(actual, timestampKey) orelse return error.MissingTimestamp;
-    const expectedTime = try zeit.instant(std.testing.io, .{ .source = .{ .unix_nano = @as(i64, @intCast(expected.timestampNs)) } });
+    const expectedTime = try zeit.instant(testing.io, .{ .source = .{ .unix_nano = @as(i64, @intCast(expected.timestampNs)) } });
     var timeBuf: [32]u8 = undefined;
-    try std.testing.expectEqualStrings(try expectedTime.time().bufPrint(&timeBuf, .rfc3339), timestamp);
+    try testing.expectEqualStrings(try expectedTime.time().bufPrint(&timeBuf, .rfc3339), timestamp);
 
     for (expected.fields) |field| {
         const key = if (field.key.len == 0) msgKey else field.key;
         const actualValue = responseObjectString(actual, key) orelse return error.MissingField;
-        try std.testing.expectEqualStrings(field.value, actualValue);
+        try testing.expectEqualStrings(field.value, actualValue);
     }
 }
 
@@ -602,9 +602,11 @@ fn parseTestFile(comptime T: type, io: Io, alloc: Allocator, filePath: []const u
     });
 }
 
+const testing = std.testing;
+
 test "serverEndToEndViaHTTP" {
-    const alloc = std.testing.allocator;
-    const io = std.testing.io;
+    const alloc = testing.allocator;
+    const io = testing.io;
     var logger = try Logger.Instance.init(io, alloc, .{
         .level = .Debug,
         .pool_size = 1,
@@ -634,7 +636,7 @@ test "serverEndToEndViaHTTP" {
         corpora.deinit(alloc);
     }
 
-    var tmp = std.testing.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
@@ -655,7 +657,7 @@ test "serverEndToEndViaHTTP" {
             };
         }
     };
-    var serverFuture = try Io.concurrent(io, ServerThread.run, .{std.testing.allocator});
+    var serverFuture = try Io.concurrent(io, ServerThread.run, .{testing.allocator});
     defer serverFuture.await(io);
     defer std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
 
@@ -724,7 +726,7 @@ fn expectStreamIDs(
     tenant: u64,
     expectedStreamIDs: []const u128,
 ) !void {
-    const nowNs: u64 = @intCast(Io.Timestamp.now(std.testing.io, .real).nanoseconds);
+    const nowNs: u64 = @intCast(Io.Timestamp.now(testing.io, .real).nanoseconds);
     const Case = struct {
         body: []const u8,
         expectedStreamIDs: []const u128,
@@ -775,7 +777,7 @@ fn expectStreamIDsByBody(
     );
     defer resp.deinit(alloc);
 
-    std.testing.expectEqual(200, resp.statusCode) catch |err| {
+    testing.expectEqual(200, resp.statusCode) catch |err| {
         // TODO: implement a client and move all the error loging to it,
         // it must be comptime configurable
         client.logger.log(.err, "stream_ids request failed", .{ .body = resp.body });
@@ -796,10 +798,10 @@ fn expectStreamIDsByBody(
     defer alloc.free(actualSorted);
     std.sort.pdq(u128, actualSorted, {}, std.sort.asc(u128));
 
-    try std.testing.expectEqualSlices(u128, expectedSorted, actualSorted);
+    try testing.expectEqualSlices(u128, expectedSorted, actualSorted);
     for (actualSorted) |streamID| {
         // validate it's not 00000, but a generated valid hash
-        try std.testing.expect(streamID > 0);
+        try testing.expect(streamID > 0);
     }
 }
 
@@ -845,7 +847,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
     );
     defer resp.deinit(alloc);
 
-    std.testing.expectEqual(200, resp.statusCode) catch |err| {
+    testing.expectEqual(200, resp.statusCode) catch |err| {
         client.logger.log(.err, "query-by-sids request failed", .{ .body = resp.body });
         return err;
     };

@@ -269,13 +269,15 @@ const MemTable = @import("MemTable.zig");
 const BlockReader = @import("BlockReader.zig");
 const Table = @import("../data/Table.zig");
 
+const testing = std.testing;
+
 test "BlockData initEmpty and deinit without header" {
     var bd = BlockData.initEmpty();
-    try std.testing.expectEqual(@as(?*ColumnsHeader, null), bd.columnsHeader);
-    try std.testing.expectEqual(@as(?[]Column, null), bd.invariantColumns);
+    try testing.expectEqual(@as(?*ColumnsHeader, null), bd.columnsHeader);
+    try testing.expectEqual(@as(?[]Column, null), bd.invariantColumns);
 
     // Should not crash when deinit is called with no decoded data.
-    bd.deinit(std.testing.allocator);
+    bd.deinit(testing.allocator);
 }
 
 const SampleLines = struct {
@@ -315,8 +317,8 @@ fn populateSampleLines(sample: *SampleLines) void {
 }
 
 test "BlockData readFrom populates columnsData and invariantColumns" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    const allocator = testing.allocator;
+    const io = testing.io;
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(allocator, 1);
     defer timestampsEncoders.deinit(allocator);
 
@@ -347,21 +349,21 @@ test "BlockData readFrom populates columnsData and invariantColumns" {
     defer blockReader.deinit(allocator);
 
     // Read first block, which should populate BlockData.
-    try std.testing.expect(try blockReader.nextBlock(io, allocator));
+    try testing.expect(try blockReader.nextBlock(io, allocator));
 
     const bd = &blockReader.blockData;
-    try std.testing.expect(bd.columnsHeader != null);
+    try testing.expect(bd.columnsHeader != null);
     const ch = bd.columnsHeader.?;
 
     // BlockData must mirror the number of column headers.
-    try std.testing.expectEqual(ch.headers.len, bd.columnsData.items.len);
+    try testing.expectEqual(ch.headers.len, bd.columnsData.items.len);
 
     // When there are any column headers, each ColumnData should correspond to its ColumnHeader.
     for (ch.headers, bd.columnsData.items) |*header, col| {
-        try std.testing.expectEqualStrings(header.key, col.key);
-        try std.testing.expectEqual(header.type, col.type);
-        try std.testing.expectEqual(header.size, col.bloomValues.len);
-        try std.testing.expectEqual(&header.dict, col.dict);
+        try testing.expectEqualStrings(header.key, col.key);
+        try testing.expectEqual(header.type, col.type);
+        try testing.expectEqual(header.size, col.bloomValues.len);
+        try testing.expectEqual(&header.dict, col.dict);
     }
 
     // Second call to nextBlock exercises BlockData reuse path (columnsHeader deinit + re-decode).
