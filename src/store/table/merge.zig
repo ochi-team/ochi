@@ -36,7 +36,7 @@ pub fn Merger(
     }
 
     return struct {
-        // assumes toMerge destination has preallocated capacity
+        /// assumes toMerge destination has preallocated capacity
         pub fn filterTablesToMerge(
             tables: []T,
             dst: *std.ArrayList(T),
@@ -64,8 +64,6 @@ pub fn Merger(
             return window;
         }
 
-        // TODO: the API must nto work with an array,
-        // it must take a slice and return another slice to get rid of expensive sorting
         pub fn selectTablesToMerge(
             tables: *std.ArrayList(T),
         ) usize {
@@ -78,10 +76,8 @@ pub fn Merger(
                 std.mem.reverse(T, tables.items[w.lower..]);
                 std.mem.reverse(T, tables.items);
             }
-            // TODO: if we can put all the edge.. items on stack,
-            // it's easier to create a new slice and collect them there,
-            // so instead of a window we return a window + left slice,
-            // it can eliminate expensive sorting here
+
+            // sort the leftovers
             const edge = w.upper - w.lower;
             std.debug.assert(edge != 0);
             if (edge < tables.items.len) {

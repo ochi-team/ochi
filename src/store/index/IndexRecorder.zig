@@ -328,7 +328,6 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
 fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
     // TODO: run merging job in parallel and benchmark whether it doesn't hurt general throughput
 
-    // TODO: take a metric to understand if capacity is enough for regular case
     var fba = std.heap.stackFallback(512, alloc);
     const fbaAlloc = fba.get();
     var mergedTables = try std.ArrayList(*Table).initCapacity(fbaAlloc, 8);
