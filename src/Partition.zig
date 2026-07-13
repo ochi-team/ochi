@@ -158,15 +158,18 @@ pub fn close(
     self: *Partition,
     io: Io,
 ) void {
-    self.index.recorder.stop(io, self.alloc) catch |err| {
+    const alloc = self.alloc;
+
+    self.index.recorder.stop(io, alloc) catch |err| {
         std.debug.panic("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
     };
-    self.index.recorder.deinit(io, self.alloc);
-    self.data.stop(io, self.alloc) catch |err| {
+    self.index.recorder.deinit(io, alloc);
+    self.data.stop(io, alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
-    self.data.deinit(io, self.alloc);
-    self.alloc.destroy(self);
+    self.data.deinit(io, alloc);
+    self.* = undefined;
+    alloc.destroy(self);
 }
 
 pub fn createDir(io: Io, path: []const u8, indexPath: []const u8, dataPath: []const u8) !void {

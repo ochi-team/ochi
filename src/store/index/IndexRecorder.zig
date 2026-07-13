@@ -199,6 +199,7 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     self.blocksToFlush.deinit(alloc);
     self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
+    self.* = undefined;
     alloc.destroy(self);
 }
 
@@ -910,7 +911,7 @@ test "flushMemEntries non-force respects flush deadline" {
     try testing.expectEqual(0, recorder.blocksToFlush.items.len);
     try testing.expect(recorder.memTables.items.len > 0);
 
-    try recorder.flushForce(io, alloc);
+    try recorder.stop(io, alloc);
 }
 
 test "mergeTables force single mem table creates disk table" {
@@ -977,6 +978,8 @@ test "IndexRecorder add and reopen preserves item count" {
         try testing.expect(recorder.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(recorder));
+
+        try recorder.stop(io, alloc);
     }
 
     {

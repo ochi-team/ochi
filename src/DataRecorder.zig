@@ -91,6 +91,7 @@ pub const DataShard = struct {
     fn deinit(self: *DataShard, alloc: Allocator) void {
         self.lines.deinit(alloc);
         alloc.free(self.buffer.buffer);
+        self.* = undefined;
     }
 
     fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line, sid: SID) !void {
@@ -377,6 +378,7 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     self.diskTables.deinit(allocator);
     allocator.free(self.shards);
     self.g.cancel(io);
+    self.* = undefined;
     allocator.destroy(self);
 }
 

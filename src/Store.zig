@@ -168,6 +168,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
+    self.* = undefined;
 }
 
 // Store tracks disk usage so:
