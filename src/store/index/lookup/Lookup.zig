@@ -325,8 +325,6 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
@@ -363,8 +361,6 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
@@ -400,8 +396,6 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     const tableAItems = [_][]const u8{
         "key:aa:002",
@@ -495,8 +489,6 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     const tableAItems = [_][]const u8{
         "key:aa0000000000000002",
@@ -628,8 +620,6 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     const tableDiskItems = [_][]const u8{
         "tenant-a-stream-0001",
@@ -722,8 +712,6 @@ test "Lookup.deinit after scan across multiple table blocks" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, 2200);
     defer items.deinit(alloc);
@@ -778,8 +766,6 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
     defer items.deinit(alloc);

@@ -100,6 +100,7 @@ pub fn open(
         compressionPool,
         decompressionPool,
     );
+    errdefer indexRecorder.deinit(io, alloc);
     errdefer indexRecorder.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop index recorder in partition opening", .{ .err = err });
     };
@@ -115,6 +116,7 @@ pub fn open(
         compressionPool,
         decompressionPool,
     );
+    errdefer data.deinit(io, alloc);
     errdefer data.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };
@@ -159,9 +161,11 @@ pub fn close(
     self.index.recorder.stop(io, self.alloc) catch |err| {
         std.debug.panic("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
     };
+    self.index.recorder.deinit(io, self.alloc);
     self.data.stop(io, self.alloc) catch |err| {
         std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
     };
+    self.data.deinit(io, self.alloc);
     self.alloc.destroy(self);
 }
 

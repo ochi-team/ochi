@@ -11,7 +11,7 @@ const Dispatcher = @import("dispatch.zig").Dispatcher;
 const AppContext = @import("dispatch.zig").AppContext;
 const Store = @import("Store.zig").Store;
 const Layout = @import("Layout.zig");
-const insert = @import("handlers/insert.zig");
+const ingest = @import("handlers/ingest.zig");
 const query = @import("handlers/query.zig");
 const flush = @import("handlers/flush.zig");
 const stream_ids = @import("handlers/stream_ids.zig");
@@ -124,8 +124,8 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, store: *Sto
     router.get("/health", health, .{});
     router.get("/metrics", metrics, .{});
 
-    router.get("/ingest/loki/ready", insert.ingestLokiReady, .{});
-    router.post("/ingest/loki/api/v1/push", insert.ingestLokiJsonHandler, .{});
+    router.get("/ingest/loki/ready", ingest.ingestLokiReady, .{});
+    router.post("/ingest/loki/api/v1/push", ingest.ingestLokiJsonHandler, .{});
 
     router.post("/query", query.queryHandler, .{});
     router.post("/stream_ids", stream_ids.streamIDsHandler, .{});

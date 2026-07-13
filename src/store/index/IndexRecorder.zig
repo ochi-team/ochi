@@ -156,12 +156,8 @@ pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // TODO: find an approach to make it never fail,
 // the only option it fails is OOM, so cleaning more memory in advance might be more reliable
 // another problem it's hard to test it via checkAllAllocationFailures
-// Then audit all deinits and use it instead
-// TODO: make using this API instead of directly managing stopped state
 pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
-    defer self.deinit(io, alloc);
-
     // we ignore canceled erorr, we stop anyway
     self.g.await(io) catch |err| {
         switch (err) {
@@ -417,13 +413,13 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
 
     // TODO: ideally to know the amount of mem tables and call unlock it branchless
     self.mxTables.lockUncancelable(io);
-    self.memTables.append(alloc, memTable) catch {
+    self.memTables.append(alloc, memTable) catch |err| {
         if (semaphoreAcquired) self.memTablesSem.post(io);
         self.mxTables.unlock(io);
-        return;
+        return err;
     };
-    try self.startMemTablesMerge(io, alloc);
     self.mxTables.unlock(io);
+    try self.startMemTablesMerge(io, alloc);
 
     if (force) {
         self.invalidateStreamFilterCache();
@@ -639,20 +635,20 @@ fn tablesMerger(
     while (true) {
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
-        self.mxTables.lockUncancelable(io);
-        // TODO: we have to know the max amount of tables in advance
-        tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
-            self.mxTables.unlock(io);
-            return err;
-        };
-        // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-        const window = merger.filterTablesToMerge(
-            tables.items,
-            &tablesToMerge,
-            maxDiskTableSize,
-        );
-        self.mxTables.unlock(io);
+        defer tablesToMerge.clearRetainingCapacity();
+        const window = blk: {
+            self.mxTables.lockUncancelable(io);
+            defer self.mxTables.unlock(io);
 
+            // TODO: we have to know the max amount of tables in advance
+            try tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len);
+            // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
+            break :blk merger.filterTablesToMerge(
+                tables.items,
+                &tablesToMerge,
+                maxDiskTableSize,
+            );
+        };
         const w = window orelse return;
         const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
         if (filteredTablesToMerge.len == 0) return;
@@ -663,7 +659,6 @@ fn tablesMerger(
         errdefer sem.post(io);
         try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
         sem.post(io);
-        tablesToMerge.clearRetainingCapacity();
     }
 }
 
@@ -1082,11 +1077,9 @@ test "IndexRecorder background flusher survives load" {
     runtime.cpus = 4;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = 256;
     try recorder.start(io, alloc);
-    defer recorder.stop(io, alloc) catch |err| {
-        std.debug.panic("failed to stop recorder: {s}", .{@errorName(err)});
-    };
 
     var g: std.Io.Group = .init;
     errdefer g.cancel(io);
@@ -1107,9 +1100,7 @@ test "IndexRecorder background flusher survives load" {
     }
 
     try g.await(io);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
-    try recorder.flushForce(io, alloc);
+    try recorder.stop(io, alloc);
 
     try testing.expectEqual(0, countMemItemsInRecorder(recorder));
     try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
@@ -1135,10 +1126,8 @@ test "IndexRecorder disk table merger survives large load" {
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     recorder.maxMemBlockSize = 4 * 1024;
+    defer recorder.deinit(io, alloc);
     try recorder.start(io, alloc);
-    defer recorder.stop(io, alloc) catch |err| {
-        std.debug.panic("failed to stop recorder: {s}", .{@errorName(err)});
-    };
 
     const minItemLen = 512;
     const maxItemLen = 1536;
@@ -1176,9 +1165,7 @@ test "IndexRecorder disk table merger survives large load" {
     }
 
     try g.await(io);
-    recorder.stopped.stop(io);
-    try recorder.g.await(io);
-    try recorder.flushForce(io, alloc);
+    try recorder.stop(io, alloc);
 
     try testing.expectEqual(0, countMemItemsInRecorder(recorder));
     try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
@@ -1279,6 +1266,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
@@ -1303,7 +1291,6 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         blocksInShards += shard.blocks.items.len;
     }
     try testing.expectEqual(countAdditionalEntries, blocksInShards);
-
     try recorder.stop(io, alloc);
 }
 
@@ -1327,6 +1314,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
     try testing.expectEqual(recorder.entries.shards.len, runtime.cpus);
 
     for (0..runtime.cpus) |_| {
@@ -1344,8 +1332,6 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     }
 
     try recorder.stop(io, alloc);
-    // after deinit we can't validate the blocks are empty, but can read the files
-
     var tables = try Table.openAll(io, alloc, rootPath, decompressionPool);
     try testing.expectEqual(tables.items.len, 1);
     defer {
@@ -1399,14 +1385,14 @@ test "IndexRecorder large entries write to 3 shards" {
     runtime.cpus = 3;
 
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
-    defer recorder.stop(io, alloc) catch unreachable;
 
     try recorder.add(io, alloc, testEntries);
 
     try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
 
-    try recorder.flushForce(io, alloc);
+    try recorder.stop(io, alloc);
 
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expect(recorder.diskTables.items.len > 0);

@@ -336,9 +336,7 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 // either lock stop or find another way to make sure none of the task are running after wg.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
-    defer self.deinit(io, alloc);
-
-    // we ignore canceled erorr, we stop anyway
+    // we ignore canceled error, we stop anyway
     // TODO: make sure it's not possible to run a job after we await,
     // so we block the following scenario:
     // - enter stop
