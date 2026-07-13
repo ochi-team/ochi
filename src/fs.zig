@@ -108,6 +108,7 @@ pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
     errdefer alloc.free(dst);
     Logger.log(.debug, "read full file", .{
         .size = size,
+        .path = path,
     });
 
     _ = try file.readPositionalAll(io, dst, 0);

@@ -634,21 +634,19 @@ fn tablesMerger(
     var tablesBuf: [amountOfTablesToMerge]*Table = undefined;
     var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesBuf);
 
-    while (true) {
+    while (!self.stopped.isStopped()) {
+        defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
-        defer tablesToMerge.clearRetainingCapacity();
-        const window = blk: {
-            self.mxTables.lockUncancelable(io);
-            defer self.mxTables.unlock(io);
+        self.mxTables.lockUncancelable(io);
+        // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
+        const window = merger.filterTablesToMerge(
+            tables.items,
+            &tablesToMerge,
+            maxDiskTableSize,
+        );
+        self.mxTables.unlock(io);
 
-            // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-            break :blk merger.filterTablesToMerge(
-                tables.items,
-                &tablesToMerge,
-                maxDiskTableSize,
-            );
-        };
         const w = window orelse return;
         const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
         if (filteredTablesToMerge.len == 0) return;

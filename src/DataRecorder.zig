@@ -570,16 +570,16 @@ fn tablesMerger(
     var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesBuf);
 
     while (!self.stopped.isStopped()) {
+        defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
-        // TODO: we have to know the max amount of tables in advance
-        tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
-            self.mxTables.unlock(io);
-            return err;
-        };
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
-        const window = merger.filterTablesToMerge(tables.items, &tablesToMerge, maxDiskTableSize);
+        const window = merger.filterTablesToMerge(
+            tables.items,
+            &tablesToMerge,
+            maxDiskTableSize,
+        );
         self.mxTables.unlock(io);
 
         const w = window orelse return;
@@ -590,7 +590,6 @@ fn tablesMerger(
         errdefer sem.post(io);
         try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
         sem.post(io);
-        tablesToMerge.clearRetainingCapacity();
     }
 }
 
@@ -876,6 +875,31 @@ fn countDiskLinesInRecorder(recorder: *DataRecorder) u64 {
         n += table.tableHeader().len;
     }
     return n;
+}
+
+test "tablesMerger handles more source tables than merge window" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const runtime = try Runtime.init(io, alloc, ".", 0.5);
+    defer runtime.deinit(alloc);
+
+    var recorder: DataRecorder = undefined;
+    recorder.stopped = .{};
+    recorder.runtime = runtime;
+    recorder.mxTables = .init;
+
+    var table: Table = undefined;
+    table.inMerge = true;
+
+    var tablesBuf = [_]*Table{&table} ** (amountOfTablesToMerge + 1);
+    var tables = std.ArrayList(*Table).initBuffer(&tablesBuf);
+    tables.items.len = tablesBuf.len;
+
+    var sem: Io.Semaphore = .{ .permits = 1 };
+    try recorder.tablesMerger(io, alloc, &tables, &sem);
+
+    try testing.expectEqual(tablesBuf.len, tables.items.len);
 }
 
 test "selectTablesInRange selects overlap and handles gaps" {
