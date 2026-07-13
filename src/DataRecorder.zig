@@ -335,7 +335,7 @@ pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 // Then audit all deinits and use it instead
 // TODO: make using this API instead of directly managing stopped state in the tests
 // TODO: this theoretically is not enough to stop the other jobs form starting,
-// either lock stop or find another way to make sure none of the task are running after wg.wait
+// either lock stop or find another way to make sure none of the task are running after g.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
     // we ignore canceled error, we stop anyway
