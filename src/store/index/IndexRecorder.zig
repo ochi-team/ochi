@@ -26,11 +26,13 @@ const Stop = @import("../../stds/Stop.zig");
 const Runtime = @import("../../Runtime.zig");
 const Logger = @import("logging");
 
+const amountOfTablesToMerge = @import("../../Consts.zig").amountOfTablesToMerge;
+
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
 const maxMemTables = 24;
 
-const merger = merge.Merger(*Table, maxMemTables);
+const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(IndexRecorder, Table);
 
 const IndexRecorder = @This();

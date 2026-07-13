@@ -16,10 +16,6 @@ const mergeMultiple = 2;
 // if edge use case comes up, we can lower it further up to 0.5-1mb, then configure it in build time
 pub const minMemTableSize: u64 = 4 * 1024 * 1024;
 
-// we need to balance throughput and memory limits
-// this number is just a guess
-pub const amountOfTablesToMerge = 16;
-
 pub const TableKind = enum {
     mem,
     disk,
@@ -33,7 +29,12 @@ const MergeWindowBound = struct {
 pub fn Merger(
     comptime T: type,
     maxMemTables: comptime_int,
+    maxTablesToMerge: comptime_int,
 ) type {
+    comptime {
+        if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
+    }
+
     return struct {
         // assumes toMerge destination has preallocated capacity
         pub fn filterTablesToMerge(
@@ -48,7 +49,7 @@ pub fn Merger(
             }
 
             // tablesToMerge is a slice of toMerge ArrayList, no need to free it
-            const window = filterLeveledTables(dst, maxDiskTableSize, amountOfTablesToMerge);
+            const window = filterLeveledTables(dst, maxDiskTableSize);
             if (window) |w| {
                 const tablesToMerge = dst.items[w.lower..w.upper];
                 for (tablesToMerge) |table| {
@@ -67,7 +68,7 @@ pub fn Merger(
         ) usize {
             if (tables.items.len < 2) return tables.items.len;
 
-            const maybeWindow = filterLeveledTables(tables, std.math.maxInt(u64), amountOfTablesToMerge);
+            const maybeWindow = filterLeveledTables(tables, std.math.maxInt(u64));
             const w = maybeWindow orelse return tables.items.len;
             if (w.lower > 0) {
                 std.mem.reverse(T, tables.items[0..w.lower]);
@@ -138,7 +139,7 @@ pub fn Merger(
             const restMem = maxMem - cacheSize;
             // 8mb min page cache size
             // TODO: better to make it configurable
-            const freePerTable = @max(restMem / amountOfTablesToMerge, tablePageCacheSize);
+            const freePerTable = @max(restMem / maxTablesToMerge, tablePageCacheSize);
             return freePerTable;
         }
 
@@ -148,12 +149,7 @@ pub fn Merger(
         fn filterLeveledTables(
             toMerge: *std.ArrayList(T),
             maxDiskTableSize: u64,
-            maxTablesToMerge: comptime_int,
         ) ?MergeWindowBound {
-            comptime {
-                if (maxTablesToMerge < 2) @compileError("maxTablesToMerge must be >= 2");
-            }
-
             if (toMerge.items.len < 2) return null;
 
             // TODO: concern is passing max int for mem tables might be not the most reliable option,
@@ -292,7 +288,7 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
             tables.appendAssumeCapacity(t);
         }
 
-        const merger = Merger(*Table, 16);
+        const merger = Merger(*Table, 16, 16);
         const edge = merger.selectTablesToMerge(&tables);
         try testing.expectEqual(case.bound.upper - case.bound.lower, edge);
         var actual = try alloc.alloc(u16, edge);
@@ -338,7 +334,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     var toMerge = try std.ArrayList(*Table).initCapacity(alloc, tables.items.len);
     defer toMerge.deinit(alloc);
 
-    const merger = Merger(*Table, 16);
+    const merger = Merger(*Table, 16, 16);
     const window = merger.filterTablesToMerge(tables.items, &toMerge, std.math.maxInt(u64));
     try testing.expect(window != null);
     const w = window.?;
@@ -393,7 +389,7 @@ test "getDestinationTableKind rules" {
     defer small2.close(io);
 
     var bothSmall = [_]*Table{ small1, small2 };
-    const merger = Merger(*Table, 16);
+    const merger = Merger(*Table, 16, 16);
     const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(1024 * 1024 * 1024);
 
     try testing.expectEqual(TableKind.mem, merger.getDestinationTableKind(bothSmall[0..], false, maxInmemoryTableSize));
@@ -415,3 +411,6 @@ test "getDestinationTableKind rules" {
     var mixed = [_]*Table{ small1, disk };
     try testing.expectEqual(TableKind.disk, merger.getDestinationTableKind(mixed[0..], false, maxInmemoryTableSize));
 }
+
+// TODO: do fuzz with bound.upper - bound.lower == (j + i) - j == i validation
+// to test the output limits

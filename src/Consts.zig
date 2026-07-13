@@ -16,3 +16,7 @@ pub const maxBlockSize = 2 * 1024 * 1024;
 
 // threshold as 90% of a max block size
 pub const flushSizeThreshold = 36 * (maxBlockSize / 40);
+
+// we need to balance throughput and memory limits
+// this number is just a guess
+pub const amountOfTablesToMerge = 16;

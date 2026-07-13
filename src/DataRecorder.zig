@@ -27,7 +27,6 @@ const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
-const maxBlockSize = @import("Consts.zig").maxBlockSize;
 const Runtime = @import("Runtime.zig");
 const Logger = @import("logging");
 
@@ -41,9 +40,11 @@ const swap = @import("store/table/swap.zig");
 const Consts = @import("Consts.zig");
 
 const flushSizeThreshold = Consts.flushSizeThreshold;
+const amountOfTablesToMerge = Consts.amountOfTablesToMerge;
+const maxBlockSize = Consts.maxBlockSize;
 
 const maxMemTables = 24;
-const merger = merge.Merger(*Table, maxMemTables);
+const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
 
 fn getFlushTime(io: Io) i64 {
