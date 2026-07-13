@@ -44,7 +44,10 @@ pub fn Merger(
         ) ?MergeWindowBound {
             for (tables) |table| {
                 if (!table.inMerge) {
-                    dst.appendAssumeCapacity(table);
+                    dst.appendBounded(table) catch {
+                        // tables slice is larger then destination array
+                        break;
+                    };
                 }
             }
 

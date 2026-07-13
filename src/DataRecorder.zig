@@ -566,8 +566,8 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *Io.Semaphore,
 ) !void {
-    var tablesToMerge = std.ArrayList(*Table).empty;
-    defer tablesToMerge.deinit(alloc);
+    var tablesBuf: [amountOfTablesToMerge]*Table = undefined;
+    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesBuf);
 
     while (!self.stopped.isStopped()) {
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));

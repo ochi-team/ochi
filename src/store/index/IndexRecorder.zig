@@ -632,8 +632,8 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *Io.Semaphore,
 ) anyerror!void {
-    var tablesToMerge = std.ArrayList(*Table).empty;
-    defer tablesToMerge.deinit(alloc);
+    var tablesBuf: [amountOfTablesToMerge]*Table = undefined;
+    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesBuf);
 
     while (true) {
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
@@ -643,8 +643,6 @@ fn tablesMerger(
             self.mxTables.lockUncancelable(io);
             defer self.mxTables.unlock(io);
 
-            // TODO: we have to know the max amount of tables in advance
-            try tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len);
             // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
             break :blk merger.filterTablesToMerge(
                 tables.items,
