@@ -88,7 +88,7 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
         });
     }
     defer if (options.setupLogger) Logger.deinit();
-    try inspect.inspect(options.release, io);
+    try inspect.inspect(options.release);
 
     Logger.log(
         .info,

@@ -1,12 +1,9 @@
 const std = @import("std");
-const Io = std.Io;
 const builtin = @import("builtin");
 const Logger = @import("logging");
 
 const maxTableSize = @import("Conf.zig").maxTableSize;
 const minOpenFileDescriptors = 1 << 16;
-const requiredOvercommit = "2";
-const overcommitPath = "/proc/sys/vm/overcommit_memory";
 
 pub const Error = error{
     NotReleaseMode,
@@ -14,7 +11,7 @@ pub const Error = error{
     InvalidOvercommit,
 };
 
-pub fn inspect(strict: bool, io: Io) !void {
+pub fn inspect(strict: bool) !void {
     switch (builtin.os.tag) {
         .linux => {},
         else => {
@@ -30,7 +27,6 @@ pub fn inspect(strict: bool, io: Io) !void {
 
     try inspectFds(strict);
     try inspectFsize(strict);
-    try inspectOvercommit(strict, io);
 }
 
 fn inspectFds(strict: bool) !void {
@@ -63,6 +59,11 @@ fn inspectFds(strict: bool) !void {
         if (strict) return err;
         return;
     };
+    Logger.log(.debug, "updated file descriptors limit", .{
+        .current = limits.cur,
+        .hard = limits.max,
+        .required = minOpenFileDescriptors,
+    });
 }
 
 fn inspectFsize(strict: bool) !void {
@@ -95,30 +96,9 @@ fn inspectFsize(strict: bool) !void {
         if (strict) return err;
         return;
     };
-}
-
-fn inspectOvercommit(strict: bool, io: Io) !void {
-    const f = std.Io.Dir.cwd().openFile(io, overcommitPath, .{ .mode = .read_only }) catch |err| {
-        Logger.log(.err, "failed to read overcommit setting", .{ .path = overcommitPath, .err = err });
-        if (strict) return err;
-        return;
-    };
-    defer f.close(io);
-
-    var buf: [8]u8 = undefined;
-    const n = f.readPositionalAll(io, &buf, 0) catch |err| {
-        Logger.log(.err, "failed to read overcommit setting", .{ .path = overcommitPath, .err = err });
-        if (strict) return err;
-        return;
-    };
-
-    const value = std.mem.trim(u8, buf[0..n], &std.ascii.whitespace);
-    if (std.mem.eql(u8, value, requiredOvercommit)) return;
-
-    Logger.log(.err, "overcommit setting is invalid", .{
-        .path = overcommitPath,
-        .current = value,
-        .required = requiredOvercommit,
+    Logger.log(.debug, "raised max file size limit", .{
+        .current = limits.cur,
+        .hard = limits.max,
+        .required = maxTableSize,
     });
-    if (strict) return error.InvalidOvercommit;
 }
