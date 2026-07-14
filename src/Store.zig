@@ -226,35 +226,42 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
 // because the existing partitions size never change and either the tables size,
 // instead we must collect size stats from the partitions directly on opening the tables
 fn readStoreUsage(self: *Store, io: Io, alloc: Allocator) !u64 {
-    var childPathBuf: [std.fs.max_path_bytes]u8 = undefined;
-
-    return readDirUsage(io, alloc, self.runtime.path, &childPathBuf);
+    return readDirUsage(io, alloc, self.runtime.path);
 }
 
-fn readDirUsage(io: Io, alloc: Allocator, path: []const u8, childPathBuf: []u8) !u64 {
-    var dir = if (std.fs.path.isAbsolute(path))
-        try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true })
-    else
-        try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
-    defer dir.close(io);
+fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
+    var stack: std.ArrayList([]u8) = try .initCapacity(alloc, 32);
+    defer stack.deinit(alloc);
 
-    var childPathWriter = std.Io.Writer.fixed(childPathBuf);
+    const rootPath = try alloc.dupe(u8, root);
+    stack.appendAssumeCapacity(rootPath);
 
     var total: u64 = 0;
-    var it = dir.iterate();
-    while (try it.next(io)) |entry| {
-        switch (entry.kind) {
-            .directory => {
-                try std.fs.path.fmtJoin(&.{ path, entry.name }).format(&childPathWriter);
-                total += try readDirUsage(io, alloc, childPathWriter.buffered(), childPathBuf);
-                childPathWriter.end = 0;
-            },
-            .file => {
-                var file = try dir.openFile(io, entry.name, .{});
-                defer file.close(io);
-                total += (try file.stat(io)).size;
-            },
-            else => {},
+
+    while (stack.pop()) |path| {
+        defer alloc.free(path);
+
+        var dir = if (std.fs.path.isAbsolute(path))
+            try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true })
+        else
+            try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+        defer dir.close(io);
+
+        var it = dir.iterate();
+        while (try it.next(io)) |entry| {
+            switch (entry.kind) {
+                .directory => {
+                    const childPath = try std.fs.path.join(alloc, &.{ path, entry.name });
+                    errdefer alloc.free(childPath);
+                    try stack.append(alloc, childPath);
+                },
+                .file => {
+                    var file = try dir.openFile(io, entry.name, .{});
+                    defer file.close(io);
+                    total += (try file.stat(io)).size;
+                },
+                else => {},
+            }
         }
     }
 

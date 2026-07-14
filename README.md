@@ -17,7 +17,7 @@ We are creating a more efficient alternative for storing logs.
 #### Download pre-built binary
 
 ```sh
-VERSION=v0.5.0 &&
+VERSION=v0.5.3 &&
 curl -Ls "https://github.com/ochi-team/ochi/releases/download/${VERSION}/Ochi-${VERSION}-linux-x86_64.tar.gz" | tar -xz
 ```
 
