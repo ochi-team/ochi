@@ -100,17 +100,16 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
     defer store.deinit(io, alloc);
     try store.start(io, alloc);
 
-    try startServer(io, alloc, conf, &store);
+    try startServer(io, alloc, conf, runtime, &store);
 }
 
-pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, store: *Store) !void {
+pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *Runtime, store: *Store) !void {
     var dispatcher = try Dispatcher.init(io, allocator, &conf.app, store);
     defer dispatcher.deinit();
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
         .address = .all(conf.server.port),
         .thread_pool = .{
-            // TODO: set to amount of cpus
-            .count = 8,
+            .count = runtime.cpus,
             .buffer_size = 32 * 1024,
         },
     }, &dispatcher);
