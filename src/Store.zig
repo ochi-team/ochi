@@ -775,7 +775,6 @@ test "init opens existing partitions, sorts them and sets lru" {
     const runtime = try Runtime.init(io, alloc, storePath, conf.app.maxCachePortion);
     defer runtime.deinit(alloc);
 
-    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const layout = try Layout.make(io, storePath, &partitionsPathBuf);
     var store = try Store.init(io, alloc, &conf, runtime, layout);
     defer store.deinit(io, alloc);

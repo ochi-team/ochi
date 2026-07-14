@@ -279,7 +279,7 @@ pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) 
     const fba = stackFba.get();
     // TODO: worth migrating json to names suparated by new line \n
     // since they are limited to 16 symbols hex symbols [0-9A-F]
-    // TODO: amount of max tables per partition must be known in advance, 
+    // TODO: amount of max tables per partition must be known in advance,
     // either the json encoding size
     const data = try std.json.Stringify.valueAlloc(fba, tableNames.items, .{
         .whitespace = .minified,
