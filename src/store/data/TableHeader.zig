@@ -36,13 +36,11 @@ pub fn writeFile(
     );
     defer allocator.free(json);
 
-    const metadataPath = try std.fs.path.join(
-        allocator,
-        &.{ path, filenames.header },
-    );
-    defer allocator.free(metadataPath);
+    var metadataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var metadataPathWriter = std.Io.Writer.fixed(&metadataPathBuf);
+    try std.fs.path.fmtJoin(&.{ path, filenames.header }).format(&metadataPathWriter);
 
-    try fs.writeBufferValToFile(io, metadataPath, json);
+    try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), json);
 }
 
 pub fn readFile(

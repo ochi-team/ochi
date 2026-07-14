@@ -70,7 +70,7 @@ refCounter: std.atomic.Value(u32),
 // TODO: investigate how we could make a checksum and validate it on opening a table
 pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, decompressionPool: *DecompressionPool) !std.ArrayList(*Table) {
     Dir.createDirAbsolute(io, path, .default_dir) catch |err| switch (err) {
-        // TODO: if the foler already exists we must read it's content and log an error
+        // TODO: if the folder already exists we must read it's content and log an error
         // in case the tables on the disk are missing in the tables list
         Dir.CreateDirError.PathAlreadyExists => {},
         else => |e| return e,
@@ -81,19 +81,20 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, decompressionPo
 
     // read table names,
     // they are given either from a file or listed directories in the path
-    const tablesFilePath = try std.fs.path.join(alloc, &[_][]const u8{ path, filenames.tables });
-    defer alloc.free(tablesFilePath);
-    var tableNames = try catalog.readNames(io, alloc, tablesFilePath, true);
+    var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
+    try std.fs.path.fmtJoin(&.{ path, filenames.tables }).format(&tablesFilePathWriter);
+    var tableNames = try catalog.readNames(io, alloc, tablesFilePathWriter.buffered(), true);
     defer {
         for (tableNames.items) |tableName| alloc.free(tableName);
         tableNames.deinit(alloc);
     }
 
     // syncing tables with a json, make sure all the listed dirs exist
-    try catalog.validateTablesExist(io, alloc, path, tableNames.items);
+    try catalog.validateTablesExist(io, path, tableNames.items);
 
     // syncing tables with the given names remove all the not listed dirs
-    try catalog.removeUnusedTables(io, alloc, path, tableNames.items);
+    try catalog.removeUnusedTables(io, path, tableNames.items);
 
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
@@ -343,10 +344,11 @@ pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) 
     });
     defer fba.free(data);
 
-    const tablesFilePath = try std.fs.path.join(fba, &.{ path, filenames.tables });
-    defer fba.free(tablesFilePath);
+    var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
+    try std.fs.path.fmtJoin(&.{ path, filenames.tables }).format(&tablesFilePathWriter);
 
-    try fs.writeBufferToFileAtomic(io, tablesFilePath, data, true);
+    try fs.writeBufferToFileAtomic(io, tablesFilePathWriter.buffered(), data, true);
 }
 
 pub fn retain(self: *Table) void {
@@ -707,8 +709,10 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
-    defer alloc.free(tablePath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table-1" }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
@@ -761,8 +765,10 @@ test "release fromMem does not affect filesystem path" {
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const sentinelPath = try std.fs.path.join(alloc, &.{ rootPath, "sentinel" });
-    defer alloc.free(sentinelPath);
+    var sentinelPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var sentinelPathWriter = std.Io.Writer.fixed(&sentinelPathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "sentinel" }).format(&sentinelPathWriter);
+    const sentinelPath = sentinelPathWriter.buffered();
     // create a real directory to verify it remains
     try testing.expectError(error.FileNotFound, Dir.accessAbsolute(io, sentinelPath, .{}));
     try Dir.createDirAbsolute(io, sentinelPath, .default_dir);
@@ -864,8 +870,10 @@ test "open reads table from disk" {
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
-    defer alloc.free(tablePath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table-1" }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
@@ -976,10 +984,15 @@ test "openAll handles all io failures" {
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const table1Path = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
-    defer alloc.free(table1Path);
-    const table2Path = try std.fs.path.join(alloc, &.{ rootPath, "table-2" });
-    defer alloc.free(table2Path);
+    var table1PathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var table1PathWriter = std.Io.Writer.fixed(&table1PathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table-1" }).format(&table1PathWriter);
+    const table1Path = table1PathWriter.buffered();
+
+    var table2PathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var table2PathWriter = std.Io.Writer.fixed(&table2PathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table-2" }).format(&table2PathWriter);
+    const table2Path = table2PathWriter.buffered();
 
     const memTable = try MemTable.init(alloc);
     defer memTable.deinit(alloc);
@@ -1001,8 +1014,10 @@ test "openAll handles all io failures" {
     try memTable.storeToDisk(io, alloc, table1Path);
     try memTable.storeToDisk(io, alloc, table2Path);
 
-    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
-    defer alloc.free(tablesFilePath);
+    var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, filenames.tables }).format(&tablesFilePathWriter);
+    const tablesFilePath = tablesFilePathWriter.buffered();
     try fs.writeBufferToFileAtomic(io, tablesFilePath, "[\"table-1\",\"table-2\"]", true);
 
     const decompressionPool = try DecompressionPool.init(alloc, 1);
@@ -1281,8 +1296,10 @@ test "queryLines reads disk table fields after open" {
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
-    defer alloc.free(tablePath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table" }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
 
     const sid = SID{ .id = 1, .tenantID = 11 };
     var fields1 = [_]Field{

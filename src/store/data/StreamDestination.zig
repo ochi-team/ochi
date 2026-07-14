@@ -140,8 +140,10 @@ test "StreamDestination file destination" {
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const filePath = try std.fs.path.join(alloc, &.{ rootPath, "timestamps.bin" });
-    defer alloc.free(filePath);
+    var filePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var filePathWriter = std.Io.Writer.fixed(&filePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "timestamps.bin" }).format(&filePathWriter);
+    const filePath = filePathWriter.buffered();
 
     const file = try Dir.createFileAbsolute(io, filePath, .{ .truncate = true, .read = true });
     var buf = std.ArrayList(u8).empty;

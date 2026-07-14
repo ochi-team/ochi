@@ -68,10 +68,11 @@ pub fn writeFile(self: *const TableHeader, io: Io, alloc: Allocator, tablePath: 
     }, .{ .whitespace = .minified });
     defer alloc.free(json);
 
-    const metadataPath = try std.fs.path.join(alloc, &[_][]const u8{ tablePath, filenames.header });
-    defer alloc.free(metadataPath);
+    var metadataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var metadataPathWriter = std.Io.Writer.fixed(&metadataPathBuf);
+    try std.fs.path.fmtJoin(&.{ tablePath, filenames.header }).format(&metadataPathWriter);
 
-    try fs.writeBufferValToFile(io, metadataPath, json);
+    try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), json);
 }
 
 const testing = std.testing;

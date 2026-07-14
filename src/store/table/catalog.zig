@@ -73,33 +73,34 @@ pub fn readNames(
     }
 }
 
-pub fn validateTablesExist(io: Io, alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
+pub fn validateTablesExist(io: Io, path: []const u8, tableNames: []const []const u8) !void {
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+
     for (tableNames) |tableName| {
-        const tablePath = try std.fs.path.join(alloc, &.{ path, tableName });
-        defer alloc.free(tablePath);
-        Dir.accessAbsolute(io, tablePath, .{}) catch |err| switch (err) {
+        try std.fs.path.fmtJoin(&.{ path, tableName }).format(&tablePathWriter);
+        Dir.accessAbsolute(io, tablePathWriter.buffered(), .{}) catch |err| switch (err) {
             error.FileNotFound => return error.TableDoesNotExist,
             else => return err,
         };
+        tablePathWriter.end = 0;
     }
 }
 
-pub fn removeUnusedTables(io: Io, alloc: Allocator, path: []const u8, tableNames: []const []const u8) !void {
+pub fn removeUnusedTables(io: Io, path: []const u8, tableNames: []const []const u8) !void {
     var dir = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer dir.close(io);
-
-    var fba = std.heap.stackFallback(128, alloc);
-    const fbaAlloc = fba.get();
 
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .directory and entry.kind != .sym_link) continue;
         if (strings.contains(tableNames, entry.name)) continue;
 
-        const pathToDelete = try std.fs.path.join(fbaAlloc, &.{ path, entry.name });
-        defer fbaAlloc.free(pathToDelete);
-        Logger.log(.info, "removing unused table path", .{ .path = pathToDelete });
-        try fs.deleteTreeAbsolute(io, pathToDelete);
+        var pathToDeleteBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var pathToDeleteWriter = std.Io.Writer.fixed(&pathToDeleteBuf);
+        try std.fs.path.fmtJoin(&.{ path, entry.name }).format(&pathToDeleteWriter);
+        Logger.log(.info, "removing unused table path", .{ .path = pathToDeleteWriter.buffered() });
+        try fs.deleteTreeAbsolute(io, pathToDeleteWriter.buffered());
     }
 }
 
@@ -142,8 +143,10 @@ test "readNames" {
 
         const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
         defer alloc.free(rootPath);
-        const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, "tables.json" });
-        defer alloc.free(tablesFilePath);
+        var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
+        try std.fs.path.fmtJoin(&.{ rootPath, "tables.json" }).format(&tablesFilePathWriter);
+        const tablesFilePath = tablesFilePathWriter.buffered();
 
         try fs.writeBufferToFileAtomic(io, tablesFilePath, case.content, true);
 
@@ -196,8 +199,10 @@ test "readNames handles missing file path cases" {
         try pathSegments.append(alloc, rootPath);
         try pathSegments.appendSlice(alloc, case.pathParts);
 
-        const tablesFilePath = try std.fs.path.join(alloc, pathSegments.items);
-        defer alloc.free(tablesFilePath);
+        var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
+        try std.fs.path.fmtJoin(pathSegments.items).format(&tablesFilePathWriter);
+        const tablesFilePath = tablesFilePathWriter.buffered();
 
         if (case.expectedErr) |expectedErr| {
             try testing.expectError(expectedErr, readNames(io, alloc, tablesFilePath, false));
@@ -225,10 +230,15 @@ test "readNames returns error in validate mode when tables file is missing but t
 
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const tablesFilePath = try std.fs.path.join(alloc, &.{ rootPath, filenames.tables });
-    defer alloc.free(tablesFilePath);
-    const tableDirPath = try std.fs.path.join(alloc, &.{ rootPath, "table-a" });
-    defer alloc.free(tableDirPath);
+    var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, filenames.tables }).format(&tablesFilePathWriter);
+    const tablesFilePath = tablesFilePathWriter.buffered();
+
+    var tableDirPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tableDirPathWriter = std.Io.Writer.fixed(&tableDirPathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table-a" }).format(&tableDirPathWriter);
+    const tableDirPath = tableDirPathWriter.buffered();
 
     try Dir.createDirAbsolute(io, tableDirPath, .default_dir);
 
@@ -248,8 +258,10 @@ test "validateTablesExist" {
     defer alloc.free(rootPath);
 
     const tableName = "table-a";
-    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
-    defer alloc.free(tablePath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, tableName }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
     try Dir.createDirAbsolute(io, tablePath, .default_dir);
 
     const Case = struct {
@@ -276,9 +288,9 @@ test "validateTablesExist" {
 
     for (cases) |case| {
         if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, validateTablesExist(io, alloc, rootPath, case.tableNames));
+            try testing.expectError(expectedErr, validateTablesExist(io, rootPath, case.tableNames));
         } else {
-            try validateTablesExist(io, alloc, rootPath, case.tableNames);
+            try validateTablesExist(io, rootPath, case.tableNames);
         }
     }
 }
@@ -314,16 +326,20 @@ test "removeUnusedTables" {
         defer alloc.free(rootPath);
 
         for (case.existingTableNames) |tableName| {
-            const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
-            defer alloc.free(tablePath);
+            var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+            var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+            try std.fs.path.fmtJoin(&.{ rootPath, tableName }).format(&tablePathWriter);
+            const tablePath = tablePathWriter.buffered();
             try Dir.createDirAbsolute(io, tablePath, .default_dir);
         }
 
-        try removeUnusedTables(io, alloc, rootPath, case.usedTableNames);
+        try removeUnusedTables(io, rootPath, case.usedTableNames);
 
         for (case.existingTableNames) |tableName| {
-            const tablePath = try std.fs.path.join(alloc, &.{ rootPath, tableName });
-            defer alloc.free(tablePath);
+            var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+            var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+            try std.fs.path.fmtJoin(&.{ rootPath, tableName }).format(&tablePathWriter);
+            const tablePath = tablePathWriter.buffered();
             if (strings.contains(case.usedTableNames, tableName)) {
                 try Dir.accessAbsolute(io, tablePath, .{});
             } else {

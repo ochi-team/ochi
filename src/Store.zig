@@ -226,25 +226,28 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
 // because the existing partitions size never change and either the tables size,
 // instead we must collect size stats from the partitions directly on opening the tables
 fn readStoreUsage(self: *Store, io: Io, alloc: Allocator) !u64 {
-    return readDirUsage(io, alloc, self.runtime.path);
+    var childPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+
+    return readDirUsage(io, alloc, self.runtime.path, &childPathBuf);
 }
 
-fn readDirUsage(io: Io, alloc: Allocator, path: []const u8) !u64 {
+fn readDirUsage(io: Io, alloc: Allocator, path: []const u8, childPathBuf: []u8) !u64 {
     var dir = if (std.fs.path.isAbsolute(path))
         try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true })
     else
         try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer dir.close(io);
 
+    var childPathWriter = std.Io.Writer.fixed(childPathBuf);
+
     var total: u64 = 0;
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .directory => {
-                const childPath = try std.fs.path.join(alloc, &.{ path, entry.name });
-                defer alloc.free(childPath);
-
-                total += try readDirUsage(io, alloc, childPath);
+                try std.fs.path.fmtJoin(&.{ path, entry.name }).format(&childPathWriter);
+                total += try readDirUsage(io, alloc, childPathWriter.buffered(), childPathBuf);
+                childPathWriter.end = 0;
             },
             .file => {
                 var file = try dir.openFile(io, entry.name, .{});
@@ -734,22 +737,34 @@ test "init opens existing partitions, sorts them and sets lru" {
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const storePath = try std.fs.path.join(alloc, &.{ rootPath, "store" });
-    defer alloc.free(storePath);
+    var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var storePathWriter = std.Io.Writer.fixed(&storePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "store" }).format(&storePathWriter);
+    const storePath = storePathWriter.buffered();
     try Dir.createDirAbsolute(io, storePath, .default_dir);
 
-    const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, filenames.partitions });
-    defer alloc.free(partitionsPath);
+    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var partitionsPathWriter = std.Io.Writer.fixed(&partitionsPathBuf);
+    try std.fs.path.fmtJoin(&.{ storePath, filenames.partitions }).format(&partitionsPathWriter);
+    const partitionsPath = partitionsPathWriter.buffered();
     try Dir.createDirAbsolute(io, partitionsPath, .default_dir);
 
     const keys = [_][]const u8{ "31121999", "01012026", "29022024" };
     for (keys) |key| {
-        const partitionPath = try std.fs.path.join(alloc, &.{ partitionsPath, key });
-        defer alloc.free(partitionPath);
-        const indexPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.indexTables });
-        defer alloc.free(indexPath);
-        const dataPath = try std.fs.path.join(alloc, &.{ partitionPath, filenames.dataTables });
-        defer alloc.free(dataPath);
+        var partitionPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var partitionPathWriter = std.Io.Writer.fixed(&partitionPathBuf);
+        try std.fs.path.fmtJoin(&.{ partitionsPath, key }).format(&partitionPathWriter);
+        const partitionPath = partitionPathWriter.buffered();
+
+        var indexPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var indexPathWriter = std.Io.Writer.fixed(&indexPathBuf);
+        try std.fs.path.fmtJoin(&.{ partitionPath, filenames.indexTables }).format(&indexPathWriter);
+        const indexPath = indexPathWriter.buffered();
+
+        var dataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var dataPathWriter = std.Io.Writer.fixed(&dataPathBuf);
+        try std.fs.path.fmtJoin(&.{ partitionPath, filenames.dataTables }).format(&dataPathWriter);
+        const dataPath = dataPathWriter.buffered();
 
         try Dir.createDirAbsolute(io, partitionPath, .default_dir);
         try Dir.createDirAbsolute(io, indexPath, .default_dir);
@@ -957,8 +972,10 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
 
-    const partitionsRoot = try std.fs.path.join(alloc, &.{ rootPath, filenames.partitions });
-    defer alloc.free(partitionsRoot);
+    var partitionsRootBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var partitionsRootWriter = std.Io.Writer.fixed(&partitionsRootBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, filenames.partitions }).format(&partitionsRootWriter);
+    const partitionsRoot = partitionsRootWriter.buffered();
     try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
 
     const conf = Conf.getConf();

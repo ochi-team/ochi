@@ -78,10 +78,15 @@ test "createStoreDirIfNotExists ensures store and partitions dirs exist" {
         var storeNameBuf: [32]u8 = undefined;
         const storeName = try std.fmt.bufPrint(&storeNameBuf, "store-{d}", .{i});
 
-        const storePath = try std.fs.path.join(alloc, &.{ rootPath, storeName });
-        defer alloc.free(storePath);
-        const partitionsPath = try std.fs.path.join(alloc, &.{ storePath, filenames.partitions });
-        defer alloc.free(partitionsPath);
+        var storePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var storePathWriter = std.Io.Writer.fixed(&storePathBuf);
+        try std.fs.path.fmtJoin(&.{ rootPath, storeName }).format(&storePathWriter);
+        const storePath = storePathWriter.buffered();
+
+        var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        var partitionsPathWriter = std.Io.Writer.fixed(&partitionsPathBuf);
+        try std.fs.path.fmtJoin(&.{ storePath, filenames.partitions }).format(&partitionsPathWriter);
+        const partitionsPath = partitionsPathWriter.buffered();
 
         if (case.createStoreDir) {
             try Dir.createDirAbsolute(io, storePath, .default_dir);

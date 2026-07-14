@@ -260,10 +260,11 @@ test "MetaIndex roundtrip file read/write" {
     defer encoding.freeCCtx(cctx);
     const compressedLen = try encoding.compressAuto(cctx, compressed, uncompressed.items);
 
-    const metaindexPath = try std.fs.path.join(alloc, &.{ tablePath, filenames.metaindex });
-    defer alloc.free(metaindexPath);
+    var metaindexPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var metaindexPathWriter = std.Io.Writer.fixed(&metaindexPathBuf);
+    try std.fs.path.fmtJoin(&.{ tablePath, filenames.metaindex }).format(&metaindexPathWriter);
 
-    var file = try Dir.createFileAbsolute(io, metaindexPath, .{ .truncate = true });
+    var file = try Dir.createFileAbsolute(io, metaindexPathWriter.buffered(), .{ .truncate = true });
     defer file.close(io);
     try file.writeStreamingAll(io, compressed[0..compressedLen]);
     try file.sync(io);

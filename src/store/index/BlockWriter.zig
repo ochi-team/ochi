@@ -279,9 +279,10 @@ fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
 }
 
 pub fn readTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
-    const filePath = try std.fs.path.join(alloc, &.{ tablePath, fileName });
-    defer alloc.free(filePath);
-    return fs.readAll(io, alloc, filePath);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
+    try std.fs.path.fmtJoin(&.{ tablePath, fileName }).format(&pathWriter);
+    return fs.readAll(io, alloc, pathWriter.buffered());
 }
 
 test "BlockWriter disk output matches mem output" {
@@ -318,8 +319,10 @@ test "BlockWriter disk output matches mem output" {
     defer tmp.cleanup();
     const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(rootPath);
-    const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table" });
-    defer alloc.free(tablePath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table" }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
 
     var diskWriter = try BlockWriter.initFromDiskTable(io, tablePath, true, compressionPool);
     defer diskWriter.deinit(alloc);

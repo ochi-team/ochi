@@ -152,12 +152,20 @@ test "pathExists returns true for existing paths and false for missing path" {
 
     const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(tmp_path);
-    const existing_file = try std.fs.path.join(alloc, &.{ tmp_path, "existing.txt" });
-    defer alloc.free(existing_file);
-    const existing_dir = try std.fs.path.join(alloc, &.{ tmp_path, "nested" });
-    defer alloc.free(existing_dir);
-    const missing = try std.fs.path.join(alloc, &.{ tmp_path, "missing.txt" });
-    defer alloc.free(missing);
+    var existingFileBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var existingFileWriter = std.Io.Writer.fixed(&existingFileBuf);
+    try std.fs.path.fmtJoin(&.{ tmp_path, "existing.txt" }).format(&existingFileWriter);
+    const existing_file = existingFileWriter.buffered();
+
+    var existingDirBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var existingDirWriter = std.Io.Writer.fixed(&existingDirBuf);
+    try std.fs.path.fmtJoin(&.{ tmp_path, "nested" }).format(&existingDirWriter);
+    const existing_dir = existingDirWriter.buffered();
+
+    var missingBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var missingWriter = std.Io.Writer.fixed(&missingBuf);
+    try std.fs.path.fmtJoin(&.{ tmp_path, "missing.txt" }).format(&missingWriter);
+    const missing = missingWriter.buffered();
 
     const cases = [_]Case{
         .{ .path = existing_file, .expected = true },
@@ -235,8 +243,10 @@ test "writeBufferValToFileAtomicWritesAndOverwritesAtomically" {
 
     const tmpPath = try tmp.dir.realPathFileAlloc(io, ".", testing.allocator);
     defer testing.allocator.free(tmpPath);
-    const absPath = try std.fs.path.join(testing.allocator, &.{ tmpPath, "atomic.txt" });
-    defer testing.allocator.free(absPath);
+    var absPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var absPathWriter = std.Io.Writer.fixed(&absPathBuf);
+    try std.fs.path.fmtJoin(&.{ tmpPath, "atomic.txt" }).format(&absPathWriter);
+    const absPath = absPathWriter.buffered();
 
     {
         try writeBufferToFileAtomic(io, absPath, "first", false);

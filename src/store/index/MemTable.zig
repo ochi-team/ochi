@@ -237,23 +237,24 @@ pub fn size(self: *MemTable) u64 {
 pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) !void {
     try fs.createDirAssert(io, path);
 
-    var fba = std.heap.stackFallback(512, alloc);
-    const fbaAlloc = fba.get();
-
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
-    const metaindexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.metaindex });
-    defer fbaAlloc.free(metaindexPath);
-    const indexPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.index });
-    defer fbaAlloc.free(indexPath);
-    const entriesPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.entries });
-    defer fbaAlloc.free(entriesPath);
-    const lensPath = try std.fs.path.join(fbaAlloc, &.{ path, filenames.lens });
-    defer fbaAlloc.free(lensPath);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
-    try fs.writeBufferValToFile(io, metaindexPath, self.metaindexBuf.items);
-    try fs.writeBufferValToFile(io, indexPath, self.indexBuf.items);
-    try fs.writeBufferValToFile(io, entriesPath, self.entriesBuf.items);
-    try fs.writeBufferValToFile(io, lensPath, self.lensBuf.items);
+    try std.fs.path.fmtJoin(&.{ path, filenames.metaindex }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.metaindexBuf.items);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.index }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.indexBuf.items);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.entries }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.entriesBuf.items);
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.lens }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.lensBuf.items);
 
     try self.tableHeader.writeFile(io, alloc, path);
 

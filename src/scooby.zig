@@ -211,10 +211,11 @@ fn readHeaderSlice(
     offset: usize,
     size: usize,
 ) ![]u8 {
-    const path = try std.fs.path.join(allocator, &.{ tablePath, fileName });
-    defer allocator.free(path);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
+    try std.fs.path.fmtJoin(&.{ tablePath, fileName }).format(&pathWriter);
 
-    var file = try std.Io.Dir.openFileAbsolute(io, path, .{});
+    var file = try std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{});
     defer file.close(io);
 
     const fileSize = (try file.stat(io)).size;
@@ -230,12 +231,13 @@ fn readHeaderSlice(
 }
 
 fn loadColumnIDGen(io: std.Io, allocator: std.mem.Allocator, tablePath: []const u8) !?*ColumnIDGen {
-    const path = try std.fs.path.join(allocator, &.{ tablePath, filenames.columnKeys });
-    defer allocator.free(path);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
+    try std.fs.path.fmtJoin(&.{ tablePath, filenames.columnKeys }).format(&pathWriter);
 
     const decompressionPool = try DecompressionPool.init(allocator, 1);
     defer decompressionPool.deinit(allocator);
-    return ColumnIDGen.decodeFile(io, allocator, decompressionPool, path);
+    return ColumnIDGen.decodeFile(io, allocator, decompressionPool, pathWriter.buffered());
 }
 
 /// Maps a logical column id to the values/bloom shard number that stores it.
@@ -252,13 +254,14 @@ fn loadColumnIdxs(
     tablePath: []const u8,
     keys: *ColumnIDGen,
 ) !ColumnIdxs {
-    const path = try std.fs.path.join(allocator, &.{ tablePath, filenames.columnIdxs });
-    defer allocator.free(path);
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
+    try std.fs.path.fmtJoin(&.{ tablePath, filenames.columnIdxs }).format(&pathWriter);
 
     var idxs = ColumnIdxs.init(allocator);
     errdefer idxs.deinit();
 
-    var file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(io, pathWriter.buffered(), .{}) catch |err| switch (err) {
         error.FileNotFound => return idxs,
         else => return err,
     };
@@ -765,17 +768,17 @@ fn readValuesSlice(
     size: usize,
 ) ![]u8 {
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
     const filePath = if (key) |k| blk: {
         if (k.len == 0) {
-            break :blk try std.fs.path.join(allocator, &.{ tablePath, filenames.messageValues });
+            try std.fs.path.fmtJoin(&.{ tablePath, filenames.messageValues }).format(&pathWriter);
+            break :blk pathWriter.buffered();
         }
         const id = colID orelse return error.MissingColumnID;
         const idxs = columnIdxs orelse return error.MissingColumnIdxs;
         const shardIdx = idxs.get(id) orelse return error.MissingColumnShard;
-        const path = try filenames.writeBloomFilePath(&pathBuf, tablePath, filenames.bloomValues, shardIdx);
-        break :blk try allocator.dupe(u8, path);
+        break :blk try filenames.writeBloomFilePath(&pathBuf, tablePath, filenames.bloomValues, shardIdx);
     } else return error.MissingColumnKey;
-    defer allocator.free(filePath);
 
     std.debug.print("  values source=\"{s}\"\n", .{filePath});
 

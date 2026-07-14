@@ -313,66 +313,51 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
         else => return err,
     }
 
-    // for mem table it's expect to have a single bloom filter shard
-    var stack = std.heap.stackFallback(2048, alloc);
-    const allocator = stack.get();
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
-    const columnKeysPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.columnKeys });
-    defer allocator.free(columnKeysPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.columnKeysBuf.items);
+    pathWriter.end = 0;
 
-    const columnIdxsPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.columnIdxs });
-    defer allocator.free(columnIdxsPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnIdxs }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.columnIdxsBuf.items);
+    pathWriter.end = 0;
 
-    const metaindexPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.metaindex });
-    defer allocator.free(metaindexPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.metaindex }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.metaIndexBuf.items);
+    pathWriter.end = 0;
 
-    const indexPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.index });
-    defer allocator.free(indexPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.index }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.indexBuf.items);
+    pathWriter.end = 0;
 
-    const columnsHeaderIndexPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.columnsHeaderIndex });
-    defer allocator.free(columnsHeaderIndexPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeaderIndex }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.columnsHeaderIndexBuf.items);
+    pathWriter.end = 0;
 
-    const columnsHeaderPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.columnsHeader });
-    defer allocator.free(columnsHeaderPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.columnsHeader }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.columnsHeaderBuf.items);
+    pathWriter.end = 0;
 
-    const timestampsPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.timestamps });
-    defer allocator.free(timestampsPath);
+    try std.fs.path.fmtJoin(&.{ path, filenames.timestamps }).format(&pathWriter);
+    try fs.writeBufferValToFile(io, pathWriter.buffered(), self.timestampsBuf.items);
+    pathWriter.end = 0;
 
-    const messageValuesPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.messageValues });
-    defer allocator.free(messageValuesPath);
-
-    const messageBloomFilterPath =
-        try std.fs.path.join(allocator, &.{ path, filenames.messageTokens });
-    defer allocator.free(messageBloomFilterPath);
-
-    try fs.writeBufferValToFile(io, columnKeysPath, self.columnKeysBuf.items);
-    try fs.writeBufferValToFile(io, columnIdxsPath, self.columnIdxsBuf.items);
-    try fs.writeBufferValToFile(io, metaindexPath, self.metaIndexBuf.items);
-    try fs.writeBufferValToFile(io, indexPath, self.indexBuf.items);
-    try fs.writeBufferValToFile(io, columnsHeaderIndexPath, self.columnsHeaderIndexBuf.items);
-    try fs.writeBufferValToFile(io, columnsHeaderPath, self.columnsHeaderBuf.items);
-    try fs.writeBufferValToFile(io, timestampsPath, self.timestampsBuf.items);
-
+    try std.fs.path.fmtJoin(&.{ path, filenames.messageTokens }).format(&pathWriter);
     try fs.writeBufferValToFile(
         io,
-        messageBloomFilterPath,
+        pathWriter.buffered(),
         self.messageBloomTokensBuf.items,
     );
+    pathWriter.end = 0;
+
+    try std.fs.path.fmtJoin(&.{ path, filenames.messageValues }).format(&pathWriter);
     try fs.writeBufferValToFile(
         io,
-        messageValuesPath,
+        pathWriter.buffered(),
         self.messageBloomValuesBuf.items,
     );
-
-    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
 
     const bloomTokensPath = try filenames.writeBloomFilePath(&pathBuf, path, filenames.bloomTokens, 0);
     const bloomTokensContent = self.bloomTokensBuf.items;
@@ -382,7 +367,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     const bloomValuesContent = self.bloomValuesBuf.items;
     try fs.writeBufferValToFile(io, bloomValuesPath, bloomValuesContent);
 
-    try self.tableHeader.writeFile(io, allocator, path);
+    try self.tableHeader.writeFile(io, alloc, path);
 
     try fs.syncPathAndParentDir(io, path);
 }
@@ -1103,10 +1088,13 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
 
     const basePath = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(basePath);
-    const flushPath = try std.fs.path.join(allocator, &.{ basePath, "flush" });
-    defer allocator.free(flushPath);
+    var flushPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var flushPathWriter = std.Io.Writer.fixed(&flushPathBuf);
+    try std.fs.path.fmtJoin(&.{ basePath, "flush" }).format(&flushPathWriter);
+    const flushPath = flushPathWriter.buffered();
 
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
     const memTable = try MemTable.init(allocator);
     defer memTable.deinit(allocator);
@@ -1125,62 +1113,59 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     );
     try memTable.storeToDisk(io, allocator, flushPath);
 
-    const columnKeysPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnKeys });
-    defer allocator.free(columnKeysPath);
-    const columnIdxsPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnIdxs });
-    defer allocator.free(columnIdxsPath);
-    const metaindexPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.metaindex });
-    defer allocator.free(metaindexPath);
-    const indexPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.index });
-    defer allocator.free(indexPath);
-    const columnsHeaderIndexPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnsHeaderIndex });
-    defer allocator.free(columnsHeaderIndexPath);
-    const columnsHeaderPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.columnsHeader });
-    defer allocator.free(columnsHeaderPath);
-    const timestampsPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.timestamps });
-    defer allocator.free(timestampsPath);
-    const messageBloomTokensPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.messageTokens });
-    defer allocator.free(messageBloomTokensPath);
-    const messageBloomValuesPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.messageValues });
-    defer allocator.free(messageBloomValuesPath);
-    const metadataPath = try std.fs.path.join(allocator, &.{ flushPath, filenames.header });
-    defer allocator.free(metadataPath);
-
-    const columnKeysContent = try readFileAll(io, allocator, columnKeysPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.columnKeys }).format(&pathWriter);
+    const columnKeysContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(columnKeysContent);
     try testing.expectEqualSlices(u8, memTable.columnKeysBuf.items, columnKeysContent);
+    pathWriter.end = 0;
 
-    const columnIdxsContent = try readFileAll(io, allocator, columnIdxsPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.columnIdxs }).format(&pathWriter);
+    const columnIdxsContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(columnIdxsContent);
     try testing.expectEqualSlices(u8, memTable.columnIdxsBuf.items, columnIdxsContent);
+    pathWriter.end = 0;
 
-    const metaindexContent = try readFileAll(io, allocator, metaindexPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.metaindex }).format(&pathWriter);
+    const metaindexContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(metaindexContent);
     try testing.expectEqualSlices(u8, memTable.metaIndexBuf.items, metaindexContent);
+    pathWriter.end = 0;
 
-    const indexContent = try readFileAll(io, allocator, indexPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.index }).format(&pathWriter);
+    const indexContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(indexContent);
     try testing.expectEqualSlices(u8, memTable.indexBuf.items, indexContent);
+    pathWriter.end = 0;
 
-    const columnsHeaderIndexContent = try readFileAll(io, allocator, columnsHeaderIndexPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.columnsHeaderIndex }).format(&pathWriter);
+    const columnsHeaderIndexContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(columnsHeaderIndexContent);
     try testing.expectEqualSlices(u8, memTable.columnsHeaderIndexBuf.items, columnsHeaderIndexContent);
+    pathWriter.end = 0;
 
-    const columnsHeaderContent = try readFileAll(io, allocator, columnsHeaderPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.columnsHeader }).format(&pathWriter);
+    const columnsHeaderContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(columnsHeaderContent);
     try testing.expectEqualSlices(u8, memTable.columnsHeaderBuf.items, columnsHeaderContent);
+    pathWriter.end = 0;
 
-    const timestampsContent = try readFileAll(io, allocator, timestampsPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.timestamps }).format(&pathWriter);
+    const timestampsContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(timestampsContent);
     try testing.expectEqualSlices(u8, memTable.timestampsBuf.items, timestampsContent);
+    pathWriter.end = 0;
 
-    const msgBloomTokensContent = try readFileAll(io, allocator, messageBloomTokensPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.messageTokens }).format(&pathWriter);
+    const msgBloomTokensContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(msgBloomTokensContent);
     try testing.expectEqualSlices(u8, memTable.messageBloomTokensBuf.items, msgBloomTokensContent);
+    pathWriter.end = 0;
 
-    const msgBloomValuesContent = try readFileAll(io, allocator, messageBloomValuesPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.messageValues }).format(&pathWriter);
+    const msgBloomValuesContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(msgBloomValuesContent);
     try testing.expectEqualSlices(u8, memTable.messageBloomValuesBuf.items, msgBloomValuesContent);
+    pathWriter.end = 0;
 
     const bloomTokensPath = try filenames.writeBloomFilePath(&pathBuf, flushPath, filenames.bloomTokens, 0);
     const bloomTokensContent = try readFileAll(io, allocator, bloomTokensPath);
@@ -1192,7 +1177,8 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     defer allocator.free(bloomValuesContent);
     try testing.expectEqualSlices(u8, memTable.bloomValuesBuf.items, bloomValuesContent);
 
-    const metadataContent = try readFileAll(io, allocator, metadataPath);
+    try std.fs.path.fmtJoin(&.{ flushPath, filenames.header }).format(&pathWriter);
+    const metadataContent = try readFileAll(io, allocator, pathWriter.buffered());
     defer allocator.free(metadataContent);
     try testing.expect(metadataContent.len > 0);
 
