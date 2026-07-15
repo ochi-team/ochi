@@ -85,6 +85,7 @@ pub fn openAll(io: Io, parentAlloc: Allocator, path: []const u8, decompressionPo
     // open tables
     var tables = try std.ArrayList(*Table).initCapacity(parentAlloc, tableNames.items.len);
     errdefer {
+        for (tables.items) |table| table.close(io);
         tables.deinit(parentAlloc);
     }
     for (tableNames.items) |tableName| {

@@ -1,4 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+const DebugIo = @import("stds/Io/DebugIo.zig");
 
 const Logger = @import("logging");
 
@@ -44,7 +47,16 @@ pub fn main() !void {
         .concurrent_limit = .limited(48),
     });
     defer ioImpl.deinit();
-    const io = ioImpl.io();
+    var debugIo: ?DebugIo = null;
+    const io: std.Io = blk: {
+        if (!build.release) {
+            debugIo = .init(ioImpl.io(), alloc);
+            break :blk debugIo.?.io();
+        } else {
+            break :blk ioImpl.io();
+        }
+    };
+    defer if (debugIo) |*dio| dio.deinit();
 
     var tracyAlloc = tracy.Allocator{
         .parent = alloc,
@@ -65,6 +77,8 @@ test {
     });
 
     _ = @import("tidy.zig");
+    _ = @import("stds/Io/DebugIo.zig");
+    _ = @import("logging");
     _ = @import("test/server.zig");
     std.testing.refAllDecls(server);
 }

@@ -71,6 +71,7 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
 
     var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const layout = try Layout.make(io, path, &partitionsPathBuf);
+    defer layout.partitionsDir.close(io);
 
     const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
     defer runtime.deinit(alloc);

@@ -231,7 +231,10 @@ fn readStoreUsage(self: *Store, io: Io, alloc: Allocator) !u64 {
 
 fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
     var stack: std.ArrayList([]u8) = try .initCapacity(alloc, 32);
-    defer stack.deinit(alloc);
+    defer {
+        for (stack.items) |path| alloc.free(path);
+        stack.deinit(alloc);
+    }
 
     const rootPath = try alloc.dupe(u8, root);
     stack.appendAssumeCapacity(rootPath);
@@ -256,9 +259,7 @@ fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
                     try stack.append(alloc, childPath);
                 },
                 .file => {
-                    var file = try dir.openFile(io, entry.name, .{});
-                    defer file.close(io);
-                    total += (try file.stat(io)).size;
+                    total += (try dir.statFile(io, entry.name, .{})).size;
                 },
                 else => {},
             }
