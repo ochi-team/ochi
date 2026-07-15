@@ -3,6 +3,7 @@ import { getCollection, render } from "astro:content";
 import Header from "../../components/Header.astro";
 import Footer from "../../components/Footer.astro";
 import BlogBackground from "../../components/BlogBackground.astro";
+import SeoHead from "../../components/SeoHead.astro";
 import "../../styles/site.css";
 
 export async function getStaticPaths() {
@@ -27,6 +28,7 @@ const authorName = post.data.author?.trim();
 const authorAvatar = authorName
   ? `/avatars/${authorName.toLowerCase().replace(/\s+/g, "-")}.png`
   : null;
+const canonicalPath = post.data.canonicalUrl ?? `/blog/${post.id}`;
 ---
 
 <!doctype html>
@@ -34,7 +36,15 @@ const authorAvatar = authorName
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{post.data.title} - Ochi Blog</title>
+    <SeoHead
+      title={`${post.data.title} - Ochi Blog`}
+      description={post.data.description || "Engineering notes from the Ochi team."}
+      canonicalPath={canonicalPath}
+      image={post.data.ogImage}
+      type="article"
+      publishedTime={new Date(post.data.date).toISOString()}
+      author={authorName}
+    />
     <link
       href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
       rel="stylesheet"

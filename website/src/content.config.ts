@@ -11,6 +11,8 @@ const blog = defineCollection({
     description: z.string(),
     date: z.string(),
     author: z.string().optional(),
+    ogImage: z.string().optional(),
+    canonicalUrl: z.string().url().optional(),
   }),
 });
 const docs = defineCollection({ loader: docsLoader(), schema: docsSchema() });

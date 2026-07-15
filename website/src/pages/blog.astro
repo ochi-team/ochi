@@ -3,6 +3,7 @@ import "../styles/site.css";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 import BlogBackground from "../components/BlogBackground.astro";
+import SeoHead from "../components/SeoHead.astro";
 import { getCollection } from 'astro:content';
 
 const posts = await getCollection('blog');
@@ -14,7 +15,11 @@ posts.sort((a, b) => new Date(b.data.date) - new Date(a.data.date));
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Blog - Ochi</title>
+		<SeoHead
+			title="Blog - Ochi"
+			description="Engineering notes, release updates, and community posts from the Ochi team."
+			canonicalPath="/blog"
+		/>
 		<link
 			href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
 			rel="stylesheet"

@@ -3,6 +3,7 @@ import "../styles/site.css";
 import EyeBackground from "../components/EyeBackground.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
+import SeoHead from "../components/SeoHead.astro";
 ---
 
 <!doctype html>
@@ -10,7 +11,11 @@ import Footer from "../components/Footer.astro";
   <head
     ><meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ochi - Green Observability</title>
+    <SeoHead
+      title="Ochi - Green Observability"
+      description="Ochi is a highly efficient, open-source logging solution. Store logs directly on disk with Loki compatible ingestion."
+      canonicalPath="/"
+    />
     <link
       href="https://fonts.googleapis.com/css2?family=Numans&display=swap"
       rel="stylesheet"
