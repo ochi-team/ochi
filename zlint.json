@@ -1,6 +1,6 @@
 {
   "rules": {
-    "avoid-as": "warn",
+    "avoid-as": "error",
     "case-convention": "warn",
     "homeless-try": "error",
     "line-length": ["warn", { "max_length": 120 }],
@@ -9,7 +9,6 @@
     "no-return-try": "warn",
     "returned-stack-reference": "error",
     "suppressed-errors": "warn",
-    "unsafe-undefined": "error",
     "unused-decls": "warn",
     "useless-error-return": "warn"
   }
