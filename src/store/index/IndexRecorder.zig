@@ -631,14 +631,18 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *Io.Semaphore,
 ) anyerror!void {
-    var tablesBuf: [amountOfTablesToMerge]*Table = undefined;
-    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesBuf);
+    var tablesToMerge = std.ArrayList(*Table).empty;
+    defer tablesToMerge.deinit(alloc);
 
     while (!self.stopped.isStopped()) {
         defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
+        tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
+            self.mxTables.unlock(io);
+            return err;
+        };
         // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
         const window = merger.filterTablesToMerge(
             tables.items,
@@ -706,6 +710,8 @@ pub fn mergeTables(
         const table = tables[0].inner.mem;
         try table.storeToDisk(io, alloc, destinationTablePath);
         const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.decompressionPool);
+        errdefer newTable.release(io);
+
         try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
         swapped = true;
         return;
@@ -773,6 +779,8 @@ pub fn mergeTables(
     }
 
     const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.decompressionPool);
+    errdefer openTable.release(io);
+
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
 }
