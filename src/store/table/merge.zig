@@ -163,6 +163,7 @@ pub fn Merger(
                 }
                 idx += 1;
             }
+            if (toMerge.items.len < 2) return null;
 
             sortToMerge(toMerge.items);
 
@@ -341,6 +342,45 @@ test "filterTablesToMerge marks only selected tables inMerge" {
     for (toMerge.items, 0..) |table, i| {
         const expected = i >= w.lower and i < w.upper;
         try testing.expectEqual(expected, table.inMerge);
+    }
+}
+
+test "filterLeveledTables returns null when size filter removes candidates" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const Case = struct {
+        sizes: []const u16,
+    };
+
+    const cases = [_]Case{
+        .{
+            .sizes = &.{ 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000 },
+        },
+        .{
+            .sizes = &.{ 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 100 },
+        },
+    };
+
+    for (cases) |case| {
+        var tables = try std.ArrayList(*Table).initCapacity(alloc, case.sizes.len);
+        defer {
+            for (tables.items) |table| table.close(io);
+            tables.deinit(alloc);
+        }
+        for (case.sizes) |size| {
+            const table = try createSizedMemTable(alloc, decompressionPool, size);
+            tables.appendAssumeCapacity(table);
+        }
+
+        var toMerge = try std.ArrayList(*Table).initCapacity(alloc, tables.items.len);
+        defer toMerge.deinit(alloc);
+
+        const merger = Merger(*Table, 16, 16);
+        const window = merger.filterTablesToMerge(tables.items, &toMerge, 10_000);
+        try testing.expectEqual(null, window);
     }
 }
 

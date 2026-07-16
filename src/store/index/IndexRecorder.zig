@@ -25,6 +25,7 @@ const Conf = @import("../../Conf.zig");
 const Stop = @import("../../stds/Stop.zig");
 const Runtime = @import("../../Runtime.zig");
 const Logger = @import("logging");
+const DebugIo = @import("../../stds/Io/DebugIo.zig");
 
 const amountOfTablesToMerge = @import("../../Consts.zig").amountOfTablesToMerge;
 
@@ -631,19 +632,15 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *Io.Semaphore,
 ) anyerror!void {
-    var tablesToMerge = std.ArrayList(*Table).empty;
-    defer tablesToMerge.deinit(alloc);
+    var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
+    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
 
     while (!self.stopped.isStopped()) {
         defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
-        tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
-            self.mxTables.unlock(io);
-            return err;
-        };
-        // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
+        // filteredTablesToMerge is a slice of the stack-backed tablesToMerge buffer.
         const window = merger.filterTablesToMerge(
             tables.items,
             &tablesToMerge,
@@ -658,9 +655,8 @@ fn tablesMerger(
         // TODO: make sure error.Stopped is handled on the upper level
         // TODO: audit all waitUncancelable, on read path it must be only cancelable
         sem.waitUncancelable(io);
-        errdefer sem.post(io);
+        defer sem.post(io);
         try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
-        sem.post(io);
     }
 }
 
@@ -854,6 +850,23 @@ fn createMemTableFromItems(io: Io, alloc: Allocator, items: []const []const u8) 
     return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
+fn createDiskTableFromItems(
+    io: Io,
+    alloc: Allocator,
+    rootPath: []const u8,
+    tableName: []const u8,
+    decompressionPool: *DecompressionPool,
+    items: []const []const u8,
+) !*Table {
+    const tablePath = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ rootPath, tableName });
+    errdefer alloc.free(tablePath);
+
+    const memTable = try createMemTableFromItems(io, alloc, items);
+    defer memTable.close(io);
+    try memTable.inner.mem.storeToDisk(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, decompressionPool);
+}
+
 fn countMemItemsInRecorder(recorder: *IndexRecorder) u64 {
     var count: u64 = 0;
     for (recorder.memTables.items) |table| {
@@ -950,6 +963,67 @@ test "mergeTables force single mem table creates disk table" {
     try testing.expect(recorder.diskTables.items[0].inner == .disk);
 
     try recorder.stop(io, alloc);
+}
+
+test "IndexRecorder bounded disk merge closes skipped table file descriptors" {
+    const alloc = testing.allocator;
+
+    var debugIo = DebugIo.init(testing.io, alloc);
+    defer debugIo.deinit();
+    const io = debugIo.io();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+    runtime.diskSpace.free = 10_000;
+    runtime.diskSpace.updatedAtMs = @intCast(Io.Timestamp.now(io, .real).toMilliseconds());
+
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+
+    for (0..amountOfTablesToMerge * 2) |i| {
+        var nameBuf: [16]u8 = undefined;
+        const tableName = try std.fmt.bufPrint(&nameBuf, "{X:0>16}", .{i + 1});
+        const item = stableItems[i % stableItems.len];
+        const table = try createDiskTableFromItems(
+            io,
+            alloc,
+            rootPath,
+            tableName,
+            decompressionPool,
+            &.{item},
+        );
+        table.size = if (i < amountOfTablesToMerge) 6000 else 100;
+        try recorder.diskTables.append(alloc, table);
+    }
+
+    const beforeMergeOpenResources = debugIo.openMap.count();
+    var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
+    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
+
+    const window = merger.filterTablesToMerge(
+        recorder.diskTables.items,
+        &tablesToMerge,
+        cap.getMaxTableSize(runtime.getFreeDiskSpace(io)),
+    );
+    try testing.expect(window != null);
+    const selected = tablesToMerge.items[window.?.lower..window.?.upper];
+    try testing.expectEqual(amountOfTablesToMerge, selected.len);
+
+    recorder.stopped.stop(io);
+    try recorder.mergeTables(io, alloc, selected, false, null);
+    try testing.expect(debugIo.openMap.count() < beforeMergeOpenResources);
+
+    recorder.deinit(io, alloc);
+    try debugIo.checkNoLeaks();
 }
 
 test "IndexRecorder add and reopen preserves item count" {
