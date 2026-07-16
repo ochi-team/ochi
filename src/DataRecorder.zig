@@ -566,19 +566,15 @@ fn tablesMerger(
     tables: *std.ArrayList(*Table),
     sem: *Io.Semaphore,
 ) !void {
-    var tablesToMerge = std.ArrayList(*Table).empty;
-    defer tablesToMerge.deinit(alloc);
+    var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
+    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
 
     while (!self.stopped.isStopped()) {
         defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
-        tablesToMerge.ensureUnusedCapacity(alloc, tables.items.len) catch |err| {
-            self.mxTables.unlock(io);
-            return err;
-        };
-        // filteredTablesToMerge is a slice of tables ArrayList, no need to free it
+        // filteredTablesToMerge is a slice of the stack-backed tablesToMerge buffer.
         const window = merger.filterTablesToMerge(
             tables.items,
             &tablesToMerge,
@@ -591,9 +587,8 @@ fn tablesMerger(
         if (filteredTablesToMerge.len == 0) return;
 
         sem.waitUncancelable(io);
-        errdefer sem.post(io);
+        defer sem.post(io);
         try self.mergeTables(io, alloc, filteredTablesToMerge, false, &self.stopped);
-        sem.post(io);
     }
 }
 
@@ -822,6 +817,7 @@ fn selectTablesInRange(
 }
 
 const testing = std.testing;
+const DebugIo = @import("stds/Io/DebugIo.zig");
 const makeUniqueFieldLines = @import("testing/fixtures.zig").makeUniqueFieldLines;
 
 var stableFields = [_][2]Field{
@@ -865,6 +861,28 @@ fn createMemTableFromLines(io: Io, alloc: Allocator, timestampsEncoders: *Timest
     return Table.fromMem(io, alloc, memTable, decompressionPool);
 }
 
+fn createDiskTableFromLines(
+    io: Io,
+    alloc: Allocator,
+    rootPath: []const u8,
+    tableName: []const u8,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+    sid: SID,
+    lines: []Line,
+) !*Table {
+    const tablePath = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ rootPath, tableName });
+    errdefer alloc.free(tablePath);
+
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines);
+    try memTable.storeToDisk(io, alloc, tablePath);
+    return Table.open(io, alloc, tablePath, decompressionPool);
+}
+
 fn countMemLinesInRecorder(recorder: *DataRecorder) u64 {
     var n: u64 = 0;
     for (recorder.memTables.items) |table| {
@@ -904,6 +922,74 @@ test "tablesMerger handles more source tables than merge window" {
     try recorder.tablesMerger(io, alloc, &tables, &sem);
 
     try testing.expectEqual(tablesBuf.len, tables.items.len);
+}
+
+test "DataRecorderBoundedDiskMergeClosesSkippedTableFileDescriptors" {
+    const alloc = testing.allocator;
+
+    var debugIo = DebugIo.init(testing.io, alloc);
+    defer debugIo.deinit();
+    const io = debugIo.io();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+    runtime.diskSpace.free = 10_000;
+    runtime.diskSpace.updatedAtMs = @intCast(Io.Timestamp.now(io, .real).toMilliseconds());
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+
+    const line = stableLine(1, 0);
+    var lines = [_]Line{line};
+    for (0..amountOfTablesToMerge * 2) |i| {
+        var nameBuf: [16]u8 = undefined;
+        const tableName = try std.fmt.bufPrint(&nameBuf, "{X:0>16}", .{i + 1});
+        lines[0].timestampNs = i + 1;
+        const table = try createDiskTableFromLines(
+            io,
+            alloc,
+            rootPath,
+            tableName,
+            timestampsEncoders,
+            compressionPool,
+            decompressionPool,
+            stableSID(@intCast(i + 1)),
+            lines[0..],
+        );
+        table.size = if (i < amountOfTablesToMerge) 6000 else 100;
+        try recorder.diskTables.append(alloc, table);
+    }
+
+    const beforeMergeOpenResources = debugIo.openMap.count();
+    var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
+    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
+
+    const window = merger.filterTablesToMerge(
+        recorder.diskTables.items,
+        &tablesToMerge,
+        cap.getMaxTableSize(runtime.getFreeDiskSpace(io)),
+    );
+    try testing.expect(window != null);
+    const selected = tablesToMerge.items[window.?.lower..window.?.upper];
+    try testing.expectEqual(amountOfTablesToMerge, selected.len);
+
+    recorder.stopped.stop(io);
+    try recorder.mergeTables(io, alloc, selected, false, null);
+    try testing.expect(debugIo.openMap.count() < beforeMergeOpenResources);
+
+    recorder.deinit(io, alloc);
+    try debugIo.checkNoLeaks();
 }
 
 test "selectTablesInRange selects overlap and handles gaps" {
