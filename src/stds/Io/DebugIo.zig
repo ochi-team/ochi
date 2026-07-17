@@ -44,6 +44,7 @@ openMap: std.AutoHashMap(File.Handle, OpenResource),
 openMapMutex: Io.Mutex = .init,
 /// mutated copy of a base Io.VTable
 vtable: Io.VTable,
+writer: ?*std.Io.Writer,
 
 fn debug(userdata: ?*anyopaque) *DebugIo {
     return @ptrCast(@alignCast(userdata.?));
@@ -56,12 +57,13 @@ pub fn io(self: *DebugIo) Io {
     };
 }
 
-pub fn init(base: Io, alloc: Allocator) DebugIo {
+pub fn init(base: Io, alloc: Allocator, writer: ?*std.Io.Writer) DebugIo {
     var dio: DebugIo = .{
         .base = base,
         .alloc = alloc,
         .openMap = .init(alloc),
         .vtable = base.vtable.*,
+        .writer = writer,
     };
 
     // implemented
@@ -185,17 +187,23 @@ pub fn checkNoLeaks(self: *DebugIo) !void {
     const stderr = std.debug.lockStderr(&.{});
     defer std.debug.unlockStderr();
 
-    const terminal = stderr.terminal();
-    const writer = terminal.writer;
+    const termWriter: struct { term: std.Io.Terminal, writer: *std.Io.Writer } = blk: {
+        if (self.writer) |w| {
+            break :blk .{ .term = .{ .mode = .no_color, .writer = w }, .writer = w };
+        } else {
+            const terminal = stderr.terminal();
+            break :blk .{ .term = terminal, .writer = terminal.writer };
+        }
+    };
 
     var it = self.openMap.iterator();
     while (it.next()) |*entry| {
-        try writer.print("========= io resource leaked ========\nleaked {s} fd={} path={s}\n", .{
+        try termWriter.writer.print("========= io resource leaked ========\nleaked {s} fd={} path={s}\n", .{
             @tagName(entry.value_ptr.kind),
             entry.key_ptr.*,
             entry.value_ptr.path,
         });
-        try std.debug.writeStackTrace(&entry.value_ptr.stackTrace, terminal);
+        try std.debug.writeStackTrace(&entry.value_ptr.stackTrace, termWriter.term);
     }
 
     return IoLeakError.FileDescriptorLeak;
@@ -854,7 +862,10 @@ fn netLookup(userdata: ?*anyopaque, host_name: net.HostName, results: *std.Io.Qu
 test "DebugIoReportsLeakedFds" {
     const alloc = std.testing.allocator;
 
-    var debugIo = DebugIo.init(std.testing.io, alloc);
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    var debugIo = DebugIo.init(std.testing.io, alloc, &w);
     defer debugIo.deinit();
     const testingIo = debugIo.io();
 
@@ -867,4 +878,6 @@ test "DebugIoReportsLeakedFds" {
 
     file.close(testingIo);
     try debugIo.checkNoLeaks();
+
+    try std.testing.expect(w.buffered().len > 0);
 }

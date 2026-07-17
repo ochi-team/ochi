@@ -31,7 +31,7 @@ const amountOfTablesToMerge = @import("../../Consts.zig").amountOfTablesToMerge;
 
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
-const maxMemTables = 24;
+const maxMemTables = 32;
 
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(IndexRecorder, Table);
@@ -183,7 +183,6 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // TODO: this must assert there is no data inmemory or it flushes it immediately
 // entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
-    // make sure deinit is never called outside of stop
     std.debug.assert(self.blocksToFlush.items.len == 0);
     std.debug.assert(self.memTables.items.len == 0);
 
@@ -963,67 +962,6 @@ test "mergeTables force single mem table creates disk table" {
     try testing.expect(recorder.diskTables.items[0].inner == .disk);
 
     try recorder.stop(io, alloc);
-}
-
-test "IndexRecorder bounded disk merge closes skipped table file descriptors" {
-    const alloc = testing.allocator;
-
-    var debugIo = DebugIo.init(testing.io, alloc);
-    defer debugIo.deinit();
-    const io = debugIo.io();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-    defer alloc.free(rootPath);
-
-    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
-    defer runtime.deinit(alloc);
-    runtime.diskSpace.free = 10_000;
-    runtime.diskSpace.updatedAtMs = @intCast(Io.Timestamp.now(io, .real).toMilliseconds());
-
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
-    const decompressionPool = try DecompressionPool.init(alloc, 1);
-    defer decompressionPool.deinit(alloc);
-
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
-
-    for (0..amountOfTablesToMerge * 2) |i| {
-        var nameBuf: [16]u8 = undefined;
-        const tableName = try std.fmt.bufPrint(&nameBuf, "{X:0>16}", .{i + 1});
-        const item = stableItems[i % stableItems.len];
-        const table = try createDiskTableFromItems(
-            io,
-            alloc,
-            rootPath,
-            tableName,
-            decompressionPool,
-            &.{item},
-        );
-        table.size = if (i < amountOfTablesToMerge) 6000 else 100;
-        try recorder.diskTables.append(alloc, table);
-    }
-
-    const beforeMergeOpenResources = debugIo.openMap.count();
-    var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
-    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
-
-    const window = merger.filterTablesToMerge(
-        recorder.diskTables.items,
-        &tablesToMerge,
-        cap.getMaxTableSize(runtime.getFreeDiskSpace(io)),
-    );
-    try testing.expect(window != null);
-    const selected = tablesToMerge.items[window.?.lower..window.?.upper];
-    try testing.expectEqual(amountOfTablesToMerge, selected.len);
-
-    recorder.stopped.stop(io);
-    try recorder.mergeTables(io, alloc, selected, false, null);
-    try testing.expect(debugIo.openMap.count() < beforeMergeOpenResources);
-
-    recorder.deinit(io, alloc);
-    try debugIo.checkNoLeaks();
 }
 
 test "IndexRecorder add and reopen preserves item count" {

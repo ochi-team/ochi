@@ -50,7 +50,8 @@ pub fn main() !void {
     var debugIo: ?DebugIo = null;
     const io: std.Io = blk: {
         if (!build.release) {
-            debugIo = .init(ioImpl.io(), alloc);
+            // debug io writer null makes it using stderr
+            debugIo = .init(ioImpl.io(), alloc, null);
             break :blk debugIo.?.io();
         } else {
             break :blk ioImpl.io();

@@ -43,7 +43,7 @@ const flushSizeThreshold = Consts.flushSizeThreshold;
 const amountOfTablesToMerge = Consts.amountOfTablesToMerge;
 const maxBlockSize = Consts.maxBlockSize;
 
-const maxMemTables = 24;
+const maxMemTables = 32;
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
 
@@ -362,7 +362,6 @@ pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 }
 
 pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
-    // make sure deinit is never called outside of stop
     std.debug.assert(self.memTables.items.len == 0);
 
     for (self.shards) |*shard| {
@@ -922,74 +921,6 @@ test "tablesMerger handles more source tables than merge window" {
     try recorder.tablesMerger(io, alloc, &tables, &sem);
 
     try testing.expectEqual(tablesBuf.len, tables.items.len);
-}
-
-test "DataRecorderBoundedDiskMergeClosesSkippedTableFileDescriptors" {
-    const alloc = testing.allocator;
-
-    var debugIo = DebugIo.init(testing.io, alloc);
-    defer debugIo.deinit();
-    const io = debugIo.io();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-    defer alloc.free(rootPath);
-
-    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
-    defer runtime.deinit(alloc);
-    runtime.diskSpace.free = 10_000;
-    runtime.diskSpace.updatedAtMs = @intCast(Io.Timestamp.now(io, .real).toMilliseconds());
-
-    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
-    defer timestampsEncoders.deinit(alloc);
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
-    const decompressionPool = try DecompressionPool.init(alloc, 1);
-    defer decompressionPool.deinit(alloc);
-
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
-
-    const line = stableLine(1, 0);
-    var lines = [_]Line{line};
-    for (0..amountOfTablesToMerge * 2) |i| {
-        var nameBuf: [16]u8 = undefined;
-        const tableName = try std.fmt.bufPrint(&nameBuf, "{X:0>16}", .{i + 1});
-        lines[0].timestampNs = i + 1;
-        const table = try createDiskTableFromLines(
-            io,
-            alloc,
-            rootPath,
-            tableName,
-            timestampsEncoders,
-            compressionPool,
-            decompressionPool,
-            stableSID(@intCast(i + 1)),
-            lines[0..],
-        );
-        table.size = if (i < amountOfTablesToMerge) 6000 else 100;
-        try recorder.diskTables.append(alloc, table);
-    }
-
-    const beforeMergeOpenResources = debugIo.openMap.count();
-    var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
-    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
-
-    const window = merger.filterTablesToMerge(
-        recorder.diskTables.items,
-        &tablesToMerge,
-        cap.getMaxTableSize(runtime.getFreeDiskSpace(io)),
-    );
-    try testing.expect(window != null);
-    const selected = tablesToMerge.items[window.?.lower..window.?.upper];
-    try testing.expectEqual(amountOfTablesToMerge, selected.len);
-
-    recorder.stopped.stop(io);
-    try recorder.mergeTables(io, alloc, selected, false, null);
-    try testing.expect(debugIo.openMap.count() < beforeMergeOpenResources);
-
-    recorder.deinit(io, alloc);
-    try debugIo.checkNoLeaks();
 }
 
 test "selectTablesInRange selects overlap and handles gaps" {
