@@ -320,7 +320,7 @@ pub fn createDir(io: Io, path: []const u8) !void {
     try fs.syncPathAndParentDir(io, path);
 }
 
-pub fn start(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+pub fn startTasks(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     for (0..self.concurrency) |_| {
         try self.startDiskTablesMerge(io, alloc);
     }
@@ -736,29 +736,11 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
 }
 
 pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
-    self.mxTables.lockUncancelable(io);
-
-    const stackSize = 64;
-    var fba = std.heap.stackFallback(stackSize, alloc);
-    const fbaAlloc = fba.get();
-    var tables = std.ArrayList(*Table).initCapacity(fbaAlloc, stackSize / @sizeOf(*Table)) catch |err| {
-        // panic because we allocate precise amount on stack
-        std.debug.panic("failed to allocate tables array list for query: {s}\n", .{@errorName(err)});
-    };
+    var tables = try self.getTables(io, alloc, query.start, query.end);
     defer {
         for (tables.items) |table| table.release(io);
-        tables.deinit(fbaAlloc);
+        tables.deinit(alloc);
     }
-
-    selectTablesInRange(fbaAlloc, &tables, self.memTables.items, query.start, query.end) catch |err| {
-        self.mxTables.unlock(io);
-        return err;
-    };
-    selectTablesInRange(fbaAlloc, &tables, self.diskTables.items, query.start, query.end) catch |err| {
-        self.mxTables.unlock(io);
-        return err;
-    };
-    self.mxTables.unlock(io);
 
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
@@ -767,6 +749,17 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     }
 
     return linesDst;
+}
+
+pub fn getTables(self: *DataRecorder, io: Io, alloc: Allocator, start: u64, end: u64) !std.ArrayList(*Table) {
+    self.mxTables.lockUncancelable(io);
+    defer self.mxTables.unlock(io);
+
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, 8);
+    try selectTablesInRange(alloc, &tables, self.memTables.items, start, end);
+    try selectTablesInRange(alloc, &tables, self.diskTables.items, start, end);
+
+    return tables;
 }
 
 fn openCreatedTable(
@@ -803,11 +796,11 @@ fn selectTablesInRange(
     alloc: Allocator,
     dst: *std.ArrayList(*Table),
     tables: []const *Table,
-    start_: u64,
+    start: u64,
     end: u64,
 ) !void {
     for (tables) |table| {
-        if (table.tableHeader().maxTimestamp < start_ or table.tableHeader().minTimestamp > end) {
+        if (table.tableHeader().maxTimestamp < start or table.tableHeader().minTimestamp > end) {
             continue;
         }
         table.retain();

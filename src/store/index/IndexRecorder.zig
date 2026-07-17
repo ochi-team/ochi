@@ -143,7 +143,7 @@ pub fn createDir(io: Io, path: []const u8) !void {
     try fs.syncPathAndParentDir(io, path);
 }
 
-pub fn start(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     // disk tables merge task is different,
     // it doesn't run infinitely, but runs a few merge cycles to process left overs
     // from the previous launches
@@ -1101,7 +1101,7 @@ test "IndexRecorder background flusher survives load" {
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = 256;
-    try recorder.start(io, alloc);
+    try recorder.startTasks(io, alloc);
 
     var g: std.Io.Group = .init;
     errdefer g.cancel(io);
@@ -1149,7 +1149,7 @@ test "IndexRecorder disk table merger survives large load" {
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
     recorder.maxMemBlockSize = 4 * 1024;
     defer recorder.deinit(io, alloc);
-    try recorder.start(io, alloc);
+    try recorder.startTasks(io, alloc);
 
     const minItemLen = 512;
     const maxItemLen = 1536;

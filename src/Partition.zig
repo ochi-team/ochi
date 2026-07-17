@@ -104,7 +104,7 @@ pub fn open(
     errdefer indexRecorder.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop index recorder in partition opening", .{ .err = err });
     };
-    try indexRecorder.start(io, alloc);
+    try indexRecorder.startTasks(io, alloc);
     const index = Index.init(indexRecorder);
 
     const data = try DataRecorder.init(
@@ -120,7 +120,7 @@ pub fn open(
     errdefer data.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };
-    try data.start(io, alloc);
+    try data.startTasks(io, alloc);
 
     const partition = try alloc.create(Partition);
     errdefer alloc.destroy(partition);

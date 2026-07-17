@@ -61,6 +61,9 @@ pathsBuf: std.ArrayList([]const u8) = .empty,
 runtime: *Runtime,
 conf: *const Conf,
 
+// 30 is a default retention
+const retentionDays = 30;
+
 // TODO: start partitions retention watcher
 pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layout: Layout) !Store {
     errdefer |err| {
@@ -73,8 +76,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     var streamCache = try Cache(void).init(alloc);
     errdefer streamCache.deinit();
 
-    // 30 is a default retention
-    var partitions = try std.ArrayList(*Partition).initCapacity(alloc, 30);
+    var partitions = try std.ArrayList(*Partition).initCapacity(alloc, retentionDays);
     errdefer {
         for (partitions.items) |partition| {
             partition.close(io);
@@ -94,7 +96,8 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const decompressionPool = try DecompressionPool.init(alloc, runtime.cpus);
     errdefer decompressionPool.deinit(alloc);
 
-    const meter = StoreMeter.init();
+    var meter = try StoreMeter.init(io, alloc);
+    errdefer meter.deinit();
 
     var store: Store = .{
         .lockFile = file,
@@ -148,6 +151,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     self.g.await(io) catch |err| switch (err) {
         error.Canceled => {},
     };
+    self.g.cancel(io);
 
     for (self.partitions.items) |partition| {
         partition.release(io);
@@ -161,7 +165,9 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 
     self.streamCache.deinit();
     self.memBlocksCache.deinit();
-    self.g.cancel(io);
+
+    self.meter.deinit();
+
     self.timestampsEncoders.deinit(allocator);
     self.compressionPool.deinit(allocator);
     self.decompressionPool.deinit(allocator);
@@ -188,7 +194,7 @@ fn runDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) void {
     const sampleIntervalNs = 20 * std.time.ns_per_s;
 
     while (!self.stopped.isStopped()) {
-        self.observeDiskUsage(io, alloc);
+        self.writeStoreMeter(io, alloc);
         self.stopped.sleepOrStop(io, sampleIntervalNs);
     }
 }
@@ -211,7 +217,7 @@ fn runCacheEvicter(self: *Store, io: Io) void {
     }
 }
 
-fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
+fn writeStoreMeter(self: *Store, io: Io, alloc: Allocator) void {
     const usage = self.readStoreUsage(io, alloc) catch |err| switch (err) {
         error.FileNotFound => 0,
         else => {
@@ -220,6 +226,11 @@ fn observeDiskUsage(self: *Store, io: Io, alloc: Allocator) void {
         },
     };
     self.meter.diskUsage.set(usage);
+
+    self.writeTableStats(io) catch |err| {
+        Logger.log(.err, "failed to write tables stats", .{ .err = err });
+        return;
+    };
 }
 
 // TODO: the implementation watches the files stats, it's not efficient,
@@ -267,6 +278,41 @@ fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
     }
 
     return total;
+}
+
+fn writeTableStats(self: *Store, io: Io) !void {
+    var partsBuf: [retentionDays]*Partition = undefined;
+    const partsLen = self.getPartitions(io, 0, std.math.maxInt(u32), &partsBuf);
+    const parts = partsBuf[0..partsLen];
+    defer for (parts) |part| part.release(io);
+
+    for (parts) |part| {
+        try part.index.recorder.mxTables.lock(io);
+        const openIndexMemTables: u32 = @intCast(part.index.recorder.memTables.items.len);
+        const openIndexDiskTables: u32 = @intCast(part.index.recorder.diskTables.items.len);
+        try self.meter.openTables.set(
+            .{ .kind = "index", .partition = part.key, .residence = "mem" },
+            openIndexMemTables,
+        );
+        try self.meter.openTables.set(
+            .{ .kind = "index", .partition = part.key, .residence = "disk" },
+            openIndexDiskTables,
+        );
+        part.index.recorder.mxTables.unlock(io);
+
+        try part.data.mxTables.lock(io);
+        const openDataMemTables: u32 = @intCast(part.data.memTables.items.len);
+        const openDataDiskTables: u32 = @intCast(part.data.diskTables.items.len);
+        try self.meter.openTables.set(
+            .{ .kind = "data", .partition = part.key, .residence = "mem" },
+            openDataMemTables,
+        );
+        try self.meter.openTables.set(
+            .{ .kind = "data", .partition = part.key, .residence = "disk" },
+            openDataDiskTables,
+        );
+        part.data.mxTables.unlock(io);
+    }
 }
 
 pub fn addLines(
@@ -369,6 +415,22 @@ pub fn addLines(
     }
 }
 
+fn getPartitions(self: *Store, io: Io, minDay: u32, maxDay: u32, parts: []*Partition) u16 {
+    self.partitionsMx.lockUncancelable(io);
+    defer self.partitionsMx.unlock(io);
+
+    const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
+
+    for (0..slice.len) |i| {
+        const part = slice[i];
+        part.retain();
+        parts[i] = part;
+    }
+
+    // even 100 years retention won't overflow it
+    return @intCast(slice.len);
+}
+
 pub fn queryLines(
     self: *Store,
     io: Io,
@@ -379,33 +441,17 @@ pub fn queryLines(
 ) !std.ArrayList(Line) {
     // TODO: query cancelation
 
-    self.partitionsMx.lockUncancelable(io);
-
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
 
-    var fba = std.heap.stackFallback(64, alloc);
-    const fbaAlloc = fba.get();
-
-    const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
-    // copy partitions not to deal with the lock
-    var parts = std.ArrayList(*Partition).initCapacity(fbaAlloc, slice.len) catch |err| {
-        self.partitionsMx.unlock(io);
-        return err;
-    };
-    defer {
-        for (parts.items) |part| part.release(io);
-        parts.deinit(fbaAlloc);
-    }
-    for (slice) |part| {
-        part.retain();
-        parts.appendAssumeCapacity(part);
-    }
-    self.partitionsMx.unlock(io);
+    var partsBuf: [retentionDays]*Partition = undefined;
+    const partsLen = self.getPartitions(io, minDay, maxDay, &partsBuf);
+    const parts = partsBuf[0..partsLen];
+    defer for (parts) |part| part.release(io);
 
     var results = std.ArrayList(Line).empty;
     errdefer deinitLinesFull(alloc, &results);
-    for (parts.items) |part| {
+    for (parts) |part| {
         var partResults = try part.queryLines(io, alloc, longAlloc, tenantID, query, self.memBlocksCache);
         defer partResults.deinit(alloc);
 
