@@ -43,7 +43,7 @@ const flushSizeThreshold = Consts.flushSizeThreshold;
 const amountOfTablesToMerge = Consts.amountOfTablesToMerge;
 const maxBlockSize = Consts.maxBlockSize;
 
-const maxMemTables = 32;
+const maxMemTables = 20;
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
 
@@ -484,12 +484,9 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
     if (force) {
         for (self.shards) |*shard| {
             // if it's not locked we are adding lines just know, makes no sense to lock it yet
-            if (shard.mx.tryLock()) {
-                defer shard.mx.unlock(io);
-                try self.flushShard(io, allocator, shard);
-            } else {
-                Logger.log(.debug, "skipping shard flush because it is locked", .{});
-            }
+            shard.mx.lockUncancelable(io);
+            defer shard.mx.unlock(io);
+            try self.flushShard(io, allocator, shard, force);
         }
         return;
     }
@@ -501,7 +498,7 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
             defer shard.mx.unlock(io);
             if (shard.flushAtUs) |flushAtUs| {
                 if (flushAtUs < nowUs) {
-                    try self.flushShard(io, allocator, shard);
+                    try self.flushShard(io, allocator, shard, force);
                 }
             }
         } else {
@@ -510,12 +507,53 @@ fn flushDataShards(self: *DataRecorder, io: Io, allocator: Allocator, force: boo
     }
 }
 
-fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard) !void {
+// TODO: replace to std Semaphore.waitTimout:
+// https://codeberg.org/ziglang/zig/commit/21980c82f48f239e50239d5af264706d15829268
+pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
+    sem.mutex.lockUncancelable(io);
+    defer sem.mutex.unlock(io);
+
+    while (sem.permits == 0) {
+        const elapsed = std.Io.Timestamp.now(io, .real).nanoseconds;
+        if (elapsed > timeout_ns)
+            return error.Timeout;
+
+        sem.cond.waitUncancelable(io, &sem.mutex);
+    }
+
+    sem.permits -= 1;
+    if (sem.permits > 0)
+        sem.cond.signal(io);
+}
+
+fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, force: bool) !void {
     const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
-        self.mxTables.lockUncancelable(io);
-        defer self.mxTables.unlock(io);
-        try self.memTables.append(alloc, memTable);
+        var semaphoreAcquired = false;
+        while (true) {
+            timedWait(&self.memTablesSem, io, std.time.ns_per_s) catch |err| {
+                switch (err) {
+                    error.Timeout => {
+                        if (self.stopped.isStopped()) {
+                            // if force we don't care about semaphore, just need to flush it
+                            if (force) break;
+                            return error.Stopped;
+                        }
+                    },
+                }
+                continue;
+            };
+
+            semaphoreAcquired = true;
+            break;
+        }
+
+        {
+            self.mxTables.lockUncancelable(io);
+            defer self.mxTables.unlock(io);
+            errdefer if (semaphoreAcquired) self.memTablesSem.post(io);
+            try self.memTables.append(alloc, memTable);
+        }
 
         shard.flushAtUs = null;
         shard.checkpointsLen = 0;
@@ -722,14 +760,14 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
         switch (err) {
             Allocator.Error.OutOfMemory => {
                 Logger.log(.warn, "processor: buffer overflow, decrease flush threashold", .{});
-                try self.flushShard(io, alloc, shard);
+                try self.flushShard(io, alloc, shard, false);
                 try shard.appendLines(alloc, lines, sid);
             },
         }
     };
 
     if (shard.mustFlush()) {
-        try self.flushShard(io, alloc, shard);
+        try self.flushShard(io, alloc, shard, false);
     } else if (shard.flushAtUs == null) {
         shard.flushAtUs = getFlushTime(io);
     }

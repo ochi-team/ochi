@@ -31,7 +31,7 @@ const amountOfTablesToMerge = @import("../../Consts.zig").amountOfTablesToMerge;
 
 // TODO: worth tuning on practice
 const blocksInMemTable = 15;
-const maxMemTables = 32;
+const maxMemTables = 16;
 
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(IndexRecorder, Table);
@@ -388,8 +388,6 @@ pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
 }
 
 fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Table, force: bool) !void {
-    // TODO: add a limit to wait max 3 minutes, otherwise something is broken
-
     var semaphoreAcquired = false;
 
     while (true) {
@@ -397,9 +395,6 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
             switch (err) {
                 error.Timeout => {
                     if (self.stopped.isStopped()) {
-                        // TODO: audit all semaphore as a state usage, it can happen
-                        // a background task fails and  doesn't post semaphore back
-
                         // if force we don't care about semaphore, just need to flush it
                         if (force) break;
                         return error.Stopped;
@@ -413,14 +408,13 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
         break;
     }
 
-    // TODO: ideally to know the amount of mem tables and call unlock it branchless
-    self.mxTables.lockUncancelable(io);
-    self.memTables.append(alloc, memTable) catch |err| {
-        if (semaphoreAcquired) self.memTablesSem.post(io);
-        self.mxTables.unlock(io);
-        return err;
-    };
-    self.mxTables.unlock(io);
+    {
+        self.mxTables.lockUncancelable(io);
+        defer self.mxTables.unlock(io);
+        errdefer if (semaphoreAcquired) self.memTablesSem.post(io);
+        try self.memTables.append(alloc, memTable);
+    }
+
     try self.startMemTablesMerge(io, alloc);
 
     if (force) {
