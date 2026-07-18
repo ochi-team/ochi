@@ -450,19 +450,22 @@ fn writeTimestamps(
         return Error.EmptyTimestamps;
     }
 
-    const encodedTimestamps = try self.timestampsEncoders.encode(io, allocator, timestamps);
-    defer allocator.free(encodedTimestamps.buf);
-    const encodedTimestampsBuf = encodedTimestamps.buf[0..encodedTimestamps.offset];
+    const offset = self.timestampsDst.len();
+    const bound = self.timestampsEncoders.bound(@intCast(timestamps.len));
+    const encodedBuf = try self.timestampsDst.allocSlice(allocator, bound);
+
+    const encodedTimestamps = try self.timestampsEncoders.encode(io, encodedBuf, timestamps);
+    const encodedTimestampsBuf = encodedBuf[0..encodedTimestamps.offset];
 
     tsHeader.* = .{
         .min = timestamps[0],
         .max = timestamps[timestamps.len - 1],
-        .offset = self.timestampsDst.len(),
+        .offset = offset,
         .size = encodedTimestampsBuf.len,
         .encodingType = encodedTimestamps.encodingType,
     };
 
-    try self.timestampsDst.appendSlice(io, allocator, encodedTimestampsBuf);
+    try self.timestampsDst.appendAllocated(io, encodedTimestampsBuf, encodedTimestamps.offset);
 }
 
 // TODO: audit the entire codebase on stateful buffers management

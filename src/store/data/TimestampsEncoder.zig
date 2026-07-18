@@ -14,7 +14,6 @@ pub const EncodingType = enum(u8) {
 pub const EncodedTimestamps = struct {
     encodingType: EncodingType,
     offset: usize,
-    buf: []u8,
 };
 
 // TODO: benchmark against gorilla and deltas
@@ -70,12 +69,16 @@ pub const TimestampsEncoderPool = struct {
         return self.ring.next();
     }
 
-    pub fn encode(pool: *TimestampsEncoderPool, io: Io, allocator: std.mem.Allocator, tss: []const u64) !EncodedTimestamps {
+    pub fn bound(_: *const TimestampsEncoderPool, len: u32) u32 {
+        return zint.Zint(u64).deltapack_compress_bound(len);
+    }
+
+    pub fn encode(pool: *TimestampsEncoderPool, io: Io, dst: []u8, tss: []const u64) !EncodedTimestamps {
         const locked = pool.next();
         locked.mx.lockUncancelable(io);
         defer locked.mx.unlock(io);
 
-        return locked.val.encode(allocator, tss);
+        return locked.val.encode(dst, tss);
     }
 
     pub fn decode(pool: *TimestampsEncoderPool, io: Io, dst: []u64, src: []const u8) !void {
@@ -99,16 +102,12 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn encode(self: *Self, allocator: std.mem.Allocator, tss: []const u64) !EncodedTimestamps {
-    const len: u32 = @intCast(tss.len);
-
-    const compress_buf = try allocator.alloc(u8, zType.deltapack_compress_bound(len));
-    const compressed_size = try zType.deltapack_compress(self.ctx, tss, compress_buf);
+pub fn encode(self: *Self, dst: []u8, tss: []const u64) !EncodedTimestamps {
+    const compressedSize = try zType.deltapack_compress(self.ctx, tss, dst);
 
     return .{
         .encodingType = .ZDeltapack,
-        .buf = compress_buf,
-        .offset = compressed_size,
+        .offset = compressedSize,
     };
 }
 pub fn decode(self: *Self, dst: []u64, src: []const u8) !void {
@@ -134,13 +133,12 @@ test "TimestampsEncoder" {
         const enc = try Self.init(alloc);
         defer enc.deinit(alloc);
 
-        const res = try enc.encode(alloc, case.input);
-        defer alloc.free(res.buf);
+        var buf: [64]u8 = undefined;
+        const res = try enc.encode(&buf, case.input);
         try testing.expectEqual(EncodingType.ZDeltapack, res.encodingType);
 
-        const dst = try alloc.alloc(u64, case.input.len);
-        defer alloc.free(dst);
-        try enc.decode(dst, res.buf[0..res.offset]);
-        try testing.expectEqualSlices(u64, dst, case.input);
+        var decoded: [8]u64 = undefined;
+        try enc.decode(decoded[0..case.input.len], buf[0..res.offset]);
+        try std.testing.expectEqualSlices(u64, case.input, decoded[0..case.input.len]);
     }
 }
