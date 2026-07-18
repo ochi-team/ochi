@@ -6,7 +6,8 @@ const Locked = @import("../../stds/Locked.zig").Locked;
 const Ring = @import("../../stds/Ring.zig").Ring;
 
 const Self = @This();
-const LockedContext = Locked(encoding.DCtx);
+
+const LockedContext = Locked(encoding.StaticDCtx);
 
 contexts: []LockedContext,
 ring: Ring(LockedContext),
@@ -18,14 +19,14 @@ pub fn init(allocator: std.mem.Allocator, count: usize) !*Self {
     var inited: usize = 0;
     errdefer {
         for (contexts[0..inited]) |*ctx| {
-            encoding.freeDCtx(ctx.val);
+            allocator.free(ctx.val.workspace);
         }
         allocator.free(contexts);
     }
 
     for (0..contexts.len) |i| {
         contexts[i] = .{
-            .val = try encoding.createDCtx(),
+            .val = try encoding.createStaticDCtx(allocator),
         };
         inited += 1;
     }
@@ -40,7 +41,7 @@ pub fn init(allocator: std.mem.Allocator, count: usize) !*Self {
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     for (self.contexts) |*ctx| {
-        encoding.freeDCtx(ctx.val);
+        allocator.free(ctx.val.workspace);
     }
     allocator.free(self.contexts);
     allocator.destroy(self);
@@ -55,5 +56,5 @@ pub fn decompress(self: *Self, io: Io, dst: []u8, src: []const u8) !usize {
     locked.mx.lockUncancelable(io);
     defer locked.mx.unlock(io);
 
-    return encoding.decompress(locked.val, dst, src);
+    return encoding.decompress(locked.val.ctx, dst, src);
 }

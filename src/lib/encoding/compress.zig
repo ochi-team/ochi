@@ -19,9 +19,35 @@ const errorSize: c_ulonglong = 0xfffffffffffffffe;
 
 pub const CCtx = *C.ZSTD_CCtx;
 pub const DCtx = *C.ZSTD_DCtx;
+pub const StaticCCtx = struct {
+    ctx: CCtx,
+    workspace: []align(8) u8,
+};
+pub const StaticDCtx = struct {
+    ctx: DCtx,
+    workspace: []align(8) u8,
+};
+
+const autoLevle = 1;
 
 pub fn createCCtx() std.mem.Allocator.Error!CCtx {
     return C.ZSTD_createCCtx() orelse std.mem.Allocator.Error.OutOfMemory;
+}
+
+pub fn createStaticCCtx(alloc: std.mem.Allocator) !StaticCCtx {
+    const workspaceSize = C.ZSTD_estimateCCtxSize(autoLevle);
+    if (C.ZSTD_isError(workspaceSize) == 1) return handleErrCode(C.ZSTD_getErrorCode(workspaceSize));
+
+    const workspace = try alloc.alignedAlloc(u8, .@"8", workspaceSize);
+    errdefer alloc.free(workspace);
+
+    const ctx = C.ZSTD_initStaticCCtx(workspace.ptr, workspace.len) orelse
+        return std.mem.Allocator.Error.OutOfMemory;
+
+    return .{
+        .ctx = ctx,
+        .workspace = workspace,
+    };
 }
 
 pub fn freeCCtx(ctx: CCtx) void {
@@ -32,13 +58,28 @@ pub fn createDCtx() std.mem.Allocator.Error!DCtx {
     return C.ZSTD_createDCtx() orelse std.mem.Allocator.Error.OutOfMemory;
 }
 
+pub fn createStaticDCtx(alloc: std.mem.Allocator) !StaticDCtx {
+    const workspaceSize = C.ZSTD_estimateDCtxSize();
+    if (C.ZSTD_isError(workspaceSize) == 1) return handleErrCode(C.ZSTD_getErrorCode(workspaceSize));
+
+    const workspace = try alloc.alignedAlloc(u8, .@"8", workspaceSize);
+    errdefer alloc.free(workspace);
+
+    const ctx = C.ZSTD_initStaticDCtx(workspace.ptr, workspace.len) orelse
+        return std.mem.Allocator.Error.OutOfMemory;
+
+    return .{
+        .ctx = ctx,
+        .workspace = workspace,
+    };
+}
+
 pub fn freeDCtx(ctx: DCtx) void {
     _ = C.ZSTD_freeDCtx(ctx);
 }
 
 pub fn compressAuto(ctx: CCtx, dst: []u8, src: []const u8) Error!usize {
-    // const level: u8 = if (src.len <= 512) 1 else if (src.len <= 4096) 2 else 3;
-    return compress(ctx, dst, src, 1);
+    return compress(ctx, dst, src, autoLevle);
 }
 
 pub fn compress(ctx: CCtx, dst: []u8, src: []const u8, level: u8) Error!usize {

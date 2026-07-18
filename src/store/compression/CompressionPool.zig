@@ -6,7 +6,8 @@ const Locked = @import("../../stds/Locked.zig").Locked;
 const Ring = @import("../../stds/Ring.zig").Ring;
 
 const Self = @This();
-const LockedContext = Locked(encoding.CCtx);
+
+const LockedContext = Locked(encoding.StaticCCtx);
 
 // TODO: there are 3 same equal objects implementations:
 // compression pool, decompression pool, timestamps encoders
@@ -20,14 +21,14 @@ pub fn init(allocator: std.mem.Allocator, count: usize) !*Self {
     var inited: usize = 0;
     errdefer {
         for (contexts[0..inited]) |*ctx| {
-            encoding.freeCCtx(ctx.val);
+            allocator.free(ctx.val.workspace);
         }
         allocator.free(contexts);
     }
 
     for (0..contexts.len) |i| {
         contexts[i] = .{
-            .val = try encoding.createCCtx(),
+            .val = try encoding.createStaticCCtx(allocator),
         };
         inited += 1;
     }
@@ -42,7 +43,7 @@ pub fn init(allocator: std.mem.Allocator, count: usize) !*Self {
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     for (self.contexts) |*ctx| {
-        encoding.freeCCtx(ctx.val);
+        allocator.free(ctx.val.workspace);
     }
     allocator.free(self.contexts);
     allocator.destroy(self);
@@ -57,5 +58,5 @@ pub fn compressAuto(self: *Self, io: Io, dst: []u8, src: []const u8) !usize {
     locked.mx.lockUncancelable(io);
     defer locked.mx.unlock(io);
 
-    return encoding.compressAuto(locked.val, dst, src);
+    return encoding.compressAuto(locked.val.ctx, dst, src);
 }

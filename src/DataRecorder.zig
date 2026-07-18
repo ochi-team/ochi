@@ -43,7 +43,7 @@ const flushSizeThreshold = Consts.flushSizeThreshold;
 const amountOfTablesToMerge = Consts.amountOfTablesToMerge;
 const maxBlockSize = Consts.maxBlockSize;
 
-const maxMemTables = 20;
+const maxMemTables = 16;
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
 
