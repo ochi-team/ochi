@@ -26,7 +26,7 @@ pub fn Cache(comptime V: type) type {
             next: ?*@This() = null,
 
             fn retain(self: *@This()) void {
-                _ = self.refCounter.fetchAdd(1, .acquire);
+                _ = self.refCounter.fetchAdd(1, .monotonic);
             }
 
             fn release(self: *@This(), alloc: Allocator) void {

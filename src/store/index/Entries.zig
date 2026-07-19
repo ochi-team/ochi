@@ -176,7 +176,7 @@ pub fn init(alloc: Allocator, concurrency: u16) !*Entries {
 }
 
 pub fn next(self: *Entries) *EntriesShard {
-    const i = self.shardIdx.fetchAdd(1, .acquire) % self.shards.len;
+    const i = self.shardIdx.fetchAdd(1, .monotonic) % self.shards.len;
     return &self.shards[i];
 }
 
@@ -196,16 +196,16 @@ test "Entries.shardIdxOverflow" {
     const e = try Entries.init(alloc, 4);
     defer e.deinit(alloc);
     e.shardIdx = .init(std.math.maxInt(usize));
-    try testing.expectEqual(e.shardIdx.load(.acquire), std.math.maxInt(usize));
+    try testing.expectEqual(e.shardIdx.load(.monotonic), std.math.maxInt(usize));
 
     _ = e.next();
-    try testing.expectEqual(e.shardIdx.load(.acquire), 0);
+    try testing.expectEqual(e.shardIdx.load(.monotonic), 0);
 
     // it fetches the value first, then increments,
     // therefore on it returns zero's shard and has value 1
     const shard = e.next();
     const firstShard = &e.shards[0];
-    try testing.expectEqual(e.shardIdx.load(.acquire), 1);
+    try testing.expectEqual(e.shardIdx.load(.monotonic), 1);
     try testing.expectEqual(shard, firstShard);
 }
 

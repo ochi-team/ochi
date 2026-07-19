@@ -630,7 +630,7 @@ fn tablesMerger(
 }
 
 fn nextMergeIdx(self: *DataRecorder) usize {
-    return self.mergeIdx.fetchAdd(1, .acq_rel);
+    return self.mergeIdx.fetchAdd(1, .monotonic);
 }
 
 fn mergeTables(
@@ -750,7 +750,7 @@ fn mergeTables(
 }
 
 pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID) !void {
-    const i = self.nextShard.fetchAdd(1, .acquire) % self.shards.len;
+    const i = self.nextShard.fetchAdd(1, .monotonic) % self.shards.len;
     var shard = &self.shards[i];
 
     shard.mx.lockUncancelable(io);
@@ -1187,13 +1187,13 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
             },
             .checkpointsLimit => {
                 for (0..DataShard.maxCheckpoints) |i| {
-                    recorder.nextShard.store(0, .release);
+                    recorder.nextShard.store(0, .monotonic);
                     var lines = [_]Line{stableLine(@intCast(i + 1), i)};
                     try recorder.addLines(io, alloc, lines[0..], stableSID(i + 1));
                 }
             },
             .deadline => {
-                recorder.nextShard.store(0, .release);
+                recorder.nextShard.store(0, .monotonic);
                 var lines = [_]Line{stableLine(1, 0)};
                 try recorder.addLines(io, alloc, lines[0..], stableSID(1));
 
@@ -1208,7 +1208,7 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
                 const filler = try recorder.shards[0].buffer.allocator().alloc(u8, maxBlockSize - recorder.shards[0].buffer.end_index);
                 @memset(filler, 'x');
 
-                recorder.nextShard.store(0, .release);
+                recorder.nextShard.store(0, .monotonic);
                 var retryLines = [_]Line{stableLine(2, 1)};
                 try recorder.addLines(io, alloc, retryLines[0..], stableSID(2));
             },

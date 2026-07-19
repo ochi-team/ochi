@@ -206,7 +206,7 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
 }
 
 pub fn nextMergeIdx(self: *IndexRecorder) u64 {
-    return self.mergeIdx.fetchAdd(1, .acquire);
+    return self.mergeIdx.fetchAdd(1, .monotonic);
 }
 
 pub fn add(self: *IndexRecorder, io: Io, alloc: Allocator, entries: []const []const u8) !void {
@@ -420,9 +420,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
     if (force) {
         self.invalidateStreamFilterCache();
     } else {
-        if (!self.needInvalidate.load(.acquire)) {
-            _ = self.needInvalidate.cmpxchgWeak(false, true, .release, .monotonic);
-        }
+        _ = self.needInvalidate.cmpxchgStrong(false, true, .release, .acquire);
     }
 }
 
@@ -527,7 +525,7 @@ fn runCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
         }
         ticks = 0;
 
-        if (self.needInvalidate.cmpxchgWeak(true, false, .acq_rel, .acquire) == null) {
+        if (self.needInvalidate.cmpxchgStrong(true, false, .release, .acquire) == null) {
             self.invalidateStreamFilterCache();
         }
     }
@@ -655,7 +653,7 @@ fn tablesMerger(
 
 // TODO: make it used in the partition cache
 fn invalidateStreamFilterCache(self: *IndexRecorder) void {
-    _ = self.indexCacheKeyVersion.fetchAdd(1, .acquire);
+    _ = self.indexCacheKeyVersion.fetchAdd(1, .monotonic);
 }
 
 pub fn mergeTables(

@@ -50,7 +50,7 @@ pub fn Swapper(
                 // remove via reference counter,
                 // it could have been open by a client.
                 // order flag doesn't matter, we don't expect any other part to change it back to
-                table.toRemove.store(true, .unordered);
+                table.toRemove.store(true, .release);
                 table.release(io);
             }
         }

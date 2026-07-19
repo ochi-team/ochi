@@ -138,8 +138,7 @@ pub fn open(
 }
 
 pub fn retain(self: *Partition) void {
-    // TODO: review all the atomics ordering
-    _ = self.refCounter.fetchAdd(1, .acquire);
+    _ = self.refCounter.fetchAdd(1, .monotonic);
 }
 
 pub fn release(self: *Partition, io: Io) void {

@@ -352,7 +352,7 @@ pub fn writeNames(io: Io, alloc: Allocator, path: []const u8, tables: []*Table) 
 }
 
 pub fn retain(self: *Table) void {
-    _ = self.refCounter.fetchAdd(1, .acquire);
+    _ = self.refCounter.fetchAdd(1, .monotonic);
 }
 
 // Table is a managed object, so it does not accept an allocator,
