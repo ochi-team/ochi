@@ -420,7 +420,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
     if (force) {
         self.invalidateStreamFilterCache();
     } else {
-        _ = self.needInvalidate.cmpxchgStrong(false, true, .release, .acquire);
+        _ = self.needInvalidate.cmpxchgStrong(false, true, .acq_rel, .acquire);
     }
 }
 
@@ -525,7 +525,7 @@ fn runCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
         }
         ticks = 0;
 
-        if (self.needInvalidate.cmpxchgStrong(true, false, .release, .acquire) == null) {
+        if (self.needInvalidate.cmpxchgStrong(true, false, .acq_rel, .acquire) == null) {
             self.invalidateStreamFilterCache();
         }
     }
