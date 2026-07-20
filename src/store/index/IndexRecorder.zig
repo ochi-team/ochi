@@ -701,11 +701,11 @@ pub fn mergeTables(
         return;
     }
 
-    var readers = try openTableReaders(io, alloc, tables, self.decompressionPool);
-    defer {
-        for (readers.items) |reader| reader.deinit(alloc);
-        readers.deinit(alloc);
-    }
+    var readersBuf: [amountOfTablesToMerge]*BlockReader = undefined;
+    var readers = std.ArrayList(*BlockReader).initBuffer(&readersBuf);
+    defer for (readers.items) |reader| reader.deinit(alloc);
+
+    try openTableReaders(io, alloc, &readers, tables, self.decompressionPool);
 
     // TODO: block writer deinit might be called before it's actually created,
     // if we get rid of all the undefined's it's solved
@@ -776,27 +776,20 @@ fn maxItemsPerCachedTable(maxMem: u64, cacheSize: u64) u64 {
     return @max(restMem / (6 * blocksInMemTable), merge.minMemTableSize);
 }
 
-fn openTableReaders(io: Io, alloc: Allocator, tables: []*Table, decompressionPool: *DecompressionPool) !std.ArrayList(*BlockReader) {
-    // TODO: take a meter of average readers amount and put them on stack if small enough (<= 16)
-    // same for data
-    var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, tables.len);
-    errdefer {
-        for (readers.items) |reader| reader.deinit(alloc);
-        readers.deinit(alloc);
-    }
+fn openTableReaders(
+    io: Io,
+    alloc: Allocator,
+    readers: *std.ArrayList(*BlockReader),
+    tables: []*Table,
+    decompressionPool: *DecompressionPool,
+) !void {
     for (tables) |table| {
-        if (table.inner == .mem) {
-            const reader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);
-            readers.appendAssumeCapacity(reader);
-        } else if (table.inner == .disk) {
-            const reader = try BlockReader.initFromDiskTable(io, alloc, table, decompressionPool);
-            readers.appendAssumeCapacity(reader);
-        } else {
-            std.debug.panic("expected mem or disk table", .{});
-        }
+        const reader = switch (table.inner) {
+            .mem => try BlockReader.initFromMemTable(io, alloc, table, decompressionPool),
+            .disk => try BlockReader.initFromDiskTable(io, alloc, table, decompressionPool),
+        };
+        readers.appendAssumeCapacity(reader);
     }
-
-    return readers;
 }
 
 fn openCreatedTable(

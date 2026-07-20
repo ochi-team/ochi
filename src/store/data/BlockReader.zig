@@ -44,13 +44,6 @@ globalBlocksCount: u64,
 // TODO: make it a pointer, seems it holds a lot of fields
 blockData: BlockData,
 
-pub fn init(io: Io, alloc: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*BlockReader {
-    return switch (table.inner) {
-        .mem => initFromMemTable(io, alloc, table, decompressionPool),
-        .disk => initFromDiskTable(io, alloc, table, decompressionPool),
-    };
-}
-
 pub fn initFromMemTable(io: Io, alloc: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*BlockReader {
     const memTable = table.inner.mem;
     const tableHeader = memTable.tableHeader;
