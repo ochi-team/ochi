@@ -15,6 +15,7 @@ const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 const Query = @import("query/Query.zig");
+const LookupPool = @import("store/index/lookup/LookupPool.zig");
 
 const Runtime = @import("Runtime.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
@@ -189,9 +190,10 @@ pub fn addLines(
     encodedTags: []const u8,
     sid: SID,
     blocksCache: *Cache(*MemBlock),
+    lookupPool: *LookupPool,
 ) !void {
     if (!self.isCached(io, sid)) {
-        if (!try self.index.hasStream(io, allocator, sid, blocksCache)) {
+        if (!try self.index.hasStream(io, allocator, sid, blocksCache, lookupPool)) {
             try self.index.indexStream(io, allocator, sid, tags, encodedTags);
         }
         try self.cache(io, sid);

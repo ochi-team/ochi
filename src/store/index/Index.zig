@@ -14,6 +14,7 @@ const TagRecordsParser = @import("TagRecordsParser.zig");
 pub const tracy = @import("tracy");
 
 const Lookup = @import("lookup/Lookup.zig");
+const LookupPool = @import("lookup/LookupPool.zig");
 const StreamIDsByPrefixesResult = Lookup.StreamIDsByPrefixesResult;
 
 const Encoder = @import("encoding").Encoder;
@@ -44,9 +45,22 @@ pub fn init(recorder: *IndexRecorder) Self {
     };
 }
 
-pub fn hasStream(self: *Self, io: Io, alloc: Allocator, sid: SID, blocksCache: *Cache(*MemBlock)) !bool {
-    var lookup = try Lookup.init(io, alloc, alloc, self.recorder, blocksCache);
-    defer lookup.deinit(io, alloc);
+pub fn hasStream(
+    self: *Self,
+    io: Io,
+    alloc: Allocator,
+    sid: SID,
+    blocksCache: *Cache(*MemBlock),
+    lookupPool: *LookupPool,
+) !bool {
+    const locked = lookupPool.next();
+    locked.mx.lockUncancelable(io);
+    defer locked.mx.unlock(io);
+
+    var lookup = locked.val;
+
+    try lookup.setup(io, alloc, alloc, self.recorder, blocksCache);
+    defer lookup.reset(io, alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
     defer alloc.free(sidBuf);
@@ -170,7 +184,7 @@ pub fn querySIDs(
     }
 
     // import to sort it since the data query expected sorted set of streams
-    std.sort.pdq(SID, sids.items, {}, SidLessThan);
+    std.sort.pdq(SID, sids.items, {}, sidLessThan);
 
     return .{ .sids = sids, .cutOff = result.cutOff };
 }
@@ -240,7 +254,7 @@ fn querySIDsFromPredicate(
 
 // TODO: when we collect only streams we can sort them without tenant,
 // and we can remove this function
-pub fn SidLessThan(_: void, self: SID, another: SID) bool {
+pub fn sidLessThan(_: void, self: SID, another: SID) bool {
     return self.tenantID < another.tenantID or
         (self.tenantID == another.tenantID and self.id < another.id);
 }

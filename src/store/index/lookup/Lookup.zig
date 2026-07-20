@@ -31,36 +31,36 @@ current: []const u8,
 isRead: bool,
 seekedIsCurrent: bool,
 
-// TODO: a good object to implement a memory pool for:
-// 1. reuse a last item query buffer
-// 2. reuse tables and its  lookup list capacity
-/// Initializes lookup cursors for all currently visible recorder tables.
+/// empty is a scaffold to setup a blank value in a pool
+pub const empty: Lookup = .{
+    .recorder = undefined,
+    .tables = .empty,
+    .lookupTables = .empty,
+
+    .heapArray = .empty,
+    .tablesHeap = undefined,
+
+    .current = undefined,
+    .isRead = false,
+    .seekedIsCurrent = false,
+};
+
 pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
-    var tables = try recorder.getTables(io, alloc);
-    errdefer {
-        for (tables.items) |t| t.release(io);
-        tables.deinit(alloc);
+    var self: Lookup = .empty;
+    errdefer self.deinit(io, alloc);
+    try self.setup(io, alloc, longAlloc, recorder, cache);
+    return self;
+}
+
+pub fn setup(self: *Lookup, io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !void {
+    self.recorder = recorder;
+
+    try recorder.collectTables(io, alloc, &self.tables);
+
+    try self.lookupTables.ensureUnusedCapacity(alloc, self.tables.items.len);
+    for (self.tables.items) |t| {
+        self.lookupTables.appendAssumeCapacity(LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool));
     }
-
-    var lookupTables = try std.ArrayList(LookupTable).initCapacity(alloc, tables.items.len);
-    errdefer lookupTables.deinit(alloc);
-    for (tables.items) |t| {
-        const lt = LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool);
-        lookupTables.appendAssumeCapacity(lt);
-    }
-
-    return .{
-        .recorder = recorder,
-        .tables = tables,
-        .lookupTables = lookupTables,
-
-        .heapArray = .empty,
-        .tablesHeap = undefined,
-
-        .current = undefined,
-        .isRead = false,
-        .seekedIsCurrent = false,
-    };
 }
 
 pub fn deinit(self: *Lookup, io: Io, alloc: Allocator) void {
@@ -69,6 +69,14 @@ pub fn deinit(self: *Lookup, io: Io, alloc: Allocator) void {
     self.heapArray.deinit(alloc);
     for (self.tables.items) |t| t.release(io);
     self.tables.deinit(alloc);
+}
+
+pub fn reset(self: *Lookup, io: Io, alloc: Allocator) void {
+    for (self.lookupTables.items) |*lt| lt.deinit(alloc);
+    self.lookupTables.clearRetainingCapacity();
+    self.heapArray.clearRetainingCapacity();
+    for (self.tables.items) |t| t.release(io);
+    self.tables.clearRetainingCapacity();
 }
 
 /// Returns the first item that starts with prefix, or null if none exist.

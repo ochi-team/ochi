@@ -157,7 +157,7 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 
     try self.startMemTablesFlusher(io, alloc);
     try self.startMemBlockFlusher(io, alloc);
-    try self.startCacheKeyInvalidator(io);
+    // try self.startCacheKeyInvalidator(io);
 }
 
 // TODO: find an approach to make it never fail,
@@ -228,23 +228,21 @@ pub fn add(self: *IndexRecorder, io: Io, alloc: Allocator, entries: []const []co
     }
 }
 
-pub fn getTables(self: *IndexRecorder, io: Io, alloc: Allocator) !std.ArrayList(*Table) {
+pub fn collectTables(self: *IndexRecorder, io: Io, alloc: Allocator, dst: *std.ArrayList(*Table)) !void {
     self.mxTables.lockUncancelable(io);
     defer self.mxTables.unlock(io);
 
     const tablesLen = self.memTables.items.len + self.diskTables.items.len;
-    var tables = try std.ArrayList(*Table).initCapacity(alloc, tablesLen);
+    try dst.ensureUnusedCapacity(alloc, tablesLen);
 
     for (self.memTables.items) |table| {
         table.retain();
-        tables.appendAssumeCapacity(table);
+        dst.appendAssumeCapacity(table);
     }
     for (self.diskTables.items) |table| {
         table.retain();
-        tables.appendAssumeCapacity(table);
+        dst.appendAssumeCapacity(table);
     }
-
-    return tables;
 }
 
 fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlock) !void {

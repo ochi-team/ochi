@@ -29,6 +29,7 @@ const Runtime = @import("Runtime.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
 const CompressionPool = @import("store/compression/CompressionPool.zig");
 const DecompressionPool = @import("store/compression/DecompressionPool.zig");
+const LookupPool = @import("store/index/lookup/LookupPool.zig");
 
 pub const Store = @This();
 
@@ -48,6 +49,7 @@ memBlocksCache: *Cache(*MemBlock),
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
 decompressionPool: *DecompressionPool,
+lookupPool: *LookupPool,
 
 meter: StoreMeter,
 
@@ -96,6 +98,9 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const decompressionPool = try DecompressionPool.init(alloc, runtime.cpus);
     errdefer decompressionPool.deinit(alloc);
 
+    const lookupPool = try LookupPool.init(alloc, runtime.cpus);
+    errdefer lookupPool.deinit(io, alloc);
+
     var meter = try StoreMeter.init(io, alloc);
     errdefer meter.deinit();
 
@@ -107,6 +112,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .timestampsEncoders = timestampsEncoders,
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
+        .lookupPool = lookupPool,
         .meter = meter,
         .runtime = runtime,
         .conf = conf,
@@ -171,6 +177,7 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     self.timestampsEncoders.deinit(allocator);
     self.compressionPool.deinit(allocator);
     self.decompressionPool.deinit(allocator);
+    self.lookupPool.deinit(io, allocator);
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -361,7 +368,7 @@ pub fn addLines(
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
-        try partition.addLines(io, allocator, list, tags, encodedTags, sid, self.memBlocksCache);
+        try partition.addLines(io, allocator, list, tags, encodedTags, sid, self.memBlocksCache, self.lookupPool);
 
         // Return early since all lines are added to the same Partition
         if (list.items.len == lines.len) return;
@@ -411,7 +418,7 @@ pub fn addLines(
         };
         defer partition.release(io);
 
-        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, sid, self.memBlocksCache);
+        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, sid, self.memBlocksCache, self.lookupPool);
     }
 }
 
