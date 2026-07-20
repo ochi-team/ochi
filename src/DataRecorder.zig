@@ -43,9 +43,14 @@ const flushSizeThreshold = Consts.flushSizeThreshold;
 const amountOfTablesToMerge = Consts.amountOfTablesToMerge;
 const maxBlockSize = Consts.maxBlockSize;
 
-const maxMemTables = 16;
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
+
+const maxMemTables = 16;
+comptime {
+    // it claims we can use a buffer size of amountOfTablesToMerge to handle merging any kind of tables
+    std.debug.assert(maxMemTables <= amountOfTablesToMerge);
+}
 
 fn getFlushTime(io: Io) i64 {
     return Io.Timestamp.now(io, .real).toMicroseconds() + Consts.dataFlushIntervalUs;
@@ -438,11 +443,8 @@ fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool
     const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
     self.mxTables.lockUncancelable(io);
 
-    var tables = std.ArrayList(*Table).initCapacity(allocator, self.memTables.items.len) catch |err| {
-        self.mxTables.unlock(io);
-        return err;
-    };
-    defer tables.deinit(allocator);
+    var tablesBuf: [maxMemTables]*Table = undefined;
+    var tables = std.ArrayList(*Table).initBuffer(&tablesBuf);
 
     for (self.memTables.items) |memTable| {
         const isTimeToMerge = memTable.inner.mem.flushAtUs <= nowUs;
@@ -529,29 +531,31 @@ pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, force: bool) !void {
     const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
-        var semaphoreAcquired = false;
         while (true) {
-            timedWait(&self.memTablesSem, io, std.time.ns_per_s) catch |err| {
+            timedWait(&self.memTablesSem, io, std.time.ns_per_s / 10) catch |err| {
                 switch (err) {
                     error.Timeout => {
                         if (self.stopped.isStopped()) {
                             // if force we don't care about semaphore, just need to flush it
-                            if (force) break;
+                            if (force) {
+                                try self.flushMemTables(io, alloc, true);
+                                continue;
+                            }
                             return error.Stopped;
                         }
+
+                        try self.flushMemTables(io, alloc, true);
                     },
                 }
-                continue;
             };
 
-            semaphoreAcquired = true;
             break;
         }
 
         {
             self.mxTables.lockUncancelable(io);
             defer self.mxTables.unlock(io);
-            errdefer if (semaphoreAcquired) self.memTablesSem.post(io);
+            errdefer self.memTablesSem.post(io);
             try self.memTables.append(alloc, memTable);
         }
 
@@ -793,7 +797,7 @@ pub fn getTables(self: *DataRecorder, io: Io, alloc: Allocator, start: u64, end:
     self.mxTables.lockUncancelable(io);
     defer self.mxTables.unlock(io);
 
-    var tables = try std.ArrayList(*Table).initCapacity(alloc, 8);
+    var tables = try std.ArrayList(*Table).initCapacity(alloc, 32);
     try selectTablesInRange(alloc, &tables, self.memTables.items, start, end);
     try selectTablesInRange(alloc, &tables, self.diskTables.items, start, end);
 

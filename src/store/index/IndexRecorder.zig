@@ -29,9 +29,13 @@ const DebugIo = @import("../../stds/Io/DebugIo.zig");
 
 const amountOfTablesToMerge = @import("../../Consts.zig").amountOfTablesToMerge;
 
-// TODO: worth tuning on practice
-const blocksInMemTable = 15;
+const blocksInMemTable = 16;
+
 const maxMemTables = 16;
+comptime {
+    // it claims we can use a buffer size of amountOfTablesToMerge to handle merging any kind of tables
+    std.debug.assert(maxMemTables <= amountOfTablesToMerge);
+}
 
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(IndexRecorder, Table);
@@ -388,30 +392,31 @@ pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
 }
 
 fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Table, force: bool) !void {
-    var semaphoreAcquired = false;
-
     while (true) {
-        timedWait(&self.memTablesSem, io, std.time.ns_per_s) catch |err| {
+        timedWait(&self.memTablesSem, io, std.time.ns_per_s / 10) catch |err| {
             switch (err) {
                 error.Timeout => {
                     if (self.stopped.isStopped()) {
                         // if force we don't care about semaphore, just need to flush it
-                        if (force) break;
+                        if (force) {
+                            try self.flushMemTables(io, alloc, true);
+                            continue;
+                        }
                         return error.Stopped;
                     }
+
+                    try self.flushMemTables(io, alloc, true);
                 },
             }
-            continue;
         };
 
-        semaphoreAcquired = true;
         break;
     }
 
     {
         self.mxTables.lockUncancelable(io);
         defer self.mxTables.unlock(io);
-        errdefer if (semaphoreAcquired) self.memTablesSem.post(io);
+        errdefer self.memTablesSem.post(io);
         try self.memTables.append(alloc, memTable);
     }
 
@@ -552,23 +557,15 @@ fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
 
 fn flushMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, force: bool) !void {
     const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
-    const bufsize = 256;
-    // TODO: metric to understand whether it's enough
-    var fba = std.heap.stackFallback(bufsize, alloc);
-    const fbaAlloc = fba.get();
 
-    var toFlush = try std.ArrayList(*Table).initCapacity(fbaAlloc, bufsize / @sizeOf(*Table));
-    defer toFlush.deinit(fbaAlloc);
+    var toFlushBuffer: [maxMemTables]*Table = undefined;
+    var toFlush = std.ArrayList(*Table).initBuffer(&toFlushBuffer);
 
     self.mxTables.lockUncancelable(io);
     for (self.memTables.items) |memTable| {
         if (!memTable.inMerge and (force or memTable.inner.mem.flushAtUs < nowUs)) {
             memTable.inMerge = true;
-            toFlush.append(fbaAlloc, memTable) catch |err| {
-                for (toFlush.items) |table| table.inMerge = false;
-                self.mxTables.unlock(io);
-                return err;
-            };
+            toFlush.appendAssumeCapacity(memTable);
         }
     }
     self.mxTables.unlock(io);
