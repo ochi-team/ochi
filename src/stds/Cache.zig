@@ -1,9 +1,21 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Thread = std.Thread;
-const builtin = @import("builtin");
 const Mutex = std.Io.Mutex;
+
+const m = @import("metrics");
+
+pub const Opts = struct {
+    meter: MeterOpt,
+};
+
+pub const MeterOpt = struct {
+    name: []const u8,
+};
+
+const HitRateMeter = m.Counter(u32);
 
 // TODO: make it support comptime meter misses/total
 // TODO: redesign the cache, it feels Node is too large to hold especially for small key
@@ -61,6 +73,8 @@ pub fn Cache(comptime V: type) type {
         shadowHead: ?*Node = null,
         shadowTail: ?*Node = null,
 
+        hitRate: HitRateMeter,
+
         pub const GetOrElseRes = struct {
             value: V,
             elseHit: bool,
@@ -74,12 +88,13 @@ pub fn Cache(comptime V: type) type {
             value: V,
         };
 
-        pub fn init(alloc: Allocator) !*Self {
+        pub fn init(alloc: Allocator, comptime opts: Opts) !*Self {
             const map = std.StringHashMap(*Node).init(alloc);
             const c = try alloc.create(Self);
             c.* = .{
                 .map = map,
                 .alloc = alloc,
+                .hitRate = .init(opts.meter.name, .{ .help = "cache hit rate" }, .{}),
             };
             return c;
         }
@@ -290,7 +305,7 @@ test "StreamCache handles concurrent set and contains" {
         }
     };
 
-    const cache = try Cache(void).init(testing.allocator);
+    const cache = try Cache(void).init(testing.allocator, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     var threads: [4]Thread = undefined;
@@ -323,7 +338,7 @@ test "Cache.set keeps first non-void value on duplicate insert" {
     const io = testing.io;
 
     const ValueCache = Cache(*Value);
-    const cache = try ValueCache.init(alloc);
+    const cache = try ValueCache.init(alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     const first = try Value.init(alloc, 1);
@@ -368,7 +383,7 @@ test "Cache.getOrElse creates non-void value only on miss" {
     const io = testing.io;
 
     const ValueCache = Cache(*Value);
-    const cache = try ValueCache.init(alloc);
+    const cache = try ValueCache.init(alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     var calls: usize = 0;
@@ -423,7 +438,7 @@ test "Cache.clean evicts shadow entries and keeps recently used entries" {
     const promoters = [_]*const fn (*Cache(void)) anyerror!bool{ p1, p2, p3 };
 
     for (promoters) |promote| {
-        const cache = try Cache(void).init(alloc);
+        const cache = try Cache(void).init(alloc, .{ .meter = .{ .name = "" } });
         defer cache.deinit();
 
         try cache.put(io, "a", {});
@@ -471,7 +486,7 @@ test "Cache pinned value survives eviction until released" {
     const io = testing.io;
 
     const ValueCache = Cache(*Value);
-    const cache = try ValueCache.init(alloc);
+    const cache = try ValueCache.init(alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     var deinits: usize = 0;
