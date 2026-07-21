@@ -269,8 +269,8 @@ pub fn addLines(
 pub fn queryLines(
     self: *Partition,
     io: Io,
+    requestArena: Allocator,
     alloc: Allocator,
-    longAlloc: Allocator,
     tenantID: u64,
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
@@ -297,7 +297,7 @@ pub fn queryLines(
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
             if (query.tagsExpr) |tags| {
-                break :sids try self.index.querySIDs(io, alloc, longAlloc, tenantID, tags, memBlocksCache);
+                break :sids try self.index.querySIDs(io, alloc, tenantID, tags, memBlocksCache);
             }
 
             break :sids .{ .cutOff = false, .sids = .empty };
@@ -317,18 +317,17 @@ pub fn queryLines(
         });
     }
 
-    return self.data.queryLines(io, alloc, sidsRes.sids.items, query);
+    return self.data.queryLines(io, requestArena, sidsRes.sids.items, query);
 }
 
 pub fn queryStreamIDs(
     self: *Partition,
     io: Io,
     alloc: Allocator,
-    longAlloc: Allocator,
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    const res = try self.index.queryAllStreamIDs(io, alloc, longAlloc, tenantID, memBlocksCache);
+    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache);
     return res.streamIDs;
 }
 

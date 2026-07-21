@@ -441,8 +441,8 @@ fn getPartitions(self: *Store, io: Io, minDay: u32, maxDay: u32, parts: []*Parti
 pub fn queryLines(
     self: *Store,
     io: Io,
+    requestArena: Allocator,
     alloc: Allocator,
-    longAlloc: Allocator,
     tenantID: u64,
     query: Query,
 ) !std.ArrayList(Line) {
@@ -457,17 +457,17 @@ pub fn queryLines(
     defer for (parts) |part| part.release(io);
 
     var results = std.ArrayList(Line).empty;
-    errdefer deinitLinesFull(alloc, &results);
+    errdefer deinitLinesFull(requestArena, &results);
     for (parts) |part| {
-        var partResults = try part.queryLines(io, alloc, longAlloc, tenantID, query, self.memBlocksCache);
-        defer partResults.deinit(alloc);
+        var partResults = try part.queryLines(io, requestArena, alloc, tenantID, query, self.memBlocksCache);
+        defer partResults.deinit(requestArena);
 
-        try results.appendSlice(alloc, partResults.items);
+        try results.appendSlice(requestArena, partResults.items);
     }
 
     // TODO: we need to make a real pagination, it's a plug not to overload the ui,
     // otherwise it fetches 10k lines and becomes unusable
-    keepLatestLines(alloc, &results, 200);
+    keepLatestLines(requestArena, &results, 200);
     return results;
 }
 
@@ -484,8 +484,8 @@ fn keepLatestLines(alloc: Allocator, lines: *std.ArrayList(Line), limit: usize) 
 pub fn queryStreamIDs(
     self: *Store,
     io: Io,
+    requestArena: Allocator,
     alloc: Allocator,
-    longAlloc: Allocator,
     tenantID: u64,
     from: u64,
     to: u64,
@@ -495,32 +495,25 @@ pub fn queryStreamIDs(
     const minDay: u32 = @intCast(from / std.time.ns_per_day);
     const maxDay: u32 = @intCast(to / std.time.ns_per_day);
 
-    var fba = std.heap.stackFallback(64, alloc);
-    const fbaAlloc = fba.get();
-
     const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
-    var parts = std.ArrayList(*Partition).initCapacity(fbaAlloc, slice.len) catch |err| {
-        self.partitionsMx.unlock(io);
-        return err;
-    };
-    defer {
-        for (parts.items) |part| part.release(io);
-        parts.deinit(fbaAlloc);
-    }
+    var partsBuf: [retentionDays]*Partition = undefined;
+    var parts = std.ArrayList(*Partition).initBuffer(&partsBuf);
+    defer for (parts.items) |part| part.release(io);
     for (slice) |part| {
         part.retain();
         parts.appendAssumeCapacity(part);
     }
+
     self.partitionsMx.unlock(io);
 
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
 
     for (parts.items) |part| {
-        var partStreamIDs = try part.queryStreamIDs(io, alloc, longAlloc, tenantID, self.memBlocksCache);
+        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.memBlocksCache);
         defer partStreamIDs.deinit(alloc);
 
         for (partStreamIDs.keys()) |sid| {
-            try streamIDs.put(alloc, sid, {});
+            try streamIDs.put(requestArena, sid, {});
         }
     }
 

@@ -45,21 +45,21 @@ pub const empty: Lookup = .{
     .seekedIsCurrent = false,
 };
 
-pub fn init(io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
+pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
     var self: Lookup = .empty;
     errdefer self.deinit(io, alloc);
-    try self.setup(io, alloc, longAlloc, recorder, cache);
+    try self.setup(io, alloc, recorder, cache);
     return self;
 }
 
-pub fn setup(self: *Lookup, io: Io, alloc: Allocator, longAlloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !void {
+pub fn setup(self: *Lookup, io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !void {
     self.recorder = recorder;
 
     try recorder.collectTables(io, alloc, &self.tables);
 
     try self.lookupTables.ensureUnusedCapacity(alloc, self.tables.items.len);
     for (self.tables.items) |t| {
-        self.lookupTables.appendAssumeCapacity(LookupTable.init(longAlloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool));
+        self.lookupTables.appendAssumeCapacity(LookupTable.init(alloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool));
     }
 }
 
@@ -336,7 +336,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -372,7 +372,7 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -462,7 +462,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -592,7 +592,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -644,7 +644,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     defer cache.deinit();
 
     {
-        var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+        var lookup = try Lookup.init(io, alloc, recorder, cache);
         defer lookup.deinit(io, alloc);
 
         const actual = try lookup.findFirstByPrefix(io, alloc, "tenant-a-stream-0002");
@@ -691,7 +691,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         .{ .prefix = "tenant-a-stream-", .expected = "tenant-a-stream-0001" },
     };
 
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
     for (cases) |case| {
         const actual = try lookup.findFirstByPrefix(io, alloc, case.prefix);
@@ -742,7 +742,7 @@ test "Lookup.deinit after scan across multiple table blocks" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     try lookup.seek(io, alloc, "key:");
@@ -800,7 +800,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     const cache = try Cache(*MemBlock).init(alloc);
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, &[_][]const u8{keyValue});

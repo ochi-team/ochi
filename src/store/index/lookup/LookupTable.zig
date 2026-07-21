@@ -29,7 +29,7 @@ fn memBlocksCacheKeyBuf(buf: []u8, key: memBlocksCacheKey) void {
 table: *Table,
 memBlocksCache: *Cache(*MemBlock),
 decompressionPool: *DecompressionPool,
-longAllocator: Allocator,
+alloc: Allocator,
 maxMemBlockSize: u32,
 // blockHeadersOwned always keeps the base allocation we must free.
 blockHeadersOwned: []BlockHeader,
@@ -52,12 +52,12 @@ memBlockPin: ?Cache(*MemBlock).Pinned,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(longAlloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock), decompressionPool: *DecompressionPool) LookupTable {
+pub fn init(alloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock), decompressionPool: *DecompressionPool) LookupTable {
     return .{
         .table = table,
         .memBlocksCache = cache,
         .decompressionPool = decompressionPool,
-        .longAllocator = longAlloc,
+        .alloc = alloc,
         .maxMemBlockSize = maxMemBlockSize,
 
         .current = "",
@@ -333,11 +333,11 @@ fn getMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: BlockH
         // otherwise 2 threads create the same block and then one of them removes a duplicate
         // TODO: instrument locking and measure contention
         fn run(ctx: @This()) !*MemBlock {
-            const memBlock = try MemBlock.init(ctx.lookupTable.longAllocator, .{
+            const memBlock = try MemBlock.init(ctx.lookupTable.alloc, .{
                 .maxMemBlockSize = ctx.lookupTable.maxMemBlockSize,
                 .blocksCountHint = @intCast(ctx.blockHeader.entriesCount),
             });
-            errdefer memBlock.deinit(ctx.lookupTable.longAllocator);
+            errdefer memBlock.deinit(ctx.lookupTable.alloc);
 
             try ctx.lookupTable.readMemBlock(ctx.io, ctx.alloc, ctx.blockHeader, memBlock);
             return memBlock;

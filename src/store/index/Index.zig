@@ -59,7 +59,7 @@ pub fn hasStream(
 
     var lookup = locked.val;
 
-    try lookup.setup(io, alloc, alloc, self.recorder, blocksCache);
+    try lookup.setup(io, alloc, self.recorder, blocksCache);
     defer lookup.reset(io, alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
@@ -80,11 +80,10 @@ pub fn queryAllStreamIDs(
     self: *Self,
     io: Io,
     alloc: Allocator,
-    longAlloc: Allocator,
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
 ) !StreamIDsByPrefixesResult {
-    var lookup = try Lookup.init(io, alloc, longAlloc, self.recorder, memBlocksCache);
+    var lookup = try Lookup.init(io, alloc, self.recorder, memBlocksCache);
     defer lookup.deinit(io, alloc);
 
     const suffixLen: usize = 1 + @sizeOf(u64);
@@ -161,13 +160,12 @@ pub fn querySIDs(
     self: *Self,
     io: Io,
     alloc: Allocator,
-    longAlloc: Allocator,
     tenantID: u64,
     tags: *const FilterExpression,
     memBlocksCache: *Cache(*MemBlock),
 ) !QuerySIDsResult {
     // TODO: cache query => stream
-    var lookup = try Lookup.init(io, alloc, longAlloc, self.recorder, memBlocksCache);
+    var lookup = try Lookup.init(io, alloc, self.recorder, memBlocksCache);
     defer lookup.deinit(io, alloc);
 
     var result = try querySIDsFromExpr(io, alloc, &lookup, tenantID, tags);
