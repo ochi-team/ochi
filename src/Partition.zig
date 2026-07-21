@@ -274,6 +274,7 @@ pub fn queryLines(
     tenantID: u64,
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
+    lookupPool: *LookupPool,
 ) !std.ArrayList(Line) {
     // TODO: query cancelation
 
@@ -297,7 +298,7 @@ pub fn queryLines(
             break :sids .{ .sids = sids, .cutOff = false };
         } else {
             if (query.tagsExpr) |tags| {
-                break :sids try self.index.querySIDs(io, alloc, tenantID, tags, memBlocksCache);
+                break :sids try self.index.querySIDs(io, alloc, tenantID, tags, memBlocksCache, lookupPool);
             }
 
             break :sids .{ .cutOff = false, .sids = .empty };
@@ -326,8 +327,9 @@ pub fn queryStreamIDs(
     alloc: Allocator,
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
+    lookupPool: *LookupPool,
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache);
+    const res = try self.index.queryAllStreamIDs(io, alloc, tenantID, memBlocksCache, lookupPool);
     return res.streamIDs;
 }
 

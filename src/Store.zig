@@ -459,7 +459,15 @@ pub fn queryLines(
     var results = std.ArrayList(Line).empty;
     errdefer deinitLinesFull(requestArena, &results);
     for (parts) |part| {
-        var partResults = try part.queryLines(io, requestArena, alloc, tenantID, query, self.memBlocksCache);
+        var partResults = try part.queryLines(
+            io,
+            requestArena,
+            alloc,
+            tenantID,
+            query,
+            self.memBlocksCache,
+            self.lookupPool,
+        );
         defer partResults.deinit(requestArena);
 
         try results.appendSlice(requestArena, partResults.items);
@@ -509,7 +517,7 @@ pub fn queryStreamIDs(
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
 
     for (parts.items) |part| {
-        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.memBlocksCache);
+        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.memBlocksCache, self.lookupPool);
         defer partStreamIDs.deinit(alloc);
 
         for (partStreamIDs.keys()) |sid| {

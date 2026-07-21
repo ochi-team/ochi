@@ -53,14 +53,12 @@ pub fn hasStream(
     blocksCache: *Cache(*MemBlock),
     lookupPool: *LookupPool,
 ) !bool {
-    const locked = lookupPool.next();
-    locked.mx.lockUncancelable(io);
-    defer locked.mx.unlock(io);
+    const lookup = lookupPool.next();
+    lookup.mx.lockUncancelable(io);
+    defer lookup.mx.unlock(io);
 
-    var lookup = locked.val;
-
-    try lookup.setup(io, alloc, self.recorder, blocksCache);
-    defer lookup.reset(io, alloc);
+    try lookup.val.setup(io, alloc, self.recorder, blocksCache);
+    defer lookup.val.reset(io, alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
     defer alloc.free(sidBuf);
@@ -68,7 +66,7 @@ pub fn hasStream(
     sid.encodeTenantWithPrefix(&enc, @intFromEnum(IndexKind.sid));
     enc.writeInt(u128, sid.id);
 
-    const maybeItem = try lookup.findFirstByPrefix(io, alloc, sidBuf);
+    const maybeItem = try lookup.val.findFirstByPrefix(io, alloc, sidBuf);
     if (maybeItem) |item| {
         return item.len == sidBuf.len;
     }
@@ -82,9 +80,14 @@ pub fn queryAllStreamIDs(
     alloc: Allocator,
     tenantID: u64,
     memBlocksCache: *Cache(*MemBlock),
+    lookupPool: *LookupPool,
 ) !StreamIDsByPrefixesResult {
-    var lookup = try Lookup.init(io, alloc, self.recorder, memBlocksCache);
-    defer lookup.deinit(io, alloc);
+    const lookup = lookupPool.next();
+    lookup.mx.lockUncancelable(io);
+    defer lookup.mx.unlock(io);
+
+    try lookup.val.setup(io, alloc, self.recorder, memBlocksCache);
+    defer lookup.val.reset(io, alloc);
 
     const suffixLen: usize = 1 + @sizeOf(u64);
     var tenantPrefix: [suffixLen]u8 = undefined;
@@ -92,7 +95,7 @@ pub fn queryAllStreamIDs(
     enc.writeInt(u8, @intFromEnum(IndexKind.sid));
     enc.writeInt(u64, tenantID);
 
-    return lookup.findAllStreamIDsByPrefixes(
+    return lookup.val.findAllStreamIDsByPrefixes(
         io,
         alloc,
         &.{&tenantPrefix},
@@ -163,12 +166,17 @@ pub fn querySIDs(
     tenantID: u64,
     tags: *const FilterExpression,
     memBlocksCache: *Cache(*MemBlock),
+    lookupPool: *LookupPool,
 ) !QuerySIDsResult {
     // TODO: cache query => stream
-    var lookup = try Lookup.init(io, alloc, self.recorder, memBlocksCache);
-    defer lookup.deinit(io, alloc);
+    const lookup = lookupPool.next();
+    lookup.mx.lockUncancelable(io);
+    defer lookup.mx.unlock(io);
 
-    var result = try querySIDsFromExpr(io, alloc, &lookup, tenantID, tags);
+    try lookup.val.setup(io, alloc, self.recorder, memBlocksCache);
+    defer lookup.val.reset(io, alloc);
+
+    var result = try querySIDsFromExpr(io, alloc, &lookup.val, tenantID, tags);
     defer result.streamIDs.deinit(alloc);
 
     if (result.streamIDs.keys().len == 0)
