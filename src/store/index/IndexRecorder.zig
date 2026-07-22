@@ -343,10 +343,7 @@ fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *st
 
     var left = memTables.items[0..];
     while (left.len > 0) {
-        var leftArray = std.ArrayList(*Table).initBuffer(left);
-        leftArray.items.len = left.len;
-
-        const n = merger.selectTablesToMerge(&leftArray);
+        const n = merger.selectTablesToMerge(left);
         const toMerge = left[0..n];
         left = left[n..];
 
@@ -357,6 +354,7 @@ fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *st
         }
 
         // TODO: I don't need it, we already have merging from []*Table, replace it
+        // or document the reasoning
         const res = try MemTable.mergeMemTables(io, alloc, memToMerge.items, self.compressionPool, self.decompressionPool);
         memToMerge.clearRetainingCapacity();
 
@@ -597,17 +595,14 @@ fn flushMemTablesInChunks(self: *IndexRecorder, io: Io, alloc: Allocator, toFlus
     if (toFlush.items.len == 0) return;
 
     // TODO: consider running chunks merging in parallel
-    var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
-    left.items.len = toFlush.items.len;
-    while (left.items.len > 0) {
-        const n = merger.selectTablesToMerge(&left);
+    var left = toFlush.items[0..];
+    while (left.len > 0) {
+        const n = merger.selectTablesToMerge(left);
         std.debug.assert(n > 0);
 
         // pass stopped as null since we must be able to flush data to disk
-        try self.mergeTables(io, alloc, left.items[0..n], true, null);
-        const tail = left.items[n..];
-        left = std.ArrayList(*Table).initBuffer(tail);
-        left.items.len = tail.len;
+        try self.mergeTables(io, alloc, left[0..n], true, null);
+        left = left[n..];
     }
 }
 
@@ -619,23 +614,19 @@ fn tablesMerger(
     sem: *Io.Semaphore,
 ) anyerror!void {
     var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
-    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
 
     while (!self.stopped.isStopped()) {
-        defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
-        // filteredTablesToMerge is a slice of the stack-backed tablesToMerge buffer.
         const window = merger.filterTablesToMerge(
             tables.items,
-            &tablesToMerge,
+            &tablesToMergeBuf,
             maxDiskTableSize,
         );
         self.mxTables.unlock(io);
 
-        const w = window orelse return;
-        const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
+        const filteredTablesToMerge = window orelse return;
         if (filteredTablesToMerge.len == 0) return;
 
         // TODO: make sure error.Stopped is handled on the upper level

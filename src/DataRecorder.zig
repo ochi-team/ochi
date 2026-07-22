@@ -466,19 +466,15 @@ fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool
 fn flushMemTablesInChunks(self: *DataRecorder, io: Io, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
     if (toFlush.items.len == 0) return;
 
-    var left = std.ArrayList(*Table).initBuffer(toFlush.items[0..]);
-    left.items.len = toFlush.items.len;
-
-    while (left.items.len > 0) {
-        const n = merger.selectTablesToMerge(&left);
+    var tail = toFlush.items[0..];
+    while (tail.len > 0) {
+        const n = merger.selectTablesToMerge(tail);
         std.debug.assert(n > 0);
 
         // TODO: attempt to run it in parallel, add a semaphore then
-        try self.mergeTables(io, alloc, left.items[0..n], true, null);
+        try self.mergeTables(io, alloc, tail[0..n], true, null);
 
-        const tail = left.items[n..];
-        left = std.ArrayList(*Table).initBuffer(tail);
-        left.items.len = tail.len;
+        tail = tail[n..];
     }
 }
 
@@ -608,23 +604,19 @@ fn tablesMerger(
     sem: *Io.Semaphore,
 ) !void {
     var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
-    var tablesToMerge = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
 
     while (!self.stopped.isStopped()) {
-        defer tablesToMerge.clearRetainingCapacity();
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
 
         self.mxTables.lockUncancelable(io);
-        // filteredTablesToMerge is a slice of the stack-backed tablesToMerge buffer.
         const window = merger.filterTablesToMerge(
             tables.items,
-            &tablesToMerge,
+            &tablesToMergeBuf,
             maxDiskTableSize,
         );
         self.mxTables.unlock(io);
 
-        const w = window orelse return;
-        const filteredTablesToMerge = tablesToMerge.items[w.lower..w.upper];
+        const filteredTablesToMerge = window orelse return;
         if (filteredTablesToMerge.len == 0) return;
 
         sem.waitUncancelable(io);
