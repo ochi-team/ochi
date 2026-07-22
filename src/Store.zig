@@ -75,9 +75,6 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const file = try createLockFile(io, runtime.path);
     errdefer file.close(io);
 
-    var streamCache = try Cache(void).init(alloc, .{ .meter = .{ .name = "stream" } });
-    errdefer streamCache.deinit();
-
     var partitions = try std.ArrayList(*Partition).initCapacity(alloc, retentionDays);
     errdefer {
         for (partitions.items) |partition| {
@@ -85,6 +82,9 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         }
         partitions.deinit(alloc);
     }
+
+    var streamCache = try Cache(void).init(alloc, .{ .meter = .{ .name = "stream" } });
+    errdefer streamCache.deinit();
 
     const memBlocksCache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "mem_blocks" } });
     errdefer memBlocksCache.deinit();

@@ -30,6 +30,10 @@ fn metrics(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     const w = res.writer();
     try ctx.dispatchMeter.write(w);
     try ctx.storeMeter.write(w);
+    try ctx.store.streamCache.hitRate.write(w);
+    try ctx.store.streamCache.missRate.write(w);
+    try ctx.store.memBlocksCache.hitRate.write(w);
+    try ctx.store.memBlocksCache.missRate.write(w);
 }
 
 fn registerSigtermHandler() void {

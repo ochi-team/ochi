@@ -16,6 +16,7 @@ pub const MeterOpt = struct {
 };
 
 const HitRateMeter = m.Counter(u32);
+const MissRateMeter = m.Counter(u32);
 
 // TODO: make it support comptime meter misses/total
 // TODO: redesign the cache, it feels Node is too large to hold especially for small key
@@ -74,6 +75,7 @@ pub fn Cache(comptime V: type) type {
         shadowTail: ?*Node = null,
 
         hitRate: HitRateMeter,
+        missRate: MissRateMeter,
 
         pub const GetOrElseRes = struct {
             value: V,
@@ -94,7 +96,8 @@ pub fn Cache(comptime V: type) type {
             c.* = .{
                 .map = map,
                 .alloc = alloc,
-                .hitRate = .init(opts.meter.name, .{ .help = "cache hit rate" }, .{}),
+                .hitRate = .init(opts.meter.name ++ "_cache_hit_rate", .{ .help = "cache hit rate" }, .{}),
+                .missRate = .init(opts.meter.name ++ "_cache_miss_rate", .{ .help = "cache miss rate" }, .{}),
             };
             return c;
         }
@@ -156,6 +159,7 @@ pub fn Cache(comptime V: type) type {
             if (self.map.get(key)) |node| {
                 self.promote(node);
                 node.retain();
+                self.hitRate.incr();
                 return .{
                     .pinned = .{ .node = node, .alloc = self.alloc },
                     .elseHit = false,
@@ -183,6 +187,7 @@ pub fn Cache(comptime V: type) type {
             self.prependActive(node);
 
             node.retain();
+            self.missRate.incr();
             return .{
                 .pinned = .{ .node = node, .alloc = self.alloc },
                 .elseHit = true,
@@ -195,8 +200,10 @@ pub fn Cache(comptime V: type) type {
 
             if (self.map.get(key)) |node| {
                 self.promote(node);
+                self.hitRate.incr();
                 return true;
             }
+            self.missRate.incr();
             return false;
         }
 
@@ -206,8 +213,10 @@ pub fn Cache(comptime V: type) type {
 
             if (self.map.get(key)) |node| {
                 self.promote(node);
+                self.hitRate.incr();
                 return node.value;
             }
+            self.missRate.incr();
             return null;
         }
 
