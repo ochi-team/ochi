@@ -157,21 +157,25 @@ pub const DataShard = struct {
                 .timestampNs = line.timestampNs,
                 .fields = fieldsCopy,
             });
-        }
 
-        if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(sid)) {
-            shard.checkpoints[shard.checkpointsLen] = .{
-                .sid = sid,
-                .i = @intCast(shard.lines.items.len),
-            };
-            shard.checkpointsLen += 1;
-        } else {
-            shard.checkpoints[shard.checkpointsLen - 1].i = @intCast(shard.lines.items.len);
+            // update the checkpoint after every line so a partial append (e.g. interrupted
+            // by an OOM from the fixed buffer) still leaves it consistent with shard.lines
+            if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(sid)) {
+                shard.checkpoints[shard.checkpointsLen] = .{
+                    .sid = sid,
+                    .i = @intCast(shard.lines.items.len),
+                };
+                shard.checkpointsLen += 1;
+            } else {
+                shard.checkpoints[shard.checkpointsLen - 1].i = @intCast(shard.lines.items.len);
+            }
         }
     }
 
     fn mustFlush(self: *const DataShard) bool {
-        return self.buffer.end_index >= flushSizeThreshold or self.checkpointsLen == maxCheckpoints;
+        return self.buffer.end_index >= flushSizeThreshold or
+            self.checkpointsLen == maxCheckpoints or
+            self.lines.items.len >= maxLines;
     }
 
     // flush sends all the data to a mem Table,
@@ -752,12 +756,17 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
     shard.mx.lockUncancelable(io);
     defer shard.mx.unlock(io);
 
+    const start = shard.lines.items.len;
     shard.appendLines(alloc, lines, sid) catch |err| {
         switch (err) {
             Allocator.Error.OutOfMemory => {
                 Logger.log(.warn, "processor: buffer overflow, decrease flush threashold", .{});
+                const offset = shard.lines.items.len - start;
                 try self.flushShard(io, alloc, shard, false);
-                try shard.appendLines(alloc, lines, sid);
+                shard.appendLines(alloc, lines[offset..], sid) catch |e| {
+                    Logger.log(.err, "processor: buffer doesn't fit input lines", .{ .err = e });
+                    return e;
+                };
             },
         }
     };
@@ -1220,6 +1229,44 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
 
         try recorder.flushForce(io, alloc);
     }
+}
+
+test "DataRecorder.addLines does not crash when a shard exceeds Block.maxLines" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
+
+    // all lines share the same sid and fields, so appendLines reuses the buffered
+    // key/value pointers and the shard's byte-size flush threshold is never hit,
+    // letting the checkpoint grow well past Block.maxLines before it's flushed.
+    const lineCount = maxLines + 500;
+    var lines: [maxLines + 500]Line = undefined;
+    for (0..lineCount) |i| {
+        lines[i] = stableLine(i + 1, 0);
+    }
+    try recorder.addLines(io, alloc, lines[0..], stableSID(1));
+
+    try recorder.flushForce(io, alloc);
+
+    try testing.expectEqual(0, recorder.memTables.items.len);
+    try testing.expectEqual(lineCount, countDiskLinesInRecorder(recorder));
 }
 
 test "DataShard.flush limits block columns per tenant" {
