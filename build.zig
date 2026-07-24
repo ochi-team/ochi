@@ -60,6 +60,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const xev = b.dependency("xev", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // C dependencies
     const zstd_dependency = b.dependency("zstd", .{
@@ -108,6 +112,7 @@ pub fn build(b: *std.Build) void {
         std.Build.Module.Import{ .name = "tracy_impl", .module = tracy.module(tracyImpl) },
         std.Build.Module.Import{ .name = "c", .module = cModule },
         std.Build.Module.Import{ .name = "encoding", .module = encodeModule },
+        std.Build.Module.Import{ .name = "xev", .module = xev.module("xev") },
     };
 
     const exe = b.addExecutable(.{

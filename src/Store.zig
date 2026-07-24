@@ -21,6 +21,8 @@ const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const lineLatestFirst = @import("store/lines.zig").lineLatestFirst;
 const Query = @import("query/Query.zig");
 
+const TimerLoop = @import("stds/xev/TimerLoop.zig");
+
 const Partition = @import("Partition.zig");
 const MemBlock = @import("store/index/MemBlock.zig");
 const filenames = @import("filenames.zig");
@@ -53,7 +55,8 @@ lookupPool: *LookupPool,
 
 meter: StoreMeter,
 
-g: Io.Group = .init,
+timerLoop: *TimerLoop,
+tickCtx: TickCtx = undefined,
 stopped: Stop = .{},
 
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
@@ -65,6 +68,15 @@ conf: *const Conf,
 
 // 30 is a default retention
 const retentionDays = 30;
+
+const diskUsageSampleIntervalNs = 20 * std.time.ns_per_s;
+const cacheCleanIntervalNs = 5 * std.time.ns_per_s;
+
+const TickCtx = struct {
+    store: *Store,
+    io: Io,
+    alloc: Allocator,
+};
 
 // TODO: start partitions retention watcher
 pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layout: Layout) !Store {
@@ -104,6 +116,9 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     var meter = try StoreMeter.init(io, alloc);
     errdefer meter.deinit();
 
+    const timerLoop = try TimerLoop.init(alloc);
+    errdefer timerLoop.deinit();
+
     var store: Store = .{
         .lockFile = file,
         .partitions = partitions,
@@ -116,6 +131,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .meter = meter,
         .runtime = runtime,
         .conf = conf,
+        .timerLoop = timerLoop,
     };
 
     // TODO: try making it parallel, it speed up start up time
@@ -148,16 +164,18 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
 pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
     errdefer self.stopped.stop(io);
 
-    try self.startDiskUsageSampler(io, alloc);
-    try self.startCacheEvicter(io);
+    self.tickCtx = .{ .store = self, .io = io, .alloc = alloc };
+
+    try self.timerLoop.addTimer(diskUsageSampleIntervalNs, &self.tickCtx, diskUsageSamplerTick);
+    try self.timerLoop.addTimer(cacheCleanIntervalNs, &self.tickCtx, cacheEvicterTick);
+    try self.timerLoop.start();
 }
 
 pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     self.stopped.stop(io);
-    self.g.await(io) catch |err| switch (err) {
-        error.Canceled => {},
-    };
-    self.g.cancel(io);
+    self.timerLoop.stop();
+    self.timerLoop.join();
+    self.timerLoop.deinit();
 
     for (self.partitions.items) |partition| {
         partition.release(io);
@@ -190,38 +208,15 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 // TODO: handle partitions eviction due to max usage config
 // TODO: find a way to move the meter to an infra level,
 // and make this meter watching max usage to guard the store to run out of space
-fn startDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) !void {
-    if (self.stopped.isStopped()) return;
-
-    errdefer self.g.cancel(io);
-    try self.g.concurrent(io, runDiskUsageSampler, .{ self, io, alloc });
+fn diskUsageSamplerTick(ctx: *anyopaque) void {
+    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
+    tickCtx.store.writeStoreMeter(tickCtx.io, tickCtx.alloc);
 }
 
-fn runDiskUsageSampler(self: *Store, io: Io, alloc: Allocator) void {
-    const sampleIntervalNs = 20 * std.time.ns_per_s;
-
-    while (!self.stopped.isStopped()) {
-        self.writeStoreMeter(io, alloc);
-        self.stopped.sleepOrStop(io, sampleIntervalNs);
-    }
-}
-
-fn startCacheEvicter(self: *Store, io: Io) !void {
-    if (self.stopped.isStopped()) return;
-
-    errdefer self.g.cancel(io);
-    try self.g.concurrent(io, runCacheEvicter, .{ self, io });
-}
-
-fn runCacheEvicter(self: *Store, io: Io) void {
-    const cleanIntervalNs = 5 * std.time.ns_per_s;
-
-    while (!self.stopped.isStopped()) {
-        self.stopped.sleepOrStop(io, cleanIntervalNs);
-
-        self.streamCache.clean(io);
-        self.memBlocksCache.clean(io);
-    }
+fn cacheEvicterTick(ctx: *anyopaque) void {
+    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
+    tickCtx.store.streamCache.clean(tickCtx.io);
+    tickCtx.store.memBlocksCache.clean(tickCtx.io);
 }
 
 fn writeStoreMeter(self: *Store, io: Io, alloc: Allocator) void {
@@ -1070,4 +1065,33 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);
+}
+
+test "Store.start spawns libxev-backed workers and deinit shuts them down cleanly" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    var partitionsRootBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var partitionsRootWriter = std.Io.Writer.fixed(&partitionsRootBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, filenames.partitions }).format(&partitionsRootWriter);
+    const partitionsRoot = partitionsRootWriter.buffered();
+    try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
+
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
+
+    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const layout = try Layout.make(io, rootPath, &partitionsPathBuf);
+    var store = try Store.init(io, alloc, &conf, runtime, layout);
+    defer store.deinit(io, alloc);
+
+    try store.start(io, alloc);
+
+    try std.Io.sleep(io, .fromMilliseconds(20), .real);
 }
