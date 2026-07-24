@@ -93,6 +93,8 @@ pub const DataShard = struct {
     fn reset(self: *DataShard) void {
         self.lines.clearRetainingCapacity();
         self.buffer.reset();
+        self.checkpointsLen = 0;
+        self.flushAtUs = null;
     }
     fn deinit(self: *DataShard, alloc: Allocator) void {
         self.lines.deinit(alloc);
@@ -559,11 +561,12 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, 
                                 memTable.release(io);
                             },
                         }
+
+                        // second timeout, we flushed the table to the disk, early return
+                        return;
                     };
                 },
             }
-
-            return;
         };
 
         {
@@ -575,9 +578,6 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, 
 
             try self.memTables.append(alloc, memTable);
         }
-
-        shard.flushAtUs = null;
-        shard.checkpointsLen = 0;
 
         try self.startMemTablesMerge(io, alloc);
     }
@@ -1501,6 +1501,65 @@ test "flushShard overflows memTables past maxMemTables when the semaphore wait t
     try recorder.flushShard(io, alloc, &recorder.shards[0], false);
 
     // deinit test data
+    for (recorder.memTables.items) |t| t.inMerge = false;
+    try recorder.flushForce(io, alloc);
+}
+
+test "flushShard resets checkpointsLen on semaphore timeout so the next appendLines doesn't overflow" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
+
+    // fill memTables to its cap with tables still "in merge" (simulating a slow concurrent
+    // merger), so flushShard forced flush can't reclaim a slot and both semaphore waits time out
+    for (0..maxMemTables) |i| {
+        var lines = [_]Line{stableLine(@intCast(i + 1), i)};
+        const table = try createMemTableFromLines(io, alloc, timestampsEncoders, recorder.compressionPool, stableSID(1), lines[0..]);
+        table.inMerge = true;
+        try recorder.memTables.append(alloc, table);
+    }
+    recorder.memTablesSem.permits = 0;
+
+    // fill the shard checkpoints up to one below the limit with distinct sids, matching what
+    // DataRecorder.addLines' round-robin shard assignment can produce under concurrency
+    const shard = &recorder.shards[0];
+    for (0..DataShard.maxCheckpoints - 1) |i| {
+        var lines = [_]Line{stableLine(@intCast(i + 1), i)};
+        try shard.appendLines(alloc, lines[0..], stableSID(@intCast(i + 2)));
+    }
+    try testing.expectEqual(DataShard.maxCheckpoints - 1, shard.checkpointsLen);
+
+    var extraLine = [_]Line{stableLine(1000, 0)};
+    try shard.appendLines(alloc, extraLine[0..], stableSID(1000));
+    try testing.expectEqual(DataShard.maxCheckpoints, shard.checkpointsLen);
+
+    // both semaphore waits time out
+    // which must reset checkpointsLen
+    // along with lines/buffer.
+    try recorder.flushShard(io, alloc, shard, false);
+    try testing.expectEqual(0, shard.checkpointsLen);
+
+    // validate bound check, shard buffer must reset after flush
+    var nextLine = [_]Line{stableLine(2000, 0)};
+    try shard.appendLines(alloc, nextLine[0..], stableSID(2000));
+
     for (recorder.memTables.items) |t| t.inMerge = false;
     try recorder.flushForce(io, alloc);
 }
