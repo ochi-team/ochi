@@ -32,8 +32,8 @@ const Logger = @import("logging");
 
 const Stop = @import("stds/Stop.zig");
 
-const flush = @import("store/table/flush.zig");
 const merge = @import("store/table/merge.zig");
+const TableKind = merge.TableKind;
 const cap = @import("store/table/cap.zig");
 const swap = @import("store/table/swap.zig");
 
@@ -531,31 +531,48 @@ pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, force: bool) !void {
     const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
-        while (true) {
-            timedWait(&self.memTablesSem, io, std.time.ns_per_s / 10) catch |err| {
-                switch (err) {
-                    error.Timeout => {
-                        if (self.stopped.isStopped()) {
-                            // if force we don't care about semaphore, just need to flush it
-                            if (force) {
-                                try self.flushMemTables(io, alloc, true);
-                                continue;
-                            }
-                            return error.Stopped;
+        timedWait(&self.memTablesSem, io, std.time.ns_per_s / 10) catch |err| {
+            errdefer memTable.release(io);
+
+            switch (err) {
+                error.Timeout => {
+                    if (self.stopped.isStopped() and !force) {
+                        return error.Stopped;
+                    }
+
+                    try self.flushMemTables(io, alloc, true);
+
+                    // if the first sem wait couldn't free the space it times out
+                    // and must flush to disk as is,
+                    timedWait(&self.memTablesSem, io, std.time.ns_per_s * 1) catch |e| {
+                        switch (e) {
+                            error.Timeout => {
+                                Logger.log(.warn, "mem table buffer is full, flush mem table", .{});
+
+                                const destinationTablePath = try self.diskTablePath(alloc, .disk);
+                                errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
+
+                                // pass empty list tables because we have nothing to merge/replace,
+                                // it must only flush to disk a passed mem table and not remove existing tables,
+                                // but perform semaphore
+                                try self.flushMemTable(io, alloc, memTable.inner.mem, &[_]*Table{}, destinationTablePath, .disk);
+                                memTable.release(io);
+                            },
                         }
+                    };
+                },
+            }
 
-                        try self.flushMemTables(io, alloc, true);
-                    },
-                }
-            };
-
-            break;
-        }
+            return;
+        };
 
         {
             self.mxTables.lockUncancelable(io);
             defer self.mxTables.unlock(io);
+
             errdefer self.memTablesSem.post(io);
+            errdefer memTable.release(io);
+
             try self.memTables.append(alloc, memTable);
         }
 
@@ -656,30 +673,12 @@ fn mergeTables(
     const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(self.runtime.cacheSize);
     const tableKind = merger.getDestinationTableKind(tables, force, maxInmemoryTableSize);
 
-    const destinationTablePath: []u8 =
-        if (tableKind == .disk) blk: {
-            // 1 for / and 16 for 16 bytes of idx representation,
-            // we can't bitcast it to [8]u8 because we need human readlable file names
-            const mergeIdx = self.nextMergeIdx();
-
-            const path = try alloc.alloc(u8, self.path.len + 1 + 16);
-            errdefer alloc.free(path);
-
-            _ = try std.fmt.bufPrint(path, "{s}/{X:0>16}", .{ self.path, mergeIdx });
-
-            break :blk path;
-        } else "";
-    errdefer if (destinationTablePath.len > 0)
-        alloc.free(destinationTablePath);
+    const destinationTablePath = try self.diskTablePath(alloc, tableKind);
+    errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
 
     if (force and tables.len == 1 and tables[0].inner == .mem) {
         const table = tables[0].inner.mem;
-        try table.storeToDisk(io, alloc, destinationTablePath);
-
-        const newTable = try openCreatedTable(io, alloc, destinationTablePath, tables, null, self.decompressionPool);
-        errdefer newTable.release(io);
-
-        try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
+        try self.flushMemTable(io, alloc, table, tables, destinationTablePath, tableKind);
         swapped = true;
         return;
     }
@@ -742,11 +741,46 @@ fn mergeTables(
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
 
-    const openTable = try openCreatedTable(io, alloc, destinationTablePath, tables, newMemTable, self.decompressionPool);
+    const openTable = try openCreatedTable(io, alloc, destinationTablePath, newMemTable, self.decompressionPool);
     errdefer openTable.release(io);
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
+}
+
+pub fn diskTablePath(self: *DataRecorder, alloc: Allocator, kind: TableKind) ![]const u8 {
+    const destinationTablePath: []u8 =
+        if (kind == .disk) blk: {
+            // 1 for / and 16 for 16 bytes of idx representation,
+            // we can't bitcast it to [8]u8 because we need human readlable file names
+            const mergeIdx = self.nextMergeIdx();
+
+            const path = try alloc.alloc(u8, self.path.len + 1 + 16);
+            errdefer alloc.free(path);
+
+            _ = try std.fmt.bufPrint(path, "{s}/{X:0>16}", .{ self.path, mergeIdx });
+
+            break :blk path;
+        } else "";
+
+    return destinationTablePath;
+}
+
+pub fn flushMemTable(
+    self: *DataRecorder,
+    io: Io,
+    alloc: Allocator,
+    memTable: *MemTable,
+    tables: []*Table,
+    destinationTablePath: []const u8,
+    tableKind: TableKind,
+) !void {
+    try memTable.storeToDisk(io, alloc, destinationTablePath);
+
+    const newTable = try openCreatedTable(io, alloc, destinationTablePath, null, self.decompressionPool);
+    errdefer newTable.release(io);
+
+    try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
 }
 
 pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID) !void {
@@ -810,12 +844,11 @@ fn openCreatedTable(
     io: Io,
     alloc: Allocator,
     tablePath: []const u8,
-    tables: []*Table,
     maybeMemTable: ?*MemTable,
     decompressionPool: *DecompressionPool,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, tables);
+        memTable.flushAtUs = Consts.dataFlushIntervalUs + Io.Timestamp.now(io, .real).toMicroseconds();
         return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 
@@ -1424,6 +1457,52 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         try testing.expectEqual(0, countMemLinesInRecorder(reopened));
         try testing.expectEqual(inserted, countDiskLinesInRecorder(reopened));
     }
+}
+
+test "flushShard overflows memTables past maxMemTables when the semaphore wait times out" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
+
+    // Fill memTables to its cap with tables that are still "in merge" (simulating a
+    // slow concurrent merger), so flushShard's forced flush can't reclaim a slot.
+    for (0..maxMemTables) |i| {
+        var lines = [_]Line{stableLine(@intCast(i + 1), i)};
+        const table = try createMemTableFromLines(io, alloc, timestampsEncoders, recorder.compressionPool, stableSID(1), lines[0..]);
+        table.inMerge = true;
+        try recorder.memTables.append(alloc, table);
+    }
+
+    // Exhaust the semaphore so flushShard's timedWait must fail with error.Timeout.
+    recorder.memTablesSem.permits = 0;
+
+    var extraLine = [_]Line{stableLine(1000, 0)};
+    try recorder.shards[0].appendLines(alloc, extraLine[0..], stableSID(2));
+
+    // since we setup max fake tables that are 'in merge', but never gonna merge,
+    // we expect the job to timeout instead of crashing due to overflowing the mem tables buffer
+    try recorder.flushShard(io, alloc, &recorder.shards[0], false);
+
+    // deinit test data
+    for (recorder.memTables.items) |t| t.inMerge = false;
+    try recorder.flushForce(io, alloc);
 }
 
 // TODO: benchmark different filesystems

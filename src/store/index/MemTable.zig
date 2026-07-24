@@ -22,9 +22,9 @@ const Table = @import("Table.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
-const MemTable = @This();
+const Consts = @import("../../Consts.zig");
 
-const flush = @import("../table/flush.zig");
+const MemTable = @This();
 
 blockHeader: BlockHeader,
 tableHeader: TableHeader,
@@ -111,7 +111,7 @@ pub fn mergeMemTables(
     const t = try empty(alloc);
     errdefer t.deinit(alloc);
 
-    const flushToDiskAtUs = flush.getFlushTablesToDiskDeadline(io, *Table, memTables);
+    const flushToDiskAtUs = Consts.indexFlushIntervalUs + Io.Timestamp.now(io, .real).toMicroseconds();
     try t.mergeIntoMemTable(io, alloc, &readers, flushToDiskAtUs, compressionPool);
     return t;
 }
