@@ -29,8 +29,10 @@ const BlockReader = @import("store/data/BlockReader.zig");
 const mergeData = @import("store/data/merge.zig").mergeData;
 const Runtime = @import("Runtime.zig");
 const Logger = @import("logging");
+const xev = @import("xev");
 
 const Stop = @import("stds/Stop.zig");
+const TimerLoop = @import("stds/xev/TimerLoop.zig");
 
 const merge = @import("store/table/merge.zig");
 const TableKind = merge.TableKind;
@@ -45,6 +47,30 @@ const maxBlockSize = Consts.maxBlockSize;
 
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
+
+const TickCtx = struct {
+    recorder: *DataRecorder,
+    io: Io,
+    alloc: Allocator,
+};
+
+const MergeTask = struct {
+    task: xev.ThreadPool.Task,
+    recorder: *DataRecorder,
+    io: Io,
+    alloc: Allocator,
+    run: *const fn (*DataRecorder, Io, Allocator) void,
+
+    fn callback(t: *xev.ThreadPool.Task) void {
+        const self: *MergeTask = @fieldParentPtr("task", t);
+        self.run(self.recorder, self.io, self.alloc);
+
+        const alloc = self.alloc;
+        const recorder = self.recorder;
+        alloc.destroy(self);
+        _ = recorder.pendingMerges.fetchSub(1, .release);
+    }
+};
 
 const maxMemTables = 16;
 comptime {
@@ -245,7 +271,13 @@ memMergeSem: Io.Semaphore,
 memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
-g: Io.Group = .init,
+timerLoop: *TimerLoop,
+tickCtx: TickCtx = undefined,
+mergePool: xev.ThreadPool,
+// number of merge tasks submitted to mergePool that haven't finished yet;
+// ponytail: busy-polled in waitForMergesToDrain, switch to a proper wait
+// primitive if shutdown latency ever matters
+pendingMerges: std.atomic.Value(usize) = .init(0),
 // TODO: migrate to io cancelation
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
@@ -296,6 +328,9 @@ pub fn init(
         tables.deinit(alloc);
     }
 
+    const timerLoop = try TimerLoop.init(alloc);
+    errdefer timerLoop.deinit();
+
     const t = try alloc.create(DataRecorder);
     errdefer alloc.destroy(t);
 
@@ -314,6 +349,8 @@ pub fn init(
         .memMergeSem = .{
             .permits = @max(4, concurrency),
         },
+        .timerLoop = timerLoop,
+        .mergePool = xev.ThreadPool.init(.{ .max_threads = concurrency }),
         .path = path,
         .runtime = runtime,
         .timestampsEncoders = timestampsEncoders,
@@ -334,8 +371,10 @@ pub fn startTasks(self: *DataRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    try self.startMemTablesFlusher(io, alloc);
-    try self.startDataShardsFlusher(io, alloc);
+    self.tickCtx = .{ .recorder = self, .io = io, .alloc = alloc };
+    try self.timerLoop.addTimer(std.time.ns_per_s, &self.tickCtx, memTablesFlusherTick);
+    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.tickCtx, dataShardsFlusherTick);
+    try self.timerLoop.start();
 }
 
 // TODO: find an approach to make it never fail,
@@ -356,11 +395,13 @@ pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     // - a job passing a stopped flag runs a task
     // - we do flush and miss the executed job
     // therefore a dirty shutdown happens and we loose the data
-    self.g.await(io) catch |err| {
-        switch (err) {
-            error.Canceled => {},
-        }
-    };
+    self.timerLoop.stop();
+    self.timerLoop.join();
+
+    // don't shut down mergePool here: flushForce below can still submit a
+    // straggler merge task (flushShard -> startMemTablesMerge), deinit()
+    // drains and shuts the pool down after that has a chance to run
+    self.waitForMergesToDrain(io);
 
     try self.flushForce(io, alloc);
 }
@@ -372,6 +413,15 @@ pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 
 pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     std.debug.assert(self.memTables.items.len == 0);
+
+    // final cleanup safety net in case stop() was never called
+    self.timerLoop.stop();
+    self.timerLoop.join();
+    self.timerLoop.deinit();
+
+    self.waitForMergesToDrain(io);
+    self.mergePool.shutdown();
+    self.mergePool.deinit();
 
     for (self.shards) |*shard| {
         shard.deinit(allocator);
@@ -386,60 +436,43 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     self.memTables.deinit(allocator);
     self.diskTables.deinit(allocator);
     allocator.free(self.shards);
-    self.g.cancel(io);
     self.* = undefined;
     allocator.destroy(self);
 }
 
-fn startMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runMemTablesFlusher, .{ self, io, alloc });
-}
-
-fn startDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runDataShardsFlusher, .{ self, io, alloc });
-}
-
-fn runMemTablesFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
-    while (!self.stopped.isStopped()) {
-        self.flushMemTables(io, alloc, false) catch |err| {
-            if (err == error.Stopped) return;
-
-            self.stopped.stop(io);
-            Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
-            return;
-        };
-
-        self.stopped.sleepOrStop(io, std.time.ns_per_s);
+fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
+    while (self.pendingMerges.load(.acquire) != 0) {
+        Io.sleep(io, .fromMilliseconds(1), .real) catch {};
     }
 }
 
-fn runDataShardsFlusher(self: *DataRecorder, io: Io, alloc: Allocator) void {
-    // half a sec
-    // TODO: test it with 1 sec
-    const flushInterval = std.time.ns_per_s / 2;
+fn memTablesFlusherTick(ctx: *anyopaque) void {
+    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
+    const self = tickCtx.recorder;
 
-    while (!self.stopped.isStopped()) {
-        self.flushDataShards(io, alloc, false) catch |err| {
-            if (err == error.Stopped) return;
+    if (self.stopped.isStopped()) return;
 
-            self.stopped.stop(io);
-            Logger.log(.err, "failed to run data shards flusher", .{ .err = err });
-            return;
-        };
-
-        self.stopped.sleepOrStop(io, flushInterval);
-    }
-
-    self.flushDataShards(io, alloc, true) catch |err| {
+    self.flushMemTables(tickCtx.io, tickCtx.alloc, false) catch |err| {
         if (err == error.Stopped) return;
 
-        self.stopped.stop(io);
-        Logger.log(.err, "failed to run force data shards flusher", .{ .err = err });
-        return;
+        self.stopped.stop(tickCtx.io);
+        Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
+    };
+}
+
+// half a sec
+// TODO: test it with 1 sec
+fn dataShardsFlusherTick(ctx: *anyopaque) void {
+    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
+    const self = tickCtx.recorder;
+
+    if (self.stopped.isStopped()) return;
+
+    self.flushDataShards(tickCtx.io, tickCtx.alloc, false) catch |err| {
+        if (err == error.Stopped) return;
+
+        self.stopped.stop(tickCtx.io);
+        Logger.log(.err, "failed to run data shards flusher", .{ .err = err });
     };
 }
 
@@ -584,19 +617,34 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, 
 }
 
 pub fn startDiskTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.isStopped()) return;
-
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runDiskTablesMerger, .{ self, io, alloc });
+    try self.submitMergeTask(io, alloc, runDiskTablesMerger);
 }
 
 pub fn startMemTablesMerge(self: *DataRecorder, io: Io, alloc: Allocator) !void {
+    try self.submitMergeTask(io, alloc, runMemTableMerger);
+}
+
+fn submitMergeTask(
+    self: *DataRecorder,
+    io: Io,
+    alloc: Allocator,
+    run: *const fn (*DataRecorder, Io, Allocator) void,
+) !void {
     if (self.stopped.isStopped()) return;
 
-    errdefer self.g.cancel(io);
+    const t = try alloc.create(MergeTask);
+    errdefer alloc.destroy(t);
 
-    try self.g.concurrent(io, runMemTableMerger, .{ self, io, alloc });
+    t.* = .{
+        .task = .{ .callback = MergeTask.callback },
+        .recorder = self,
+        .io = io,
+        .alloc = alloc,
+        .run = run,
+    };
+
+    _ = self.pendingMerges.fetchAdd(1, .monotonic);
+    self.mergePool.schedule(.from(&t.task));
 }
 
 fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
@@ -1503,6 +1551,42 @@ test "flushShard overflows memTables past maxMemTables when the semaphore wait t
     // deinit test data
     for (recorder.memTables.items) |t| t.inMerge = false;
     try recorder.flushForce(io, alloc);
+}
+
+test "DataRecorder.startTasks spawns libxev-backed workers and stop shuts them down cleanly" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    defer recorder.deinit(io, alloc);
+
+    try recorder.startTasks(io, alloc);
+
+    var lines = [_]Line{stableLine(1, 0)};
+    try recorder.addLines(io, alloc, lines[0..], stableSID(1));
+
+    // gives the TimerLoop-driven flusher a chance to run at least once
+    try std.Io.sleep(io, .fromMilliseconds(20), .real);
+
+    try recorder.stop(io, alloc);
+
+    try testing.expectEqual(0, recorder.memTables.items.len);
+    try testing.expectEqual(1, countDiskLinesInRecorder(recorder));
 }
 
 // TODO: benchmark different filesystems
