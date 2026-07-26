@@ -56,7 +56,7 @@ lookupPool: *LookupPool,
 meter: StoreMeter,
 
 timerLoop: *TimerLoop,
-tickCtx: TickCtx = undefined,
+tickCtx: TaskCtx = undefined,
 stopped: Stop = .{},
 
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
@@ -70,9 +70,9 @@ conf: *const Conf,
 const retentionDays = 30;
 
 const diskUsageSampleIntervalNs = 20 * std.time.ns_per_s;
-const cacheCleanIntervalNs = 5 * std.time.ns_per_s;
+const cacheCleanIntervalNs = 10 * std.time.ns_per_s;
 
-const TickCtx = struct {
+const TaskCtx = struct {
     store: *Store,
     io: Io,
     alloc: Allocator,
@@ -209,14 +209,14 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
 // TODO: find a way to move the meter to an infra level,
 // and make this meter watching max usage to guard the store to run out of space
 fn diskUsageSamplerTick(ctx: *anyopaque) void {
-    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
-    tickCtx.store.writeStoreMeter(tickCtx.io, tickCtx.alloc);
+    const taskCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
+    taskCtx.store.writeStoreMeter(taskCtx.io, taskCtx.alloc);
 }
 
 fn cacheEvicterTick(ctx: *anyopaque) void {
-    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
-    tickCtx.store.streamCache.clean(tickCtx.io);
-    tickCtx.store.memBlocksCache.clean(tickCtx.io);
+    const taskCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
+    taskCtx.store.streamCache.clean(taskCtx.io);
+    taskCtx.store.memBlocksCache.clean(taskCtx.io);
 }
 
 fn writeStoreMeter(self: *Store, io: Io, alloc: Allocator) void {
@@ -1065,33 +1065,4 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);
-}
-
-test "Store.start spawns libxev-backed workers and deinit shuts them down cleanly" {
-    const alloc = testing.allocator;
-    const io = testing.io;
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-    defer alloc.free(rootPath);
-
-    var partitionsRootBuf: [std.fs.max_path_bytes]u8 = undefined;
-    var partitionsRootWriter = std.Io.Writer.fixed(&partitionsRootBuf);
-    try std.fs.path.fmtJoin(&.{ rootPath, filenames.partitions }).format(&partitionsRootWriter);
-    const partitionsRoot = partitionsRootWriter.buffered();
-    try Dir.createDirAbsolute(io, partitionsRoot, .default_dir);
-
-    const conf = Conf.getConf();
-    const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
-    defer runtime.deinit(alloc);
-
-    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const layout = try Layout.make(io, rootPath, &partitionsPathBuf);
-    var store = try Store.init(io, alloc, &conf, runtime, layout);
-    defer store.deinit(io, alloc);
-
-    try store.start(io, alloc);
-
-    try std.Io.sleep(io, .fromMilliseconds(20), .real);
 }

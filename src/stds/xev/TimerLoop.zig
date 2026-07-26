@@ -44,6 +44,7 @@ wakeCompletion: xev.Completion = .{},
 thread: ?std.Thread = null,
 entries: std.ArrayList(*Entry) = .empty,
 stopping: std.atomic.Value(bool) = .init(false),
+pool: std.heap.MemoryPool(Entry),
 
 pub fn init(alloc: Allocator) !*TimerLoop {
     const self = try alloc.create(TimerLoop);
@@ -52,19 +53,25 @@ pub fn init(alloc: Allocator) !*TimerLoop {
     var loop = try xev.Loop.init(.{});
     errdefer loop.deinit();
 
-    const wake = try xev.Async.init();
+    var wake = try xev.Async.init();
+    errdefer wake.deinit();
+
+    const pool: std.heap.MemoryPool(Entry) = try .initCapacity(alloc, 16);
+    errdefer pool.deinit(alloc);
 
     self.* = .{
         .alloc = alloc,
         .loop = loop,
         .wake = wake,
+        .pool = pool,
     };
     return self;
 }
 
 pub fn deinit(self: *TimerLoop) void {
-    for (self.entries.items) |entry| self.alloc.destroy(entry);
+    for (self.entries.items) |entry| self.pool.destroy(entry);
     self.entries.deinit(self.alloc);
+    self.pool.deinit(self.alloc);
     self.wake.deinit();
     self.loop.deinit();
     self.alloc.destroy(self);
@@ -74,8 +81,8 @@ pub fn deinit(self: *TimerLoop) void {
 /// re-arming itself until the TimerLoop is stopped.
 /// must be called before start().
 pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn) !void {
-    const entry = try self.alloc.create(Entry);
-    errdefer self.alloc.destroy(entry);
+    const entry = try self.pool.create(self.alloc);
+    errdefer self.pool.destroy(entry);
 
     entry.* = .{
         .parent = self,

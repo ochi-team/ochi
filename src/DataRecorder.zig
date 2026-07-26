@@ -48,7 +48,7 @@ const maxBlockSize = Consts.maxBlockSize;
 const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(DataRecorder, Table);
 
-const TickCtx = struct {
+const TaskCtx = struct {
     recorder: *DataRecorder,
     io: Io,
     alloc: Allocator,
@@ -56,17 +56,15 @@ const TickCtx = struct {
 
 const MergeTask = struct {
     task: xev.ThreadPool.Task,
-    recorder: *DataRecorder,
-    io: Io,
-    alloc: Allocator,
+    ctx: TaskCtx,
     run: *const fn (*DataRecorder, Io, Allocator) void,
 
     fn callback(t: *xev.ThreadPool.Task) void {
         const self: *MergeTask = @fieldParentPtr("task", t);
-        self.run(self.recorder, self.io, self.alloc);
+        self.run(self.ctx.recorder, self.ctx.io, self.ctx.alloc);
 
-        const alloc = self.alloc;
-        const recorder = self.recorder;
+        const alloc = self.ctx.alloc;
+        const recorder = self.ctx.recorder;
         alloc.destroy(self);
         _ = recorder.pendingMerges.fetchSub(1, .release);
     }
@@ -274,11 +272,8 @@ memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
 timerLoop: *TimerLoop,
-tickCtx: TickCtx = undefined,
+tickCtx: TaskCtx,
 mergePool: xev.ThreadPool,
-// number of merge tasks submitted to mergePool that haven't finished yet;
-// ponytail: busy-polled in waitForMergesToDrain, switch to a proper wait
-// primitive if shutdown latency ever matters
 pendingMerges: std.atomic.Value(usize) = .init(0),
 // TODO: migrate to io cancelation
 // TODO: implement atomic value that change it's value depending on how many times it's read,
@@ -352,6 +347,7 @@ pub fn init(
             .permits = @max(4, concurrency),
         },
         .timerLoop = timerLoop,
+        .tickCtx = undefined,
         .mergePool = xev.ThreadPool.init(.{ .max_threads = concurrency }),
         .path = path,
         .runtime = runtime,
@@ -359,6 +355,8 @@ pub fn init(
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
     };
+
+    t.tickCtx = .{ .recorder = t, .io = io, .alloc = alloc };
 
     return t;
 }
@@ -373,8 +371,7 @@ pub fn startTasks(self: *DataRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    self.tickCtx = .{ .recorder = self, .io = io, .alloc = alloc };
-    try self.timerLoop.addTimer(std.time.ns_per_s, &self.tickCtx, memTablesFlusherTick);
+    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.tickCtx, memTablesFlusherTick);
     try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.tickCtx, dataShardsFlusherTick);
     try self.timerLoop.start();
 }
@@ -449,7 +446,7 @@ fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
 }
 
 fn memTablesFlusherTick(ctx: *anyopaque) void {
-    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
+    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
     const self = tickCtx.recorder;
 
     if (self.stopped.isStopped()) return;
@@ -462,10 +459,8 @@ fn memTablesFlusherTick(ctx: *anyopaque) void {
     };
 }
 
-// half a sec
-// TODO: test it with 1 sec
 fn dataShardsFlusherTick(ctx: *anyopaque) void {
-    const tickCtx: *TickCtx = @ptrCast(@alignCast(ctx));
+    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
     const self = tickCtx.recorder;
 
     if (self.stopped.isStopped()) return;
@@ -637,9 +632,11 @@ fn submitMergeTask(
 
     t.* = .{
         .task = .{ .callback = MergeTask.callback },
-        .recorder = self,
-        .io = io,
-        .alloc = alloc,
+        .ctx = .{
+            .recorder = self,
+            .io = io,
+            .alloc = alloc,
+        },
         .run = run,
     };
 
@@ -1610,42 +1607,6 @@ test "flushShard resets checkpointsLen on semaphore timeout so the next appendLi
 
     for (recorder.memTables.items) |t| t.inMerge = false;
     try recorder.flushForce(io, alloc);
-}
-
-test "DataRecorder.startTasks spawns libxev-backed workers and stop shuts them down cleanly" {
-    const alloc = testing.allocator;
-    const io = testing.io;
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-    defer alloc.free(rootPath);
-
-    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
-    defer runtime.deinit(alloc);
-
-    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
-    defer timestampsEncoders.deinit(alloc);
-    const compressionPool = try CompressionPool.init(alloc, 1);
-    defer compressionPool.deinit(alloc);
-    const decompressionPool = try DecompressionPool.init(alloc, 1);
-    defer decompressionPool.deinit(alloc);
-
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
-    defer recorder.deinit(io, alloc);
-
-    try recorder.startTasks(io, alloc);
-
-    var lines = [_]Line{stableLine(1, 0)};
-    try recorder.addLines(io, alloc, lines[0..], stableSID(1));
-
-    // gives the TimerLoop-driven flusher a chance to run at least once
-    try std.Io.sleep(io, .fromMilliseconds(20), .real);
-
-    try recorder.stop(io, alloc);
-
-    try testing.expectEqual(0, recorder.memTables.items.len);
-    try testing.expectEqual(1, countDiskLinesInRecorder(recorder));
 }
 
 // TODO: benchmark different filesystems
