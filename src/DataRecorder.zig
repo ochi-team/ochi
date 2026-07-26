@@ -52,6 +52,8 @@ const TaskCtx = struct {
     recorder: *DataRecorder,
     io: Io,
     alloc: Allocator,
+    pool: *std.heap.MemoryPool(MergeTask),
+    mx: *std.Io.Mutex,
 };
 
 const MergeTask = struct {
@@ -63,9 +65,13 @@ const MergeTask = struct {
         const self: *MergeTask = @fieldParentPtr("task", t);
         self.run(self.ctx.recorder, self.ctx.io, self.ctx.alloc);
 
-        const alloc = self.ctx.alloc;
+        const pool = self.ctx.pool;
         const recorder = self.ctx.recorder;
-        alloc.destroy(self);
+        const mx = self.ctx.mx;
+        const io = self.ctx.io;
+        mx.lockUncancelable(io);
+        pool.destroy(self);
+        mx.unlock(io);
         _ = recorder.pendingMerges.fetchSub(1, .release);
     }
 };
@@ -272,7 +278,7 @@ memTablesSem: Io.Semaphore = .{
     .permits = maxMemTables,
 },
 timerLoop: *TimerLoop,
-tickCtx: TaskCtx,
+taskCtx: TaskCtx,
 mergePool: *xev.ThreadPool,
 pendingMerges: std.atomic.Value(usize) = .init(0),
 // TODO: migrate to io cancelation
@@ -285,6 +291,9 @@ runtime: *Runtime,
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
 decompressionPool: *DecompressionPool,
+
+taskPool: *std.heap.MemoryPool(MergeTask),
+mxPool: std.Io.Mutex = .init,
 
 pub fn init(
     io: Io,
@@ -327,6 +336,11 @@ pub fn init(
         tables.deinit(alloc);
     }
 
+    const taskPool = try alloc.create(std.heap.MemoryPool(MergeTask));
+    errdefer alloc.destroy(taskPool);
+    taskPool.* = try .initCapacity(alloc, 32);
+    errdefer taskPool.deinit(alloc);
+
     const t = try alloc.create(DataRecorder);
     errdefer alloc.destroy(t);
 
@@ -346,16 +360,17 @@ pub fn init(
             .permits = @max(4, concurrency),
         },
         .timerLoop = timerLoop,
-        .tickCtx = undefined,
+        .taskCtx = undefined,
         .mergePool = mergePool,
         .path = path,
         .runtime = runtime,
         .timestampsEncoders = timestampsEncoders,
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
+        .taskPool = taskPool,
     };
 
-    t.tickCtx = .{ .recorder = t, .io = io, .alloc = alloc };
+    t.taskCtx = .{ .recorder = t, .io = io, .alloc = alloc, .mx = &t.mxPool, .pool = taskPool };
 
     return t;
 }
@@ -370,8 +385,8 @@ pub fn startTasks(self: *DataRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.tickCtx, memTablesFlusherTick);
-    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.tickCtx, dataShardsFlusherTick);
+    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.taskCtx, memTablesFlusherTick);
+    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.taskCtx, dataShardsFlusherTick);
     try self.timerLoop.start();
 }
 
@@ -407,13 +422,13 @@ pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     try self.flushMemTables(io, alloc, true);
 }
 
-pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
+pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
     std.debug.assert(self.memTables.items.len == 0);
 
     self.waitForMergesToDrain(io);
 
     for (self.shards) |*shard| {
-        shard.deinit(allocator);
+        shard.deinit(alloc);
     }
     for (self.diskTables.items) |table| {
         table.release(io);
@@ -422,11 +437,13 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
         table.release(io);
     }
 
-    self.memTables.deinit(allocator);
-    self.diskTables.deinit(allocator);
-    allocator.free(self.shards);
+    self.memTables.deinit(alloc);
+    self.diskTables.deinit(alloc);
+    alloc.free(self.shards);
+    self.taskPool.deinit(alloc);
+    alloc.destroy(self.taskPool);
     self.* = undefined;
-    allocator.destroy(self);
+    alloc.destroy(self);
 }
 
 fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
@@ -617,7 +634,10 @@ fn submitMergeTask(
 ) !void {
     if (self.stopped.isStopped()) return;
 
-    const t = try alloc.create(MergeTask);
+    self.mxPool.lockUncancelable(io);
+    defer self.mxPool.unlock(io);
+
+    const t = try self.taskPool.create(alloc);
     errdefer alloc.destroy(t);
 
     t.* = .{
@@ -626,6 +646,8 @@ fn submitMergeTask(
             .recorder = self,
             .io = io,
             .alloc = alloc,
+            .pool = self.taskPool,
+            .mx = &self.mxPool,
         },
         .run = run,
     };
