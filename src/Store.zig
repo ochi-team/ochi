@@ -97,10 +97,10 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         partitions.deinit(alloc);
     }
 
-    var streamCache = try Cache(void).init(alloc, .{ .meter = .{ .name = "stream" } });
+    var streamCache = try Cache(void).init(io, alloc, .{ .meter = .{ .name = "stream" } });
     errdefer streamCache.deinit();
 
-    const memBlocksCache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "mem_blocks" } });
+    const memBlocksCache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "mem_blocks" } });
     errdefer memBlocksCache.deinit();
 
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, runtime.cpus);
@@ -230,8 +230,8 @@ fn diskUsageSamplerTick(ctx: *anyopaque) void {
 
 fn cacheEvicterTick(ctx: *anyopaque) void {
     const taskCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
-    taskCtx.store.streamCache.clean(taskCtx.io);
-    taskCtx.store.memBlocksCache.clean(taskCtx.io);
+    taskCtx.store.streamCache.clean();
+    taskCtx.store.memBlocksCache.clean();
 }
 
 fn writeStoreMeter(self: *Store, io: Io, alloc: Allocator) void {

@@ -348,7 +348,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
         timerLoop.deinit();
     }
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
     var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
@@ -396,7 +396,7 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
         timerLoop.deinit();
     }
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
     var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
@@ -498,7 +498,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
         .{ .prefix = "zzzz", .expected = null },
     };
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
     var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
@@ -640,7 +640,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
         },
     };
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
     var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
@@ -702,7 +702,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         try recorder.diskTables.append(alloc, table);
     }
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     {
@@ -814,7 +814,7 @@ test "Lookup.deinit after scan across multiple table blocks" {
         try recorder.memTables.append(alloc, table);
     }
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
     var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
@@ -884,7 +884,7 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
         try recorder.memTables.append(alloc, table);
     }
 
-    const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
     var lookup = try Lookup.init(io, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);

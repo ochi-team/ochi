@@ -25,8 +25,8 @@ const MissRateMeter = m.Counter(u32);
 // TODO: define several comptime buckets up to cpus count to reduce lock contention
 // TODO: profile lock contention
 // TODO: make a mechanic to clean on closing a table/partition
-// TODO: memory pool is not threqd safe, if we have extensive usage of it worth implementing
-// a lock free pool
+// TODO: memory pool is not thred safe, if we have extensive usage of it worth implementing
+// a lock free pool, using lock cloe by is also not safe
 pub fn Cache(comptime V: type) type {
     return struct {
         const Self = @This();
@@ -45,14 +45,16 @@ pub fn Cache(comptime V: type) type {
                 _ = self.refCounter.fetchAdd(1, .monotonic);
             }
 
-            fn release(self: *@This(), alloc: Allocator, nodesPool: *std.heap.MemoryPool(Node)) void {
+            fn release(self: *@This(), alloc: Allocator, nodesPool: *std.heap.MemoryPool(Node), io: Io, mx: *std.Io.Mutex) void {
                 const prev = self.refCounter.fetchSub(1, .acq_rel);
                 std.debug.assert(prev > 0);
 
                 if (prev != 1) return;
 
                 if (V != void) self.value.deinit(alloc);
+                mx.lockUncancelable(io);
                 nodesPool.destroy(self);
+                mx.unlock(io);
             }
         };
 
@@ -60,9 +62,11 @@ pub fn Cache(comptime V: type) type {
             node: *Node,
             alloc: Allocator,
             pool: *std.heap.MemoryPool(Node),
+            io: Io,
+            mx: *std.Io.Mutex,
 
             pub fn release(self: *const Pinned) void {
-                self.node.release(self.alloc, self.pool);
+                self.node.release(self.alloc, self.pool, self.io, self.mx);
             }
 
             pub fn value(self: *const Pinned) V {
@@ -72,7 +76,9 @@ pub fn Cache(comptime V: type) type {
 
         map: std.StringHashMap(*Node),
         alloc: Allocator,
+        io: Io,
         nodesPool: std.heap.MemoryPool(Node),
+        poolMx: Mutex = .init,
         mx: Mutex = .init,
         activeHead: ?*Node = null,
         activeTail: ?*Node = null,
@@ -95,7 +101,7 @@ pub fn Cache(comptime V: type) type {
             value: V,
         };
 
-        pub fn init(alloc: Allocator, comptime opts: Opts) !*Self {
+        pub fn init(io: Io, alloc: Allocator, comptime opts: Opts) !*Self {
             const map = std.StringHashMap(*Node).init(alloc);
 
             var pool: std.heap.MemoryPool(Node) = try .initCapacity(alloc, 64);
@@ -105,6 +111,7 @@ pub fn Cache(comptime V: type) type {
             c.* = .{
                 .map = map,
                 .alloc = alloc,
+                .io = io,
                 .nodesPool = pool,
                 .hitRate = .init(opts.meter.name ++ "_cache_hit_rate", .{ .help = "cache hit rate" }, .{}),
                 .missRate = .init(opts.meter.name ++ "_cache_miss_rate", .{ .help = "cache miss rate" }, .{}),
@@ -117,7 +124,7 @@ pub fn Cache(comptime V: type) type {
             while (it.next()) |e| {
                 const node = e.value_ptr.*;
                 self.alloc.free(node.key);
-                node.release(self.alloc, &self.nodesPool);
+                node.release(self.alloc, &self.nodesPool, self.io, &self.poolMx);
             }
             self.map.deinit();
             self.nodesPool.deinit(self.alloc);
@@ -150,7 +157,7 @@ pub fn Cache(comptime V: type) type {
                 };
                 break :n node;
             };
-            errdefer node.release(self.alloc);
+            errdefer node.release(self.alloc, self.nodesPool, self.io, &self.poolMx);
 
             gop.value_ptr.* = node;
             self.prependActive(node);
@@ -172,7 +179,7 @@ pub fn Cache(comptime V: type) type {
                 node.retain();
                 self.hitRate.incr();
                 return .{
-                    .pinned = .{ .node = node, .alloc = self.alloc, .pool = &self.nodesPool },
+                    .pinned = .{ .node = node, .alloc = self.alloc, .pool = &self.nodesPool, .io = io, .mx = &self.poolMx },
                     .elseHit = false,
                 };
             }
@@ -192,7 +199,7 @@ pub fn Cache(comptime V: type) type {
                 };
                 break :n node;
             };
-            errdefer node.release(self.alloc, &self.nodesPool);
+            errdefer node.release(self.alloc, &self.nodesPool, self.io, &self.poolMx);
 
             try self.map.put(k, node);
             self.prependActive(node);
@@ -200,7 +207,7 @@ pub fn Cache(comptime V: type) type {
             node.retain();
             self.missRate.incr();
             return .{
-                .pinned = .{ .node = node, .alloc = self.alloc, .pool = &self.nodesPool },
+                .pinned = .{ .node = node, .alloc = self.alloc, .pool = &self.nodesPool, .io = io, .mx = &self.poolMx },
                 .elseHit = true,
             };
         }
@@ -231,9 +238,9 @@ pub fn Cache(comptime V: type) type {
             return null;
         }
 
-        pub fn clean(self: *Self, io: Io) void {
-            self.mx.lockUncancelable(io);
-            defer self.mx.unlock(io);
+        pub fn clean(self: *Self) void {
+            self.mx.lockUncancelable(self.io);
+            defer self.mx.unlock(self.io);
 
             while (self.shadowTail) |node| {
                 self.evictNode(node);
@@ -254,7 +261,7 @@ pub fn Cache(comptime V: type) type {
             self.unlink(node);
             _ = self.map.remove(node.key);
             self.alloc.free(node.key);
-            node.release(self.alloc, &self.nodesPool);
+            node.release(self.alloc, &self.nodesPool, self.io, &self.poolMx);
         }
 
         fn promote(self: *Self, node: *Node) void {
@@ -325,7 +332,7 @@ test "StreamCache handles concurrent set and contains" {
         }
     };
 
-    const cache = try Cache(void).init(testing.allocator, .{ .meter = .{ .name = "" } });
+    const cache = try Cache(void).init(testing.io, testing.allocator, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     var threads: [4]Thread = undefined;
@@ -358,7 +365,7 @@ test "Cache.set keeps first non-void value on duplicate insert" {
     const io = testing.io;
 
     const ValueCache = Cache(*Value);
-    const cache = try ValueCache.init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try ValueCache.init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     const first = try Value.init(alloc, 1);
@@ -403,7 +410,7 @@ test "Cache.getOrElse creates non-void value only on miss" {
     const io = testing.io;
 
     const ValueCache = Cache(*Value);
-    const cache = try ValueCache.init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try ValueCache.init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     var calls: usize = 0;
@@ -458,18 +465,18 @@ test "Cache.clean evicts shadow entries and keeps recently used entries" {
     const promoters = [_]*const fn (*Cache(void)) anyerror!bool{ p1, p2, p3 };
 
     for (promoters) |promote| {
-        const cache = try Cache(void).init(alloc, .{ .meter = .{ .name = "" } });
+        const cache = try Cache(void).init(io, alloc, .{ .meter = .{ .name = "" } });
         defer cache.deinit();
 
         try cache.put(io, "a", {});
         try cache.put(io, "b", {});
 
         // moves both to shadow list
-        cache.clean(io);
+        cache.clean();
         // promotes "a"
         try testing.expect(try promote(cache));
 
-        cache.clean(io);
+        cache.clean();
         // "a" persist because it was promoted from shadow to active
         try testing.expect(cache.contains(io, "a"));
         try testing.expect(!cache.contains(io, "b"));
@@ -506,7 +513,7 @@ test "Cache pinned value survives eviction until released" {
     const io = testing.io;
 
     const ValueCache = Cache(*Value);
-    const cache = try ValueCache.init(alloc, .{ .meter = .{ .name = "" } });
+    const cache = try ValueCache.init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
 
     var deinits: usize = 0;
@@ -515,8 +522,8 @@ test "Cache pinned value survives eviction until released" {
         .deinits = &deinits,
     }, CreateCtx.run)).pinned;
 
-    cache.clean(io);
-    cache.clean(io);
+    cache.clean();
+    cache.clean();
 
     try testing.expect(!cache.contains(io, "a"));
     try testing.expectEqual(0, deinits);

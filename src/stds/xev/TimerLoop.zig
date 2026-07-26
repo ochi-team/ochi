@@ -90,6 +90,10 @@ pub fn deinit(self: *TimerLoop) void {
 /// Once started, the timer is armed on the loop thread as
 /// soon as it wakes up, so several owners can keep registering timers as they come online
 pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn) !void {
+    // here we lock pool allocator as well, no only pending entries
+    spinLock(&self.pendingMx);
+    defer self.pendingMx.unlock();
+
     const entry = try self.pool.create(self.alloc);
     errdefer self.pool.destroy(entry);
 
@@ -106,11 +110,7 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
         return;
     }
 
-    {
-        spinLock(&self.pendingMx);
-        defer self.pendingMx.unlock();
-        try self.pendingEntries.append(self.alloc, entry);
-    }
+    try self.pendingEntries.append(self.alloc, entry);
     self.wake.notify() catch |err| {
         Logger.log(.err, "TimerLoop: failed to notify wake async", .{ .err = err });
     };
