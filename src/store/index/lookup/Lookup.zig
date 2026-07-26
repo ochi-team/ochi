@@ -15,6 +15,7 @@ const LookupTable = @import("LookupTable.zig");
 const TagRecordsParser = @import("../TagRecordsParser.zig");
 const CompressionPool = @import("../../compression/CompressionPool.zig");
 const DecompressionPool = @import("../../compression/DecompressionPool.zig");
+const TimerLoop = @import("../../../stds/xev/TimerLoop.zig");
 const Logger = @import("logging");
 
 const Lookup = @This();
@@ -338,8 +339,14 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
@@ -380,8 +387,14 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
@@ -421,8 +434,14 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     const tableAItems = [_][]const u8{
         "key:aa:002",
@@ -520,8 +539,14 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     const tableAItems = [_][]const u8{
         "key:aa0000000000000002",
@@ -657,8 +682,14 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     const tableDiskItems = [_][]const u8{
         "tenant-a-stream-0001",
@@ -755,8 +786,14 @@ test "Lookup.deinit after scan across multiple table blocks" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, 2200);
     defer items.deinit(alloc);
@@ -815,8 +852,14 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);
     defer items.deinit(alloc);

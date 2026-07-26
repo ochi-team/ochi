@@ -43,6 +43,12 @@ wake: xev.Async,
 wakeCompletion: xev.Completion = .{},
 thread: ?std.Thread = null,
 entries: std.ArrayList(*Entry) = .empty,
+// entries queued by addTimer() calls made after start(); drained and armed
+// on the loop thread by wakeCallback, since xev.Loop isn't thread-safe.
+// a spinlock is fine here: the critical section is a single array append
+// and contention is rare
+pendingMx: std.atomic.Mutex = .unlocked,
+pendingEntries: std.ArrayList(*Entry) = .empty,
 stopping: std.atomic.Value(bool) = .init(false),
 pool: std.heap.MemoryPool(Entry),
 
@@ -56,7 +62,7 @@ pub fn init(alloc: Allocator) !*TimerLoop {
     var wake = try xev.Async.init();
     errdefer wake.deinit();
 
-    const pool: std.heap.MemoryPool(Entry) = try .initCapacity(alloc, 16);
+    const pool: std.heap.MemoryPool(Entry) = try .initCapacity(alloc, 32);
     errdefer pool.deinit(alloc);
 
     self.* = .{
@@ -71,6 +77,8 @@ pub fn init(alloc: Allocator) !*TimerLoop {
 pub fn deinit(self: *TimerLoop) void {
     for (self.entries.items) |entry| self.pool.destroy(entry);
     self.entries.deinit(self.alloc);
+    for (self.pendingEntries.items) |entry| self.pool.destroy(entry);
+    self.pendingEntries.deinit(self.alloc);
     self.pool.deinit(self.alloc);
     self.wake.deinit();
     self.loop.deinit();
@@ -78,8 +86,9 @@ pub fn deinit(self: *TimerLoop) void {
 }
 
 /// registers a timer that fires `tick(ctx)` every `intervalNs`,
-/// re-arming itself until the TimerLoop is stopped.
-/// must be called before start().
+/// re-arming itself until the TimerLoop is stopped. Safe to call after start().
+/// Once started, the timer is armed on the loop thread as
+/// soon as it wakes up, so several owners can keep registering timers as they come online
 pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn) !void {
     const entry = try self.pool.create(self.alloc);
     errdefer self.pool.destroy(entry);
@@ -91,7 +100,24 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
         .ctx = ctx,
         .tick = tick,
     };
-    try self.entries.append(self.alloc, entry);
+
+    if (self.thread == null) {
+        try self.entries.append(self.alloc, entry);
+        return;
+    }
+
+    {
+        spinLock(&self.pendingMx);
+        defer self.pendingMx.unlock();
+        try self.pendingEntries.append(self.alloc, entry);
+    }
+    self.wake.notify() catch |err| {
+        Logger.log(.err, "TimerLoop: failed to notify wake async", .{ .err = err });
+    };
+}
+
+fn spinLock(m: *std.atomic.Mutex) void {
+    while (!m.tryLock()) std.atomic.spinLoopHint();
 }
 
 fn wakeCallback(
@@ -107,12 +133,33 @@ fn wakeCallback(
         loop.stop();
         return .disarm;
     }
+
+    var pending: std.ArrayList(*Entry) = blk: {
+        spinLock(&self.pendingMx);
+        defer self.pendingMx.unlock();
+        const p = self.pendingEntries;
+        self.pendingEntries = .empty;
+        break :blk p;
+    };
+    defer pending.deinit(self.alloc);
+
+    for (pending.items) |entry| {
+        self.entries.append(self.alloc, entry) catch |err| {
+            Logger.log(.err, "TimerLoop: failed to register pending timer", .{ .err = err });
+            continue;
+        };
+        entry.xevTimer.run(loop, &entry.completion, entry.intervalMs, Entry, entry, Entry.callback);
+    }
+
     return .rearm;
 }
 
-/// spawns the thread driving the registered timers. addTimer must not
-/// be called after start().
+/// spawns the thread driving the registered timers. Safe to call more than
+/// once (e.g. from several recorders sharing the same loop): a no-op if
+/// already started.
 pub fn start(self: *TimerLoop) !void {
+    if (self.thread != null) return;
+
     self.wake.wait(&self.loop, &self.wakeCompletion, TimerLoop, self, wakeCallback);
     for (self.entries.items) |entry| {
         entry.xevTimer.run(&self.loop, &entry.completion, entry.intervalMs, Entry, entry, Entry.callback);
@@ -169,4 +216,38 @@ test "TimerLoop fires a repeating timer and stops cleanly" {
     loop.join();
 
     try testing.expect(counter > 0);
+}
+
+test "TimerLoop arms timers added after start, shared across multiple owners" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const loop = try TimerLoop.init(alloc);
+    defer loop.deinit();
+
+    var counterA: usize = 0;
+    var counterB: usize = 0;
+    const tick = struct {
+        fn run(ctx: *anyopaque) void {
+            const c: *usize = @ptrCast(@alignCast(ctx));
+            c.* += 1;
+        }
+    }.run;
+
+    try loop.addTimer(5 * std.time.ns_per_ms, &counterA, tick);
+    try loop.start();
+    // start() must be idempotent: recorders sharing the loop all call it
+    try loop.start();
+
+    // registered after the loop is already running, simulating a partition
+    // opened later on top of a Store-owned shared TimerLoop
+    try loop.addTimer(5 * std.time.ns_per_ms, &counterB, tick);
+
+    try std.Io.sleep(io, .fromMilliseconds(50), .real);
+
+    loop.stop();
+    loop.join();
+
+    try testing.expect(counterA > 0);
+    try testing.expect(counterB > 0);
 }

@@ -126,6 +126,7 @@ pub fn init(
     compressionPool: *CompressionPool,
     decompressionPool: *DecompressionPool,
     mergePool: *xev.ThreadPool,
+    timerLoop: *TimerLoop,
 ) !*IndexRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -152,9 +153,6 @@ pub fn init(
 
     var flushBlocksDestination = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksThresholdToFlush);
     errdefer flushBlocksDestination.deinit(alloc);
-
-    const timerLoop = try TimerLoop.init(alloc);
-    errdefer timerLoop.deinit();
 
     const t = try alloc.create(IndexRecorder);
     errdefer alloc.destroy(t);
@@ -209,8 +207,6 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // another problem it's hard to test it via checkAllAllocationFailures
 pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
-    self.timerLoop.stop();
-    self.timerLoop.join();
     self.waitForMergesToDrain(io);
 
     try self.flushForce(io, alloc);
@@ -228,11 +224,6 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // TODO: this must assert there is no data inmemory or it flushes it immediately
 // entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
-    // final cleanup safety net in case stop() was never called
-    self.timerLoop.stop();
-    self.timerLoop.join();
-    self.timerLoop.deinit();
-
     self.waitForMergesToDrain(io);
 
     std.debug.assert(self.blocksToFlush.items.len == 0);
@@ -935,8 +926,14 @@ test "flushMemEntries non-force respects flush deadline" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     var block = try MemBlock.init(alloc, .{
         .maxMemBlockSize = 64,
@@ -986,8 +983,14 @@ test "mergeTables force single mem table creates disk table" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
     try recorder.memTables.append(alloc, table);
@@ -1027,8 +1030,14 @@ test "IndexRecorder add and reopen preserves item count" {
             mergePool.deinit();
         }
 
-        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+        const timerLoop = try TimerLoop.init(alloc);
+        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
         defer recorder.deinit(io, alloc);
+        defer {
+            timerLoop.stop();
+            timerLoop.join();
+            timerLoop.deinit();
+        }
 
         for (0..inserted) |i| {
             const item = stableItems[i % stableItems.len];
@@ -1060,8 +1069,14 @@ test "IndexRecorder add and reopen preserves item count" {
             mergePool.deinit();
         }
 
-        const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+        const timerLoop = try TimerLoop.init(alloc);
+        const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
         defer reopened.deinit(io, alloc);
+        defer {
+            timerLoop.stop();
+            timerLoop.join();
+            timerLoop.deinit();
+        }
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(reopened));
@@ -1154,8 +1169,14 @@ test "IndexRecorder background flusher survives load" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     recorder.maxMemBlockSize = 256;
     try recorder.startTasks(io, alloc);
 
@@ -1208,9 +1229,15 @@ test "IndexRecorder disk table merger survives large load" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     recorder.maxMemBlockSize = 4 * 1024;
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     try recorder.startTasks(io, alloc);
 
     const minItemLen = 512;
@@ -1279,8 +1306,14 @@ test "IndexRecorder flushForce skips oversized-only input without crash" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     recorder.maxMemBlockSize = 64;
 
     const tooLarge = "x" ** 512;
@@ -1323,7 +1356,8 @@ test "IndexRecorder reads free disk space from runtime" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     var batch = [_][]const u8{stableItems[1]};
 
     try recorder.add(io, alloc, &batch);
@@ -1337,6 +1371,11 @@ test "IndexRecorder reads free disk space from runtime" {
 
     recorder.stopped.stop(io);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     recorder.waitForMergesToDrain(io);
 }
 
@@ -1367,8 +1406,14 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
     const firstShardEntries = try alloc.alloc([]const u8, Entries.maxBlocksPerShard);
@@ -1421,8 +1466,14 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     try testing.expectEqual(recorder.entries.shards.len, runtime.cpus);
 
     for (0..runtime.cpus) |_| {
@@ -1498,8 +1549,14 @@ test "IndexRecorder large entries write to 3 shards" {
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
     try recorder.add(io, alloc, testEntries);
@@ -1537,8 +1594,14 @@ test "addToMemTables overflows memTables past maxMemTables when the semaphore wa
         mergePool.deinit();
     }
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
 
     // Fill memTables to its cap with tables that are still "in merge" (simulating a
     // slow concurrent merger), so addToMemTables's forced flush can't reclaim a slot.

@@ -23,7 +23,10 @@ const MissRateMeter = m.Counter(u32);
 // as 64 bytes it's doubling the size
 // TODO: try a simple TTL cache if it consumes much less memory and gives enough miss/total ratio
 // TODO: define several comptime buckets up to cpus count to reduce lock contention
+// TODO: profile lock contention
 // TODO: make a mechanic to clean on closing a table/partition
+// TODO: memory pool is not threqd safe, if we have extensive usage of it worth implementing
+// a lock free pool
 pub fn Cache(comptime V: type) type {
     return struct {
         const Self = @This();

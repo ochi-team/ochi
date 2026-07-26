@@ -672,6 +672,7 @@ fn openPartition(
         self.compressionPool,
         self.decompressionPool,
         self.threadPool,
+        self.timerLoop,
     );
 
     self.pathsBuf.appendAssumeCapacity(path);

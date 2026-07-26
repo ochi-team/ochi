@@ -19,6 +19,7 @@ const LookupPool = @import("store/index/lookup/LookupPool.zig");
 
 const Runtime = @import("Runtime.zig");
 const xev = @import("xev");
+const TimerLoop = @import("stds/xev/TimerLoop.zig");
 const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
 const CompressionPool = @import("store/compression/CompressionPool.zig");
 const DecompressionPool = @import("store/compression/DecompressionPool.zig");
@@ -74,6 +75,7 @@ pub fn open(
     compressionPool: *CompressionPool,
     decompressionPool: *DecompressionPool,
     mergePool: *xev.ThreadPool,
+    timerLoop: *TimerLoop,
 ) !*Partition {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -103,6 +105,7 @@ pub fn open(
         compressionPool,
         decompressionPool,
         mergePool,
+        timerLoop,
     );
     errdefer indexRecorder.deinit(io, alloc);
     errdefer indexRecorder.stop(io, alloc) catch |err| {
@@ -120,6 +123,7 @@ pub fn open(
         compressionPool,
         decompressionPool,
         mergePool,
+        timerLoop,
     );
     errdefer data.deinit(io, alloc);
     errdefer data.stop(io, alloc) catch |err| {
