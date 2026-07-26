@@ -361,6 +361,14 @@ pub fn retain(self: *Table) void {
 // which created that table
 // TODO: find how we can explicitly carry an allocator
 pub fn release(self: *Table, io: Io) void {
+    // TODO: on older intel CPUs it must be more efficient, benchmark:
+    // ~ObjectPtr() {
+    //   if (1 == p->count.load(std::memory_order_acquire) ||
+    //       1 == p->count.fetch_sub(1, std::memory_order_acq_rel)) {
+    //     delete p;
+    //   }
+    // }
+    // or even better implementation: https://github.com/gcc-mirror/gcc/commit/dbf8bd3c2f2cd2d27ca4f0fe379bd9490273c6d7
     const prev = self.refCounter.fetchSub(1, .acq_rel);
     std.debug.assert(prev > 0);
 
