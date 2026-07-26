@@ -42,23 +42,24 @@ pub fn Cache(comptime V: type) type {
                 _ = self.refCounter.fetchAdd(1, .monotonic);
             }
 
-            fn release(self: *@This(), alloc: Allocator) void {
+            fn release(self: *@This(), alloc: Allocator, nodesPool: *std.heap.MemoryPool(Node)) void {
                 const prev = self.refCounter.fetchSub(1, .acq_rel);
                 std.debug.assert(prev > 0);
 
                 if (prev != 1) return;
 
                 if (V != void) self.value.deinit(alloc);
-                alloc.destroy(self);
+                nodesPool.destroy(self);
             }
         };
 
         pub const Pinned = struct {
             node: *Node,
             alloc: Allocator,
+            pool: *std.heap.MemoryPool(Node),
 
             pub fn release(self: *const Pinned) void {
-                self.node.release(self.alloc);
+                self.node.release(self.alloc, self.pool);
             }
 
             pub fn value(self: *const Pinned) V {
@@ -68,6 +69,7 @@ pub fn Cache(comptime V: type) type {
 
         map: std.StringHashMap(*Node),
         alloc: Allocator,
+        nodesPool: std.heap.MemoryPool(Node),
         mx: Mutex = .init,
         activeHead: ?*Node = null,
         activeTail: ?*Node = null,
@@ -92,10 +94,15 @@ pub fn Cache(comptime V: type) type {
 
         pub fn init(alloc: Allocator, comptime opts: Opts) !*Self {
             const map = std.StringHashMap(*Node).init(alloc);
+
+            var pool: std.heap.MemoryPool(Node) = try .initCapacity(alloc, 64);
+            errdefer pool.deinit(alloc);
+
             const c = try alloc.create(Self);
             c.* = .{
                 .map = map,
                 .alloc = alloc,
+                .nodesPool = pool,
                 .hitRate = .init(opts.meter.name ++ "_cache_hit_rate", .{ .help = "cache hit rate" }, .{}),
                 .missRate = .init(opts.meter.name ++ "_cache_miss_rate", .{ .help = "cache miss rate" }, .{}),
             };
@@ -107,9 +114,10 @@ pub fn Cache(comptime V: type) type {
             while (it.next()) |e| {
                 const node = e.value_ptr.*;
                 self.alloc.free(node.key);
-                node.release(self.alloc);
+                node.release(self.alloc, &self.nodesPool);
             }
             self.map.deinit();
+            self.nodesPool.deinit(self.alloc);
             self.alloc.destroy(self);
         }
 
@@ -131,7 +139,7 @@ pub fn Cache(comptime V: type) type {
 
             const node = n: {
                 errdefer if (V != void) value.deinit(self.alloc);
-                const node = try self.alloc.create(Node);
+                const node = try self.nodesPool.create(self.alloc);
                 node.* = .{
                     .key = k,
                     .value = value,
@@ -161,7 +169,7 @@ pub fn Cache(comptime V: type) type {
                 node.retain();
                 self.hitRate.incr();
                 return .{
-                    .pinned = .{ .node = node, .alloc = self.alloc },
+                    .pinned = .{ .node = node, .alloc = self.alloc, .pool = &self.nodesPool },
                     .elseHit = false,
                 };
             }
@@ -173,7 +181,7 @@ pub fn Cache(comptime V: type) type {
             const node = n: {
                 errdefer if (V != void) value.deinit(self.alloc);
 
-                const node = try self.alloc.create(Node);
+                const node = try self.nodesPool.create(self.alloc);
                 node.* = .{
                     .key = k,
                     .value = value,
@@ -181,7 +189,7 @@ pub fn Cache(comptime V: type) type {
                 };
                 break :n node;
             };
-            errdefer node.release(self.alloc);
+            errdefer node.release(self.alloc, &self.nodesPool);
 
             try self.map.put(k, node);
             self.prependActive(node);
@@ -189,7 +197,7 @@ pub fn Cache(comptime V: type) type {
             node.retain();
             self.missRate.incr();
             return .{
-                .pinned = .{ .node = node, .alloc = self.alloc },
+                .pinned = .{ .node = node, .alloc = self.alloc, .pool = &self.nodesPool },
                 .elseHit = true,
             };
         }
@@ -243,7 +251,7 @@ pub fn Cache(comptime V: type) type {
             self.unlink(node);
             _ = self.map.remove(node.key);
             self.alloc.free(node.key);
-            node.release(self.alloc);
+            node.release(self.alloc, &self.nodesPool);
         }
 
         fn promote(self: *Self, node: *Node) void {
