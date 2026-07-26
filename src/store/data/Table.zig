@@ -65,6 +65,7 @@ toRemove: std.atomic.Value(bool) = .init(false),
 // first time it's open on start up,
 // then readers can retain it
 // TODO: make it u16
+// TODO: define an Arc object to move all the ref counting to it's type
 refCounter: std.atomic.Value(u32),
 
 // TODO: investigate how we could make a checksum and validate it on opening a table
