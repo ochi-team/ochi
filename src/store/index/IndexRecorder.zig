@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const xev = @import("xev");
 
 const fs = @import("../../fs.zig");
 
@@ -23,6 +24,7 @@ const swap = @import("../table/swap.zig");
 
 const Conf = @import("../../Conf.zig");
 const Stop = @import("../../stds/Stop.zig");
+const TimerLoop = @import("../../stds/xev/TimerLoop.zig");
 const Runtime = @import("../../Runtime.zig");
 const Logger = @import("logging");
 const DebugIo = @import("../../stds/Io/DebugIo.zig");
@@ -44,9 +46,35 @@ const swapper = swap.Swapper(IndexRecorder, Table);
 
 const IndexRecorder = @This();
 
+const TaskCtx = struct {
+    recorder: *IndexRecorder,
+    io: Io,
+    alloc: Allocator,
+};
+
+const MergeTask = struct {
+    task: xev.ThreadPool.Task,
+    ctx: TaskCtx,
+    run: *const fn (*IndexRecorder, Io, Allocator) void,
+
+    fn callback(t: *xev.ThreadPool.Task) void {
+        const self: *MergeTask = @fieldParentPtr("task", t);
+        self.run(self.ctx.recorder, self.ctx.io, self.ctx.alloc);
+
+        const alloc = self.ctx.alloc;
+        const recorder = self.ctx.recorder;
+        alloc.destroy(self);
+        _ = recorder.pendingMerges.fetchSub(1, .release);
+    }
+};
+
 entries: *Entries,
 
+// accumulated memblocks prepared to flush
 blocksToFlush: std.ArrayList(*MemBlock),
+// reused buffer for the periodic mem block flusher
+flushBlocksDestination: std.ArrayList(*MemBlock),
+// mxBlocks lock is used to provide access to blocksToFlush and flushBlocksDestination
 mxBlocks: Io.Mutex = .init,
 // TODO: make it as atomic instead of locking to access this value,
 // we still need mutex to access blocksToFlush (mxBlocks)
@@ -65,8 +93,11 @@ concurrency: u16,
 diskMergeSem: Io.Semaphore,
 memMergeSem: Io.Semaphore,
 
-g: Io.Group = .init,
 stopped: Stop = .{},
+timerLoop: *TimerLoop,
+taskCtx: TaskCtx = undefined,
+mergePool: *xev.ThreadPool,
+pendingMerges: std.atomic.Value(usize) = .init(0),
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
 // TODO: find an optimal way to handle ingestion rate higher than merge rate
@@ -94,6 +125,7 @@ pub fn init(
     runtime: *Runtime,
     compressionPool: *CompressionPool,
     decompressionPool: *DecompressionPool,
+    mergePool: *xev.ThreadPool,
 ) !*IndexRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -118,12 +150,19 @@ pub fn init(
         tables.deinit(alloc);
     }
 
+    var flushBlocksDestination = try std.ArrayList(*MemBlock).initCapacity(alloc, blocksThresholdToFlush);
+    errdefer flushBlocksDestination.deinit(alloc);
+
+    const timerLoop = try TimerLoop.init(alloc);
+    errdefer timerLoop.deinit();
+
     const t = try alloc.create(IndexRecorder);
     errdefer alloc.destroy(t);
     t.* = .{
         .entries = entries,
         .blocksThresholdToFlush = blocksThresholdToFlush,
         .blocksToFlush = blocksToFlush,
+        .flushBlocksDestination = flushBlocksDestination,
         .maxMemBlockSize = Conf.getConf().app.maxIndexMemBlockSize,
         .diskTables = tables,
         .memTables = memTables,
@@ -132,6 +171,8 @@ pub fn init(
         .runtime = runtime,
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
+        .timerLoop = timerLoop,
+        .mergePool = mergePool,
         .concurrency = concurrency,
         .diskMergeSem = .{
             .permits = @max(4, concurrency),
@@ -140,6 +181,7 @@ pub fn init(
             .permits = @max(4, concurrency),
         },
     };
+    t.taskCtx = .{ .recorder = t, .io = io, .alloc = alloc };
 
     return t;
 }
@@ -157,9 +199,9 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    try self.startMemTablesFlusher(io, alloc);
-    try self.startMemBlockFlusher(io, alloc);
-    // try self.startCacheKeyInvalidator(io);
+    try self.timerLoop.addTimer(std.time.ns_per_s, &self.taskCtx, memTablesFlusherTick);
+    try self.timerLoop.addTimer(std.time.ns_per_s, &self.taskCtx, memBlockFlusherTick);
+    try self.timerLoop.start();
 }
 
 // TODO: find an approach to make it never fail,
@@ -167,12 +209,9 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // another problem it's hard to test it via checkAllAllocationFailures
 pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
-    // we ignore canceled erorr, we stop anyway
-    self.g.await(io) catch |err| {
-        switch (err) {
-            error.Canceled => {},
-        }
-    };
+    self.timerLoop.stop();
+    self.timerLoop.join();
+    self.waitForMergesToDrain(io);
 
     try self.flushForce(io, alloc);
 }
@@ -189,6 +228,13 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // TODO: this must assert there is no data inmemory or it flushes it immediately
 // entires, blocks, memtables
 pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
+    // final cleanup safety net in case stop() was never called
+    self.timerLoop.stop();
+    self.timerLoop.join();
+    self.timerLoop.deinit();
+
+    self.waitForMergesToDrain(io);
+
     std.debug.assert(self.blocksToFlush.items.len == 0);
     std.debug.assert(self.memTables.items.len == 0);
 
@@ -205,6 +251,7 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
 
     self.entries.deinit(alloc);
     self.blocksToFlush.deinit(alloc);
+    self.flushBlocksDestination.deinit(alloc);
     self.diskTables.deinit(alloc);
     self.memTables.deinit(alloc);
     self.* = undefined;
@@ -451,12 +498,39 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
 // 2. runX - runs a given task that MUST be able to complete without stopped signal,
 // it has a specific error handling and stopped signal
 
-pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.isStopped()) {
-        return;
-    }
+fn submitMergeTask(
+    self: *IndexRecorder,
+    io: Io,
+    alloc: Allocator,
+    run: *const fn (*IndexRecorder, Io, Allocator) void,
+) !void {
+    if (self.stopped.isStopped()) return;
 
-    try self.g.concurrent(io, runDiskTablesMerger, .{ self, io, alloc });
+    const t = try alloc.create(MergeTask);
+    errdefer alloc.destroy(t);
+
+    t.* = .{
+        .task = .{ .callback = MergeTask.callback },
+        .ctx = .{
+            .recorder = self,
+            .io = io,
+            .alloc = alloc,
+        },
+        .run = run,
+    };
+
+    _ = self.pendingMerges.fetchAdd(1, .monotonic);
+    self.mergePool.schedule(.from(&t.task));
+}
+
+fn waitForMergesToDrain(self: *IndexRecorder, io: Io) void {
+    while (self.pendingMerges.load(.acquire) != 0) {
+        Io.sleep(io, .fromMilliseconds(1), .real) catch {};
+    }
+}
+
+pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+    try self.submitMergeTask(io, alloc, runDiskTablesMerger);
 }
 
 fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
@@ -468,97 +542,40 @@ fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
     };
 }
 
-fn startMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.g.cancel(io);
+fn memTablesFlusherTick(ctx: *anyopaque) void {
+    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
+    const self = tickCtx.recorder;
 
-    try self.g.concurrent(io, runMemTablesFlusher, .{ self, io, alloc });
+    if (self.stopped.isStopped()) return;
+
+    self.flushMemTables(tickCtx.io, tickCtx.alloc, false) catch |err| {
+        if (err == error.Stopped) return;
+
+        self.stopped.stop(tickCtx.io);
+        Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
+    };
 }
 
-fn runMemTablesFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
-    while (true) {
-        if (self.stopped.isStopped()) {
-            return;
-        }
+fn memBlockFlusherTick(ctx: *anyopaque) void {
+    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
+    const self = tickCtx.recorder;
 
-        self.flushMemTables(io, alloc, false) catch |err| {
-            if (err == error.Stopped) return;
+    if (self.stopped.isStopped()) return;
 
-            Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
-            self.stopped.stop(io);
-            return;
-        };
-        self.stopped.sleepOrStop(io, std.time.ns_per_s);
-    }
-}
+    self.flushMemEntries(tickCtx.io, tickCtx.alloc, &self.flushBlocksDestination, false) catch |err| {
+        if (err == error.Stopped) return;
 
-fn startMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runMemBlockFlusher, .{ self, io, alloc });
-}
-
-fn runMemBlockFlusher(self: *IndexRecorder, io: Io, alloc: Allocator) void {
-    var blocksDestination = std.ArrayList(*MemBlock).initCapacity(alloc, self.blocksThresholdToFlush) catch {
-        Logger.log(.err, "failed to start mem blocks flusher, OOM", .{});
-        self.stopped.stop(io);
+        self.stopped.stop(tickCtx.io);
+        Logger.log(.err, "unexpected error on running mem blocks flusher", .{ .err = err });
         return;
     };
-    defer blocksDestination.deinit(alloc);
-
-    while (true) {
-        if (self.stopped.isStopped()) {
-            return;
-        }
-
-        self.flushMemEntries(io, alloc, &blocksDestination, false) catch |err| {
-            if (err == error.Stopped) return;
-
-            self.stopped.stop(io);
-            Logger.log(.err, "unexpected error on running mem blocks flusher", .{ .err = err });
-            return;
-        };
-        blocksDestination.clearRetainingCapacity();
-        self.stopped.sleepOrStop(io, std.time.ns_per_s);
-    }
-}
-
-fn startCacheKeyInvalidator(self: *IndexRecorder, io: Io) !void {
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runCacheKeyInvalidator, .{ self, io });
-}
-
-fn runCacheKeyInvalidator(self: *IndexRecorder, io: Io) void {
-    var ticks: u8 = 0;
-    while (true) {
-        // invalidate every 15 secs, check stopped every 3 secs
-        self.stopped.sleepOrStop(io, 3 * std.time.ns_per_s);
-        ticks +%= 1;
-
-        if (self.stopped.isStopped()) {
-            self.invalidateStreamFilterCache();
-            return;
-        }
-
-        if (ticks < 5) {
-            continue;
-        }
-        ticks = 0;
-
-        if (self.needInvalidate.cmpxchgStrong(true, false, .acq_rel, .acquire) == null) {
-            self.invalidateStreamFilterCache();
-        }
-    }
+    self.flushBlocksDestination.clearRetainingCapacity();
 }
 
 /// it's not supposed to run at the beginning in backrgound,
 /// we run it only on demand
 pub fn startMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
-    if (self.stopped.isStopped()) return;
-
-    errdefer self.g.cancel(io);
-
-    try self.g.concurrent(io, runMemTablesMerge, .{ self, io, alloc });
+    try self.submitMergeTask(io, alloc, runMemTablesMerge);
 }
 
 fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
@@ -912,7 +929,13 @@ test "flushMemEntries non-force respects flush deadline" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     var block = try MemBlock.init(alloc, .{
@@ -957,7 +980,13 @@ test "mergeTables force single mem table creates disk table" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     const table = try createMemTableFromItems(io, alloc, &.{ "k1", "k2", "k3" });
@@ -992,7 +1021,13 @@ test "IndexRecorder add and reopen preserves item count" {
         const decompressionPool = try DecompressionPool.init(alloc, 1);
         defer decompressionPool.deinit(alloc);
 
-        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+
+        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
@@ -1019,7 +1054,13 @@ test "IndexRecorder add and reopen preserves item count" {
         const decompressionPool = try DecompressionPool.init(alloc, 1);
         defer decompressionPool.deinit(alloc);
 
-        const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+
+        const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
         defer reopened.deinit(io, alloc);
         try testing.expect(reopened.diskTables.items.len > 0);
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(reopened));
@@ -1107,7 +1148,13 @@ test "IndexRecorder background flusher survives load" {
     defer decompressionPool.deinit(alloc);
     runtime.cpus = 4;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = 256;
     try recorder.startTasks(io, alloc);
@@ -1155,7 +1202,13 @@ test "IndexRecorder disk table merger survives large load" {
     defer decompressionPool.deinit(alloc);
     runtime.cpus = 4;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     recorder.maxMemBlockSize = 4 * 1024;
     defer recorder.deinit(io, alloc);
     try recorder.startTasks(io, alloc);
@@ -1220,7 +1273,13 @@ test "IndexRecorder flushForce skips oversized-only input without crash" {
     defer decompressionPool.deinit(alloc);
     runtime.cpus = 1;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = 64;
 
@@ -1258,7 +1317,13 @@ test "IndexRecorder reads free disk space from runtime" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     var batch = [_][]const u8{stableItems[1]};
 
     try recorder.add(io, alloc, &batch);
@@ -1272,7 +1337,7 @@ test "IndexRecorder reads free disk space from runtime" {
 
     recorder.stopped.stop(io);
     defer recorder.deinit(io, alloc);
-    try recorder.g.await(io);
+    recorder.waitForMergesToDrain(io);
 }
 
 test "IndexRecorder large entries write to 3 shards sequentially" {
@@ -1296,7 +1361,13 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
     defer decompressionPool.deinit(alloc);
     runtime.cpus = 3;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
@@ -1344,7 +1415,13 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
     defer decompressionPool.deinit(alloc);
     runtime.cpus = 3;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
     try testing.expectEqual(recorder.entries.shards.len, runtime.cpus);
 
@@ -1415,7 +1492,13 @@ test "IndexRecorder large entries write to 3 shards" {
     defer decompressionPool.deinit(alloc);
     runtime.cpus = 3;
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
     recorder.maxMemBlockSize = maxIndexMemBlockSize;
 
@@ -1448,7 +1531,13 @@ test "addToMemTables overflows memTables past maxMemTables when the semaphore wa
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     // Fill memTables to its cap with tables that are still "in merge" (simulating a

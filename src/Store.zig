@@ -5,8 +5,8 @@ const Dir = Io.Dir;
 
 const zeit = @import("zeit");
 const tracy = @import("tracy");
+const xev = @import("xev");
 
-const fs = @import("fs.zig");
 const Layout = @import("Layout.zig");
 const Stop = @import("stds/Stop.zig");
 
@@ -52,6 +52,8 @@ timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
 decompressionPool: *DecompressionPool,
 lookupPool: *LookupPool,
+
+threadPool: *xev.ThreadPool,
 
 meter: StoreMeter,
 
@@ -113,6 +115,14 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const lookupPool = try LookupPool.init(alloc, runtime.cpus);
     errdefer lookupPool.deinit(io, alloc);
 
+    const threadPool = try alloc.create(xev.ThreadPool);
+    errdefer alloc.destroy(threadPool);
+    threadPool.* = .init(.{ .max_threads = runtime.cpus });
+    errdefer {
+        threadPool.shutdown();
+        threadPool.deinit();
+    }
+
     var meter = try StoreMeter.init(io, alloc);
     errdefer meter.deinit();
 
@@ -128,6 +138,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
         .lookupPool = lookupPool,
+        .threadPool = threadPool,
         .meter = meter,
         .runtime = runtime,
         .conf = conf,
@@ -171,7 +182,7 @@ pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
     try self.timerLoop.start();
 }
 
-pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
+pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
     self.stopped.stop(io);
     self.timerLoop.stop();
     self.timerLoop.join();
@@ -180,22 +191,26 @@ pub fn deinit(self: *Store, io: Io, allocator: Allocator) void {
     for (self.partitions.items) |partition| {
         partition.release(io);
     }
-    self.partitions.deinit(allocator);
+    self.partitions.deinit(alloc);
 
     for (self.pathsBuf.items) |path| {
-        allocator.free(path);
+        alloc.free(path);
     }
-    self.pathsBuf.deinit(allocator);
+    self.pathsBuf.deinit(alloc);
 
     self.streamCache.deinit();
     self.memBlocksCache.deinit();
 
     self.meter.deinit();
 
-    self.timestampsEncoders.deinit(allocator);
-    self.compressionPool.deinit(allocator);
-    self.decompressionPool.deinit(allocator);
-    self.lookupPool.deinit(io, allocator);
+    self.timestampsEncoders.deinit(alloc);
+    self.compressionPool.deinit(alloc);
+    self.decompressionPool.deinit(alloc);
+    self.lookupPool.deinit(io, alloc);
+
+    alloc.destroy(self.threadPool);
+    self.threadPool.shutdown();
+    self.threadPool.deinit();
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -656,6 +671,7 @@ fn openPartition(
         self.timestampsEncoders,
         self.compressionPool,
         self.decompressionPool,
+        self.threadPool,
     );
 
     self.pathsBuf.appendAssumeCapacity(path);

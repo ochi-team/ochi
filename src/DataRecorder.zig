@@ -273,7 +273,7 @@ memTablesSem: Io.Semaphore = .{
 },
 timerLoop: *TimerLoop,
 tickCtx: TaskCtx,
-mergePool: xev.ThreadPool,
+mergePool: *xev.ThreadPool,
 pendingMerges: std.atomic.Value(usize) = .init(0),
 // TODO: migrate to io cancelation
 // TODO: implement atomic value that change it's value depending on how many times it's read,
@@ -294,6 +294,7 @@ pub fn init(
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     compressionPool: *CompressionPool,
     decompressionPool: *DecompressionPool,
+    mergePool: *xev.ThreadPool,
 ) !*DataRecorder {
     std.debug.assert(std.fs.path.isAbsolute(path));
     std.debug.assert(path[path.len - 1] != std.fs.path.sep);
@@ -348,7 +349,7 @@ pub fn init(
         },
         .timerLoop = timerLoop,
         .tickCtx = undefined,
-        .mergePool = xev.ThreadPool.init(.{ .max_threads = concurrency }),
+        .mergePool = mergePool,
         .path = path,
         .runtime = runtime,
         .timestampsEncoders = timestampsEncoders,
@@ -419,8 +420,6 @@ pub fn deinit(self: *DataRecorder, io: Io, allocator: Allocator) void {
     self.timerLoop.deinit();
 
     self.waitForMergesToDrain(io);
-    self.mergePool.shutdown();
-    self.mergePool.deinit();
 
     for (self.shards) |*shard| {
         shard.deinit(allocator);
@@ -1241,7 +1240,13 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
         const decompressionPool = try DecompressionPool.init(alloc, 1);
         defer decompressionPool.deinit(alloc);
 
-        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
         defer recorder.deinit(io, alloc);
 
         switch (case.trigger) {
@@ -1328,7 +1333,13 @@ test "DataRecorder.addLines does not crash when a shard exceeds Block.maxLines" 
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     // all lines share the same sid and fields, so appendLines reuses the buffered
@@ -1366,7 +1377,13 @@ test "DataShard.flush limits block columns per tenant" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     // tenant 1
@@ -1426,7 +1443,13 @@ test "mergeTables force single mem table creates disk table" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     var lines = [_]Line{
@@ -1468,7 +1491,13 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         const decompressionPool = try DecompressionPool.init(alloc, 1);
         defer decompressionPool.deinit(alloc);
 
-        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
         defer recorder.deinit(io, alloc);
 
         for (0..inserted) |i| {
@@ -1495,7 +1524,13 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
         const decompressionPool = try DecompressionPool.init(alloc, 1);
         defer decompressionPool.deinit(alloc);
 
-        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+
+        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
         defer reopened.deinit(io, alloc);
 
         try testing.expect(reopened.diskTables.items.len > 0);
@@ -1523,7 +1558,13 @@ test "flushShard overflows memTables past maxMemTables when the semaphore wait t
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     // Fill memTables to its cap with tables that are still "in merge" (simulating a
@@ -1569,7 +1610,13 @@ test "flushShard resets checkpointsLen on semaphore timeout so the next appendLi
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     // fill memTables to its cap with tables still "in merge" (simulating a slow concurrent

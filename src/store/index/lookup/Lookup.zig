@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const xev = @import("xev");
 
 const Heap = @import("../../../stds/heap.zig").Heap;
 const Runtime = @import("../../../Runtime.zig");
@@ -331,7 +332,13 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
@@ -367,7 +374,13 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     const cache = try Cache(*MemBlock).init(alloc, .{ .meter = .{ .name = "" } });
@@ -402,7 +415,13 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     const tableAItems = [_][]const u8{
@@ -495,7 +514,13 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     const tableAItems = [_][]const u8{
@@ -626,7 +651,13 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     const tableDiskItems = [_][]const u8{
@@ -718,7 +749,13 @@ test "Lookup.deinit after scan across multiple table blocks" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, 2200);
@@ -772,7 +809,13 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool);
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool);
     defer recorder.deinit(io, alloc);
 
     var items = try std.ArrayList([]const u8).initCapacity(alloc, resultLimit + 1);

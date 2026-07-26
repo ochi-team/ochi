@@ -172,7 +172,8 @@ fn pipes(self: *Parser, allocator: Allocator, tokens: []const Token) ParseError!
     return .empty;
 }
 
-// TODO: ideally we make the parser not recursive and implement a linter rule to ban recursion
+// TODO: ideally we make the parser not recursive and implement a linter rule to ban recursion,
+// it limits the stack buffers which we could actively use since we know the max query size
 fn boolean(
     self: *Parser,
     allocator: Allocator,

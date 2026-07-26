@@ -1,0 +1,40 @@
+data_dir: .vector
+
+sources:
+  in:
+    type: stdin
+
+transforms:
+  parse:
+    type: remap
+    inputs: [in]
+    source: |-
+      .metadata = {}
+      .service = "ochi"
+      .ddsource = "vector"
+      .ddtags = "job:local"
+      parsed, err = parse_logfmt(.message)
+      if err == null {
+        msg, msg_err = string(parsed.msg)
+        if msg_err == null {
+          metadata = {}
+          for_each(object(parsed)) -> |key, value| {
+            if key != "msg" {
+              metadata = set!(metadata, [key], string(value) ?? encode_json(value))
+            }
+          }
+          .message = msg
+          .metadata = metadata
+        }
+      }
+
+sinks:
+  datadog:
+    type: datadog_logs
+    inputs: [parse]
+    default_api_key: "UNKNOWN"
+    site: datadoghq.eu
+    compression: gzip
+    healthcheck:
+      enabled: true
+
