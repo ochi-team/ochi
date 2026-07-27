@@ -5,7 +5,7 @@ export const options = {
   scenarios: {
     default: {
       executor: "per-vu-iterations",
-      vus: 10,
+      vus: 8,
       iterations: 2000,
     },
   },
@@ -33,7 +33,7 @@ const conf = new loki.Config({
 const client = new loki.Client(conf);
 
 export default function () {
-  const res = client.pushParameterized(60, 36 * KB, 36 * KB);
+  const res = client.pushParameterized(60, 48 * KB, 48 * KB);
 
   if (res.status !== 200) {
     console.error(`push failed status=${res.status} body=${res.body}`);

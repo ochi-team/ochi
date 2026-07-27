@@ -47,7 +47,7 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
 
     // TODO: it's too early to pass page allocator,
     // we might be able to use arena a bit more
-    process(ctx.io, res.arena, ctx.allocator, ctx, uncompressed, params) catch
+    process(ctx.io, res.arena, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
 
     res.status = 200;
@@ -62,15 +62,14 @@ pub fn ingestLokiReady(_: *AppContext, _: *httpz.Request, res: *httpz.Response) 
 /// docs for more info: https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs
 fn process(
     io: Io,
-    parseAlloc: std.mem.Allocator,
-    ingestAlloc: std.mem.Allocator,
+    requestArena: std.mem.Allocator,
     ctx: *AppContext,
     data: []const u8,
     params: Params,
 ) !void {
     // TODO: implement a zero allocation parsing, we copy the data in the end anyway
 
-    const root = try std.json.parseFromSliceLeaky(std.json.Value, parseAlloc, data, .{
+    const root = try std.json.parseFromSliceLeaky(std.json.Value, requestArena, data, .{
         .allocate = .alloc_if_needed,
     });
 
@@ -80,10 +79,10 @@ fn process(
 
     // pre allocate labels list
     var tags: std.ArrayList(Field) = .empty;
-    defer tags.deinit(parseAlloc);
+    defer tags.deinit(requestArena);
 
-    var processor = try Processor.init(ctx.allocator, ctx.store);
-    defer processor.deinit(ingestAlloc);
+    var processor = try Processor.init(requestArena, ctx.store);
+    defer processor.deinit(requestArena);
 
     // Iterate through each stream
     for (streams.array.items) |stream| {
@@ -106,7 +105,7 @@ fn process(
                 }
             }
             if (labelSize > defaultMaxFieldsPerLine) return error.MaxFieldsPerLineExceeded;
-            try tags.ensureTotalCapacity(parseAlloc, labelSize);
+            try tags.ensureTotalCapacity(requestArena, labelSize);
         }
 
         if (stream.object.get("stream")) |streamObj| {
@@ -116,14 +115,14 @@ fn process(
                     .string => |s| s,
                     else => return error.LabelValueNotString,
                 };
-                try tags.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = valueStr });
+                try tags.append(requestArena, .{ .key = entry.key_ptr.*, .value = valueStr });
             }
         }
 
         const tagsLen = tags.items.len;
         const streamTags = tags.items[0..tagsLen];
 
-        try processor.reinit(ingestAlloc, streamTags, params.tenantID);
+        try processor.reinit(requestArena, streamTags, params.tenantID);
 
         // Parse "values" array
         const values = stream.object.get("values") orelse return error.MissingValues;
@@ -154,7 +153,7 @@ fn process(
                         .string => |s| s,
                         else => return error.MetadataValueNotString,
                     };
-                    try tags.append(parseAlloc, .{ .key = entry.key_ptr.*, .value = value_str });
+                    try tags.append(requestArena, .{ .key = entry.key_ptr.*, .value = value_str });
                 }
             }
 
@@ -167,15 +166,15 @@ fn process(
             // it requires 2 more options: parseJsonMsg and msgField,
             // first defines whether the parins is required,
             // second is optional and defines what field in the given json is read as a `msgKey` field
-            try tags.append(parseAlloc, .{ .key = "", .value = msg });
+            try tags.append(requestArena, .{ .key = "", .value = msg });
 
-            try processor.tryAppendLine(io, ingestAlloc, tsNs, tags.items);
+            try processor.tryAppendLine(io, requestArena, tsNs, tags.items);
 
             // clean value labels, but retain stream labels
             tags.items.len = tagsLen;
         }
 
-        try processor.flush(io, ingestAlloc);
+        try processor.flush(io, ctx.allocator);
 
         // clean len of the labels len, but retain allocated memory
         tags.clearRetainingCapacity();
@@ -209,5 +208,5 @@ test "process does not panic when values has three lines" {
         \\["1778922991218871002","line-3"]]}]}
     ;
 
-    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), testing.allocator, &ctx, body, .{ .tenantID = ctx.tenantID }));
+    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }));
 }
