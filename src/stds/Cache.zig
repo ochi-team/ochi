@@ -45,7 +45,13 @@ pub fn Cache(comptime V: type) type {
                 _ = self.refCounter.fetchAdd(1, .monotonic);
             }
 
-            fn release(self: *@This(), alloc: Allocator, nodesPool: *std.heap.MemoryPool(Node), io: Io, mx: *std.Io.Mutex) void {
+            fn release(
+                self: *@This(),
+                alloc: Allocator,
+                nodesPool: *std.heap.MemoryPool(Node),
+                io: Io,
+                mx: *std.Io.Mutex,
+            ) void {
                 const prev = self.refCounter.fetchSub(1, .acq_rel);
                 std.debug.assert(prev > 0);
 

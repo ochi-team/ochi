@@ -84,9 +84,7 @@ pub fn init(alloc: Allocator) !*TimerLoop {
 }
 
 pub fn deinit(self: *TimerLoop) void {
-    for (self.entries.items) |entry| self.pool.destroy(entry);
     self.entries.deinit(self.alloc);
-    for (self.pendingEntries.items) |entry| self.pool.destroy(entry);
     self.pendingEntries.deinit(self.alloc);
     self.wakeHandlers.deinit(self.alloc);
     self.pool.deinit(self.alloc);
@@ -100,27 +98,31 @@ pub fn deinit(self: *TimerLoop) void {
 /// Once started, the timer is armed on the loop thread as
 /// soon as it wakes up, so several owners can keep registering timers as they come online
 pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn) !void {
-    // here we lock pool allocator as well, no only pending entries
-    spinLock(&self.pendingMx);
-    defer self.pendingMx.unlock();
+    // here we lock pool allocator as well, no only pending entries,
+    // create a block in order not to lock on notify
+    {
+        spinLock(&self.pendingMx);
+        defer self.pendingMx.unlock();
 
-    const entry = try self.pool.create(self.alloc);
-    errdefer self.pool.destroy(entry);
+        const entry = try self.pool.create(self.alloc);
+        errdefer self.pool.destroy(entry);
 
-    entry.* = .{
-        .parent = self,
-        .xevTimer = try xev.Timer.init(),
-        .intervalMs = intervalNs / std.time.ns_per_ms,
-        .ctx = ctx,
-        .tick = tick,
-    };
+        entry.* = .{
+            .parent = self,
+            .xevTimer = try xev.Timer.init(),
+            .intervalMs = intervalNs / std.time.ns_per_ms,
+            .ctx = ctx,
+            .tick = tick,
+        };
 
-    if (self.thread == null) {
-        try self.entries.append(self.alloc, entry);
-        return;
+        if (self.thread == null) {
+            try self.entries.append(self.alloc, entry);
+            return;
+        }
+
+        try self.pendingEntries.append(self.alloc, entry);
     }
 
-    try self.pendingEntries.append(self.alloc, entry);
     self.notify();
 }
 

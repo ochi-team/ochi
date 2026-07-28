@@ -52,8 +52,6 @@ const TaskCtx = struct {
     recorder: *DataRecorder,
     io: Io,
     alloc: Allocator,
-    pool: *std.heap.MemoryPool(MergeTask),
-    mx: *std.Io.Mutex,
 };
 
 const MergeTask = struct {
@@ -65,13 +63,9 @@ const MergeTask = struct {
         const self: *MergeTask = @fieldParentPtr("task", t);
         self.run(self.ctx.recorder, self.ctx.io, self.ctx.alloc);
 
-        const pool = self.ctx.pool;
         const recorder = self.ctx.recorder;
-        const mx = self.ctx.mx;
-        const io = self.ctx.io;
-        mx.lockUncancelable(io);
-        pool.destroy(self);
-        mx.unlock(io);
+        const alloc = self.ctx.alloc;
+        alloc.destroy(self);
         _ = recorder.pendingMerges.fetchSub(1, .release);
     }
 };
@@ -317,9 +311,6 @@ timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
 decompressionPool: *DecompressionPool,
 
-taskPool: *std.heap.MemoryPool(MergeTask),
-mxPool: std.Io.Mutex = .init,
-
 pub fn init(
     io: Io,
     alloc: Allocator,
@@ -367,11 +358,6 @@ pub fn init(
         tables.deinit(alloc);
     }
 
-    const taskPool = try alloc.create(std.heap.MemoryPool(MergeTask));
-    errdefer alloc.destroy(taskPool);
-    taskPool.* = try .initCapacity(alloc, 32);
-    errdefer taskPool.deinit(alloc);
-
     const t = try alloc.create(DataRecorder);
     errdefer alloc.destroy(t);
 
@@ -398,11 +384,10 @@ pub fn init(
         .timestampsEncoders = timestampsEncoders,
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
-        .taskPool = taskPool,
         .tableTimerSlots = tableTimerSlots,
     };
 
-    t.taskCtx = .{ .recorder = t, .io = io, .alloc = alloc, .mx = &t.mxPool, .pool = taskPool };
+    t.taskCtx = .{ .recorder = t, .io = io, .alloc = alloc };
     for (shards) |*shard| shard.parent = t;
     for (&t.tableTimerSlots) |*slot| slot.recorder = t;
 
@@ -481,8 +466,6 @@ pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
     alloc.free(self.shards);
     self.pendingShardArms.deinit(alloc);
     self.pendingTableArms.deinit(alloc);
-    self.taskPool.deinit(alloc);
-    alloc.destroy(self.taskPool);
     self.* = undefined;
     alloc.destroy(self);
 }
@@ -778,20 +761,14 @@ fn submitMergeTask(
 ) !void {
     if (self.stopped.isStopped()) return;
 
-    self.mxPool.lockUncancelable(io);
-    defer self.mxPool.unlock(io);
-
-    const t = try self.taskPool.create(alloc);
+    const t = try alloc.create(MergeTask);
     errdefer alloc.destroy(t);
-
     t.* = .{
         .task = .{ .callback = MergeTask.callback },
         .ctx = .{
             .recorder = self,
             .io = io,
             .alloc = alloc,
-            .pool = self.taskPool,
-            .mx = &self.mxPool,
         },
         .run = run,
     };
