@@ -49,8 +49,17 @@ entries: std.ArrayList(*Entry) = .empty,
 // and contention is rare
 pendingMx: std.atomic.Mutex = .unlocked,
 pendingEntries: std.ArrayList(*Entry) = .empty,
+// callbacks invoked on every loop-thread wake, for owners that need to marshal
+// their own state onto the loop thread (xev.Loop/Completion registration is
+// only safe there) without standing up a second xev.Async of their own.
+wakeHandlers: std.ArrayList(WakeHandler) = .empty,
 stopping: std.atomic.Value(bool) = .init(false),
 pool: std.heap.MemoryPool(Entry),
+
+pub const WakeHandler = struct {
+    ctx: *anyopaque,
+    cb: *const fn (ctx: *anyopaque, loop: *xev.Loop) void,
+};
 
 pub fn init(alloc: Allocator) !*TimerLoop {
     const self = try alloc.create(TimerLoop);
@@ -79,6 +88,7 @@ pub fn deinit(self: *TimerLoop) void {
     self.entries.deinit(self.alloc);
     for (self.pendingEntries.items) |entry| self.pool.destroy(entry);
     self.pendingEntries.deinit(self.alloc);
+    self.wakeHandlers.deinit(self.alloc);
     self.pool.deinit(self.alloc);
     self.wake.deinit();
     self.loop.deinit();
@@ -111,13 +121,30 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
     }
 
     try self.pendingEntries.append(self.alloc, entry);
+    self.notify();
+}
+
+pub fn spinLock(m: *std.atomic.Mutex) void {
+    while (!m.tryLock()) std.atomic.spinLoopHint();
+}
+
+/// registers a callback invoked on every loop-thread wake, i.e. whenever
+/// notify() runs. Safe to call before or after start(): guarded by the same
+/// pendingMx addTimer uses, since the loop thread reads wakeHandlers under
+/// that lock too (see wakeCallback).
+pub fn addWakeHandler(self: *TimerLoop, ctx: *anyopaque, cb: *const fn (ctx: *anyopaque, loop: *xev.Loop) void) !void {
+    spinLock(&self.pendingMx);
+    defer self.pendingMx.unlock();
+    try self.wakeHandlers.append(self.alloc, .{ .ctx = ctx, .cb = cb });
+}
+
+/// wakes the loop thread; safe to call from any thread. Combined with a
+/// registered wake handler, lets owners marshal work onto the loop thread
+/// without a second xev.Async.
+pub fn notify(self: *TimerLoop) void {
     self.wake.notify() catch |err| {
         Logger.log(.err, "TimerLoop: failed to notify wake async", .{ .err = err });
     };
-}
-
-fn spinLock(m: *std.atomic.Mutex) void {
-    while (!m.tryLock()) std.atomic.spinLoopHint();
 }
 
 fn wakeCallback(
@@ -151,6 +178,12 @@ fn wakeCallback(
         entry.xevTimer.run(loop, &entry.completion, entry.intervalMs, Entry, entry, Entry.callback);
     }
 
+    {
+        spinLock(&self.pendingMx);
+        defer self.pendingMx.unlock();
+        for (self.wakeHandlers.items) |h| h.cb(h.ctx, loop);
+    }
+
     return .rearm;
 }
 
@@ -178,9 +211,7 @@ fn run(self: *TimerLoop) void {
 /// thread to exit.
 pub fn stop(self: *TimerLoop) void {
     self.stopping.store(true, .release);
-    self.wake.notify() catch |err| {
-        Logger.log(.err, "TimerLoop: failed to notify wake async", .{ .err = err });
-    };
+    self.notify();
 }
 
 pub fn join(self: *TimerLoop) void {

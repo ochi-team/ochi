@@ -76,6 +76,17 @@ const MergeTask = struct {
     }
 };
 
+// fixed pool of one-shot deadline timers for mem tables: memTablesSem bounds the
+// number of live mem tables to maxMemTables, so a slot is always available.
+// The slot's address is stable for the process lifetime.
+const TableTimerSlot = struct {
+    recorder: *DataRecorder = undefined,
+    xevTimer: xev.Timer,
+    completion: xev.Completion = .{},
+    cancelCompletion: xev.Completion = .{},
+    table: ?*Table = null,
+};
+
 const maxMemTables = 16;
 comptime {
     // it claims we can use a buffer size of amountOfTablesToMerge to handle merging any kind of tables
@@ -108,15 +119,20 @@ pub const DataShard = struct {
 
     mx: Io.Mutex = .init,
     lines: std.ArrayList(Line) = .empty,
-    // TODO: take a meter to understand if we should increase checkpoints array size,
-    // the ration between checkpoints len and size on flushing must be close
+    // TODO: take a meter to understand if we should increase checkpoints array size
     checkpoints: [maxCheckpoints]SidCheckpoint = undefined,
     checkpointsLen: u16 = 0,
     buffer: FixedBufferAllocator,
 
-    // TODO: currently there is a single background process flushing the data shards
-    // try instead assign a timer task to a shard and benchmark on high amount of shard (high amount of cpu)
     flushAtUs: ?i64 = null,
+
+    // per-shard deadline timer, armed at the exact flushAtUs instant instead of
+    // being discovered by a periodic scan; shards live for the process lifetime
+    // in DataRecorder.shards, so the timer's userdata (the shard itself) is always valid
+    parent: *DataRecorder = undefined,
+    xevTimer: xev.Timer,
+    timerC: xev.Completion = .{},
+    timerCancelC: xev.Completion = .{},
 
     pub const maxCheckpoints = 16;
 
@@ -281,6 +297,15 @@ timerLoop: *TimerLoop,
 taskCtx: TaskCtx,
 mergePool: *xev.ThreadPool,
 pendingMerges: std.atomic.Value(usize) = .init(0),
+
+// per-object deadline scheduling: arm requests come from arbitrary threads
+// (addLines, merge workers) and must be applied to timerLoop.loop only from
+// its own thread, so they're queued here and drained via timerLoop's own
+// wake handler instead of standing up a second xev.Async.
+pendingDeadlineMx: std.atomic.Mutex = .unlocked,
+pendingShardArms: std.ArrayList(*DataShard) = .empty,
+pendingTableArms: std.ArrayList(*Table) = .empty,
+tableTimerSlots: [maxMemTables]TableTimerSlot,
 // TODO: migrate to io cancelation
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
@@ -321,11 +346,17 @@ pub fn init(
 
     for (shards) |*shard| {
         const buf = try alloc.alloc(u8, maxBlockSize);
+        errdefer alloc.free(buf);
+
         shard.* = .{
             .buffer = FixedBufferAllocator.init(buf),
+            .xevTimer = try xev.Timer.init(),
         };
         shardsInited += 1;
     }
+
+    var tableTimerSlots: [maxMemTables]TableTimerSlot = undefined;
+    for (&tableTimerSlots) |*slot| slot.* = .{ .xevTimer = try xev.Timer.init() };
 
     var memTables = try std.ArrayList(*Table).initCapacity(alloc, maxMemTables);
     errdefer memTables.deinit(alloc);
@@ -368,9 +399,12 @@ pub fn init(
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
         .taskPool = taskPool,
+        .tableTimerSlots = tableTimerSlots,
     };
 
     t.taskCtx = .{ .recorder = t, .io = io, .alloc = alloc, .mx = &t.mxPool, .pool = taskPool };
+    for (shards) |*shard| shard.parent = t;
+    for (&t.tableTimerSlots) |*slot| slot.recorder = t;
 
     return t;
 }
@@ -385,8 +419,8 @@ pub fn startTasks(self: *DataRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.taskCtx, memTablesFlusherTick);
-    try self.timerLoop.addTimer(std.time.ns_per_s / 2, &self.taskCtx, dataShardsFlusherTick);
+    try self.timerLoop.addWakeHandler(self, deadlineWakeHandler);
+
     try self.timerLoop.start();
 }
 
@@ -427,6 +461,11 @@ pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
 
     self.waitForMergesToDrain(io);
 
+    for (self.pendingTableArms.items) |table| table.release(io);
+    for (&self.tableTimerSlots) |*slot| {
+        if (slot.table) |table| table.release(io);
+    }
+
     for (self.shards) |*shard| {
         shard.deinit(alloc);
     }
@@ -440,6 +479,8 @@ pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
     self.memTables.deinit(alloc);
     self.diskTables.deinit(alloc);
     alloc.free(self.shards);
+    self.pendingShardArms.deinit(alloc);
+    self.pendingTableArms.deinit(alloc);
     self.taskPool.deinit(alloc);
     alloc.destroy(self.taskPool);
     self.* = undefined;
@@ -452,32 +493,134 @@ fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
     }
 }
 
-fn memTablesFlusherTick(ctx: *anyopaque) void {
-    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
-    const self = tickCtx.recorder;
-
+fn deadlineWakeHandler(ctx: *anyopaque, loop: *xev.Loop) void {
+    const self: *DataRecorder = @ptrCast(@alignCast(ctx));
     if (self.stopped.isStopped()) return;
 
-    self.flushMemTables(tickCtx.io, tickCtx.alloc, false) catch |err| {
-        if (err == error.Stopped) return;
+    var shardArms: std.ArrayList(*DataShard) = undefined;
+    var tableArms: std.ArrayList(*Table) = undefined;
+    {
+        TimerLoop.spinLock(&self.pendingDeadlineMx);
+        defer self.pendingDeadlineMx.unlock();
+        shardArms = self.pendingShardArms;
+        self.pendingShardArms = .empty;
+        tableArms = self.pendingTableArms;
+        self.pendingTableArms = .empty;
+    }
+    defer shardArms.deinit(self.taskCtx.alloc);
+    defer tableArms.deinit(self.taskCtx.alloc);
 
-        self.stopped.stop(tickCtx.io);
-        Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
-    };
+    for (shardArms.items) |shard| self.armShardTimer(loop, shard);
+    for (tableArms.items) |table| self.armTableTimer(loop, table);
 }
 
-fn dataShardsFlusherTick(ctx: *anyopaque) void {
-    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
-    const self = tickCtx.recorder;
+fn armShardTimer(self: *DataRecorder, loop: *xev.Loop, shard: *DataShard) void {
+    const flushAtUs = shard.flushAtUs orelse return; // flushed early (mustFlush) before the arm was drained
+    const nowUs = Io.Timestamp.now(self.taskCtx.io, .real).toMicroseconds();
+    shard.xevTimer.reset(loop, &shard.timerC, &shard.timerCancelC, deltaMs(flushAtUs, nowUs), DataShard, shard, shardTimerCallback);
+}
 
-    if (self.stopped.isStopped()) return;
+fn shardTimerCallback(
+    ud: ?*DataShard,
+    loop: *xev.Loop,
+    c: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch {};
+    const shard = ud.?;
+    const self = shard.parent;
 
-    self.flushDataShards(tickCtx.io, tickCtx.alloc, false) catch |err| {
-        if (err == error.Stopped) return;
+    if (self.stopped.isStopped()) return .disarm;
 
-        self.stopped.stop(tickCtx.io);
-        Logger.log(.err, "failed to run data shards flusher", .{ .err = err });
+    const io = self.taskCtx.io;
+
+    if (!shard.mx.tryLock()) {
+        // addLines is actively appending; retry shortly instead of dropping the deadline
+        shard.xevTimer.reset(loop, c, &shard.timerCancelC, 1, DataShard, shard, shardTimerCallback);
+        return .disarm;
+    }
+    defer shard.mx.unlock(io);
+
+    // flushAtUs is only ever cleared (mustFlush already flushed it) or left
+    // unchanged for a shard's active window, never moved to a later deadline,
+    // so a stale fire after an early flush is a safe no-op here.
+    const flushAtUs = shard.flushAtUs orelse return .disarm;
+    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
+    if (flushAtUs > nowUs) {
+        shard.xevTimer.reset(loop, c, &shard.timerCancelC, deltaMs(flushAtUs, nowUs), DataShard, shard, shardTimerCallback);
+        return .disarm;
+    }
+
+    self.flushShard(io, self.taskCtx.alloc, shard, false) catch |err| {
+        if (err != error.Stopped) {
+            self.stopped.stop(io);
+            Logger.log(.err, "failed to run scheduled shard flush", .{ .err = err });
+        }
     };
+    return .disarm;
+}
+
+fn armTableTimer(self: *DataRecorder, loop: *xev.Loop, table: *Table) void {
+    const slot = for (&self.tableTimerSlots) |*s| {
+        if (s.table == null) break s;
+    } else {
+        // unreachable in practice: memTablesSem bounds live mem tables to
+        // maxMemTables, matching tableTimerSlots.len exactly
+        Logger.log(.err, "DataRecorder: no free table timer slot, dropping scheduled flush", .{});
+        table.release(self.taskCtx.io);
+        return;
+    };
+
+    slot.table = table;
+
+    const nowUs = Io.Timestamp.now(self.taskCtx.io, .real).toMicroseconds();
+    const delayMs = deltaMs(table.inner.mem.flushAtUs, nowUs);
+    slot.xevTimer.reset(loop, &slot.completion, &slot.cancelCompletion, delayMs, TableTimerSlot, slot, tableTimerCallback);
+}
+
+fn deltaMs(deadlineUs: i64, nowUs: i64) u64 {
+    if (deadlineUs <= nowUs) return 0;
+    const deltaUs: u64 = @intCast(deadlineUs - nowUs);
+    return deltaUs / std.time.us_per_ms;
+}
+
+fn tableTimerCallback(
+    ud: ?*TableTimerSlot,
+    loop: *xev.Loop,
+    c: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = loop;
+    _ = c;
+    _ = r catch {};
+    const slot = ud.?;
+    const self = slot.recorder;
+    const table = slot.table.?;
+    const io = self.taskCtx.io;
+
+    defer {
+        table.release(io);
+        slot.table = null;
+    }
+
+    if (self.stopped.isStopped()) return .disarm;
+
+    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
+
+    self.mxTables.lockUncancelable(io);
+    const shouldFlush = !table.inMerge and table.inner.mem.flushAtUs <= nowUs;
+    if (shouldFlush) table.inMerge = true;
+    self.mxTables.unlock(io);
+
+    if (shouldFlush) {
+        var tables = [_]*Table{table};
+        self.mergeTables(io, self.taskCtx.alloc, tables[0..], true, null) catch |err| {
+            self.stopped.stop(io);
+            Logger.log(.err, "failed to run scheduled mem table flush", .{ .err = err });
+        };
+    }
+
+    return .disarm;
 }
 
 fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool) !void {
@@ -614,6 +757,7 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, 
             try self.memTables.append(alloc, memTable);
         }
 
+        self.requestTableTimer(memTable);
         try self.startMemTablesMerge(io, alloc);
     }
 }
@@ -803,6 +947,8 @@ fn mergeTables(
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
+
+    if (tableKind == .mem) self.requestTableTimer(openTable);
 }
 
 pub fn diskTablePath(self: *DataRecorder, alloc: Allocator, kind: TableKind) ![]const u8 {
@@ -866,7 +1012,39 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
         try self.flushShard(io, alloc, shard, false);
     } else if (shard.flushAtUs == null) {
         shard.flushAtUs = getFlushTime(io);
+        self.requestShardTimer(shard);
     }
+}
+
+// queues an arm request for the loop thread; safe to call from any thread.
+fn requestShardTimer(self: *DataRecorder, shard: *DataShard) void {
+    TimerLoop.spinLock(&self.pendingDeadlineMx);
+    self.pendingShardArms.append(self.taskCtx.alloc, shard) catch |err| {
+        self.pendingDeadlineMx.unlock();
+        Logger.log(.err, "DataRecorder: failed to queue shard timer arm", .{ .err = err });
+        return;
+    };
+    self.pendingDeadlineMx.unlock();
+
+    self.timerLoop.notify();
+}
+
+// queues an arm request for the loop thread; safe to call from any thread.
+// retains the table for the timer's lifetime so a merge that frees it before
+// the deadline fires can't leave the timer pointing at freed memory.
+fn requestTableTimer(self: *DataRecorder, table: *Table) void {
+    table.retain();
+
+    TimerLoop.spinLock(&self.pendingDeadlineMx);
+    self.pendingTableArms.append(self.taskCtx.alloc, table) catch |err| {
+        self.pendingDeadlineMx.unlock();
+        Logger.log(.err, "DataRecorder: failed to queue table timer arm", .{ .err = err });
+        table.release(self.taskCtx.io);
+        return;
+    };
+    self.pendingDeadlineMx.unlock();
+
+    self.timerLoop.notify();
 }
 
 pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {

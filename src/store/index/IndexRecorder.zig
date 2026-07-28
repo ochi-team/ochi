@@ -74,6 +74,17 @@ const MergeTask = struct {
     }
 };
 
+// fixed pool of one-shot deadline timers for mem tables: memTablesSem bounds the
+// number of live mem tables to maxMemTables, so a slot is always available.
+// The slot's address is stable for the process lifetime.
+const TableTimerSlot = struct {
+    recorder: *IndexRecorder = undefined,
+    xevTimer: xev.Timer,
+    completion: xev.Completion = .{},
+    cancelCompletion: xev.Completion = .{},
+    table: ?*Table = null,
+};
+
 entries: *Entries,
 
 // accumulated memblocks prepared to flush
@@ -104,6 +115,14 @@ timerLoop: *TimerLoop,
 taskCtx: TaskCtx = undefined,
 mergePool: *xev.ThreadPool,
 pendingMerges: std.atomic.Value(usize) = .init(0),
+
+// per-object deadline scheduling: arm requests come from arbitrary threads
+// (addToMemTables, merge workers) and must be applied to timerLoop.loop only from
+// its own thread, so they're queued here and drained via timerLoop's own
+// wake handler instead of standing up a second xev.Async.
+pendingDeadlineMx: std.atomic.Mutex = .unlocked,
+pendingTableArms: std.ArrayList(*Table) = .empty,
+tableTimerSlots: [maxMemTables]TableTimerSlot = undefined,
 // limits amount of mem tables in order to handle too high ingestion rate,
 // when mem tables are not merged fast enough
 // TODO: find an optimal way to handle ingestion rate higher than merge rate
@@ -168,6 +187,9 @@ pub fn init(
     taskPool.* = try .initCapacity(alloc, 32);
     errdefer taskPool.deinit(alloc);
 
+    var tableTimerSlots: [maxMemTables]TableTimerSlot = undefined;
+    for (&tableTimerSlots) |*slot| slot.* = .{ .xevTimer = try xev.Timer.init() };
+
     const t = try alloc.create(IndexRecorder);
     errdefer alloc.destroy(t);
     t.* = .{
@@ -193,8 +215,10 @@ pub fn init(
             .permits = @max(4, concurrency),
         },
         .taskPool = taskPool,
+        .tableTimerSlots = tableTimerSlots,
     };
     t.taskCtx = .{ .recorder = t, .io = io, .alloc = alloc, .mx = &t.mxPool, .pool = taskPool };
+    for (&t.tableTimerSlots) |*slot| slot.recorder = t;
 
     return t;
 }
@@ -212,7 +236,8 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
         try self.startDiskTablesMerge(io, alloc);
     }
 
-    try self.timerLoop.addTimer(std.time.ns_per_s, &self.taskCtx, memTablesFlusherTick);
+    try self.timerLoop.addWakeHandler(self, deadlineWakeHandler);
+
     try self.timerLoop.addTimer(std.time.ns_per_s, &self.taskCtx, memBlockFlusherTick);
     try self.timerLoop.start();
 }
@@ -243,6 +268,16 @@ pub fn deinit(self: *IndexRecorder, io: Io, alloc: Allocator) void {
 
     std.debug.assert(self.blocksToFlush.items.len == 0);
     std.debug.assert(self.memTables.items.len == 0);
+
+    // requestTableTimer retains its table for the timer's lifetime; if the timer
+    // never got to fire (queued but never drained, e.g. startTasks was never
+    // called, or timerLoop's thread already stopped/joined before deinit), that
+    // extra ref would otherwise leak the table forever.
+    for (self.pendingTableArms.items) |table| table.release(io);
+    for (&self.tableTimerSlots) |*slot| {
+        if (slot.table) |table| table.release(io);
+    }
+    self.pendingTableArms.deinit(alloc);
 
     for (self.blocksToFlush.items) |block| {
         block.deinit(alloc);
@@ -490,6 +525,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
         try self.memTables.append(alloc, memTable);
     }
 
+    self.requestTableTimer(memTable);
     try self.startMemTablesMerge(io, alloc);
 
     if (force) {
@@ -542,6 +578,103 @@ fn waitForMergesToDrain(self: *IndexRecorder, io: Io) void {
     }
 }
 
+fn deltaMs(deadlineUs: i64, nowUs: i64) u64 {
+    if (deadlineUs <= nowUs) return 0;
+    const deltaUs: u64 = @intCast(deadlineUs - nowUs);
+    return deltaUs / std.time.us_per_ms;
+}
+
+// queues an arm request for the loop thread; safe to call from any thread.
+// retains the table for the timer's lifetime so a merge that frees it before
+// the deadline fires can't leave the timer pointing at freed memory.
+fn requestTableTimer(self: *IndexRecorder, table: *Table) void {
+    table.retain();
+
+    TimerLoop.spinLock(&self.pendingDeadlineMx);
+    self.pendingTableArms.append(self.taskCtx.alloc, table) catch |err| {
+        self.pendingDeadlineMx.unlock();
+        Logger.log(.err, "IndexRecorder: failed to queue table timer arm", .{ .err = err });
+        table.release(self.taskCtx.io);
+        return;
+    };
+    self.pendingDeadlineMx.unlock();
+
+    self.timerLoop.notify();
+}
+
+fn deadlineWakeHandler(ctx: *anyopaque, loop: *xev.Loop) void {
+    const self: *IndexRecorder = @ptrCast(@alignCast(ctx));
+    if (self.stopped.isStopped()) return;
+
+    var tableArms: std.ArrayList(*Table) = undefined;
+    {
+        TimerLoop.spinLock(&self.pendingDeadlineMx);
+        defer self.pendingDeadlineMx.unlock();
+        tableArms = self.pendingTableArms;
+        self.pendingTableArms = .empty;
+    }
+    defer tableArms.deinit(self.taskCtx.alloc);
+
+    for (tableArms.items) |table| self.armTableTimer(loop, table);
+}
+
+fn armTableTimer(self: *IndexRecorder, loop: *xev.Loop, table: *Table) void {
+    const slot = for (&self.tableTimerSlots) |*s| {
+        if (s.table == null) break s;
+    } else {
+        // unreachable in practice: memTablesSem bounds live mem tables to
+        // maxMemTables, matching tableTimerSlots.len exactly
+        Logger.log(.err, "IndexRecorder: no free table timer slot, dropping scheduled flush", .{});
+        table.release(self.taskCtx.io);
+        return;
+    };
+
+    slot.table = table;
+
+    const nowUs = Io.Timestamp.now(self.taskCtx.io, .real).toMicroseconds();
+    const delayMs = deltaMs(table.inner.mem.flushAtUs, nowUs);
+    slot.xevTimer.reset(loop, &slot.completion, &slot.cancelCompletion, delayMs, TableTimerSlot, slot, tableTimerCallback);
+}
+
+fn tableTimerCallback(
+    ud: ?*TableTimerSlot,
+    loop: *xev.Loop,
+    c: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = loop;
+    _ = c;
+    _ = r catch {};
+    const slot = ud.?;
+    const self = slot.recorder;
+    const table = slot.table.?;
+    const io = self.taskCtx.io;
+
+    defer {
+        table.release(io);
+        slot.table = null;
+    }
+
+    if (self.stopped.isStopped()) return .disarm;
+
+    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
+
+    self.mxTables.lockUncancelable(io);
+    const shouldFlush = !table.inMerge and table.inner.mem.flushAtUs <= nowUs;
+    if (shouldFlush) table.inMerge = true;
+    self.mxTables.unlock(io);
+
+    if (shouldFlush) {
+        var tables = [_]*Table{table};
+        self.mergeTables(io, self.taskCtx.alloc, tables[0..], true, null) catch |err| {
+            self.stopped.stop(io);
+            Logger.log(.err, "failed to run scheduled mem table flush", .{ .err = err });
+        };
+    }
+
+    return .disarm;
+}
+
 pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     try self.submitMergeTask(io, alloc, runDiskTablesMerger);
 }
@@ -552,20 +685,6 @@ fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
 
         self.stopped.stop(io);
         Logger.log(.err, "failed to run disk tables merger", .{ .err = err });
-    };
-}
-
-fn memTablesFlusherTick(ctx: *anyopaque) void {
-    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
-    const self = tickCtx.recorder;
-
-    if (self.stopped.isStopped()) return;
-
-    self.flushMemTables(tickCtx.io, tickCtx.alloc, false) catch |err| {
-        if (err == error.Stopped) return;
-
-        self.stopped.stop(tickCtx.io);
-        Logger.log(.err, "failed to run mem tables flusher", .{ .err = err });
     };
 }
 
@@ -790,6 +909,8 @@ pub fn mergeTables(
 
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
+
+    if (tableKind == .mem) self.requestTableTimer(openTable);
 }
 
 // TODO: move it to config instead of computed property
