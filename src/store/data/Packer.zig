@@ -193,24 +193,52 @@ const testing = std.testing;
 // TODO: there must be more properties besides rount-trippness,
 // e.g. size of the output is less
 test "Packer.packValuesRoundtrip" {
-    const allocator = testing.allocator;
+    const alloc = testing.allocator;
 
     const Case = struct {
         strings: []const []const u8,
     };
 
-    const veryLongString = try allocator.alloc(u8, 2 << 15);
-    defer allocator.free(veryLongString);
-    @memset(veryLongString, 'x');
-    var manyStrings: [1000][]const u8 = undefined;
+    var veryLongString: [2 << 15]u8 = undefined;
+    @memset(&veryLongString, 'x');
+    var manyStrings: [512][]const u8 = undefined;
     for (0..manyStrings.len) |i| {
-        manyStrings[i] = try std.fmt.allocPrint(allocator, "log {d}", .{1000 + i});
+        manyStrings[i] = try std.fmt.allocPrint(alloc, "{d}", .{1000 + i});
     }
     defer {
         for (manyStrings) |str| {
-            allocator.free(str);
+            alloc.free(str);
         }
     }
+
+    // u16-width lengths 256..65535, non-invariant block
+    var mediumA: [300]u8 = undefined;
+    @memset(&mediumA, 'a');
+    var mediumB: [500]u8 = undefined;
+    @memset(&mediumB, 'b');
+
+    // u16-width lengths 256..65535, invariant block
+    var mediumC: [400]u8 = undefined;
+    @memset(&mediumC, 'c');
+    var mediumD: [400]u8 = undefined;
+    @memset(&mediumD, 'd');
+
+    // u32-width lengths 65536+, non-invariant block
+    var bigA: [70000]u8 = undefined;
+    @memset(&bigA, 'p');
+    var bigB: [70001]u8 = undefined;
+    @memset(&bigB, 'q');
+
+    // u32-width lengths 65536+, invariant block
+    var bigC: [70000]u8 = undefined;
+    @memset(&bigC, 'e');
+    var bigD: [70000]u8 = undefined;
+    @memset(&bigD, 'f');
+
+    // NOTE: uintBlockType64/uintBlockTypeInvariant64 require a length >= 1<<32
+    // (a 4GiB+ string) to trigger, which isn't practical to allocate in a test.
+    // The u8/u16/u32 cases above exercise the same code path structurally.
+
     const cases = [_]Case{
         .{
             .strings = &[_][]const u8{
@@ -237,32 +265,57 @@ test "Packer.packValuesRoundtrip" {
         },
         .{
             .strings = &[_][]const u8{
-                veryLongString,
+                &veryLongString,
             },
         },
         .{
             .strings = manyStrings[0..],
         },
+        .{
+            // non-invariant, u8-width lengths
+            .strings = &[_][]const u8{ "a", "bb", "ccc" },
+        },
+        .{
+            // empty input
+            .strings = &[_][]const u8{},
+        },
+        .{
+            // zero-length strings mixed with non-zero
+            .strings = &[_][]const u8{ "", "abc", "" },
+        },
+        .{
+            .strings = &[_][]const u8{ &mediumA, &mediumB },
+        },
+        .{
+            .strings = &[_][]const u8{ &mediumC, &mediumD },
+        },
+        .{
+            .strings = &[_][]const u8{ &bigA, &bigB },
+        },
+        .{
+            .strings = &[_][]const u8{ &bigC, &bigD },
+        },
     };
 
     for (cases) |case| {
-        var encoder = try Self.init(allocator);
+        var encoder = try Self.init(alloc);
         defer encoder.deinit();
 
-        var packedValues: [128 * 1024]u8 = undefined;
         // TODO: audit all constCast usage and get rid of them
         var bound = try encoder.packValuesInterBound(@constCast(case.strings));
-        defer bound.deinit(allocator);
-        const compressionPool = try CompressionPool.init(allocator, 1);
-        defer compressionPool.deinit(allocator);
-        const decompressionPool = try DecompressionPool.init(allocator, 1);
-        defer decompressionPool.deinit(allocator);
-        const n = try packValues(compressionPool, testing.io, &packedValues, bound);
+        defer bound.deinit(alloc);
+        const packedValues = try alloc.alloc(u8, bound.lensBound + bound.valuesBound);
+        defer alloc.free(packedValues);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
+        const n = try packValues(compressionPool, testing.io, packedValues, bound);
 
-        const unpacker = try Unpacker.init(allocator, decompressionPool);
-        defer unpacker.deinit(allocator);
-        const unpacked = try unpacker.unpackValues(testing.io, allocator, packedValues[0..n], case.strings.len);
-        defer allocator.free(unpacked);
+        const unpacker = try Unpacker.init(alloc, decompressionPool);
+        defer unpacker.deinit(alloc);
+        const unpacked = try unpacker.unpackValues(testing.io, alloc, packedValues[0..n], case.strings.len);
+        defer alloc.free(unpacked);
 
         try testing.expectEqual(case.strings.len, unpacked.len);
         for (case.strings, unpacked) |original, decoded| {
