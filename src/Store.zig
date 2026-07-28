@@ -208,9 +208,9 @@ pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
     self.decompressionPool.deinit(alloc);
     self.lookupPool.deinit(io, alloc);
 
-    alloc.destroy(self.threadPool);
     self.threadPool.shutdown();
     self.threadPool.deinit();
+    alloc.destroy(self.threadPool);
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
