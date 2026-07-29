@@ -72,7 +72,7 @@ conf: *const Conf,
 const retentionDays = 30;
 
 const diskUsageSampleIntervalNs = 20 * std.time.ns_per_s;
-const cacheCleanIntervalNs = 10 * std.time.ns_per_s;
+const cacheCleanIntervalNs = 30 * std.time.ns_per_s;
 
 const TaskCtx = struct {
     store: *Store,

@@ -544,16 +544,21 @@ fn shardTimerCallback(
 }
 
 fn armTableTimer(self: *DataRecorder, loop: *xev.Loop, table: *Table) void {
-    const slot = for (&self.tableTimerSlots) |*s| {
-        if (s.table == null) break s;
-    } else {
-        // unreachable in practice: memTablesSem bounds live mem tables to
-        // maxMemTables, matching tableTimerSlots.len exactly
+    const io = self.taskCtx.io;
+
+    self.mxTables.lockUncancelable(io);
+    const found = for (&self.tableTimerSlots) |*s| {
+        if (s.table == null or s.table.?.inMerge) break s;
+    } else null;
+    self.mxTables.unlock(io);
+
+    const slot = found orelse {
         Logger.log(.err, "DataRecorder: no free table timer slot, dropping scheduled flush", .{});
-        table.release(self.taskCtx.io);
+        table.release(io);
         return;
     };
 
+    if (slot.table) |stale| stale.release(io);
     slot.table = table;
 
     const nowUs = Io.Timestamp.now(self.taskCtx.io, .real).toMicroseconds();
@@ -710,7 +715,7 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, 
                     timedWait(&self.memTablesSem, io, std.time.ns_per_s * 1) catch |e| {
                         switch (e) {
                             error.Timeout => {
-                                Logger.log(.warn, "mem table buffer is full, flush mem table", .{});
+                                Logger.log(.warn, "data: mem tables buffer is full, flush mem table", .{});
 
                                 const destinationTablePath = try self.diskTablePath(alloc, .disk);
                                 errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
@@ -1060,7 +1065,7 @@ fn openCreatedTable(
     decompressionPool: *DecompressionPool,
 ) !*Table {
     if (maybeMemTable) |memTable| {
-        memTable.flushAtUs = Consts.dataFlushIntervalUs + Io.Timestamp.now(io, .real).toMicroseconds();
+        memTable.flushAtUs = getFlushTime(io);
         return Table.fromMem(io, alloc, memTable, decompressionPool);
     }
 

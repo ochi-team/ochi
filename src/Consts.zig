@@ -1,7 +1,7 @@
 const std = @import("std");
 
 // time interval in microseconds to flush data shards and mem tables
-pub const dataFlushIntervalUs = std.time.us_per_s;
+pub const dataFlushIntervalUs = std.time.us_per_s / 2;
 
 // time interval in microseconds to flush mem tables to disk
 pub const indexFlushIntervalUs = 5 * std.time.us_per_s;

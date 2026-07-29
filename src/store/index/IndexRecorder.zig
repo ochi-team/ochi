@@ -479,7 +479,7 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
                 timedWait(&self.memTablesSem, io, std.time.ns_per_s * 3) catch |e| {
                     switch (e) {
                         error.Timeout => {
-                            Logger.log(.warn, "mem table buffer is full, flush mem table", .{});
+                            Logger.log(.warn, "index: mem tables buffer is full, flush mem table", .{});
 
                             const destinationTablePath = try self.diskTablePath(alloc, .disk);
                             errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
@@ -597,16 +597,21 @@ fn deadlineWakeHandler(ctx: *anyopaque, loop: *xev.Loop) void {
 }
 
 fn armTableTimer(self: *IndexRecorder, loop: *xev.Loop, table: *Table) void {
-    const slot = for (&self.tableTimerSlots) |*s| {
-        if (s.table == null) break s;
-    } else {
-        // unreachable in practice: memTablesSem bounds live mem tables to
-        // maxMemTables, matching tableTimerSlots.len exactly
+    const io = self.taskCtx.io;
+
+    self.mxTables.lockUncancelable(io);
+    const found = for (&self.tableTimerSlots) |*s| {
+        if (s.table == null or s.table.?.inMerge) break s;
+    } else null;
+    self.mxTables.unlock(io);
+
+    const slot = found orelse {
         Logger.log(.err, "IndexRecorder: no free table timer slot, dropping scheduled flush", .{});
-        table.release(self.taskCtx.io);
+        table.release(io);
         return;
     };
 
+    if (slot.table) |stale| stale.release(io);
     slot.table = table;
 
     const nowUs = Io.Timestamp.now(self.taskCtx.io, .real).toMicroseconds();
