@@ -2,6 +2,8 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = Io.Dir;
 
+const tracy = @import("tracy");
+
 const fs = @import("../../fs.zig");
 const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
@@ -247,6 +249,12 @@ pub fn addLines(
     sids: []SID,
     linesBySid: [][]Line,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataShard.flush",
+    });
+    defer z.end();
+
     if (sids.len == 0) {
         return Error.EmptySids;
     }
@@ -300,7 +308,7 @@ pub fn addLines(
 }
 
 // TODO: find out if we can use StreamWriter to flush the table to disk
-pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []const u8) !void {
+pub fn storeToDisk(self: *MemTable, io: Io, path: []const u8) !void {
     // TODO: make this function parallel when it comes to writing files
     if (Dir.openDirAbsolute(io, path, .{})) |dir| {
         dir.close(io);
@@ -367,7 +375,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: std.mem.Allocator, path: []co
     const bloomValuesContent = self.bloomValuesBuf.items;
     try fs.writeBufferValToFile(io, bloomValuesPath, bloomValuesContent);
 
-    try self.tableHeader.writeFile(io, alloc, path);
+    try self.tableHeader.writeFile(io, path);
 
     try fs.syncPathAndParentDir(io, path);
 }
@@ -1111,7 +1119,7 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
         sampleSid,
         lines[0..],
     );
-    try memTable.storeToDisk(io, allocator, flushPath);
+    try memTable.storeToDisk(io, flushPath);
 
     try std.fs.path.fmtJoin(&.{ flushPath, filenames.columnKeys }).format(&pathWriter);
     const columnKeysContent = try readFileAll(io, allocator, pathWriter.buffered());
@@ -1182,5 +1190,5 @@ fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
     defer allocator.free(metadataContent);
     try testing.expect(metadataContent.len > 0);
 
-    try testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(io, allocator, flushPath));
+    try testing.expectError(error.DirAlreadyExists, memTable.storeToDisk(io, flushPath));
 }

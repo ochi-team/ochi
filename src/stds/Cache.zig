@@ -5,6 +5,7 @@ const Io = std.Io;
 const Thread = std.Thread;
 const Mutex = std.Io.Mutex;
 
+const tracy = @import("tracy");
 const m = @import("metrics");
 
 pub const Opts = struct {
@@ -138,6 +139,12 @@ pub fn Cache(comptime V: type) type {
         }
 
         pub fn put(self: *Self, io: Io, key: []const u8, value: V) !V {
+            const z = tracy.Zone.begin(.{
+                .src = @src(),
+                .name = "Cache.put",
+            });
+            defer z.end();
+
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 
@@ -177,6 +184,12 @@ pub fn Cache(comptime V: type) type {
             ctx: anytype,
             comptime action: *const fn (@TypeOf(ctx)) anyerror!V,
         ) !GetOrElsePinnedRes {
+            const z = tracy.Zone.begin(.{
+                .src = @src(),
+                .name = "Cache.getOrElsePinned",
+            });
+            defer z.end();
+
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 
@@ -219,6 +232,12 @@ pub fn Cache(comptime V: type) type {
         }
 
         pub fn contains(self: *Self, io: Io, key: []const u8) bool {
+            const z = tracy.Zone.begin(.{
+                .src = @src(),
+                .name = "Cache.contains",
+            });
+            defer z.end();
+
             self.mx.lockUncancelable(io);
             defer self.mx.unlock(io);
 

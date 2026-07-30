@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const encoding = @import("encoding");
 
 const SID = @import("../lines.zig").SID;
@@ -101,6 +103,12 @@ pub fn initFromData(data: *const BlockData, sid: SID) BlockHeader {
 pub const encodeExpectedSize = SID.encodeBound + 4 + 4 + 32 + 1 + 40;
 
 pub fn encode(self: *const BlockHeader, buf: []u8) usize {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockHeader.encode",
+    });
+    defer z.end();
+
     var enc = Encoder.init(buf);
 
     self.sid.encode(&enc);

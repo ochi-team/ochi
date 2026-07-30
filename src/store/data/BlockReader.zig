@@ -440,7 +440,7 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
 
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
-    memTable.storeToDisk(io, alloc, tablePath) catch |err| {
+    memTable.storeToDisk(io, tablePath) catch |err| {
         alloc.free(tablePath);
         return err;
     };

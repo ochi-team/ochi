@@ -53,10 +53,17 @@ pub fn hasStream(
     blocksCache: *Cache(*MemBlock),
     lookupPool: *LookupPool,
 ) !bool {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "index.hasStream",
+    });
+    defer z.end();
+
     const lookup = lookupPool.next();
     lookup.mx.lockUncancelable(io);
     defer lookup.mx.unlock(io);
 
+    // TODO: remove lookup pool, useless, better to use arenas
     try lookup.val.setup(io, alloc, self.recorder, blocksCache);
     defer lookup.val.reset(io, alloc);
 

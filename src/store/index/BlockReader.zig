@@ -650,7 +650,7 @@ test "BlockReader.initFromDiskTable decodes blocks without null crash" {
     const memTable = try MemTable.init(io, alloc, &blocks, compressionPool, decompressionPool);
     defer memTable.deinit(alloc);
 
-    try memTable.storeToDisk(io, alloc, tablePath);
+    try memTable.storeToDisk(io, tablePath);
 
     const diskTable = try Table.open(io, alloc, tablePath, decompressionPool);
     defer diskTable.close(io);

@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const xev = @import("xev");
 
+const tracy = @import("tracy");
+
 const Heap = @import("../../../stds/heap.zig").Heap;
 const Runtime = @import("../../../Runtime.zig");
 const Cache = @import("../../../stds/Cache.zig").Cache;
@@ -86,6 +88,12 @@ pub fn reset(self: *Lookup, io: Io, alloc: Allocator) void {
 /// 1) seek to the first item >= prefix
 /// 2) verify the returned candidate still has the prefix.
 pub fn findFirstByPrefix(self: *Lookup, io: Io, alloc: Allocator, prefix: []const u8) !?[]const u8 {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "Lookup.findFirstByPrefix",
+    });
+    defer z.end();
+
     try self.seek(io, alloc, prefix);
 
     if (!try self.next(io, alloc)) {
@@ -311,7 +319,7 @@ fn createDiskTableFromItems(
 
     const memTable = try createMemTableFromItems(io, alloc, items, compressionPool);
     defer memTable.close(io);
-    try memTable.inner.mem.storeToDisk(io, alloc, tablePath);
+    try memTable.inner.mem.storeToDisk(io, tablePath);
 
     return Table.open(io, alloc, tablePath, decompressionPool);
 }

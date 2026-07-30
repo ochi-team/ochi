@@ -66,6 +66,8 @@ pub fn encode(self: *ColumnIDGen, io: Io, compressionPool: *CompressionPool, all
         uncompressedSize += encoding.Encoder.varIntBound(key.len);
         uncompressedSize += key.len;
     }
+    // TODO: implement stack fallback that replaces stack size to 1 in tests,
+    // add a tidy linter that restricts usage of std.heap.stackFallback
     var stackFba = std.heap.stackFallback(512, alloc);
     const fba = stackFba.get();
     const tmpBuf = try fba.alloc(u8, uncompressedSize);

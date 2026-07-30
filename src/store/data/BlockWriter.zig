@@ -5,6 +5,8 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 const Block = @import("Block.zig");
@@ -87,6 +89,12 @@ pub fn writeLines(
     lines: []Line,
     tableWriter: *TableWriter,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockWriter.writeLines",
+    });
+    defer z.end();
+
     const block = try Block.initFromLines(allocator, lines);
     defer block.deinit(allocator);
 
@@ -118,6 +126,12 @@ fn writeBlock(
     sid: SID,
     tableWriter: *TableWriter,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockWriter.writeBlock",
+    });
+    defer z.end();
+
     var isSeenSid = false;
     if (self.sidLast) |sidLast| {
         std.debug.assert(!sid.lessThan(sidLast));
@@ -179,6 +193,12 @@ fn writeContent(io: Io, alloc: Allocator, content: Content, sid: SID, tableWrite
 }
 
 pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter, th: *TableHeader) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockWriter.finish",
+    });
+    defer z.end();
+
     th.uncompressedSize = self.size;
     th.len = self.len;
     th.blocksCount = self.blocksCount;
@@ -197,6 +217,12 @@ pub fn finish(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *Ta
 }
 
 fn flushIndexBlock(self: *BlockWriter, io: Io, allocator: Allocator, tableWriter: *TableWriter) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockWriter.flushIndexBlock",
+    });
+    defer z.end();
+
     defer self.indexBlockBuf.clearRetainingCapacity();
     if (self.indexBlockBuf.items.len > 0) {
         try self.indexBlockHeader.writeIndexBlock(

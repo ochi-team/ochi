@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
 const encoding = @import("encoding");
 
 const Stop = @import("../../stds/Stop.zig");
@@ -133,6 +134,12 @@ fn setup(
     flushAtUs: i64,
     compressionPool: *CompressionPool,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "MemTable.setup",
+    });
+    defer z.end();
+
     block.sortData();
     self.flushAtUs = flushAtUs;
     self.tableHeader.deinit(alloc);
@@ -201,6 +208,12 @@ fn mergeIntoMemTable(
     flushAtUs: i64,
     compressionPool: *CompressionPool,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "MemTable.mergeIntoMemTable",
+    });
+    defer z.end();
+
     self.flushAtUs = flushAtUs;
 
     var writer = BlockWriter.initFromMemTable(self, compressionPool);
@@ -217,6 +230,12 @@ pub fn mergeBlocks(
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const Stop,
 ) !TableHeader {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "mergeBlocks",
+    });
+    defer z.end();
+
     defer writer.close(io, alloc) catch |err| {
         Logger.log(.err, "failed to close index block writer", .{ .err = err });
     };
@@ -234,7 +253,7 @@ pub fn size(self: *MemTable) u64 {
     );
 }
 
-pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) !void {
+pub fn storeToDisk(self: *MemTable, io: Io, path: []const u8) !void {
     try fs.createDirAssert(io, path);
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
@@ -256,7 +275,7 @@ pub fn storeToDisk(self: *MemTable, io: Io, alloc: Allocator, path: []const u8) 
     try std.fs.path.fmtJoin(&.{ path, filenames.lens }).format(&pathWriter);
     try fs.writeBufferValToFile(io, pathWriter.buffered(), self.lensBuf.items);
 
-    try self.tableHeader.writeFile(io, alloc, path);
+    try self.tableHeader.writeFile(io, path);
 
     try fs.syncPathAndParentDir(io, path);
 }

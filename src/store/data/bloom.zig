@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const tracy = @import("tracy");
+
 const Encoder = @import("encoding").Encoder;
 const Logger = @import("logging");
 
@@ -41,6 +43,12 @@ pub const HashTokenizer = struct {
         allocator: std.mem.Allocator,
         values: []const []const u8,
     ) !std.ArrayList(u64) {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "tokenizeValues",
+        });
+        defer z.end();
+
         var dst: std.ArrayList(u64) = try .initCapacity(allocator, 128);
         errdefer dst.deinit(allocator);
         for (values, 0..) |val, i| {
@@ -281,6 +289,12 @@ pub const BloomFilter = struct {
     }
 
     pub fn writeBits(dst: []u8, src: []const u64) void {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "writeBits",
+        });
+        defer z.end();
+
         @memset(dst, 0);
         var buf: [8]u8 align(@alignOf(u64)) = undefined;
         const p: *u64 = @ptrCast(&buf);

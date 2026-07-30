@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const xev = @import("xev");
+const tracy = @import("tracy");
 
 const fs = @import("../../fs.zig");
 
@@ -9,6 +10,7 @@ const cap = @import("../table/cap.zig");
 
 const Cache = @import("../../stds/Cache.zig").Cache;
 const Entries = @import("Entries.zig");
+const maxEntrySize = Entries.maxEntrySize;
 const MemBlock = @import("MemBlock.zig");
 const Table = @import("Table.zig");
 const MemTable = @import("MemTable.zig");
@@ -289,6 +291,12 @@ pub fn nextMergeIdx(self: *IndexRecorder) u64 {
 }
 
 pub fn add(self: *IndexRecorder, io: Io, alloc: Allocator, entries: []const []const u8) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.add",
+    });
+    defer z.end();
+
     var entryIndex: usize = 0;
 
     while (entryIndex < entries.len) {
@@ -321,6 +329,12 @@ pub fn collectTables(self: *IndexRecorder, io: Io, alloc: Allocator, dst: *std.A
 }
 
 fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlock) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.flushBlocks",
+    });
+    defer z.end();
+
     if (blocks.len == 0) return;
 
     // TODO: make a more narrow locking, ideally before we make flushEntriesAt field as atomic
@@ -345,6 +359,12 @@ fn flushBlocks(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlo
 }
 
 fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks: []*MemBlock, force: bool) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.flushBlocksToMemTables",
+    });
+    defer z.end();
+
     std.debug.assert(blocks.len > 0);
     var tail = blocks[0..];
     errdefer for (tail) |block| block.deinit(alloc);
@@ -403,6 +423,12 @@ fn flushBlocksToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, blocks
 /// requires same Allocator that's used to create them,
 /// because it deinits the merged ones
 fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *std.ArrayList(*Table)) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.mergeMemTables",
+    });
+    defer z.end();
+
     // TODO: run merging job in parallel and benchmark whether it doesn't hurt general throughput
 
     var fba = std.heap.stackFallback(512, alloc);
@@ -463,6 +489,12 @@ pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
 }
 
 fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Table, force: bool) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.addToMemTables",
+    });
+    defer z.end();
+
     timedWait(&self.memTablesSem, io, std.time.ns_per_s / 5) catch |err| {
         errdefer memTable.release(io);
 
@@ -625,6 +657,12 @@ fn tableTimerCallback(
     c: *xev.Completion,
     r: xev.Timer.RunError!void,
 ) xev.CallbackAction {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.tableTimerCallback",
+    });
+    defer z.end();
+
     _ = loop;
     _ = c;
     _ = r catch {};
@@ -663,6 +701,12 @@ pub fn startDiskTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !voi
 }
 
 fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.runDiskTablesMerger",
+    });
+    defer z.end();
+
     self.tablesMerger(io, alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
@@ -672,6 +716,12 @@ fn runDiskTablesMerger(self: *IndexRecorder, io: Io, alloc: Allocator) void {
 }
 
 fn memBlockFlusherTick(ctx: *anyopaque) void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.memBlockFlusherTick",
+    });
+    defer z.end();
+
     const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
     const self = tickCtx.recorder;
 
@@ -694,6 +744,12 @@ pub fn startMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void
 }
 
 fn runMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.runMemTablesMerge",
+    });
+    defer z.end();
+
     self.tablesMerger(io, alloc, &self.memTables, &self.memMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
@@ -801,6 +857,12 @@ pub fn mergeTables(
     force: bool,
     stopped: ?*const Stop,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.mergeTables",
+    });
+    defer z.end();
+
     std.debug.assert(tables.len > 0);
     for (tables) |table| std.debug.assert(table.inMerge);
 
@@ -878,11 +940,10 @@ pub fn mergeTables(
         memTable.tableHeader = tableHeader;
     } else {
         std.debug.assert(destinationTablePath.len > 0);
-        var fbaFallback = std.heap.stackFallback(256, alloc);
         // TODO: pass table header to openining a table and use it instead of reading from a file,
         // write a test in advance to confirm it's exact same header
         defer tableHeader.deinit(alloc);
-        try tableHeader.writeFile(io, fbaFallback.get(), destinationTablePath);
+        try tableHeader.writeFile(io, destinationTablePath);
 
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
@@ -930,7 +991,13 @@ pub fn flushMemTable(
     destinationTablePath: []const u8,
     tableKind: TableKind,
 ) !void {
-    try memTable.storeToDisk(io, alloc, destinationTablePath);
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "IndexRecorder.flushMemTable",
+    });
+    defer z.end();
+
+    try memTable.storeToDisk(io, destinationTablePath);
 
     const newTable = try openCreatedTable(io, alloc, destinationTablePath, null, self.decompressionPool);
     errdefer newTable.release(io);
@@ -1005,7 +1072,7 @@ fn createDiskTableFromItems(
 
     const memTable = try createMemTableFromItems(io, alloc, items);
     defer memTable.close(io);
-    try memTable.inner.mem.storeToDisk(io, alloc, tablePath);
+    try memTable.inner.mem.storeToDisk(io, tablePath);
     return Table.open(io, alloc, tablePath, decompressionPool);
 }
 

@@ -345,7 +345,7 @@ fn createTestTableDir(io: Io, alloc: Allocator, tablePath: []const u8) !void {
         .firstEntry = items[0],
         .lastEntry = items[items.len - 1],
     };
-    try header.writeFile(io, alloc, tablePath);
+    try header.writeFile(io, tablePath);
 }
 
 // TODO: bunch of tests/things is duplicated between data/index tables,

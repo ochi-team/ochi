@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const Encoder = @import("encoding").Encoder;
 const QuerySIDsResult = @import("store/index/Index.zig").QuerySIDsResult;
 
@@ -200,6 +202,12 @@ pub fn addLines(
     blocksCache: *Cache(*MemBlock),
     lookupPool: *LookupPool,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "Partition.addLine",
+    });
+    defer z.end();
+
     if (!self.isCached(io, sid)) {
         if (!try self.index.hasStream(io, allocator, sid, blocksCache, lookupPool)) {
             try self.index.indexStream(io, allocator, sid, tags, encodedTags);

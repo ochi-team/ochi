@@ -5,6 +5,8 @@ const Allocator = std.mem.Allocator;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const fs = @import("fs.zig");
 
 const Line = @import("store/lines.zig").Line;
@@ -143,6 +145,12 @@ pub const DataShard = struct {
     }
 
     fn appendLines(shard: *DataShard, alloc: Allocator, lines: []const Line, sid: SID) !void {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "DataShard.appendLines",
+        });
+        defer z.end();
+
         const bufferAlloc = shard.buffer.allocator();
         for (lines) |line| {
             validate(line.fields) catch |err| {
@@ -231,6 +239,12 @@ pub const DataShard = struct {
         decompressionPool: *DecompressionPool,
         sem: *Io.Semaphore,
     ) !?*Table {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "DataShard.flush",
+        });
+        defer z.end();
+
         if (self.lines.items.len == 0) {
             return null;
         }
@@ -509,6 +523,12 @@ fn shardTimerCallback(
     c: *xev.Completion,
     r: xev.Timer.RunError!void,
 ) xev.CallbackAction {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.shardTimerCallback",
+    });
+    defer z.end();
+
     _ = r catch {};
     const shard = ud.?;
     const self = shard.parent;
@@ -578,6 +598,12 @@ fn tableTimerCallback(
     c: *xev.Completion,
     r: xev.Timer.RunError!void,
 ) xev.CallbackAction {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.tableTimerCallback",
+    });
+    defer z.end();
+
     _ = loop;
     _ = c;
     _ = r catch {};
@@ -697,6 +723,12 @@ pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
 }
 
 fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, force: bool) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.flushShard",
+    });
+    defer z.end();
+
     const maybeMemTable = try shard.flush(io, alloc, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.memMergeSem);
     if (maybeMemTable) |memTable| {
         timedWait(&self.memTablesSem, io, std.time.ns_per_s / 10) catch |err| {
@@ -783,6 +815,12 @@ fn submitMergeTask(
 }
 
 fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.runDiskTablesMerger",
+    });
+    defer z.end();
+
     self.tablesMerger(io, alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
@@ -792,6 +830,12 @@ fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
 }
 
 fn runMemTableMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.runMemTableMerger",
+    });
+    defer z.end();
+
     self.tablesMerger(io, alloc, &self.memTables, &self.memMergeSem) catch |err| {
         if (err == error.Stopped) return;
 
@@ -841,6 +885,12 @@ fn mergeTables(
     force: bool,
     stopped: ?*const Stop,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.mergeTables",
+    });
+    defer z.end();
+
     std.debug.assert(tables.len > 0);
     for (tables) |table| std.debug.assert(table.inMerge);
 
@@ -916,10 +966,7 @@ fn mergeTables(
     } else {
         std.debug.assert(destinationTablePath.len > 0);
 
-        // TODO: implement stack fallback that replaces stack size to 1 in tests,
-        // add a tidy linter that restricts usage of std.heap.stackFallback
-        var fba = std.heap.stackFallback(256, alloc);
-        try tableHeader.writeFile(io, fba.get(), destinationTablePath);
+        try tableHeader.writeFile(io, destinationTablePath);
 
         try fs.syncPathAndParentDir(io, destinationTablePath);
     }
@@ -960,7 +1007,13 @@ pub fn flushMemTable(
     destinationTablePath: []const u8,
     tableKind: TableKind,
 ) !void {
-    try memTable.storeToDisk(io, alloc, destinationTablePath);
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.flushMemTable",
+    });
+    defer z.end();
+
+    try memTable.storeToDisk(io, destinationTablePath);
 
     const newTable = try openCreatedTable(io, alloc, destinationTablePath, null, self.decompressionPool);
     errdefer newTable.release(io);
@@ -969,6 +1022,12 @@ pub fn flushMemTable(
 }
 
 pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.addLine",
+    });
+    defer z.end();
+
     const i = self.nextShard.fetchAdd(1, .monotonic) % self.shards.len;
     var shard = &self.shards[i];
 
@@ -1167,7 +1226,7 @@ fn createDiskTableFromLines(
     defer memTable.deinit(alloc);
 
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines);
-    try memTable.storeToDisk(io, alloc, tablePath);
+    try memTable.storeToDisk(io, tablePath);
     return Table.open(io, alloc, tablePath, decompressionPool);
 }
 

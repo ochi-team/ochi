@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
+const tracy = @import("tracy");
 const Encoder = encoding.Encoder;
 const Unpacker = @import("Unpacker.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
@@ -129,6 +130,12 @@ pub fn packValuesInterBound(self: *Self, values: [][]const u8) !PackBound {
 }
 
 pub fn packValues(pool: *CompressionPool, io: Io, dst: []u8, bound: PackBound) !usize {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "packValues",
+    });
+    defer z.end();
+
     // Pack lengths and values into different slices of the same buffer
     const encodedLensSize = try packBytes(pool, io, dst[0..bound.lensBound], bound.lensBuf);
     const encodedValuesSize = try packBytes(pool, io, dst[encodedLensSize..], bound.valuesBuf);
@@ -146,6 +153,14 @@ fn packBytesBound(srcLen: usize) !usize {
 }
 
 fn packBytes(pool: *CompressionPool, io: Io, dest: []u8, src: []u8) !usize {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "packBytes",
+    });
+    z.text("src.len");
+    z.value(src.len);
+    defer z.end();
+
     if (src.len < 128) {
         // skip compression, up to 127 can be in a single byte to be compatible with leb128
         // 1 compression kind, 1 len, len of the buf

@@ -417,14 +417,20 @@ test "filterLeveledTables returns null when size filter removes candidates" {
     }
 }
 
-fn createDiskTableFromItems(io: Io, alloc: Allocator, tablePath: []const u8, items: []const []const u8, compressionPool: *CompressionPool) !*Table {
+fn createDiskTableFromItems(
+    io: Io,
+    alloc: Allocator,
+    tablePath: []const u8,
+    items: []const []const u8,
+    compressionPool: *CompressionPool,
+) !*Table {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
     const memTable = try createMemTableFromItems(io, alloc, items, compressionPool);
     defer memTable.close(io);
     const mem = memTable.inner.mem;
-    try mem.storeToDisk(io, alloc, tablePath);
+    try mem.storeToDisk(io, tablePath);
     return Table.open(io, alloc, tablePath, decompressionPool);
 }
 

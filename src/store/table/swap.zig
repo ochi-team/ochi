@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const merge = @import("merge.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
@@ -19,6 +21,12 @@ pub fn Swapper(
             newTable: *T,
             tableKind: merge.TableKind,
         ) !void {
+            const z = tracy.Zone.begin(.{
+                .src = @src(),
+                .name = "swapTables",
+            });
+            defer z.end();
+
             self.mxTables.lockUncancelable(io);
             errdefer self.mxTables.unlock(io);
 

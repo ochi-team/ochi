@@ -2,7 +2,9 @@
 const std = @import("std");
 const Io = std.Io;
 
+const tracy = @import("tracy");
 const httpz = @import("httpz");
+
 const AppContext = @import("../dispatch.zig").AppContext;
 const Store = @import("../Store.zig").Store;
 const Processor = @import("../process.zig").Processor;
@@ -19,6 +21,12 @@ const Logger = @import("logging");
 
 /// ingestLokiJsonHandler defines a loki json insertion operation
 pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "ingestLokiJsonHandler",
+    });
+    defer z.end();
+
     const contentType = r.headers.get("content-type");
 
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
@@ -45,8 +53,6 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
 
     const params = Params{ .tenantID = ctx.tenantID };
 
-    // TODO: it's too early to pass page allocator,
-    // we might be able to use arena a bit more
     process(ctx.io, res.arena, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
 

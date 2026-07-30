@@ -1,6 +1,8 @@
 const std = @import("std");
 const snappy = @import("snappy").raw;
 
+const tracy = @import("tracy");
+
 // TODO: support gzip to cover loki fully
 // TODO: support streaming decompression together with unmarshalling, so we pass a reader
 // to a json/proto marshaller and don't keep the full uncompressed buffer in memory
@@ -20,14 +22,24 @@ pub const Compression = enum(u8) {
         return error.CompressingNotSupported;
     }
     pub fn uncompress(compression: Compression, allocator: std.mem.Allocator, compressed: []const u8) ![]const u8 {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "uncompress",
+        });
+        defer z.end();
+
         return switch (compression) {
             .gzip => return error.CompressionNotSupported,
             .snappy => {
+                z.text("snappy");
                 const uncompressed = try allocator.alloc(u8, try snappy.uncompressedLength(compressed[0..]));
                 _ = try snappy.uncompress(compressed[0..], uncompressed);
                 return uncompressed;
             },
-            .none => return compressed,
+            .none => {
+                z.text("none");
+                return compressed;
+            },
         };
     }
 };

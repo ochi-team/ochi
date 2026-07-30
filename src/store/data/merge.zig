@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const Stop = @import("../../stds/Stop.zig");
 const Heap = @import("../../stds/heap.zig").Heap;
 
@@ -42,6 +44,12 @@ pub fn mergeData(
     readers: *std.ArrayList(*BlockReader),
     stopped: ?*const Stop,
 ) !TableHeader {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "DataRecorder.flushMemTable",
+    });
+    defer z.end();
+
     defer writer.close(io);
 
     var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, readers);
@@ -161,6 +169,12 @@ pub const StreamMerger = struct {
         writer: *TableWriter,
         blockData: *BlockData,
     ) !void {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "StreamMerger.writeBlock",
+        });
+        defer z.end();
+
         // TODO: assert the data and merger state
 
         const totalKeys = blockData.columnsData.items.len + if (blockData.invariantColumns) |invariantCol| invariantCol.len else 0;
@@ -212,6 +226,12 @@ pub const StreamMerger = struct {
         blockWriter: *BlockWriter,
         writer: *TableWriter,
     ) !void {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "StreamMerger.merge",
+        });
+        defer z.end();
+
         const len = self.lines.items.len;
         try self.decodeLines(io, alloc, blockData);
         std.debug.assert(self.lines.items.len > len);
@@ -228,6 +248,12 @@ pub const StreamMerger = struct {
     }
 
     fn decodeLines(self: *StreamMerger, io: Io, alloc: Allocator, blockData: *BlockData) !void {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "StreamMerger.decodeLines",
+        });
+        defer z.end();
+
         const block = try Block.initFromData(io, alloc, self.timestampsEncoders, blockData, self.unpacker, self.decoder);
         defer block.deinit(alloc);
 
@@ -646,7 +672,7 @@ test "mergeData multi tenant" {
             .{ .tenantID = tenantID, .id = 1 },
             lines[0..],
         );
-        try memTable.storeToDisk(io, alloc, tablePath);
+        try memTable.storeToDisk(io, tablePath);
 
         const table = try Table.open(io, alloc, tablePath, decompressionPool);
         try tables.append(alloc, table);

@@ -121,7 +121,7 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8, decompressionPool: *Deco
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var pathWriter = std.Io.Writer.fixed(&pathBuf);
 
-    const header = try TableHeader.readFile(io, alloc, path);
+    const header = try TableHeader.readFile(io, path);
 
     try std.fs.path.fmtJoin(&.{ path, filenames.columnKeys }).format(&pathWriter);
     var columnIDGen = try ColumnIDGen.decodeFile(io, alloc, decompressionPool, pathWriter.buffered());
@@ -751,7 +751,7 @@ test "release keeps table unless toRemove is set, then removes table dir" {
 
     var lines = [_]Line{ line1, line2 };
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
-    try memTable.storeToDisk(io, alloc, tablePath);
+    try memTable.storeToDisk(io, tablePath);
 
     const table1Path = try alloc.dupe(u8, tablePath);
     const table1 = try Table.open(io, alloc, table1Path, decompressionPool);
@@ -912,7 +912,7 @@ test "open reads table from disk" {
 
     var lines = [_]Line{ line1, line2 };
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
-    try memTable.storeToDisk(io, alloc, tablePath);
+    try memTable.storeToDisk(io, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
     const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);
@@ -1020,8 +1020,8 @@ test "openAll handles all io failures" {
     }};
 
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
-    try memTable.storeToDisk(io, alloc, table1Path);
-    try memTable.storeToDisk(io, alloc, table2Path);
+    try memTable.storeToDisk(io, table1Path);
+    try memTable.storeToDisk(io, table2Path);
 
     var tablesFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var tablesFilePathWriter = std.Io.Writer.fixed(&tablesFilePathBuf);
@@ -1337,7 +1337,7 @@ test "queryLines reads disk table fields after open" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines[0..]);
-    try memTable.storeToDisk(io, alloc, tablePath);
+    try memTable.storeToDisk(io, tablePath);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
     const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);

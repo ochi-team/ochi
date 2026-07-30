@@ -364,33 +364,18 @@ pub fn writeBlock(
     defer columnsHeader.deinit(allocator);
     const columns = block.getColumns();
 
-    const z2 = tracy.Zone.begin(.{
-        .src = @src(),
-        .name = "TableWriter.writeBlock.allocColBlooms",
-    });
     try self.columnIDGen.keyIDs.ensureUnusedCapacity(allocator, columns.len);
     try self.colIdx.ensureUnusedCapacity(@intCast(columns.len));
     try self.bloomValuesList.ensureUnusedCapacity(allocator, columns.len);
     try self.bloomTokensList.ensureUnusedCapacity(allocator, columns.len);
-    z2.end();
 
-    const z3 = tracy.Zone.begin(.{
-        .src = @src(),
-        .name = "TableWriter.writeBlock.prepareEncoders",
-    });
     var valuesEncoder = try ValuesEncoder.init(allocator);
     defer valuesEncoder.deinit();
     var packer = try Packer.init(allocator);
     defer packer.deinit();
-    const zTokenizer = tracy.Zone.begin(.{
-        .src = @src(),
-        .name = "TableWriter.writeBlock.HashTokenizer",
-    });
     var buckets: [bucketsSize]Bucket = undefined;
     var tokenizer = try HashTokenizer.init(allocator, &buckets);
     defer tokenizer.deinit(allocator);
-    zTokenizer.end();
-    z3.end();
     for (columns, 0..) |col, i| {
         try self.writeColumn(
             io,
@@ -416,6 +401,12 @@ pub fn writeData(
     blockHeader: *BlockHeader,
     data: *BlockData,
 ) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockWriter.writeData",
+    });
+    defer z.end();
+
     try self.writeTimestampsData(io, alloc, &blockHeader.timestampsHeader, data.timestampsData);
 
     const columnsHeader = try ColumnsHeader.initFromData(alloc, data);
@@ -510,17 +501,17 @@ fn writeColumn(
     packer: *Packer,
     tokenizer: *HashTokenizer,
 ) !void {
-    ch.key = col.key;
-
-    const z1 = tracy.Zone.begin(.{
+    const z = tracy.Zone.begin(.{
         .src = @src(),
-        .name = "TableWriter.writeColumn.encodeValues",
+        .name = "TableWriter.writeColumn",
     });
+    defer z.end();
+
+    ch.key = col.key;
     const valueType = try valuesEncoder.encode(col.values, &ch.dict);
     ch.type = valueType.type;
     ch.min = valueType.min;
     ch.max = valueType.max;
-    z1.end();
 
     const bloomBufI = self.getBloomBufferIndex(io, allocator, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
@@ -532,10 +523,6 @@ fn writeColumn(
         else => return err,
     };
 
-    const z2 = tracy.Zone.begin(.{
-        .src = @src(),
-        .name = "TableWriter.writeColumn.packValue",
-    });
     var packedBound = try packer.packValuesInterBound(valuesEncoder.values.items);
     defer packedBound.deinit(allocator);
     const packBound = packedBound.lensBound + packedBound.valuesBound;
@@ -545,12 +532,7 @@ fn writeColumn(
     ch.offset = bloomValuesBuf.len();
     try bloomValuesBuf.appendAllocated(io, packDst, packedCap);
     ch.size = packedCap;
-    z2.end();
 
-    const z3 = tracy.Zone.begin(.{
-        .src = @src(),
-        .name = "TableWriter.writeColumn.tokenizeValues",
-    });
     ch.bloomFilterOffset = bloomTokensBuf.len();
     const bloomHashCap = if (valueType.type == .dict) 0 else blk: {
         var hashes = try tokenizer.tokenizeValues(allocator, col.values);
@@ -564,10 +546,15 @@ fn writeColumn(
         break :blk dstSize;
     };
     ch.bloomFilterSize = bloomHashCap;
-    z3.end();
 }
 
 fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData, ch: *ColumnHeader) !void {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "BlockWriter.writeColumnData",
+    });
+    defer z.end();
+
     const dataLen = col.bloomValues.len;
     std.debug.assert(dataLen <= maxValuesBlockSize);
 
@@ -688,6 +675,7 @@ fn writeColumnsHeader(
         .name = "TableWriter.writeColumnsHeader",
     });
     defer z.end();
+
     std.debug.assert(csh.headers.len + csh.invariantColumns.len <= Block.maxColumns);
 
     var columnIDs: [Block.maxColumns]u16 = undefined;
