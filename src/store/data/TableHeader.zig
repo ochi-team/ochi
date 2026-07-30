@@ -5,11 +5,11 @@ const Dir = Io.Dir;
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
 
-const maxFileBytes = 16 * 1024 * 1024;
-
 // adding new fields take into account the header must own them,
 // follow the pattern of the index table header
 const TableHeader = @This();
+
+const headerEncodeBufferSize = 256;
 
 // TODO: find out whether we can do them u32
 minTimestamp: u64 = 0,
@@ -22,35 +22,26 @@ bloomValuesBuffersAmount: u32 = 0,
 
 /// flush writes header file to disk,
 /// header is saved as a json structure
-// TODO: we must be able to calculate a size of it in advance knowing all the limits
 pub fn writeFile(
     self: *const TableHeader,
     io: Io,
-    allocator: std.mem.Allocator,
     path: []const u8,
 ) !void {
-    const json = try std.json.Stringify.valueAlloc(
-        allocator,
-        self,
-        .{},
-    );
-    defer allocator.free(json);
+    var buf: [headerEncodeBufferSize]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try std.json.Stringify.value(self, .{}, &w);
 
     var metadataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var metadataPathWriter = std.Io.Writer.fixed(&metadataPathBuf);
     try std.fs.path.fmtJoin(&.{ path, filenames.header }).format(&metadataPathWriter);
 
-    try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), json);
+    try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), w.buffered());
 }
 
 pub fn readFile(
     io: Io,
-    allocator: std.mem.Allocator,
     path: []const u8,
 ) !TableHeader {
-    var fba = std.heap.stackFallback(1024, allocator);
-    const fbaAlloc = fba.get();
-
     var metadataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var metadataPathWriter = std.Io.Writer.fixed(&metadataPathBuf);
     try std.fs.path.fmtJoin(&.{ path, filenames.header }).format(&metadataPathWriter);
@@ -58,11 +49,14 @@ pub fn readFile(
     var file = try Dir.openFileAbsolute(io, metadataPathWriter.buffered(), .{});
     defer file.close(io);
 
-    var file_reader = file.reader(io, &.{});
-    const data = try file_reader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes));
-    defer fbaAlloc.free(data);
+    var rawBuf: [headerEncodeBufferSize]u8 = undefined;
+    var fileReader = file.reader(io, &.{});
+    const n = try fileReader.interface.readSliceShort(&rawBuf);
 
-    const parsed = try std.json.parseFromSlice(TableHeader, fbaAlloc, data, .{});
+    var jsonBuf: [headerEncodeBufferSize]u8 = undefined;
+    var stackAlloc = std.heap.FixedBufferAllocator.init(&jsonBuf);
+    const alloc = stackAlloc.allocator();
+    const parsed = try std.json.parseFromSlice(TableHeader, alloc, rawBuf[0..n], .{});
     defer parsed.deinit();
 
     return parsed.value;
@@ -71,28 +65,49 @@ pub fn readFile(
 const testing = std.testing;
 
 test "roundtrip file read/write" {
-    const alloc = testing.allocator;
     const io = testing.io;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io, "table");
-    const tablePath = try tmp.dir.realPathFileAlloc(io, "table", alloc);
-    defer alloc.free(tablePath);
-
-    const header = TableHeader{
-        .minTimestamp = 10,
-        .maxTimestamp = 25,
-        .uncompressedSize = 1024,
-        .compressedSize = 512,
-        .len = 3,
-        .blocksCount = 2,
-        .bloomValuesBuffersAmount = 7,
+    const Case = struct {
+        header: TableHeader,
+    };
+    const cases = &[_]Case{
+        .{
+            .header = .{
+                .minTimestamp = 10,
+                .maxTimestamp = 25,
+                .uncompressedSize = 1024,
+                .compressedSize = 512,
+                .len = 3,
+                .blocksCount = 2,
+                .bloomValuesBuffersAmount = 7,
+            },
+        },
+        .{
+            .header = .{
+                .minTimestamp = std.math.maxInt(u64),
+                .maxTimestamp = std.math.maxInt(u64),
+                .uncompressedSize = std.math.maxInt(u32),
+                .compressedSize = std.math.maxInt(u32),
+                .len = std.math.maxInt(u32),
+                .blocksCount = std.math.maxInt(u32),
+                .bloomValuesBuffersAmount = std.math.maxInt(u32),
+            },
+        },
     };
 
-    try header.writeFile(io, alloc, tablePath);
+    for (cases) |case| {
+        try tmp.dir.createDirPath(io, "table");
+        var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try tmp.dir.realPathFile(io, "table", &pathBuf);
+        const tablePath = pathBuf[0..n];
 
-    const readHeader = try TableHeader.readFile(io, alloc, tablePath);
-    try testing.expectEqualDeep(header, readHeader);
+        const header = case.header;
+        try header.writeFile(io, tablePath);
+
+        const readHeader = try TableHeader.readFile(io, tablePath);
+        try testing.expectEqualDeep(header, readHeader);
+    }
 }

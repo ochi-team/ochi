@@ -5,12 +5,12 @@ const Dir = Io.Dir;
 
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
+const maxEntrySize = @import("Entries.zig").maxEntrySize;
 
-const maxFileBytes = 16 * 1024 * 1024;
+const headerBufferSize = 4096;
 
 const TableHeader = @This();
 
-// TODO: try making both values u32
 entriesCount: u64 = 0,
 blocksCount: u64 = 0,
 firstEntry: []const u8 = "",
@@ -21,11 +21,7 @@ pub fn deinit(self: TableHeader, alloc: Allocator) void {
     alloc.free(self.lastEntry);
 }
 
-// TODO: TableHeader could have a static bound value to give a stack buffer
 pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
-    var fba = std.heap.stackFallback(1024, alloc);
-    const fbaAlloc = fba.get();
-
     var metadataBuf: [std.fs.max_path_bytes]u8 = undefined;
     var metadataPathWriter = std.Io.Writer.fixed(&metadataBuf);
     try std.fs.path.fmtJoin(&.{ path, filenames.header }).format(&metadataPathWriter);
@@ -35,15 +31,14 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     };
     defer file.close(io);
 
+    var rawBuf: [headerBufferSize]u8 = undefined;
     var fileReader = file.reader(io, &metadataBuf);
-    const data = fileReader.interface.allocRemaining(fbaAlloc, .limited(maxFileBytes)) catch |err| {
-        std.debug.panic("can't read table header '{s}': {s}", .{ path, @errorName(err) });
-    };
-    defer fbaAlloc.free(data);
+    const n = try fileReader.interface.readSliceShort(&rawBuf);
 
-    const parsed = std.json.parseFromSlice(TableHeader, fbaAlloc, data, .{}) catch |err| {
-        std.debug.panic("can't parse table header '{s}': {s}", .{ path, @errorName(err) });
-    };
+    var jsonBuf: [headerBufferSize]u8 = undefined;
+    var bufferAlloc = std.heap.FixedBufferAllocator.init(&jsonBuf);
+    const stackAlloc = bufferAlloc.allocator();
+    const parsed = try std.json.parseFromSlice(TableHeader, stackAlloc, rawBuf[0..n], .{});
     defer parsed.deinit();
 
     const firstEntry = try alloc.dupe(u8, parsed.value.firstEntry);
@@ -59,20 +54,21 @@ pub fn readFile(io: Io, alloc: Allocator, path: []const u8) !TableHeader {
     };
 }
 
-pub fn writeFile(self: *const TableHeader, io: Io, alloc: Allocator, tablePath: []const u8) !void {
-    const json = try std.json.Stringify.valueAlloc(alloc, .{
+pub fn writeFile(self: *const TableHeader, io: Io, tablePath: []const u8) !void {
+    var buf: [headerBufferSize]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try std.json.Stringify.value(.{
         .entriesCount = self.entriesCount,
         .blocksCount = self.blocksCount,
         .firstEntry = self.firstEntry,
         .lastEntry = self.lastEntry,
-    }, .{ .whitespace = .minified });
-    defer alloc.free(json);
+    }, .{ .whitespace = .minified }, &w);
 
     var metadataPathBuf: [std.fs.max_path_bytes]u8 = undefined;
     var metadataPathWriter = std.Io.Writer.fixed(&metadataPathBuf);
     try std.fs.path.fmtJoin(&.{ tablePath, filenames.header }).format(&metadataPathWriter);
 
-    try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), json);
+    try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), w.buffered());
 }
 
 const testing = std.testing;
@@ -83,21 +79,46 @@ test "roundtrip file read/write" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io, "table");
-    const tablePath = try tmp.dir.realPathFileAlloc(io, "table", alloc);
-    defer alloc.free(tablePath);
-
-    var tb = TableHeader{
-        .blocksCount = 5,
-        .entriesCount = 12,
-        .firstEntry = "alpha",
-        .lastEntry = "omega",
+    const Case = struct {
+        header: TableHeader,
     };
 
-    try tb.writeFile(io, alloc, tablePath);
+    var largeFirstEntry: [maxEntrySize]u8 = undefined;
+    @memset(&largeFirstEntry, 'a');
+    var largeLastEntry: [maxEntrySize]u8 = undefined;
+    @memset(&largeLastEntry, 'x');
 
-    var readTb = try TableHeader.readFile(io, alloc, tablePath);
-    defer readTb.deinit(alloc);
+    const cases = &[_]Case{
+        .{
+            .header = .{
+                .blocksCount = 5,
+                .entriesCount = 12,
+                .firstEntry = "alpha",
+                .lastEntry = "omega",
+            },
+        },
+        .{
+            .header = .{
+                .blocksCount = std.math.maxInt(u64),
+                .entriesCount = std.math.maxInt(u64),
+                .firstEntry = &largeFirstEntry,
+                .lastEntry = &largeLastEntry,
+            },
+        },
+    };
+    for (cases) |case| {
+        try tmp.dir.createDirPath(io, "table");
+        var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try tmp.dir.realPathFile(io, "table", &pathBuf);
+        const tablePath = pathBuf[0..n];
 
-    try testing.expectEqualDeep(tb, readTb);
+        const header = case.header;
+
+        try header.writeFile(io, tablePath);
+
+        var readTb = try TableHeader.readFile(io, alloc, tablePath);
+        defer readTb.deinit(alloc);
+
+        try testing.expectEqualDeep(header, readTb);
+    }
 }
