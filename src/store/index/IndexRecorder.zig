@@ -1434,7 +1434,7 @@ test "IndexRecorder disk table merger survives large load" {
     try recorder.startTasks(io, alloc);
 
     const minItemLen = 512;
-    const maxItemLen = 1536;
+    const maxItemLen = maxEntrySize;
     const itemPoolSize = 32;
     const lenSpan = maxItemLen - minItemLen + 1;
 

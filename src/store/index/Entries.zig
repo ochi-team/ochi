@@ -2,10 +2,15 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const tracy = @import("tracy");
+
 const builtin = @import("builtin");
 
 const MemBlock = @import("MemBlock.zig");
 const Logger = @import("logging");
+
+// no point to index larger entries
+pub const maxEntrySize = 1024;
 
 const EntriesShardAddResult = struct {
     blocksToFlush: std.ArrayList(*MemBlock),
@@ -39,6 +44,16 @@ const EntriesShard = struct {
         entries: []const []const u8,
         maxMemBlockSize: u32,
     ) !?EntriesShardAddResult {
+        const z = tracy.Zone.begin(.{
+            .src = @src(),
+            .name = "EntriesShard.add",
+        });
+        defer z.end();
+
+        // an entry allowed through must still fit a freshly created block,
+        // whose capacity is maxMemBlockSize
+        const effectiveMaxEntrySize = @min(maxEntrySize, maxMemBlockSize);
+
         self.mx.lockUncancelable(io);
         defer self.mx.unlock(io);
 
@@ -46,16 +61,16 @@ const EntriesShard = struct {
         if (self.blocks.items.len == 0) {
             var firstValid: usize = entries.len;
             for (0..entries.len) |i| {
-                if (entries[i].len <= maxMemBlockSize) {
+                if (entries[i].len <= effectiveMaxEntrySize) {
                     firstValid = i;
                     break;
                 }
             }
 
             if (firstValid == entries.len) {
-                Logger.log(.debug, "skip adding items to index block", .{
+                Logger.log(.warn, "skip adding items to index block", .{
                     .items = entries.len,
-                    .maxSize = maxMemBlockSize,
+                    .maxSize = effectiveMaxEntrySize,
                 });
                 return null;
             }
@@ -77,13 +92,13 @@ const EntriesShard = struct {
 
         for (entries[validBlockI..]) |entry| {
             // Skip too long item
-            if (entry.len > maxMemBlockSize) {
+            if (entry.len > effectiveMaxEntrySize) {
                 var logPrefix = entry;
                 if (logPrefix.len > 32) {
                     logPrefix = logPrefix[0..32];
                 }
                 Logger.log(.warn, "skip adding item to index, item is too large", .{
-                    .maxSize = maxMemBlockSize,
+                    .maxSize = effectiveMaxEntrySize,
                     .given = entry.len,
                     .value = logPrefix,
                 });
