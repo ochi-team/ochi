@@ -6,7 +6,6 @@ const Decoder = @import("encoding").Decoder;
 pub const maxDictColumnValueSize = 256;
 pub const maxDictColumnValuesLen = 8;
 
-// TODO: first candidate to init from a mem pool
 // TODO: rename all Self's to its name
 const Self = @This();
 
@@ -24,6 +23,18 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 
 pub fn reset(self: *Self) void {
     self.values.clearRetainingCapacity();
+}
+
+pub fn copy(self: *const Self, allocator: std.mem.Allocator) !Self {
+    var values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
+    errdefer {
+        for (values.items) |v| allocator.free(v);
+        values.deinit(allocator);
+    }
+    for (self.values.items) |v| {
+        values.appendAssumeCapacity(try allocator.dupe(u8, v));
+    }
+    return .{ .values = values };
 }
 
 pub fn set(self: *Self, v: []const u8) ?u8 {

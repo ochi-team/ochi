@@ -187,6 +187,16 @@ pub const TimestampsData = struct {
         if (self.data.len > 0) alloc.free(self.data);
         self.* = .{};
     }
+
+    pub fn copy(self: *const TimestampsData, buf: []u8) TimestampsData {
+        @memcpy(buf, self.data);
+        return .{
+            .data = buf,
+            .encodingType = self.encodingType,
+            .minTimestamp = self.minTimestamp,
+            .maxTimestamp = self.maxTimestamp,
+        };
+    }
 };
 
 pub const ColumnData = struct {
@@ -196,10 +206,12 @@ pub const ColumnData = struct {
     min: u64,
     max: u64,
 
+    // writeColumnData uses a pointer to borrow,
+    // therefore it may require passing  a ColumndData as a pointer,
+    // it takes it from ColumnHeader,
+    // it's lifetime coupled to ColumnHeader === BlockReader
     // TODO: try making it a value, it stores a single array and used mostly as a value in the headers,
     // or the other way around,
-    // it's important to note writeColumnData uses *ColumnDict in order to move ownership,
-    // therefore it may require passing  a ColumndData as a pointer
     dict: *ColumnDict,
     // TODO: this holds ownership of merge read, either document it's ownership
     // or remove if we migrate ot file read / mmap
@@ -260,6 +272,46 @@ pub const ColumnData = struct {
             }
         }
         self.* = undefined;
+    }
+
+    /// copies the column.
+    /// ownedDictValues collects the duped dict value buffers so the caller can
+    /// use them after BlockReader free
+    pub fn copy(self: *const ColumnData, alloc: Allocator, column: *ColumnData, ownedDictValues: *std.ArrayList([]const u8)) !void {
+        const key = try alloc.dupe(u8, self.key);
+        errdefer alloc.free(key);
+
+        const bloomValues = try alloc.alloc(u8, self.bloomValues.len);
+        errdefer alloc.free(bloomValues);
+        @memcpy(bloomValues, self.bloomValues);
+
+        var bloomTokens: ?[]const u8 = null;
+        errdefer if (bloomTokens) |t| alloc.free(t);
+        if (self.bloomTokens) |tokens| {
+            const buf = try alloc.alloc(u8, tokens.len);
+            @memcpy(buf, tokens);
+            bloomTokens = buf;
+        }
+
+        const dict = try alloc.create(ColumnDict);
+        errdefer alloc.destroy(dict);
+        dict.* = try self.dict.copy(alloc);
+        errdefer dict.deinit(alloc);
+        try ownedDictValues.ensureUnusedCapacity(alloc, dict.values.items.len);
+        for (dict.values.items) |v| ownedDictValues.appendAssumeCapacity(v);
+
+        column.* = .{
+            .key = key,
+            .type = self.type,
+
+            .min = self.min,
+            .max = self.max,
+
+            .dict = dict,
+            .bloomValues = bloomValues,
+
+            .bloomTokens = bloomTokens,
+        };
     }
 };
 

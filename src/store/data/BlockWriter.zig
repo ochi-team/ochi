@@ -121,7 +121,6 @@ fn writeBlock(
     self: *BlockWriter,
     io: Io,
     alloc: Allocator,
-    // block: *Block,
     content: Content,
     sid: SID,
     tableWriter: *TableWriter,

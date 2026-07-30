@@ -9,6 +9,8 @@ const Heap = @import("../../stds/heap.zig").Heap;
 
 const sizing = @import("../data/sizing.zig");
 
+const ColumnData = @import("BlockData.zig").ColumnData;
+const Column = @import("Column.zig");
 const TableHeader = @import("../data/TableHeader.zig");
 const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
@@ -95,6 +97,16 @@ pub const StreamMerger = struct {
     lines: std.ArrayList(Line) = .empty,
     mergeBufferLines: std.ArrayList(Line) = .empty,
 
+    // holds a current block copied until
+    // either flushed as-is or merged with a second block for the same stream
+    block: BlockData = BlockData.initEmpty(),
+    // owns dict values and invariant column values duped into block. tracked
+    // separately because both containers can get their values swapped out,
+    // by downstream decode (Block.initFromData) or write (TableWriter.writeColumnData) steps,
+    // which only ever free the container
+    // TODO: this can go away to arena
+    blockValues: std.ArrayList([]const u8) = .empty,
+
     unpacker: *Unpacker,
     decoder: *ValuesDecoder,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
@@ -149,13 +161,44 @@ pub const StreamMerger = struct {
         // TODO: if Lines holds all the fields slice we can reuse the array capacity
         for (self.lines.items) |line| freeFields(alloc, line.fields);
         self.lines.clearRetainingCapacity();
+
+        self.resetBlock(alloc);
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
         deinitLinesFull(alloc, &self.lines);
         self.mergeBufferLines.deinit(alloc);
+        self.freeBlockDicts(alloc);
+        self.blockValues.deinit(alloc);
+        self.block.deinit(alloc);
         self.unpacker.deinit(alloc);
         self.decoder.deinit();
+    }
+
+    fn freeBlockDicts(self: *StreamMerger, alloc: Allocator) void {
+        for (self.block.columnsData.items) |col| {
+            alloc.free(col.key);
+            // values container may have been freed by
+            // TableWriter.writeColumnData
+            col.dict.deinit(alloc);
+            alloc.destroy(col.dict);
+        }
+        if (self.block.invariantColumns) |cols| {
+            for (cols) |col| {
+                alloc.free(col.key);
+                // same as above: container may have been freed
+                // by Block.initFromData while decoding
+                alloc.free(col.values);
+            }
+            alloc.free(cols);
+        }
+        for (self.blockValues.items) |v| alloc.free(v);
+        self.blockValues.clearRetainingCapacity();
+    }
+
+    fn resetBlock(self: *StreamMerger, alloc: Allocator) void {
+        self.freeBlockDicts(alloc);
+        self.block.reset(alloc);
     }
 
     pub fn writeBlock(
@@ -172,7 +215,7 @@ pub const StreamMerger = struct {
         });
         defer z.end();
 
-        // TODO: assert the data and merger state
+        self.assertState(blockData);
 
         const totalKeys = blockData.columnsData.items.len + if (blockData.invariantColumns) |invariantCol| invariantCol.len else 0;
 
@@ -184,7 +227,7 @@ pub const StreamMerger = struct {
             if (blockData.uncompressedSizeBytes >= maxBlockSize) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.decodeLines(io, alloc, blockData);
+                try self.setBlock(alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
@@ -193,7 +236,7 @@ pub const StreamMerger = struct {
             if (totalKeys > Block.maxColumns) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.decodeLines(io, alloc, blockData);
+                try self.setBlock(alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.size >= maxBlockSize) {
@@ -207,9 +250,18 @@ pub const StreamMerger = struct {
 
     // TODO: this and many more demonstartes obvious dependece of block and stream writers,
     // they always go together, I have to inject one into another probably
-    fn flushStream(self: *StreamMerger, io: Io, alloc: Allocator, writer: *BlockWriter, streamWriter: *TableWriter) !void {
+    fn flushStream(
+        self: *StreamMerger,
+        io: Io,
+        alloc: Allocator,
+        writer: *BlockWriter,
+        streamWriter: *TableWriter,
+    ) !void {
         if (self.lines.items.len > 0) {
             try writer.writeLines(io, alloc, self.sid, self.lines.items, streamWriter);
+        } else if (self.block.len > 0) {
+            // never merged with a second block for this stream, write the copy as-is
+            try writer.writeData(io, alloc, &self.block, streamWriter);
         }
 
         self.reset(alloc);
@@ -229,6 +281,13 @@ pub const StreamMerger = struct {
         });
         defer z.end();
 
+        if (self.block.len > 0) {
+            // a single block was held for this stream, unpack it into lines now
+            // that a second block forces an actual merge
+            try self.decodeLines(io, alloc, &self.block);
+            self.resetBlock(alloc);
+        }
+
         const len = self.lines.items.len;
         try self.decodeLines(io, alloc, blockData);
         std.debug.assert(self.lines.items.len > len);
@@ -242,6 +301,64 @@ pub const StreamMerger = struct {
         if (self.size >= maxBlockSize) {
             try self.flushStream(io, alloc, blockWriter, writer);
         }
+    }
+
+    // setBlock copies block into self.block so it can be written out later
+    // without ever decoding it into lines. columnsHeaderBuf/columnsHeader are not copied.
+    fn setBlock(self: *StreamMerger, alloc: Allocator, block: *const BlockData) !void {
+        const timestampsBuf = try alloc.alloc(u8, block.timestampsData.data.len);
+        errdefer alloc.free(timestampsBuf);
+        const timestampsData = block.timestampsData.copy(timestampsBuf);
+
+        // self.block.columnsData is reused from a previous setBlock call
+        std.debug.assert(self.block.columnsData.items.len == 0);
+        try self.block.columnsData.ensureTotalCapacity(alloc, block.columnsData.items.len);
+        errdefer {
+            for (self.block.columnsData.items) |col| {
+                alloc.free(col.key);
+                // TODO: it shows vague ownership of dict, fix it and document
+                col.dict.deinit(alloc);
+                alloc.destroy(col.dict);
+                var c = col;
+                c.deinit(alloc);
+            }
+            self.block.columnsData.clearRetainingCapacity();
+        }
+        for (block.columnsData.items) |*src| {
+            var dst: ColumnData = undefined;
+            try src.copy(alloc, &dst, &self.blockValues);
+            self.block.columnsData.appendAssumeCapacity(dst);
+        }
+
+        var invariantColumns: ?[]Column = null;
+        errdefer if (invariantColumns) |inv| alloc.free(inv);
+        if (block.invariantColumns) |cols| {
+            const dup = try alloc.alloc(Column, cols.len);
+            for (cols, 0..) |col, i| {
+                const key = try alloc.dupe(u8, col.key);
+                errdefer alloc.free(key);
+
+                const values = try alloc.alloc([]const u8, col.values.len);
+                try self.blockValues.ensureUnusedCapacity(alloc, col.values.len);
+                for (col.values, 0..) |v, j| {
+                    const value = try alloc.dupe(u8, v);
+                    values[j] = value;
+                    self.blockValues.appendAssumeCapacity(value);
+                }
+
+                dup[i] = .{ .key = key, .values = values };
+            }
+            invariantColumns = dup;
+        }
+
+        self.block = .{
+            .sid = block.sid,
+            .uncompressedSizeBytes = block.uncompressedSizeBytes,
+            .len = block.len,
+            .timestampsData = timestampsData,
+            .invariantColumns = invariantColumns,
+            .columnsData = self.block.columnsData,
+        };
     }
 
     fn decodeLines(self: *StreamMerger, io: Io, alloc: Allocator, blockData: *BlockData) !void {
@@ -270,6 +387,24 @@ pub const StreamMerger = struct {
         // (test is implemented to confirm it, good to have it for merger),
         // then understand whether I can use blockData.uncompressedSizeBytes
         self.size += sizing.linesJsonSize(self.lines.items[offset..]);
+    }
+
+    fn assertState(self: *const StreamMerger, data: *const BlockData) void {
+        // expected empty block if the lines are not processed yet
+        if (self.lines.items.len > 0) std.debug.assert(self.block.len == 0);
+        std.debug.assert(!data.sid.lessThan(self.sid));
+
+        if (!data.sid.eql(self.sid)) return;
+        if (data.len == 0) return;
+
+        if (self.lines.items.len == 0) {
+            if (self.block.len == 0) return;
+
+            std.debug.assert(data.timestampsData.minTimestamp >= self.block.timestampsData.minTimestamp);
+            return;
+        }
+
+        std.debug.assert(data.timestampsData.minTimestamp >= self.lines.items[0].timestampNs);
     }
 };
 
