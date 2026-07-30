@@ -34,8 +34,7 @@ const Consts = @import("../../Consts.zig");
 
 const maxBlockSize = Consts.maxBlockSize;
 
-// TODO: rename this crap, wtf is "data"
-pub fn mergeData(
+pub fn mergeBlocks(
     io: Io,
     alloc: Allocator,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
@@ -59,11 +58,9 @@ pub fn mergeData(
     defer blockWriter.deinit(alloc);
 
     while (merger.heap.array.items.len > 0) {
-        if (stopped) |stop| {
-            if (stop.isStopped()) {
-                // TODO: test whether break cleans the resources
-                return error.Stopped;
-            }
+        if (stopped != null and stopped.?.isStopped()) {
+            // TODO: test whether break cleans the resources
+            return error.Stopped;
         }
 
         const reader = merger.heap.peek().?;
@@ -505,7 +502,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         errdefer dstMemTable.deinit(alloc);
         const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders, compressionPool);
         defer streamWriter.deinit(alloc);
-        dstMemTable.tableHeader = try mergeData(io, alloc, timestampsEncoders, decompressionPool, streamWriter, &readers, null);
+        dstMemTable.tableHeader = try mergeBlocks(io, alloc, timestampsEncoders, decompressionPool, streamWriter, &readers, null);
 
         try testing.expect(dstMemTable.indexBuf.items.len > 0);
         try testing.expect(dstMemTable.metaIndexBuf.items.len > 0);
@@ -593,7 +590,7 @@ test "mergeData flushes maxLines for one stream" {
         compressionPool,
     );
     defer streamWriter.deinit(alloc);
-    dstMemTable.tableHeader = try mergeData(
+    dstMemTable.tableHeader = try mergeBlocks(
         io,
         alloc,
         timestampsEncoders,
@@ -690,7 +687,7 @@ test "mergeData multi tenant" {
         compressionPool,
     );
     defer streamWriter.deinit(alloc);
-    dstMemTable.tableHeader = try mergeData(
+    dstMemTable.tableHeader = try mergeBlocks(
         io,
         alloc,
         timestampsEncoders,

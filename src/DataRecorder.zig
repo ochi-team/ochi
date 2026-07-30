@@ -28,7 +28,7 @@ const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
 const BlockReader = @import("store/data/BlockReader.zig");
-const mergeData = @import("store/data/merge.zig").mergeData;
+const mergeBlocks = @import("store/data/merge.zig").mergeBlocks;
 const Runtime = @import("Runtime.zig");
 const Logger = @import("logging");
 const xev = @import("xev");
@@ -945,7 +945,7 @@ fn mergeTables(
     };
     defer streamWriter.deinit(alloc);
 
-    const tableHeader = mergeData(io, alloc, self.timestampsEncoders, self.decompressionPool, streamWriter, &readers, stopped) catch |err| {
+    const tableHeader = mergeBlocks(io, alloc, self.timestampsEncoders, self.decompressionPool, streamWriter, &readers, stopped) catch |err| {
         switch (err) {
             error.Stopped => {
                 if (destinationTablePath.len > 0) {
