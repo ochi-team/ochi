@@ -47,7 +47,7 @@ pub fn mergeBlocks(
 ) !TableHeader {
     const z = tracy.Zone.begin(.{
         .src = @src(),
-        .name = "DataRecorder.flushMemTable",
+        .name = "DataRecorder.mergeBlocks",
     });
     defer z.end();
 

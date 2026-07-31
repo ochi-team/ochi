@@ -117,6 +117,9 @@ pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *R
             .count = runtime.cpus,
             .buffer_size = 32 * 1024,
         },
+        .workers = .{
+            .max_conn = @intCast(conf.app.maxConnections),
+        },
     }, &dispatcher);
     registerSigtermHandler();
     defer server.deinit();
