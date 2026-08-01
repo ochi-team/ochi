@@ -1,9 +1,9 @@
 const std = @import("std");
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
+
 const Packer = @import("Packer.zig");
 const areNumbersSame = Packer.areNumbersSame;
-const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const Io = std.Io;
 
@@ -36,7 +36,6 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 
 pub fn unpackValues(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
     var offset: usize = 0;
-    // TODO: avoid repeated allocations of the unpacked buffers, both length and buf
     const lengths = try self.unpackU64(io, allocator, encoded, count, &offset);
     defer allocator.free(lengths);
 

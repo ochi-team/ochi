@@ -906,6 +906,10 @@ fn mergeTables(
     const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(self.runtime.cacheSize);
     const tableKind = merger.getDestinationTableKind(tables, force, maxInmemoryTableSize);
 
+    // TODO: this errdefer is broken, it can break on merge after the table owns it
+    // and it creates double free;
+    // all tables already own, make it using a static buffer and make tables copy the incoming buffer
+    // to eliminate this "move"
     const destinationTablePath = try self.diskTablePath(alloc, tableKind);
     errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
 

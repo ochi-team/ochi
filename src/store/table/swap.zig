@@ -40,7 +40,7 @@ pub fn Swapper(
                 },
                 .mem => {
                     try self.memTables.append(alloc, newTable);
-                    try self.startDiskTablesMerge(io, alloc);
+                    try self.startMemTablesMerge(io, alloc);
                 },
             }
 
