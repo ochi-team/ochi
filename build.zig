@@ -128,8 +128,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    b.installArtifact(exe);
     addOption(b, exe, release);
+    b.installArtifact(exe);
 
     const scooby_exe = b.addExecutable(.{
         .name = "scooby",
@@ -141,6 +141,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    addOption(b, scooby_exe, release);
     b.installArtifact(scooby_exe);
 
     // run command
