@@ -113,6 +113,8 @@ fn getDiskSpace(path: []const u8, nowMs: u64) DiskSpace {
 }
 
 fn getCpuCount() usize {
+    // TODO: it doesn't work in a container limits,
+    // read cgroups directly or something
     const cpus = std.Thread.getCpuCount() catch |err| {
         Logger.log(.warn, "failed to get CPU count, defaulting to 4 threads", .{ .err = err });
         return 4;

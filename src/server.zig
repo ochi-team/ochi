@@ -98,7 +98,7 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
     Logger.log(
         .info,
         "Ochi in mono mode starting",
-        .{ .port = conf.server.port, .version = options.version },
+        .{ .port = conf.server.port, .version = options.version, .cpus = runtime.cpus },
     );
 
     var store = try Store.init(io, alloc, &conf, runtime, layout);
