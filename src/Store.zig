@@ -149,6 +149,14 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     var it = layout.partitionsDir.iterate();
     // TODO: ban while loops via linter and set explicit loops
     while (try it.next(io)) |entry| {
+        if (entry.kind != .directory and entry.kind != .sym_link) {
+            Logger.log(.warn, "partitions folder has an unexpected file", .{
+                .filename = entry.name,
+                .kind = @tagName(entry.kind),
+            });
+            continue;
+        }
+
         const partitionPath = try std.fs.path.join(alloc, &.{ layout.partitionsPath, entry.name });
         errdefer alloc.free(partitionPath);
 
@@ -801,7 +809,7 @@ test "dayFromKey parses partition keys and roundtrips with partitionKeyBuf" {
     }
 }
 
-test "init opens existing partitions, sorts them and sets lru" {
+test "init opens existing partitions, sorts them and sets lru, ignores files in partitions" {
     const alloc = testing.allocator;
     const io = testing.io;
 
@@ -844,6 +852,12 @@ test "init opens existing partitions, sorts them and sets lru" {
         try Dir.createDirAbsolute(io, indexPath, .default_dir);
         try Dir.createDirAbsolute(io, dataPath, .default_dir);
     }
+    // files is ignored in a partitions folder
+    var dummyFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var dummyFileWriter: std.Io.Writer = .fixed(&dummyFilePathBuf);
+    try std.fs.path.fmtJoin(&.{ partitionsPath, ".DS_Store" }).format(&dummyFileWriter);
+    const dummyFile = try Dir.createFileAbsolute(io, dummyFileWriter.buffered(), .{});
+    defer dummyFile.close(io);
 
     const conf = Conf.getConf();
     const runtime = try Runtime.init(io, alloc, storePath, conf.app.maxCachePortion);
