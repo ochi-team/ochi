@@ -555,8 +555,10 @@ fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData
     });
     defer z.end();
 
-    const dataLen = col.bloomValues.len;
-    std.debug.assert(dataLen <= maxValuesBlockSize);
+    ch.size = col.bloomValues.len;
+    std.debug.assert(ch.size <= maxValuesBlockSize);
+    ch.bloomFilterSize = if (col.bloomTokens) |t| t.len else 0;
+    std.debug.assert(ch.bloomFilterSize <= maxBloomTokensBlockSize);
 
     ch.key = col.key;
     ch.type = col.type;
@@ -566,7 +568,6 @@ fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData
 
     // move the dict ownership to ch in order to avoid double free
     std.mem.swap(std.ArrayList([]const u8), &ch.dict.values, &col.dict.values);
-    ch.size = dataLen;
 
     const bloomBufI = self.getBloomBufferIndex(io, alloc, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {
@@ -581,9 +582,6 @@ fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData
     ch.offset = bloomValuesBuf.len();
     try bloomValuesBuf.appendSlice(io, alloc, col.bloomValues);
 
-    const bloomFilterSize = bloomTokensBuf.len();
-    std.debug.assert(bloomFilterSize <= maxBloomTokensBlockSize);
-    ch.bloomFilterSize = if (col.bloomTokens) |d| d.len else 0;
     ch.bloomFilterOffset = bloomTokensBuf.len();
     if (col.bloomTokens) |d| try bloomTokensBuf.appendSlice(io, alloc, d);
 }
