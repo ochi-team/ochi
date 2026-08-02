@@ -1042,11 +1042,11 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
     shard.appendLines(alloc, lines, sid) catch |err| {
         switch (err) {
             Allocator.Error.OutOfMemory => {
-                Logger.log(.warn, "processor: buffer overflow, decrease flush threashold", .{});
+                Logger.log(.warn, "data shard: buffer overflow, decrease flush threashold", .{});
                 const offset = shard.lines.items.len - start;
                 try self.flushShard(io, alloc, shard, false);
                 shard.appendLines(alloc, lines[offset..], sid) catch |e| {
-                    Logger.log(.err, "processor: buffer doesn't fit input lines", .{ .err = e });
+                    Logger.log(.err, "data shard: buffer doesn't fit input lines", .{ .err = e });
                     return e;
                 };
             },

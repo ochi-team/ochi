@@ -218,7 +218,7 @@ pub fn addLines(
     try self.data.addLines(io, allocator, lines.items, sid);
 }
 
-// TODO: this api is not used, but if we want to collect more sids in the processor
+// TODO: this api is not used, but if we want to collect more sids in the accumulator
 // we can ressurect it back
 // const bufSize = 1024;
 // pub fn addLinesWithSidChunks(

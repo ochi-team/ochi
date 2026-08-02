@@ -112,7 +112,7 @@ pub fn queryAllStreamIDs(
 pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
-        .name = ".Index.indexStream",
+        .name = "Index.indexStream",
     });
     defer z.end();
 

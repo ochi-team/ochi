@@ -29,7 +29,7 @@ pub const maxTableSize: u64 = 50 << 30;
 
 pub const AppConfig = struct {
     // TODO: make it 16 x cpus
-    maxConnections: u32 = 16,
+    maxConnections: u32 = 8,
     maxRequestSize: u32 = 4 * 1024 * 1024,
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,
     /// must be cache friendly, depending on used CPU model must be changed according its L1 cache size

@@ -22,7 +22,7 @@ pub const maxColumns = 2048;
 // maxLines is a max amount of lines that we can put into a block,
 // assuming the maxBlockSize
 // approximate value if the max body size ~4mb and an average small line 128 bytes
-// the batch size is used in the ingest request, processor arena, data shard buffer
+// the batch size is used in the ingest request, accumulator arena, data shard buffer
 pub const maxLines: usize = 32 * 1014;
 
 comptime {

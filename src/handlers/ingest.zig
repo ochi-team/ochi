@@ -7,10 +7,10 @@ const httpz = @import("httpz");
 
 const AppContext = @import("../dispatch.zig").AppContext;
 const Store = @import("../Store.zig").Store;
-const Processor = @import("../process.zig").Processor;
+const Accumulator = @import("../Accumulator.zig");
+const Params = Accumulator.Params;
 const Field = @import("../store/lines.zig").Field;
 const defaultMaxFieldsPerLine = @import("../store/lines.zig").defaultMaxFieldsPerLine;
-const Params = @import("../process.zig").Params;
 const ApiError = @import("../server/error.zig").ApiError;
 const Compression = @import("../server/compression.zig").Compression;
 const Logger = @import("logging");
@@ -87,8 +87,8 @@ fn process(
     var tags: std.ArrayList(Field) = .empty;
     defer tags.deinit(requestArena);
 
-    var processor = try Processor.init(requestArena, ctx.store);
-    defer processor.deinit(requestArena);
+    var accumulator = try Accumulator.init(requestArena, ctx.store);
+    defer accumulator.deinit(requestArena);
 
     // Iterate through each stream
     for (streams.array.items) |stream| {
@@ -128,7 +128,7 @@ fn process(
         const tagsLen = tags.items.len;
         const streamTags = tags.items[0..tagsLen];
 
-        try processor.reinit(requestArena, streamTags, params.tenantID);
+        try accumulator.reinit(requestArena, streamTags, params.tenantID);
 
         // Parse "values" array
         const values = stream.object.get("values") orelse return error.MissingValues;
@@ -174,13 +174,13 @@ fn process(
             // second is optional and defines what field in the given json is read as a `msgKey` field
             try tags.append(requestArena, .{ .key = "", .value = msg });
 
-            try processor.tryAppendLine(io, requestArena, tsNs, tags.items);
+            try accumulator.tryAppendLine(io, requestArena, tsNs, tags.items);
 
             // clean value labels, but retain stream labels
             tags.items.len = tagsLen;
         }
 
-        try processor.flush(io, ctx.allocator);
+        try accumulator.flush(io, ctx.allocator);
 
         // clean len of the labels len, but retain allocated memory
         tags.clearRetainingCapacity();
