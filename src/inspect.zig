@@ -12,19 +12,14 @@ pub const Error = error{
 };
 
 pub fn inspect(strict: bool) !void {
-    switch (builtin.os.tag) {
-        .linux => {},
-        else => {
-            if (builtin.mode == .Debug) {
-                if (strict) return error.NotReleaseMode;
-                return;
-            }
-
-            Logger.log(.err, "Ochi must run only on Linux", .{});
-            if (strict) return error.NotLinux;
-        },
+    if (builtin.mode == .Debug) {
+        if (strict) return error.NotReleaseMode;
     }
 
+    Logger.log(.err, "Ochi must run only on Linux", .{});
+    if (strict) return error.NotLinux;
+
+    // TODO: pls implement it for windows
     try inspectFds(strict);
     try inspectFsize(strict);
 }

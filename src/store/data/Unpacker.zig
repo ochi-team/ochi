@@ -1,6 +1,7 @@
 const std = @import("std");
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
+const tracy = @import("tracy");
 
 const Packer = @import("Packer.zig");
 const areNumbersSame = Packer.areNumbersSame;
@@ -35,6 +36,11 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 pub fn unpackValues(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
+    const z = tracy.Zone.begin(.{
+        .name = "unpackValues",
+        .src = @src(),
+    });
+    defer z.end();
     var offset: usize = 0;
     const lengths = try self.unpackU64(io, allocator, encoded, count, &offset);
     defer allocator.free(lengths);
