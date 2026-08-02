@@ -370,6 +370,10 @@ pub const StreamMerger = struct {
 
         const block = try Block.initFromData(io, alloc, self.timestampsEncoders, blockData, self.unpacker, self.decoder);
         defer block.deinit(alloc);
+        defer {
+            for (self.unpacker.garbage.items) |buf| alloc.free(buf);
+            self.unpacker.garbage.clearRetainingCapacity();
+        }
 
         const offset = self.lines.items.len;
         try block.gatherLines(alloc, &self.lines);
@@ -577,6 +581,43 @@ test "mergeLines" {
         mergeLines(&merged, case.left, case.right);
         try testing.expectEqualDeep(case.expected, merged.items);
     }
+}
+
+test "StreamMerger.decodeLines frees unpacker garbage buffers" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+    const sid = SID{ .tenantID = 1, .id = 42 };
+
+    const memTable = try MemTable.init(alloc);
+    const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
+    defer table.close(io);
+
+    // one column with 2 fields create col values buffer to reproduce a leak
+    var fields1 = [_]Field{.{ .key = "key", .value = "value-1" }};
+    var fields2 = [_]Field{.{ .key = "key", .value = "value-2" }};
+    var lines = [_]Line{
+        .{ .timestampNs = 1, .fields = fields1[0..] },
+        .{ .timestampNs = 2, .fields = fields2[0..] },
+    };
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines[0..]);
+
+    const reader = try BlockReader.initFromMemTable(io, alloc, table, decompressionPool);
+    defer reader.deinit(alloc);
+
+    var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 1);
+    defer readers.deinit(alloc);
+    try readers.append(alloc, reader);
+
+    var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, &readers);
+    defer merger.deinit(alloc);
+
+    try merger.decodeLines(io, alloc, &reader.blockData);
 }
 
 test "mergeData keeps merged memtable buffers alive after source memtables deinit" {
