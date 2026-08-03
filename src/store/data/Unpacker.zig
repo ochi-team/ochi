@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 const tracy = @import("tracy");
@@ -22,35 +23,35 @@ const Self = @This();
 garbage: std.ArrayList([]u8) = .empty,
 compressionPool: *DecompressionPool,
 
-pub fn init(allocator: std.mem.Allocator, compressionPool: *DecompressionPool) !*Self {
-    const s = try allocator.create(Self);
+pub fn init(alloc: Allocator, compressionPool: *DecompressionPool) !*Self {
+    const s = try alloc.create(Self);
     s.* = .{ .compressionPool = compressionPool };
     return s;
 }
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *Self, alloc: Allocator) void {
     for (self.garbage.items) |buf| {
-        allocator.free(buf);
+        alloc.free(buf);
     }
-    self.garbage.deinit(allocator);
-    allocator.destroy(self);
+    self.garbage.deinit(alloc);
+    alloc.destroy(self);
 }
 
-pub fn unpackValues(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: []const u8, count: usize) ![][]const u8 {
+pub fn unpackValues(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize) ![][]const u8 {
     const z = tracy.Zone.begin(.{
         .name = "unpackValues",
         .src = @src(),
     });
     defer z.end();
     var offset: usize = 0;
-    const lengths = try self.unpackU64(io, allocator, encoded, count, &offset);
-    defer allocator.free(lengths);
+    const lengths = try self.unpackU64(io, alloc, encoded, count, &offset);
+    defer alloc.free(lengths);
 
     const tail = encoded[offset..];
-    const buf = try self.unpackBytes(io, allocator, tail, &offset);
-    try self.garbage.append(allocator, buf);
+    const buf = try self.unpackBytes(io, alloc, tail, &offset);
+    try self.garbage.append(alloc, buf);
     std.debug.assert(offset == encoded.len);
 
-    var res = try allocator.alloc([]const u8, lengths.len);
+    var res = try alloc.alloc([]const u8, lengths.len);
     // same values first
     if (lengths.len >= 2 and buf.len == lengths[0] and areNumbersSame(lengths)) {
         for (0..res.len) |i| {
@@ -69,19 +70,19 @@ pub fn unpackValues(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: 
     return res;
 }
 
-pub fn unpackU64(self: *Self, io: Io, allocator: std.mem.Allocator, encoded: []const u8, count: usize, offset: *usize) ![]u64 {
-    const buf = try self.unpackBytes(io, allocator, encoded, offset);
-    defer allocator.free(buf);
-    return unpackU64s(allocator, buf, count);
+pub fn unpackU64(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize, offset: *usize) ![]u64 {
+    const buf = try self.unpackBytes(io, alloc, encoded, offset);
+    defer alloc.free(buf);
+    return unpackU64s(alloc, buf, count);
 }
 
-fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u64 {
+fn unpackU64s(alloc: Allocator, data: []const u8, count: usize) ![]u64 {
     if (data.len < 1) {
         return UnpackError.InsufficientData;
     }
     const vType = data[0];
-    var res = try allocator.alloc(u64, count);
-    errdefer allocator.free(res);
+    var res = try alloc.alloc(u64, count);
+    errdefer alloc.free(res);
 
     switch (vType) {
         Packer.uintBlockTypeInvariant8 => {
@@ -166,7 +167,7 @@ fn unpackU64s(allocator: std.mem.Allocator, data: []const u8, count: usize) ![]u
     return res;
 }
 
-fn unpackBytes(self: *Self, io: Io, allocator: std.mem.Allocator, data: []const u8, offset: *usize) ![]u8 {
+fn unpackBytes(self: *Self, io: Io, alloc: Allocator, data: []const u8, offset: *usize) ![]u8 {
     if (data.len == 0) {
         return UnpackError.InsufficientData;
     }
@@ -183,7 +184,7 @@ fn unpackBytes(self: *Self, io: Io, allocator: std.mem.Allocator, data: []const 
                 return UnpackError.InsufficientDataLen;
             }
             offset.* += 2 + len;
-            return allocator.dupe(u8, bytes[0..len]);
+            return alloc.dupe(u8, bytes[0..len]);
         },
         Packer.compressionKindZstd => {
             // compressed format: [kind:u8][len:leb128][compressed_data]
@@ -197,13 +198,13 @@ fn unpackBytes(self: *Self, io: Io, allocator: std.mem.Allocator, data: []const 
 
             const decompressedSize = try encoding.getFrameContentSize(compressedData);
 
-            const decompressed = try allocator.alloc(u8, decompressedSize);
-            errdefer allocator.free(decompressed);
+            const decompressed = try alloc.alloc(u8, decompressedSize);
+            errdefer alloc.free(decompressed);
 
             // TODO: it must be fixed, we must not rely on the expected size
             const actualSize = try self.compressionPool.decompress(io, decompressed, compressedData);
             if (actualSize != decompressedSize) {
-                allocator.free(decompressed);
+                alloc.free(decompressed);
                 return UnpackError.DecompressionFailed;
             }
 
