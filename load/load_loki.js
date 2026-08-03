@@ -33,7 +33,7 @@ const conf = new loki.Config({
 const client = new loki.Client(conf);
 
 export default function () {
-  const res = client.pushParameterized(60, 64 * KB, 64 * KB);
+  const res = client.pushParameterized(60, 128 * KB, 128 * KB);
 
   if (res.status !== 200) {
     console.error(`push failed status=${res.status} body=${res.body}`);

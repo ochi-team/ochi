@@ -15,6 +15,11 @@ pub fn flushHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
         return ApiError.ContentTypeNotSupported;
     }
 
+    ctx.accumulatorPool.flushAll(ctx.io) catch |err| {
+        Logger.log(.err, "failed to flush accumulator pool", .{ .err = err });
+        return ApiError.InternalError;
+    };
+
     ctx.store.flush(ctx.io, ctx.allocator) catch |err| {
         Logger.log(.err, "failed to flush store", .{ .err = err });
         return ApiError.InternalError;

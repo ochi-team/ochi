@@ -9,6 +9,7 @@ const Logger = @import("logging");
 const AppConfig = @import("Conf.zig").AppConfig;
 
 const Store = @import("Store.zig").Store;
+const AccumulatorPool = @import("AccumulatorPool.zig");
 
 const ApiError = @import("server/error.zig").ApiError;
 
@@ -26,6 +27,7 @@ pub const AppContext = struct {
 
     dispatchMeter: *DispatchMeter,
     storeMeter: *StoreMeter,
+    accumulatorPool: *AccumulatorPool,
 };
 
 pub const Dispatcher = struct {
@@ -34,10 +36,14 @@ pub const Dispatcher = struct {
     conf: *const AppConfig,
     store: *Store,
     meter: DispatchMeter,
+    accumulatorPool: *AccumulatorPool,
 
     pub fn init(io: Io, allocator: Allocator, conf: *const AppConfig, store: *Store) !Dispatcher {
         var meter = try DispatchMeter.init(allocator, io);
         errdefer meter.deinit();
+
+        const accumulatorPool = try AccumulatorPool.init(io, allocator, store, store.timerLoop, conf.maxConnections);
+        errdefer accumulatorPool.deinit(allocator);
 
         return .{
             .io = io,
@@ -45,11 +51,13 @@ pub const Dispatcher = struct {
             .conf = conf,
             .store = store,
             .meter = meter,
+            .accumulatorPool = accumulatorPool,
         };
     }
 
     pub fn deinit(self: *Dispatcher) void {
         self.meter.deinit();
+        self.accumulatorPool.deinit(self.allocator);
     }
 
     pub fn dispatch(
@@ -84,6 +92,7 @@ pub const Dispatcher = struct {
             .diagnostic = &diagnostic,
             .dispatchMeter = &self.meter,
             .storeMeter = &self.store.meter,
+            .accumulatorPool = self.accumulatorPool,
         };
 
         action(&ctx, req, res) catch |err| {

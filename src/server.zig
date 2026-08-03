@@ -110,7 +110,12 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
 
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *Runtime, store: *Store) !void {
     var dispatcher = try Dispatcher.init(io, allocator, &conf.app, store);
-    defer dispatcher.deinit();
+    defer {
+        dispatcher.accumulatorPool.flushAll(io) catch |err| {
+            Logger.log(.err, "failed to flush accumulator pool", .{ .err = err });
+        };
+        dispatcher.deinit();
+    }
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
         .address = .all(conf.server.port),
         .thread_pool = .{

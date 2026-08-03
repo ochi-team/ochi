@@ -5,9 +5,12 @@ const Io = std.Io;
 const tracy = @import("tracy");
 const httpz = @import("httpz");
 
+const xev = @import("xev");
+
 const AppContext = @import("../dispatch.zig").AppContext;
 const Store = @import("../Store.zig").Store;
 const Accumulator = @import("../Accumulator.zig");
+const AccumulatorPool = @import("../AccumulatorPool.zig");
 const Params = Accumulator.Params;
 const Field = @import("../store/lines.zig").Field;
 const defaultMaxFieldsPerLine = @import("../store/lines.zig").defaultMaxFieldsPerLine;
@@ -73,7 +76,9 @@ fn process(
     data: []const u8,
     params: Params,
 ) !void {
-    // TODO: implement a zero allocation parsing, we copy the data in the end anyway
+    const slot = ctx.accumulatorPool.acquire(ctx.io, data.len) catch
+        return ApiError.FailedToProccess;
+    defer ctx.accumulatorPool.release(ctx.io, slot);
 
     const root = try std.json.parseFromSliceLeaky(std.json.Value, requestArena, data, .{
         .allocate = .alloc_if_needed,
@@ -87,8 +92,7 @@ fn process(
     var tags: std.ArrayList(Field) = .empty;
     defer tags.deinit(requestArena);
 
-    var accumulator = try Accumulator.init(requestArena, ctx.store);
-    defer accumulator.deinit(requestArena);
+    const accumulator = &slot.accumulator;
 
     // Iterate through each stream
     for (streams.array.items) |stream| {
@@ -128,7 +132,7 @@ fn process(
         const tagsLen = tags.items.len;
         const streamTags = tags.items[0..tagsLen];
 
-        try accumulator.reinit(requestArena, streamTags, params.tenantID);
+        try accumulator.reinit(ctx.allocator, streamTags, params.tenantID);
 
         // Parse "values" array
         const values = stream.object.get("values") orelse return error.MissingValues;
@@ -174,14 +178,13 @@ fn process(
             // second is optional and defines what field in the given json is read as a `msgKey` field
             try tags.append(requestArena, .{ .key = "", .value = msg });
 
-            try accumulator.tryAppendLine(io, requestArena, tsNs, tags.items);
+            try accumulator.tryAppendLine(io, ctx.allocator, tsNs, tags.items);
 
             // clean value labels, but retain stream labels
             tags.items.len = tagsLen;
         }
 
-        try accumulator.flush(io, ctx.allocator);
-
+        try ctx.accumulatorPool.afterAppend(io, slot);
         // clean len of the labels len, but retain allocated memory
         tags.clearRetainingCapacity();
     }
@@ -202,10 +205,17 @@ test "process does not panic when values has three lines" {
         .diagnostic = &diagnostic,
         .dispatchMeter = undefined,
         .storeMeter = undefined,
+        .accumulatorPool = undefined,
     };
     // process uses leaky parsing, so we rely on arena
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+
+    var slot = AccumulatorPool.Slot{
+        .accumulator = try Accumulator.init(testing.allocator, &store),
+        .xevTimer = try xev.Timer.init(),
+    };
+    defer slot.accumulator.deinit(testing.allocator);
 
     const body =
         \\{"streams":[{"stream":{"app":"api"},"values":[
@@ -214,5 +224,5 @@ test "process does not panic when values has three lines" {
         \\["1778922991218871002","line-3"]]}]}
     ;
 
-    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }));
+    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }, &slot));
 }
