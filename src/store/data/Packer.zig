@@ -74,6 +74,12 @@ const PackBound = struct {
 };
 
 pub fn packValuesInterBound(self: *Self, values: [][]const u8) !PackBound {
+    const z = tracy.Zone.begin(.{
+        .src = @src(),
+        .name = "packValuesInterBound",
+    });
+    defer z.end();
+
     defer self.lengths.clearRetainingCapacity();
     try self.lengths.ensureUnusedCapacity(self.allocator, values.len);
     var lenSum: usize = 0;
