@@ -359,7 +359,7 @@ pub fn addLines(
     // TODO: make partition interval configurable
     // in order to being able to test shorter partitions: 1, 2, 3, 6, 12 hours
     const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
-    const minDay = (nowNs - self.conf.app.storeRetention) / std.time.ns_per_day;
+    const minDay = (nowNs - self.conf.app.storeRetentionNs()) / std.time.ns_per_day;
     // limit the incoming logs to now + 1 day,
     // in case an ingestor sends data with broken timezone or timestamp
     const maxDay = (nowNs + std.time.ns_per_day) / std.time.ns_per_day;
@@ -401,7 +401,7 @@ pub fn addLines(
         if (day < minDay) {
             Logger.log(.warn, "incoming log is out of the retention range", .{
                 .range = "lower",
-                .limit = nowNs - self.conf.app.storeRetention,
+                .limit = nowNs - self.conf.app.storeRetentionNs(),
                 .given = lines[idx].timestampNs,
             });
             continue;

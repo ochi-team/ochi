@@ -665,7 +665,9 @@ fn tableTimerCallback(
 
     _ = loop;
     _ = c;
-    _ = r catch {};
+    _ = r catch |err| {
+        Logger.log(.err, "failed to run tableTimerCallback", .{ .err = err });
+    };
     const slot = ud.?;
     const self = slot.recorder;
     const table = slot.table.?;

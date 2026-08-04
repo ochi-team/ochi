@@ -212,7 +212,7 @@ fn appendLine(
 
 pub fn mustFlush(self: *Accumulator, io: Io) bool {
     if (self.flushAtUs) |flushAtUs| {
-        if (flushAtUs >= std.Io.Timestamp.now(io, .real).toMicroseconds()) return true;
+        if (std.Io.Timestamp.now(io, .real).toMicroseconds() >= flushAtUs) return true;
     }
     return self.buffer.end_index >= flushSizeThreshold;
 }

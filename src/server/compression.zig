@@ -4,8 +4,6 @@ const snappy = @import("snappy").raw;
 const tracy = @import("tracy");
 
 // TODO: support gzip to cover loki fully
-// TODO: support streaming decompression together with unmarshalling, so we pass a reader
-// to a json/proto marshaller and don't keep the full uncompressed buffer in memory
 pub const Compression = enum(u8) {
     snappy,
     gzip,

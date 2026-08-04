@@ -529,7 +529,9 @@ fn shardTimerCallback(
     });
     defer z.end();
 
-    _ = r catch {};
+    _ = r catch |err| {
+        Logger.log(.err, "failed to run data shardTimerCallback", .{ .err = err });
+    };
     const shard = ud.?;
     const self = shard.parent;
 
@@ -606,7 +608,9 @@ fn tableTimerCallback(
 
     _ = loop;
     _ = c;
-    _ = r catch {};
+    _ = r catch |err| {
+        Logger.log(.err, "failed to run data tableTimerCallback", .{ .err = err });
+    };
     const slot = ud.?;
     const self = slot.recorder;
     const table = slot.table.?;
@@ -744,7 +748,9 @@ fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataShard, 
 
                     // if the first sem wait couldn't free the space it times out
                     // and must flush to disk as is,
-                    timedWait(&self.memTablesSem, io, std.time.ns_per_s * 1) catch |e| {
+                    // TODO: this wait times out quite often,
+                    // we have to avoid it, it declines latency and throughput
+                    timedWait(&self.memTablesSem, io, std.time.ns_per_s / 100) catch |e| {
                         switch (e) {
                             error.Timeout => {
                                 Logger.log(.warn, "data: mem tables buffer is full, flush mem table", .{});

@@ -11,18 +11,15 @@ const TimerLoop = @import("stds/xev/TimerLoop.zig");
 const Ring = @import("stds/Ring.zig").Ring;
 const Consts = @import("Consts.zig");
 
-const Self = @This();
+const flushSizeThreshold = Consts.flushSizeThreshold;
 
-// flush proactively once a slot's buffer is this full, ahead of
-// Accumulator's own (higher) internal safety threshold
-const flushThresholdPercent = 80;
+const Self = @This();
 
 pub const Slot = struct {
     accumulator: Accumulator,
     mx: Io.Mutex = .init,
 
-    // per-slot deadline timer, armed at the exact flushAtUs instant; slots
-    // live for the pool's lifetime so the timer's userdata is always valid
+    // flush deadline timer, armed at flushAtUs
     parent: *Self = undefined,
     xevTimer: xev.Timer,
     timerC: xev.Completion = .{},
@@ -35,9 +32,6 @@ io: Io,
 alloc: Allocator,
 timerLoop: *TimerLoop,
 
-// arm requests come from arbitrary threads (acquire/afterAppend) and must be
-// applied to timerLoop.loop only from its own thread, so they're queued here
-// and drained via timerLoop's wake handler, mirroring DataRecorder's shard timers
 pendingMx: std.atomic.Mutex = .unlocked,
 pendingArms: std.ArrayList(*Slot) = .empty,
 
@@ -85,14 +79,13 @@ pub fn next(self: *Self) *Slot {
     return self.ring.next();
 }
 
-/// acquire locks the next slot in the ring and, if `bodySize` more bytes
-/// wouldn't fit in the remaining buffer capacity, flushes it first.
 pub fn acquire(self: *Self, io: Io, bodySize: usize) !*Slot {
     const slot = self.next();
     slot.mx.lockUncancelable(io);
     errdefer slot.mx.unlock(io);
 
     // TODO: implementing a compression this won't work,
+    // because uncompressed body size is not known in advance
     // we need to handle full capacity on append in order to flush a buffer on time
     const buf = &slot.accumulator.buffer;
     if (buf.end_index + bodySize > buf.buffer.len) {
@@ -102,7 +95,7 @@ pub fn acquire(self: *Self, io: Io, bodySize: usize) !*Slot {
     return slot;
 }
 
-pub fn release(_: *Self, io: Io, slot: *Slot) void {
+pub fn release(_: *const Self, io: Io, slot: *Slot) void {
     slot.mx.unlock(io);
 }
 
@@ -110,7 +103,7 @@ pub fn release(_: *Self, io: Io, slot: *Slot) void {
 /// otherwise arms an idle flush deadline the first time the slot holds data.
 pub fn afterAppend(self: *Self, io: Io, slot: *Slot) !void {
     const buf = &slot.accumulator.buffer;
-    if (buf.end_index >= buf.buffer.len * flushThresholdPercent / 100) {
+    if (buf.end_index >= flushSizeThreshold) {
         try slot.accumulator.flush(io, self.alloc);
         return;
     }
@@ -134,13 +127,13 @@ pub fn flushAll(self: *Self, io: Io) !void {
 }
 
 fn requestArm(self: *Self, slot: *Slot) void {
-    TimerLoop.spinLock(&self.pendingMx);
-    self.pendingArms.append(self.alloc, slot) catch |err| {
-        self.pendingMx.unlock();
-        Logger.log(.err, "AccumulatorPool: failed to queue timer arm", .{ .err = err });
-        return;
-    };
-    self.pendingMx.unlock();
+    {
+        TimerLoop.spinLock(&self.pendingMx);
+        defer self.pendingMx.unlock();
+        self.pendingArms.append(self.alloc, slot) catch |err| {
+            Logger.log(.err, "AccumulatorPool: failed to queue timer arm", .{ .err = err });
+        };
+    }
 
     self.timerLoop.notify();
 }
@@ -161,7 +154,8 @@ fn wakeHandler(ctx: *anyopaque, loop: *xev.Loop) void {
 }
 
 fn armTimer(self: *Self, loop: *xev.Loop, slot: *Slot) void {
-    const flushAtUs = slot.accumulator.flushAtUs orelse return; // flushed early before the arm was drained
+    // flushed early before the arm was drained
+    const flushAtUs = slot.accumulator.flushAtUs orelse return;
     const nowUs: u64 = @intCast(Io.Timestamp.now(self.io, .real).toMicroseconds());
     slot.xevTimer.reset(loop, &slot.timerC, &slot.timerCancelC, deltaMs(flushAtUs, nowUs), Slot, slot, timerCallback);
 }
@@ -177,7 +171,9 @@ fn timerCallback(
     c: *xev.Completion,
     r: xev.Timer.RunError!void,
 ) xev.CallbackAction {
-    _ = r catch {};
+    _ = r catch |err| {
+        Logger.log(.err, "failed to run accumulator timerCallback", .{ .err = err });
+    };
     const slot = ud.?;
     const self = slot.parent;
     const io = self.io;
@@ -189,9 +185,7 @@ fn timerCallback(
     }
     defer slot.mx.unlock(io);
 
-    // flushAtUs is only ever cleared (an early flush already handled it) or
-    // left unchanged, never moved to a later deadline, so a stale fire after
-    // an early flush is a safe no-op here.
+    // disarm the callback if no flush deadline
     const flushAtUs = slot.accumulator.flushAtUs orelse return .disarm;
     const nowUs: u64 = @intCast(Io.Timestamp.now(io, .real).toMicroseconds());
     if (flushAtUs > nowUs) {

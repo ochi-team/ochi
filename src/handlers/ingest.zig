@@ -11,6 +11,7 @@ const AppContext = @import("../dispatch.zig").AppContext;
 const Store = @import("../Store.zig").Store;
 const Accumulator = @import("../Accumulator.zig");
 const AccumulatorPool = @import("../AccumulatorPool.zig");
+const TimerLoop = @import("../stds/xev/TimerLoop.zig");
 const Params = Accumulator.Params;
 const Field = @import("../store/lines.zig").Field;
 const defaultMaxFieldsPerLine = @import("../store/lines.zig").defaultMaxFieldsPerLine;
@@ -196,6 +197,13 @@ const testing = std.testing;
 test "process does not panic when values has three lines" {
     var store: Store = undefined;
     var diagnostic: Logger.Diagnostic = .{};
+
+    const timerLoop = try TimerLoop.init(testing.allocator);
+    defer timerLoop.deinit();
+
+    const accumulatorPool = try AccumulatorPool.init(testing.io, testing.allocator, &store, timerLoop, 1);
+    defer accumulatorPool.deinit(testing.allocator);
+
     var ctx = AppContext{
         .io = testing.io,
         .allocator = testing.allocator,
@@ -205,17 +213,11 @@ test "process does not panic when values has three lines" {
         .diagnostic = &diagnostic,
         .dispatchMeter = undefined,
         .storeMeter = undefined,
-        .accumulatorPool = undefined,
+        .accumulatorPool = accumulatorPool,
     };
     // process uses leaky parsing, so we rely on arena
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-
-    var slot = AccumulatorPool.Slot{
-        .accumulator = try Accumulator.init(testing.allocator, &store),
-        .xevTimer = try xev.Timer.init(),
-    };
-    defer slot.accumulator.deinit(testing.allocator);
 
     const body =
         \\{"streams":[{"stream":{"app":"api"},"values":[
@@ -224,5 +226,5 @@ test "process does not panic when values has three lines" {
         \\["1778922991218871002","line-3"]]}]}
     ;
 
-    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }, &slot));
+    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }));
 }

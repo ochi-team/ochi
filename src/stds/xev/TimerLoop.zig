@@ -21,7 +21,9 @@ const Entry = struct {
         c: *xev.Completion,
         r: xev.Timer.RunError!void,
     ) xev.CallbackAction {
-        _ = r catch {};
+        _ = r catch |err| {
+            Logger.log(.err, "failed to run TimerLoop callback", .{ .err = err });
+        };
         const entry = ud.?;
 
         if (!entry.parent.stopping.load(.acquire)) {
@@ -155,7 +157,9 @@ fn wakeCallback(
     _: *xev.Completion,
     r: xev.Async.WaitError!void,
 ) xev.CallbackAction {
-    _ = r catch {};
+    _ = r catch |err| {
+        Logger.log(.err, "failed to run wake callback", .{ .err = err });
+    };
     const self = ud.?;
 
     if (self.stopping.load(.acquire)) {

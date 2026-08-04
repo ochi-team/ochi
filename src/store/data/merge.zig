@@ -382,6 +382,8 @@ pub const StreamMerger = struct {
             const fields = self.lines.items[lineI].fields;
             // data is short living, so we need to copy key values buffers,
             // TODO: we may move field array instead of copying it, do it for every copyFields usage
+            // TODO: there are tons of allocator calls, it's not ok, we must reuse the merger arena here,
+            // it happens right before flush, good to eliminate it
             const copiedFields = try copyFields(alloc, fields);
             alloc.free(fields);
             self.lines.items[lineI].fields = copiedFields;

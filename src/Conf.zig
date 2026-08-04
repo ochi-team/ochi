@@ -30,6 +30,7 @@ pub const maxTableSize: u64 = 50 << 30;
 pub const AppConfig = struct {
     // TODO: make it 16 x cpus
     maxConnections: u32 = 8,
+    // TODO: test how accumulator handles a single stream twice larger than its buffer
     maxRequestSize: u32 = 4 * 1024 * 1024,
     /// maxIndexMemBlockSize is a size of the mem block for index before start flushing the chunk,
     /// must be cache friendly, depending on used CPU model must be changed according its L1 cache size
@@ -40,7 +41,7 @@ pub const AppConfig = struct {
 
     // TODO: make it supporting absolute path
     storePath: []const u8 = ".ochi",
-    storeRetention: u64 = 30 * std.time.ns_per_day,
+    storeRetentionDays: u16 = 30,
     // TODO: confogure max cache size,
     // this pool can be preallocated and given away only for the caches:
     // - index queries
@@ -48,6 +49,10 @@ pub const AppConfig = struct {
     // - small tables page caches
     // then document the list of use cases for all the caches
     // in order to distributed it evenly
+
+    pub fn storeRetentionNs(self: *const AppConfig) u64 {
+        return std.time.ns_per_day * @as(u64, @intCast(self.storeRetentionDays));
+    }
 };
 
 pub const ServerConfig = struct {
