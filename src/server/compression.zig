@@ -3,7 +3,6 @@ const snappy = @import("snappy").raw;
 
 const tracy = @import("tracy");
 
-// TODO: support gzip to cover loki fully
 pub const Compression = enum(u8) {
     snappy,
     gzip,
@@ -27,11 +26,19 @@ pub const Compression = enum(u8) {
         defer z.end();
 
         return switch (compression) {
-            .gzip => return error.CompressionNotSupported,
+            .gzip => {
+                z.text("gzip");
+                // const bound = try bound(compressed);
+                // const uncompressed = try allocator.alloc(u8, bound);
+                // try zlib.uncompress(compressed, uncompressed);
+                // return uncompressed;
+                return error.CompressionNotSupported;
+            },
             .snappy => {
                 z.text("snappy");
-                const uncompressed = try allocator.alloc(u8, try snappy.uncompressedLength(compressed[0..]));
-                _ = try snappy.uncompress(compressed[0..], uncompressed);
+                const bound = try snappy.uncompressedLength(compressed);
+                const uncompressed = try allocator.alloc(u8, bound);
+                _ = try snappy.uncompress(compressed, uncompressed);
                 return uncompressed;
             },
             .none => {

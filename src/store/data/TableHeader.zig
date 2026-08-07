@@ -11,7 +11,6 @@ const TableHeader = @This();
 
 const headerEncodeBufferSize = 256;
 
-// TODO: find out whether we can do them u32
 minTimestamp: u64 = 0,
 maxTimestamp: u64 = 0,
 uncompressedSize: u32 = 0,

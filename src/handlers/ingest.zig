@@ -38,7 +38,7 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
         // TODO: implement protobuf marhsalling
         return ApiError.ContentTypeNotSupported;
     }
-    // TODO: consider using concurrent reader of the body,
+    // TODO: consider using streaming reader of the body,
     // currently the entire body is pre-read by the start of the API handler
     const body = r.body() orelse return ApiError.EmptyBody;
 
@@ -193,6 +193,14 @@ fn process(
 
 const testing = std.testing;
 
+const encodeTags = @import("../store/lines.zig").encodeTags;
+const makeStreamID = @import("../store/lines.zig").makeStreamID;
+const Query = @import("../query/Query.zig");
+const Layout = @import("../Layout.zig");
+const Runtime = @import("../Runtime.zig");
+const Conf = @import("../Conf.zig");
+const Consts = @import("../Consts.zig");
+
 // TODO: move this test to corpora
 test "process does not panic when values has three lines" {
     var store: Store = undefined;
@@ -227,4 +235,96 @@ test "process does not panic when values has three lines" {
     ;
 
     try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }));
+}
+
+test "large body is processed and appears in the query response" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const layout = try Layout.make(io, rootPath, &partitionsPathBuf);
+
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
+
+    var store = try Store.init(io, alloc, &conf, runtime, layout);
+    defer store.deinit(io, alloc);
+
+    var diagnostic: Logger.Diagnostic = .{};
+    const timerLoop = try TimerLoop.init(alloc);
+    defer timerLoop.deinit();
+    const accumulatorPool = try AccumulatorPool.init(io, alloc, &store, timerLoop, 1);
+    defer accumulatorPool.deinit(alloc);
+
+    var ctx = AppContext{
+        .io = io,
+        .allocator = alloc,
+        .conf = undefined,
+        .tenantID = 0,
+        .store = &store,
+        .diagnostic = &diagnostic,
+        .dispatchMeter = undefined,
+        .storeMeter = undefined,
+        .accumulatorPool = accumulatorPool,
+    };
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // enough lines * message size to exceed Consts.maxBlockSize (the accumulator's inner buffer),
+    // forcing at least one internal flush to the store mid-request
+    const lineCount = 200;
+    const msgSize = 15_000; // stays under defaultMaxFieldValueSize (16KiB)
+    try testing.expect(lineCount * msgSize > Consts.maxBlockSize);
+
+    const message = try a.alloc(u8, msgSize);
+    @memset(message, 'x');
+
+    const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
+
+    var body: std.ArrayList(u8) = try .initCapacity(a, 4 * 1024 * 1024);
+    body.appendSliceAssumeCapacity("{\"streams\":[{\"stream\":{\"app\":\"large\"},\"values\":[");
+    for (0..lineCount) |i| {
+        if (i != 0) body.appendAssumeCapacity(',');
+        const entry = try std.fmt.allocPrint(a, "[\"{d}\",\"{s}\"]", .{ nowNs + i, message });
+        defer a.free(entry);
+        body.appendSliceAssumeCapacity(entry);
+    }
+    body.appendSliceAssumeCapacity("]}]}");
+
+    try process(io, a, &ctx, body.items, .{ .tenantID = ctx.tenantID });
+    try accumulatorPool.flushAll(io);
+    try store.flush(io, alloc);
+
+    var tags = [_]Field{.{ .key = "app", .value = "large" }};
+    const encodedTags = try encodeTags(a, tags[0..]);
+    const sid = makeStreamID(ctx.tenantID, encodedTags).id;
+
+    const query = Query{
+        .streamIDs = &.{sid},
+        .start = 0,
+        .end = nowNs + std.time.ns_per_hour,
+    };
+    var lines = try ctx.store.queryLines(io, a, alloc, ctx.tenantID, query);
+    defer lines.deinit(a);
+
+    try testing.expectEqual(lineCount, lines.items.len);
+    for (lines.items) |line| {
+        var found = false;
+        for (line.fields) |field| {
+            // _msg found
+            if (field.key.len == 0) {
+                try testing.expectEqualStrings(message, field.value);
+                found = true;
+            }
+        }
+        try testing.expect(found);
+    }
 }

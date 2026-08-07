@@ -46,6 +46,7 @@ openMapMutex: Io.Mutex = .init,
 vtable: Io.VTable,
 writer: ?*std.Io.Writer,
 
+// TODO: allow injecting io failures and test in fuzzing/chaos
 fn debug(userdata: ?*anyopaque) *DebugIo {
     return @ptrCast(@alignCast(userdata.?));
 }
