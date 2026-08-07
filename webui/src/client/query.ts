@@ -28,7 +28,7 @@ type QueryLogsParams = {
     tenantID?: string;
 };
 
-const queryEndpoint = `${import.meta.env.OCHI_HOST ?? ''}/query`;
+const queryEndpoint = `${import.meta.env.DEV ? '' : import.meta.env.OCHI_HOST ?? ''}/query`;
 
 function isJsonRecord(value: unknown): value is LogEntry {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
