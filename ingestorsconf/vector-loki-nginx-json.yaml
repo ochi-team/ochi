@@ -1,0 +1,42 @@
+data_dir: .vector
+
+sources:
+  in:
+    type: stdin
+
+transforms:
+  parse:
+    type: remap
+    inputs: [in]
+    source: |-
+      .metadata = {}
+      parsed, err = parse_nginx_log(.message, "combined")
+      if err == null {
+        metadata = { "lvl": "info" }
+        for_each(object(parsed)) -> |key, value| {
+          if key == "timestamp" {
+            .timestamp = value
+          } else if key != "request" {
+            metadata = set!(metadata, [key], string(value) ?? encode_json(value))
+          }
+        }
+        .message = string!(parsed.request)
+        .metadata = metadata
+      }
+
+sinks:
+  loki:
+    type: loki
+    inputs: [parse]
+    endpoint: http://localhost:9014
+    path: /ingest/loki/api/v1/push
+    compression: none
+    healthcheck:
+      enabled: false
+    dangerously_allow_unconfined_template_resolution: true
+    structured_metadata:
+      '*': "{{ metadata }}"
+    encoding:
+      codec: text
+    labels:
+      job: "local"
