@@ -17,7 +17,7 @@ pub fn inspect(strict: bool) !void {
     }
 
     Logger.log(.err, "Ochi must run only on Linux", .{});
-    if (strict) return error.NotLinux;
+    if (strict and builtin.os.tag != .linux) return error.NotLinux;
 
     // TODO: pls implement it for windows
     try inspectFds(strict);
