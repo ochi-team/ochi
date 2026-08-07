@@ -43,8 +43,8 @@ sinks:
     compression: none
     healthcheck:
       enabled: false
+    dangerously_allow_unconfined_template_resolution: true
     structured_metadata:
-      dangerously_allow_unconfined_template_resolution: "true"
       '*': "{{ metadata }}"
     encoding:
       codec: text
