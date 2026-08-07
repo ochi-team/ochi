@@ -34,7 +34,7 @@ jobs:
         run: zig build test
 
       - name: Build release binary
-        run: zig build -Doptimize=ReleaseSafe -Drelease=true -Dtarget=x86_64-linux-gnu-baseline
+        run: zig build -Doptimize=ReleaseSafe -Drelease=true -Dtarget=x86_64-linux-gnu -Dcpu=baseline
 
       - name: Package artifacts
         run: |
