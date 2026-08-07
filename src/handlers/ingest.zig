@@ -34,7 +34,7 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
     const contentType = r.headers.get("content-type");
 
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
-        ctx.diagnostic.set(.{ .key = "req.contentType", .value = contentType.? });
+        ctx.request.diagnostic.set(.{ .key = "req.contentType", .value = contentType.? });
         // TODO: implement protobuf marhsalling
         return ApiError.ContentTypeNotSupported;
     }
@@ -55,7 +55,7 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
         return ApiError.DecompressFailed;
     defer res.arena.free(uncompressed);
 
-    const params = Params{ .tenantID = ctx.tenantID };
+    const params = Params{ .tenantID = ctx.request.tenantID };
 
     process(ctx.io, res.arena, ctx, uncompressed, params) catch
         return ApiError.FailedToProccess;
@@ -216,12 +216,14 @@ test "process does not panic when values has three lines" {
         .io = testing.io,
         .allocator = testing.allocator,
         .conf = undefined,
-        .tenantID = 0,
         .store = &store,
-        .diagnostic = &diagnostic,
         .dispatchMeter = undefined,
         .storeMeter = undefined,
         .accumulatorPool = accumulatorPool,
+        .request = &.{
+            .tenantID = 0,
+            .diagnostic = &diagnostic,
+        },
     };
     // process uses leaky parsing, so we rely on arena
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -234,7 +236,7 @@ test "process does not panic when values has three lines" {
         \\["1778922991218871002","line-3"]]}]}
     ;
 
-    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.tenantID }));
+    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.request.tenantID }));
 }
 
 test "large body is processed and appears in the query response" {
@@ -266,12 +268,14 @@ test "large body is processed and appears in the query response" {
         .io = io,
         .allocator = alloc,
         .conf = undefined,
-        .tenantID = 0,
         .store = &store,
-        .diagnostic = &diagnostic,
         .dispatchMeter = undefined,
         .storeMeter = undefined,
         .accumulatorPool = accumulatorPool,
+        .request = &.{
+            .tenantID = 0,
+            .diagnostic = &diagnostic,
+        },
     };
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -299,20 +303,20 @@ test "large body is processed and appears in the query response" {
     }
     body.appendSliceAssumeCapacity("]}]}");
 
-    try process(io, a, &ctx, body.items, .{ .tenantID = ctx.tenantID });
+    try process(io, a, &ctx, body.items, .{ .tenantID = ctx.request.tenantID });
     try accumulatorPool.flushAll(io);
     try store.flush(io, alloc);
 
     var tags = [_]Field{.{ .key = "app", .value = "large" }};
     const encodedTags = try encodeTags(a, tags[0..]);
-    const sid = makeStreamID(ctx.tenantID, encodedTags).id;
+    const sid = makeStreamID(ctx.request.tenantID, encodedTags).id;
 
     const query = Query{
         .streamIDs = &.{sid},
         .start = 0,
         .end = nowNs + std.time.ns_per_hour,
     };
-    var lines = try ctx.store.queryLines(io, a, alloc, ctx.tenantID, query);
+    var lines = try ctx.store.queryLines(io, a, alloc, ctx.request.tenantID, query);
     defer lines.deinit(a);
 
     try testing.expectEqual(lineCount, lines.items.len);

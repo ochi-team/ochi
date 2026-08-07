@@ -77,7 +77,7 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) A
         .query = body,
     });
 
-    var lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.tenantID, query) catch {
+    var lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query) catch {
         return ApiError.FailedToProccess;
     };
     defer lines.deinit(res.arena);

@@ -21,13 +21,16 @@ pub const AppContext = struct {
     conf: *const AppConfig,
     store: *Store,
 
-    // TODO: move it to a request context, a lifetime highlighted object
-    tenantID: u64,
-    diagnostic: *Logger.Diagnostic,
-
     dispatchMeter: *DispatchMeter,
     storeMeter: *StoreMeter,
     accumulatorPool: *AccumulatorPool,
+
+    request: *const RequestContext,
+};
+
+pub const RequestContext = struct {
+    tenantID: u64,
+    diagnostic: *Logger.Diagnostic,
 };
 
 pub const Dispatcher = struct {
@@ -87,12 +90,14 @@ pub const Dispatcher = struct {
             .io = self.io,
             .allocator = self.allocator,
             .conf = self.conf,
-            .tenantID = tenantID,
             .store = self.store,
-            .diagnostic = &diagnostic,
             .dispatchMeter = &self.meter,
             .storeMeter = &self.store.meter,
             .accumulatorPool = self.accumulatorPool,
+            .request = &.{
+                .tenantID = tenantID,
+                .diagnostic = &diagnostic,
+            },
         };
 
         action(&ctx, req, res) catch |err| {
@@ -135,7 +140,7 @@ pub const Dispatcher = struct {
                 },
             }
 
-            Logger.logWithDiagnostic(.err, "failed to handle request", .{ .err = err }, ctx.diagnostic);
+            Logger.logWithDiagnostic(.err, "failed to handle request", .{ .err = err }, ctx.request.diagnostic);
         };
     }
 
