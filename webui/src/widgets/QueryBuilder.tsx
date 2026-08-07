@@ -23,19 +23,19 @@ const timeRangeOptions = [
     'Last 30 days',
     'Since 1 Jan 1970',
 ];
-const timeRangeQueryTokens = [
-    '5m',
-    '15m',
-    '30m',
-    '60m',
-    '3h',
-    '6h',
-    '12h',
-    '24h',
-    '2d',
-    '7d',
-    '30d',
-    '1970-01-01T00:00:00.000Z',
+const timeRangeQueryTokens: Array<[isDuration: boolean, token: string]> = [
+    [true, '5m'],
+    [true, '15m'],
+    [true, '30m'],
+    [true, '60m'],
+    [true, '3h'],
+    [true, '6h'],
+    [true, '12h'],
+    [true, '24h'],
+    [true, '2d'],
+    [true, '7d'],
+    [true, '30d'],
+    [false, '1970-01-01T00:00:00.000Z'],
 ];
 
 if (timeRangeOptions.length != timeRangeQueryTokens.length) {
@@ -104,8 +104,8 @@ const QueryBuilder: Component<QueryBuilderProps> = (props) => {
                         onChange={(event) => {
                             const i = timeRangeOptions.indexOf(event.currentTarget.value)
                             setTimestampRange(event.currentTarget.value);
-                            const queryToken = timeRangeQueryTokens[i];
-                            props.setTimeRangeQueryToken(queryToken);
+                            const [isDuration, token] = timeRangeQueryTokens[i];
+                            props.setTimeRangeQueryToken(isDuration ? `-${token}` : token);
                         }}
                         value={timestampRange()}>
                         <For each={timeRangeOptions}>

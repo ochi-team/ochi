@@ -19,7 +19,7 @@ function isPrimitiveAttributeValue(value: JsonValue): value is string | number |
 const LogView: Component = () => {
     const [linesViewType, setLinesViewType] = createSignal<LinesViewType>('message');
     const [query, setQuery] = createSignal('');
-    const [timeRangeQueryToken, setTimeRangeQueryToken] = createSignal('15m');
+    const [timeRangeQueryToken, setTimeRangeQueryToken] = createSignal('-15m');
     const [lines, setLines] = createSignal<LogEntry[]>([]);
     const [historicQueries, setHistoricQueries] = createSignal<string[]>(loadQueryHistory());
     const [isQueryLoading, setIsQueryLoading] = createSignal(false);

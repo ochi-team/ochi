@@ -88,7 +88,7 @@ fn translateTimeValue(value: TimeValue, nowNs: u64) TranslateError!u64 {
         .timestamp => |ts| {
             const timestamp = zeit.Time.fromISO8601(ts) catch return TranslateError.InvalidTimestamp;
             const ns = timestamp.instant().timestamp;
-            if (ns <= 0) {
+            if (ns < 0) {
                 return TranslateError.InvalidTimestamp;
             }
             if (ns > std.math.maxInt(u64)) {
@@ -242,6 +242,29 @@ test "Translator.query" {
             .expectedQuery = .{
                 .start = now - (5 * std.time.ns_per_min),
                 .end = now + (30 * std.time.ns_per_s),
+                .tagsExpr = &.{
+                    .predicate = .{
+                        .key = "env",
+                        .value = "prod",
+                        .op = .equal,
+                    },
+                },
+                .fieldsExpr = null,
+            },
+        },
+        .{
+            // translates absolute timestamp 1970
+            .qset = .{
+                .timeRange = .{ .{ .timestamp = "1970-01-01T00:00:00.000Z" }, .now },
+                .tags = .{ .equalOp = .{ &.{ .literal = "env" }, &.{ .literal = "prod" } } },
+                .query = null,
+                .pipes = .empty,
+            },
+            .nowNs = now,
+            .expectedQuery = .{
+                // 1970 year is 0
+                .start = 0,
+                .end = now,
                 .tagsExpr = &.{
                     .predicate = .{
                         .key = "env",

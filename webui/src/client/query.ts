@@ -66,11 +66,11 @@ function parseQueryErrorResponse(value: unknown): Error | null {
 }
 
 export function buildLoqlQuery(timeRangeQueryToken: string, query: string): string {
-    return `[-${timeRangeQueryToken}, now] ${query}`;
+    return `[${timeRangeQueryToken}, now] ${query}`;
 }
 
 export function loqlQueryPrefix(timeRangeQueryToken: string): string {
-    return `[-${timeRangeQueryToken}, now] `;
+    return `[${timeRangeQueryToken}, now] `;
 }
 
 export async function queryLogs(params: QueryLogsParams): Promise<QueryResponse> {
