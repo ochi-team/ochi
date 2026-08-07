@@ -1026,7 +1026,7 @@ const QueryInput: Component<QueryInputProps> = (props) => {
 
             <Show when={!query()}>
                 <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                    {'{region-eu-west-1} level=error'}
+                    {'{region-eu-west-1} job=local'}
                 </span>
             </Show>
 
