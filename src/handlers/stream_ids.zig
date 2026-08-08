@@ -29,9 +29,6 @@ pub fn streamIDsHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Respons
     }
 
     const body = r.body() orelse return ApiError.EmptyBody;
-    if (body.len > ctx.conf.maxRequestSize) {
-        return ApiError.MaxBodySize;
-    }
 
     const request = parseRequest(res.arena, body) catch return ApiError.FailedToParse;
     const timeRange = resolveTimeRange(ctx.io, request) catch return ApiError.InvalidBody;

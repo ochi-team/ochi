@@ -100,6 +100,14 @@ pub const Dispatcher = struct {
             },
         };
 
+        if (req.body()) |body| {
+            if (body.len > ctx.conf.maxRequestSize) {
+                res.status = 413;
+                res.body = "max body size is exceeded";
+                return;
+            }
+        }
+
         action(&ctx, req, res) catch |err| {
             switch (err) {
                 // ingest api errors

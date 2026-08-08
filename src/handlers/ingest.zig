@@ -40,10 +40,6 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
     // currently the entire body is pre-read by the start of the API handler
     const body = r.body() orelse return ApiError.EmptyBody;
 
-    if (body.len > ctx.conf.maxRequestSize) {
-        return ApiError.MaxBodySize;
-    }
-
     // TODO: validate a disk has enough space
     const encoding = r.headers.get("content-encoding") orelse "";
     const compress = Compression.fromEncoding(encoding) catch
