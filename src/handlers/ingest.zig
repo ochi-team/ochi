@@ -150,7 +150,10 @@ fn process(
                 else => return error.TimestampNotString,
             };
             const tsNs = std.fmt.parseInt(u64, timestampStr, 10) catch |err| switch (err) {
-                error.InvalidCharacter => return ApiError.InvalidTimestamp,
+                error.InvalidCharacter => {
+                    ctx.request.diagnostic.set(.{ .key = "timestamp", .value = timestampStr });
+                    return ApiError.InvalidTimestamp;
+                },
                 else => return err,
             };
 
@@ -266,8 +269,6 @@ test "large body is processed and appears in the query response" {
     body.appendSliceAssumeCapacity("]}]}");
 
     try process(io, a, &ctx, body.items, .{ .tenantID = ctx.request.tenantID });
-    try accumulatorPool.flushAll(io);
-    try store.flush(io, alloc);
 
     var tags = [_]Field{.{ .key = "app", .value = "large" }};
     const encodedTags = try encodeTags(a, tags[0..]);
@@ -278,6 +279,17 @@ test "large body is processed and appears in the query response" {
         .start = 0,
         .end = nowNs + std.time.ns_per_hour,
     };
+
+    // assert accumulator has a left over the flushed body,
+    // but only part of it since the body doesn't fit its buffer
+    const pendingLines = accumulatorPool.slots[0].accumulator.lines.items.len;
+    try testing.expect(pendingLines > 0);
+    try testing.expect(pendingLines < lineCount);
+
+    // assert the rest of the lines available after flush
+    try accumulatorPool.flushAll(io);
+    try store.flush(io, alloc);
+
     var lines = try ctx.store.queryLines(io, a, alloc, ctx.request.tenantID, query);
     defer lines.deinit(a);
 
