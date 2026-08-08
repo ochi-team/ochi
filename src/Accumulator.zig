@@ -218,6 +218,9 @@ pub fn mustFlush(self: *Accumulator, io: Io) bool {
 }
 
 pub fn flush(self: *Accumulator, io: Io, alloc: Allocator) !void {
+    Logger.log(.debug, "flushing accumator buffer", .{
+        .size = self.buffer.end_index,
+    });
     var start: usize = 0;
     for (self.checkpoints[0..self.checkpointsLen]) |checkpoint| {
         const chunk = self.lines.items[start..checkpoint.i];
