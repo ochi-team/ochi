@@ -13,8 +13,6 @@ const ColumnData = @import("BlockData.zig").ColumnData;
 const Column = @import("Column.zig");
 const TableHeader = @import("../data/TableHeader.zig");
 const copyFields = @import("../lines.zig").copyFields;
-const freeFields = @import("../lines.zig").freeFields;
-const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const SID = @import("../lines.zig").SID;
 const Line = @import("../lines.zig").Line;
 const Field = @import("../lines.zig").Field;
@@ -96,6 +94,7 @@ pub const StreamMerger = struct {
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
     mergeBufferLines: std.ArrayList(Line) = .empty,
+    linesArena: std.heap.ArenaAllocator,
 
     // holds a current block copied until
     // either flushed as-is or merged with a second block for the same stream
@@ -125,9 +124,11 @@ pub const StreamMerger = struct {
         // TODO: experiment with Loser tree intead of heap:
         // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
 
-        const unpacker = try Unpacker.init(alloc, decompressionPool);
-        errdefer unpacker.deinit(alloc);
-        const decoder = try ValuesDecoder.init(alloc);
+        var linesArena: std.heap.ArenaAllocator = .init(alloc);
+        const linesArenaAlloc = linesArena.allocator();
+        const unpacker = try Unpacker.init(linesArenaAlloc, decompressionPool);
+        errdefer unpacker.deinit(linesArenaAlloc);
+        const decoder = try ValuesDecoder.init(linesArenaAlloc);
         errdefer decoder.deinit();
 
         var i: usize = 0;
@@ -149,6 +150,7 @@ pub const StreamMerger = struct {
             .heap = heap,
             .unpacker = unpacker,
             .decoder = decoder,
+            .linesArena = linesArena,
             .timestampsEncoders = timestampsEncoders,
         };
     }
@@ -158,21 +160,18 @@ pub const StreamMerger = struct {
         self.size = 0;
         self.sid = .{ .tenantID = 0, .id = 0 };
 
-        // TODO: if Lines holds all the fields slice we can reuse the array capacity
-        for (self.lines.items) |line| freeFields(alloc, line.fields);
         self.lines.clearRetainingCapacity();
+        _ = self.linesArena.reset(.retain_capacity);
 
         self.resetBlock(alloc);
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
-        deinitLinesFull(alloc, &self.lines);
-        self.mergeBufferLines.deinit(alloc);
         self.freeBlockDicts(alloc);
         self.blockValues.deinit(alloc);
         self.block.deinit(alloc);
-        self.unpacker.deinit(alloc);
-        self.decoder.deinit();
+
+        self.linesArena.deinit();
     }
 
     fn freeBlockDicts(self: *StreamMerger, alloc: Allocator) void {
@@ -292,7 +291,8 @@ pub const StreamMerger = struct {
         try self.decodeLines(io, alloc, blockData);
         std.debug.assert(self.lines.items.len > len);
 
-        try self.mergeBufferLines.ensureTotalCapacity(alloc, self.lines.items.len);
+        const linesArena = self.linesArena.allocator();
+        try self.mergeBufferLines.ensureTotalCapacity(linesArena, self.lines.items.len);
         defer self.mergeBufferLines.clearRetainingCapacity();
 
         mergeLines(&self.mergeBufferLines, self.lines.items[0..len], self.lines.items[len..]);
@@ -367,25 +367,33 @@ pub const StreamMerger = struct {
             .name = "StreamMerger.decodeLines",
         });
         defer z.end();
+        _ = alloc;
 
-        const block = try Block.initFromData(io, alloc, self.timestampsEncoders, blockData, self.unpacker, self.decoder);
-        defer block.deinit(alloc);
+        const linesArena = self.linesArena.allocator();
+        const block = try Block.initFromData(
+            io,
+            linesArena,
+            self.timestampsEncoders,
+            blockData,
+            self.unpacker,
+            self.decoder,
+        );
+
+        defer block.deinit(linesArena);
         defer {
-            for (self.unpacker.garbage.items) |buf| alloc.free(buf);
+            for (self.unpacker.garbage.items) |buf| linesArena.free(buf);
             self.unpacker.garbage.clearRetainingCapacity();
         }
 
         const offset = self.lines.items.len;
-        try block.gatherLines(alloc, &self.lines);
+        try block.gatherLines(linesArena, &self.lines);
 
         for (offset..self.lines.items.len) |lineI| {
             const fields = self.lines.items[lineI].fields;
             // data is short living, so we need to copy key values buffers,
             // TODO: we may move field array instead of copying it, do it for every copyFields usage
-            // TODO: there are tons of allocator calls, it's not ok, we must reuse the merger arena here,
-            // it happens right before flush, good to eliminate it
-            const copiedFields = try copyFields(alloc, fields);
-            alloc.free(fields);
+            const copiedFields = try copyFields(self.linesArena.allocator(), fields);
+            linesArena.free(fields);
             self.lines.items[lineI].fields = copiedFields;
         }
 

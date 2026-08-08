@@ -268,8 +268,6 @@ pub const LinesSizeError = error{
     MaxLineSizeExceeded,
 };
 
-// TODO: it's a common case to copy fields, move it to lines,
-// same happens in the accumulator and data shard
 pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
     const copiedFields = try alloc.alloc(Field, fields.len);
     var copied: usize = 0;

@@ -80,12 +80,20 @@ pub fn initFromData(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEnc
         try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
     }
 
+    var lastCopied: u16 = 0;
+    errdefer {
+        for (columns[firstInvariant .. firstInvariant + lastCopied]) |col| {
+            alloc.free(col.values);
+        }
+    }
     if (data.invariantColumns) |invariants| {
         for (invariants, 0..) |*invariant, i| {
             columns[firstInvariant + i].key = invariant.key;
             // move the values to the block instead of copying them
-            columns[firstInvariant + i].values = &[_][]const u8{};
-            std.mem.swap([][]const u8, &columns[firstInvariant + i].values, &invariant.values);
+            columns[firstInvariant + i].values = try alloc.dupe([]const u8, invariant.values);
+            // we know max columns fit into u16
+            lastCopied = @intCast(i);
+            // std.mem.swap([][]const u8, &columns[firstInvariant + i].values, &invariant.values);
         }
     }
 
