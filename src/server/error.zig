@@ -6,6 +6,7 @@ pub const ApiError = error{
     ContentEncodingNotSupported,
     FailedToProccess,
     FailedToParse,
+    InvalidTimestamp,
     InvalidBody,
     FailedToWriteResponse,
     InternalError,

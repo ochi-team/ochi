@@ -5,8 +5,6 @@ const Io = std.Io;
 const tracy = @import("tracy");
 const httpz = @import("httpz");
 
-const xev = @import("xev");
-
 const AppContext = @import("../dispatch.zig").AppContext;
 const Store = @import("../Store.zig").Store;
 const Accumulator = @import("../Accumulator.zig");
@@ -24,7 +22,7 @@ const Logger = @import("logging");
 // to reproduce all the errors
 
 /// ingestLokiJsonHandler defines a loki json insertion operation
-pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
+pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "ingestLokiJsonHandler",
@@ -57,8 +55,11 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
 
     const params = Params{ .tenantID = ctx.request.tenantID };
 
-    process(ctx.io, res.arena, ctx, uncompressed, params) catch
-        return ApiError.FailedToProccess;
+    try process(ctx.io, res.arena, ctx, uncompressed, params);
+    // process(ctx.io, res.arena, ctx, uncompressed, params) catch |err| switch (err) {
+    //     ApiError.InvalidTimestamp => return err,
+    //     else => return ApiError.FailedToProccess,
+    // };
 
     res.status = 200;
 }
@@ -152,7 +153,10 @@ fn process(
                 .string => |s| s,
                 else => return error.TimestampNotString,
             };
-            const tsNs = try std.fmt.parseInt(u64, timestampStr, 10);
+            const tsNs = std.fmt.parseInt(u64, timestampStr, 10) catch |err| switch (err) {
+                error.InvalidCharacter => return ApiError.InvalidTimestamp,
+                else => return err,
+            };
 
             // Parse structured metadata (if present)
             if (lineArray.len > 2) {
@@ -200,44 +204,6 @@ const Layout = @import("../Layout.zig");
 const Runtime = @import("../Runtime.zig");
 const Conf = @import("../Conf.zig");
 const Consts = @import("../Consts.zig");
-
-// TODO: move this test to corpora
-test "process does not panic when values has three lines" {
-    var store: Store = undefined;
-    var diagnostic: Logger.Diagnostic = .{};
-
-    const timerLoop = try TimerLoop.init(testing.allocator);
-    defer timerLoop.deinit();
-
-    const accumulatorPool = try AccumulatorPool.init(testing.io, testing.allocator, &store, timerLoop, 1);
-    defer accumulatorPool.deinit(testing.allocator);
-
-    var ctx = AppContext{
-        .io = testing.io,
-        .allocator = testing.allocator,
-        .conf = undefined,
-        .store = &store,
-        .dispatchMeter = undefined,
-        .storeMeter = undefined,
-        .accumulatorPool = accumulatorPool,
-        .request = &.{
-            .tenantID = 0,
-            .diagnostic = &diagnostic,
-        },
-    };
-    // process uses leaky parsing, so we rely on arena
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const body =
-        \\{"streams":[{"stream":{"app":"api"},"values":[
-        \\["bad-ts","line-1"],
-        \\["1778922991218871001","line-2"],
-        \\["1778922991218871002","line-3"]]}]}
-    ;
-
-    try testing.expectError(error.InvalidCharacter, process(testing.io, arena.allocator(), &ctx, body, .{ .tenantID = ctx.request.tenantID }));
-}
 
 test "large body is processed and appears in the query response" {
     const alloc = testing.allocator;

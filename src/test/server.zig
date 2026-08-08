@@ -69,6 +69,10 @@ const QueryResponse = struct {
     lines: []std.json.Value,
 };
 
+const IngestErrorResponse = struct {
+    code: []const u8,
+};
+
 const QuerySyntaxErrorResponse = struct {
     code: []const u8,
     meta: struct {
@@ -227,6 +231,42 @@ pub const OchiClient = struct {
             client.logger.log(.err, "ingest request failed", .{ .body = resp.body });
             return err;
         };
+    }
+
+    pub fn expectIngestLokiJsonError(
+        client: *OchiClient,
+        alloc: Allocator,
+        tenant: u64,
+        body: []const u8,
+        expectedStatus: u16,
+        expectedResponse: IngestErrorResponse,
+    ) !void {
+        const maxCompressedLen = snappy.maxCompressedLength(body.len);
+        const compressed = try alloc.alloc(u8, maxCompressedLen);
+        defer alloc.free(compressed);
+        const compressedLen = try snappy.compress(body, compressed);
+
+        var resp = try client.request(
+            alloc,
+            .POST,
+            "/ingest/loki/api/v1/push",
+            compressed[0..compressedLen],
+            tenant,
+            "application/json",
+            "snappy",
+        );
+        defer resp.deinit(alloc);
+
+        testing.expectEqual(expectedStatus, resp.statusCode) catch |err| {
+            client.logger.log(.err, "unexpected ingest error status", .{ .body = resp.body });
+            return err;
+        };
+
+        const parsed = try std.json.parseFromSlice(IngestErrorResponse, alloc, resp.body, .{
+            .ignore_unknown_fields = false,
+        });
+        defer parsed.deinit();
+        try testing.expectEqualDeep(expectedResponse, parsed.value);
     }
 
     pub fn flush(
@@ -501,6 +541,16 @@ const IngestCorpus = struct {
     }
 };
 
+const IngestErrorCase = struct {
+    request: std.json.Value,
+    response_status: u16,
+    response: IngestErrorResponse,
+};
+
+const IngestErrorsCorpus = struct {
+    cases: []IngestErrorCase,
+};
+
 const QueryCorpus = struct {
     description: []const u8,
     tenant: u64,
@@ -511,6 +561,7 @@ const QueryCorpus = struct {
 pub const QueryTestCorpus = struct {
     name: []const u8,
     ingest: IngestCorpus,
+    ingestErrorsBefore: []const IngestErrorCase,
     queries: []QueryCorpus,
 };
 
@@ -522,11 +573,13 @@ const CorporaReader = struct {
     dirPath: []const u8,
 
     ingestJson: std.ArrayList(std.json.Parsed(IngestCorpus)) = .empty,
+    ingestErrorsBeforeJson: std.ArrayList(std.json.Parsed(IngestErrorsCorpus)) = .empty,
     queriesJson: std.ArrayList(std.json.Parsed([]QueryCorpus)) = .empty,
 
     fn read(self: *CorporaReader, io: Io, alloc: Allocator) !std.ArrayList(QueryTestCorpus) {
         const corporaDirName = "src/test/corpora";
         const ingestFileName = "ingest.json";
+        const ingestErrorsBeforeFileName = "ingest_errors_before.json";
         const queriesFileName = "queries.json";
 
         var fullPathBuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -554,6 +607,11 @@ const CorporaReader = struct {
             errdefer parsedIngest.deinit();
 
             w.end = 0;
+            try std.fs.path.fmtJoin(&.{ self.dirPath, corporaDirName, entry.name, ingestErrorsBeforeFileName }).format(&w);
+            const ingestErrorsBefore = try parseTestFile(IngestErrorsCorpus, io, alloc, w.buffer[0..w.end]);
+            errdefer ingestErrorsBefore.deinit();
+
+            w.end = 0;
             try std.fs.path.fmtJoin(&.{ self.dirPath, corporaDirName, entry.name, queriesFileName }).format(&w);
             const parsedQueries = try parseTestFile([]QueryCorpus, io, alloc, w.buffer[0..w.end]);
             errdefer parsedQueries.deinit();
@@ -561,10 +619,12 @@ const CorporaReader = struct {
             try tests.append(alloc, .{
                 .name = try alloc.dupe(u8, entry.name),
                 .ingest = parsedIngest.value,
+                .ingestErrorsBefore = ingestErrorsBefore.value.cases,
                 .queries = parsedQueries.value,
             });
 
             try self.ingestJson.append(alloc, parsedIngest);
+            try self.ingestErrorsBeforeJson.append(alloc, ingestErrorsBefore);
             try self.queriesJson.append(alloc, parsedQueries);
         }
 
@@ -573,13 +633,13 @@ const CorporaReader = struct {
     }
 
     fn deinit(self: *CorporaReader, alloc: Allocator) void {
-        for (self.ingestJson.items) |parsed| {
-            parsed.deinit();
-        }
+        for (self.ingestJson.items) |parsed| parsed.deinit();
         self.ingestJson.deinit(alloc);
-        for (self.queriesJson.items) |parsed| {
-            parsed.deinit();
-        }
+
+        for (self.ingestErrorsBeforeJson.items) |parsed| parsed.deinit();
+        self.ingestErrorsBeforeJson.deinit(alloc);
+
+        for (self.queriesJson.items) |parsed| parsed.deinit();
         self.queriesJson.deinit(alloc);
     }
 };
@@ -865,6 +925,19 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
 }
 
 fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, nowNs: u64) !void {
+    // before ingest errors test
+    for (corpus.ingestErrorsBefore) |case| {
+        const body = try std.json.Stringify.valueAlloc(alloc, case.request, .{});
+        defer alloc.free(body);
+        try client.expectIngestLokiJsonError(
+            alloc,
+            corpus.ingest.tenant,
+            body,
+            case.response_status,
+            case.response,
+        );
+    }
+
     // ingest
     {
         const ingestBody = try buildIngestBody(alloc, corpus.ingest, nowNs);

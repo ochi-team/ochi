@@ -17,7 +17,7 @@ const ApiError = @import("../server/error.zig").ApiError;
 const Logger = @import("logging");
 
 /// queryHandler does a query fetch according to a passed Query in the body
-pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
+pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
     const contentType = r.headers.get("content-type");
 
     const body = r.body() orelse return ApiError.EmptyBody;

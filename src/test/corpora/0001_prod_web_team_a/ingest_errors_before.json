@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "request": {
+        "streams": [
+          {
+            "stream": { "app": "api" },
+            "values": [
+              ["bad-ts", "line-1"],
+              ["1778922991218871001", "line-2"],
+              ["1778922991218871002", "line-3"]
+            ]
+          }
+        ]
+      },
+      "response_status": 400,
+      "response": {
+        "code": "INVALID_TIMESTAMP"
+      }
+    }
+  ]
+}

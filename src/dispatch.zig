@@ -102,6 +102,13 @@ pub const Dispatcher = struct {
 
         action(&ctx, req, res) catch |err| {
             switch (err) {
+                // ingest api errors
+                ApiError.InvalidTimestamp => {
+                    res.status = 400;
+                    res.body = "{\"code\":\"INVALID_TIMESTAMP\"}";
+                },
+
+                // others
                 ApiError.EmptyBody => {
                     res.status = 400;
                     res.body = "request body is empty";

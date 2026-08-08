@@ -22,7 +22,7 @@ const StreamIDsRequest = struct {
     to: ?[]const u8 = null,
 };
 
-pub fn streamIDsHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) ApiError!void {
+pub fn streamIDsHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !void {
     const contentType = r.headers.get("content-type");
     if (contentType != null and !std.mem.eql(u8, "application/json", contentType.?)) {
         return ApiError.ContentTypeNotSupported;
