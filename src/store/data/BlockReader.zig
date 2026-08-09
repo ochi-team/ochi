@@ -43,8 +43,15 @@ globalBlocksCount: u64,
 // TODO: find a better name
 // TODO: make it a pointer, seems it holds a lot of fields
 blockData: BlockData,
+// backs blockData
+arena: std.heap.ArenaAllocator,
 
-pub fn initFromMemTable(io: Io, alloc: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*BlockReader {
+pub fn initFromMemTable(
+    io: Io,
+    alloc: Allocator,
+    table: *const Table,
+    decompressionPool: *DecompressionPool,
+) !*BlockReader {
     const memTable = table.inner.mem;
     const tableHeader = memTable.tableHeader;
     const indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
@@ -87,18 +94,29 @@ pub fn initFromMemTable(io: Io, alloc: Allocator, table: *const Table, decompres
         .globalBlocksCount = 0,
 
         .blockData = BlockData.initEmpty(),
+        .arena = .init(alloc),
     };
     return br;
 }
 
-pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table, decompressionPool: *DecompressionPool) !*BlockReader {
+pub fn initFromDiskTable(
+    io: Io,
+    alloc: Allocator,
+    table: *const Table,
+    decompressionPool: *DecompressionPool,
+) !*BlockReader {
     const tableHeader = table.inner.disk.tableHeader;
 
     const tableReader = try TableReader.init(io, alloc, table, decompressionPool);
     errdefer tableReader.deinit(alloc);
     var indexBlockHeaders: []IndexBlockHeader = &.{};
     if (tableReader.metaIndexBuf.len > 0) {
-        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(io, alloc, decompressionPool, tableReader.metaIndexBuf);
+        indexBlockHeaders = try IndexBlockHeader.readIndexBlockHeaders(
+            io,
+            alloc,
+            decompressionPool,
+            tableReader.metaIndexBuf,
+        );
     }
     errdefer if (indexBlockHeaders.len > 0) {
         alloc.free(indexBlockHeaders);
@@ -132,6 +150,7 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table, decompre
         .globalBlocksCount = 0,
 
         .blockData = BlockData.initEmpty(),
+        .arena = .init(alloc),
     };
     return br;
 }
@@ -139,7 +158,8 @@ pub fn initFromDiskTable(io: Io, alloc: Allocator, table: *const Table, decompre
 pub fn deinit(self: *BlockReader, allocator: Allocator) void {
     self.blockHeaders.deinit(allocator);
     self.tableReader.deinit(allocator);
-    self.blockData.deinit(allocator);
+    // deinit blockData
+    self.arena.deinit();
 
     if (self.indexBlockHeaders.len > 0) {
         allocator.free(self.indexBlockHeaders);
@@ -156,10 +176,10 @@ pub fn columnsLen(self: *const BlockReader) usize {
 /// nextBlock reads the next block from the reader and puts it into blockData.
 /// Returns false if there are no more blocks.
 /// blockData is valid until the next call to NextBlock().
-pub fn nextBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
+pub fn nextBlock(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     // Load more blocks if needed
     while (self.nextBlockIdx >= self.blockHeaders.items.len) {
-        if (!try self.nextIndexBlock(io, allocator)) {
+        if (!try self.nextIndexBlock(io, alloc)) {
             return false;
         }
     }
@@ -179,7 +199,7 @@ pub fn nextBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
     std.debug.assert(th.min >= ih.minTs);
     std.debug.assert(th.max <= ih.maxTs);
 
-    try self.blockData.readFrom(io, allocator, bh, self.tableReader);
+    try self.blockData.readFrom(io, &self.arena, bh, self.tableReader);
 
     self.globalUncompressedSizeBytes += bh.size;
     self.globalRowsCount += bh.len;
@@ -195,7 +215,7 @@ pub fn nextBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
     return true;
 }
 
-fn nextIndexBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
+fn nextIndexBlock(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     if (self.nextIndexBlockIdx >= self.indexBlockHeaders.len) {
         // No more blocks left
         // Validate tableHeader
@@ -213,11 +233,12 @@ fn nextIndexBlock(self: *BlockReader, io: Io, allocator: Allocator) !bool {
     std.debug.assert(ih.minTs >= self.tableHeader.minTimestamp);
     std.debug.assert(ih.maxTs <= self.tableHeader.maxTimestamp);
 
-    const indexBlockData = try readIndexBlock(io, allocator, ih, self.tableReader, self.decompressionPool);
-    defer allocator.free(indexBlockData);
+    const arena = self.arena.allocator();
+    const indexBlockData = try readIndexBlock(io, arena, ih, self.tableReader, self.decompressionPool);
+    defer arena.free(indexBlockData);
 
     self.blockHeaders.clearRetainingCapacity();
-    try BlockHeader.decodeFew(allocator, &self.blockHeaders, indexBlockData);
+    try BlockHeader.decodeFew(alloc, &self.blockHeaders, indexBlockData);
 
     self.nextIndexBlockIdx += 1;
     self.nextBlockIdx = 0;
@@ -238,19 +259,19 @@ pub fn blockReaderLessThan(one: *const BlockReader, another: *const BlockReader)
 
 fn readIndexBlock(
     io: Io,
-    allocator: Allocator,
+    alloc: Allocator,
     ih: *const IndexBlockHeader,
     tableReader: *TableReader,
     decompressionPool: *DecompressionPool,
 ) ![]u8 {
-    const compressed = try allocator.alloc(u8, ih.size);
-    defer allocator.free(compressed);
+    const compressed = try alloc.alloc(u8, ih.size);
+    defer alloc.free(compressed);
     const n = try tableReader.readIndex(io, compressed, ih.offset);
     std.debug.assert(n == compressed.len);
 
     const decompressedSize = try encoding.getFrameContentSize(compressed);
-    const decompressed = try allocator.alloc(u8, decompressedSize);
-    errdefer allocator.free(decompressed);
+    const decompressed = try alloc.alloc(u8, decompressedSize);
+    errdefer alloc.free(decompressed);
 
     _ = try decompressionPool.decompress(io, decompressed, compressed);
     return decompressed;
@@ -437,7 +458,14 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
     defer compressionPool.deinit(alloc);
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try memTable.addLinesForSid(
+        io,
+        alloc,
+        timestampsEncoders,
+        compressionPool,
+        .{ .id = 1, .tenantID = 1234 },
+        lines[0..],
+    );
 
     const tablePath = try std.fs.path.join(alloc, &.{ rootPath, "table-1" });
     memTable.storeToDisk(io, tablePath) catch |err| {

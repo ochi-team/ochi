@@ -53,27 +53,19 @@ pub const BlockData = struct {
         return .{ .columnsData = std.ArrayList(ColumnData).empty, .timestampsData = .{} };
     }
 
-    pub fn reset(self: *BlockData, allocator: Allocator) void {
+    /// resetArena assumes it's owned by an arena allocator,
+    /// so it doesn't free or clearRetainingCapacity
+    pub fn resetArena(self: *BlockData) void {
         self.sid = .{ .tenantID = 0, .id = 0 };
         self.uncompressedSizeBytes = 0;
         self.len = 0;
 
-        self.timestampsData.deinit(allocator);
-        for (self.columnsData.items) |*col| {
-            col.deinit(allocator);
-        }
-        self.columnsData.clearRetainingCapacity();
+        self.timestampsData = .{};
+        self.columnsData = .empty;
         self.invariantColumns = null;
+        self.columnsHeader = null;
 
-        if (self.columnsHeader) |ch| {
-            // TODO: make it reset instead
-            ch.deinit(allocator);
-            self.columnsHeader = null;
-        }
-        if (self.columnsHeaderBuf.len > 0) {
-            allocator.free(self.columnsHeaderBuf);
-            self.columnsHeaderBuf = "";
-        }
+        self.columnsHeaderBuf = "";
     }
 
     pub fn deinit(self: *BlockData, alloc: Allocator) void {
@@ -90,15 +82,16 @@ pub const BlockData = struct {
         self.timestampsData.deinit(alloc);
     }
 
-    // TODO: assign this API to a reader instead so we could have data as a pure data models
     pub fn readFrom(
         self: *BlockData,
         io: Io,
-        alloc: Allocator,
+        arena: *std.heap.ArenaAllocator,
         bh: *const BlockHeader,
         sr: *const TableReader,
     ) !void {
-        self.reset(alloc);
+        _ = arena.reset(.retain_capacity);
+        self.resetArena();
+        const alloc = arena.allocator();
 
         self.sid = bh.sid;
         self.uncompressedSizeBytes = bh.size;

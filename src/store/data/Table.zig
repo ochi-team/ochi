@@ -615,9 +615,11 @@ fn queryBlock(
     const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
     defer tableReader.deinit(alloc);
 
+    var blockDataArena: std.heap.ArenaAllocator = .init(alloc);
+    defer blockDataArena.deinit();
+
     var blockData = BlockData.initEmpty();
-    defer blockData.deinit(alloc);
-    try blockData.readFrom(io, alloc, &blockHeader, tableReader);
+    try blockData.readFrom(io, &blockDataArena, &blockHeader, tableReader);
 
     const unpacker = try Unpacker.init(alloc, decompressionPool);
     defer unpacker.deinit(alloc);

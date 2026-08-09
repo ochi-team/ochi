@@ -670,7 +670,15 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         errdefer dstMemTable.deinit(alloc);
         const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders, compressionPool);
         defer streamWriter.deinit(alloc);
-        dstMemTable.tableHeader = try mergeBlocks(io, alloc, timestampsEncoders, decompressionPool, streamWriter, &readers, null);
+        dstMemTable.tableHeader = try mergeBlocks(
+            io,
+            alloc,
+            timestampsEncoders,
+            decompressionPool,
+            streamWriter,
+            &readers,
+            null,
+        );
 
         try testing.expect(dstMemTable.indexBuf.items.len > 0);
         try testing.expect(dstMemTable.metaIndexBuf.items.len > 0);

@@ -489,9 +489,11 @@ test "initFromLines and initFromData produce identical blocks" {
             .colIdx = &writer.colIdx,
         };
 
+        var bdArena: std.heap.ArenaAllocator = .init(alloc);
+        defer bdArena.deinit();
+
         var bd = BlockData.initEmpty();
-        defer bd.deinit(alloc);
-        try bd.readFrom(io, alloc, &bh, &sr);
+        try bd.readFrom(io, &bdArena, &bh, &sr);
 
         const unpacker = try Unpacker.init(alloc, decompressionPool);
         const decoder = try ValuesDecoder.init(alloc);
