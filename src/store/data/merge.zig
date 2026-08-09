@@ -288,12 +288,12 @@ pub const StreamMerger = struct {
         if (self.block.len > 0) {
             // a single block was held for this stream, unpack it into lines now
             // that a second block forces an actual merge
-            try self.decodeLines(io, alloc, &self.block);
+            try self.decodeLines(io, &self.block);
             self.resetBlock(alloc);
         }
 
         const len = self.lines.items.len;
-        try self.decodeLines(io, alloc, blockData);
+        try self.decodeLines(io, blockData);
         std.debug.assert(self.lines.items.len > len);
 
         const linesArena = self.linesArena.allocator();
@@ -366,13 +366,12 @@ pub const StreamMerger = struct {
         };
     }
 
-    fn decodeLines(self: *StreamMerger, io: Io, alloc: Allocator, blockData: *BlockData) !void {
+    fn decodeLines(self: *StreamMerger, io: Io, blockData: *BlockData) !void {
         const z = tracy.Zone.begin(.{
             .src = @src(),
             .name = "StreamMerger.decodeLines",
         });
         defer z.end();
-        _ = alloc;
 
         const linesArena = self.linesArena.allocator();
         const block = try Block.initFromData(
@@ -632,7 +631,7 @@ test "StreamMerger.decodeLines frees unpacker garbage buffers" {
     var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, &readers);
     defer merger.deinit(alloc);
 
-    try merger.decodeLines(io, alloc, &reader.blockData);
+    try merger.decodeLines(io, &reader.blockData);
 }
 
 test "mergeData keeps merged memtable buffers alive after source memtables deinit" {
