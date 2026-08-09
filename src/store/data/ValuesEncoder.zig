@@ -539,8 +539,8 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         try testing.expectEqual(case.expectedMin, valueType.min);
         try testing.expectEqual(case.expectedMax, valueType.max);
 
-        const decoder = try ValuesDecoder.init(allocator);
-        defer decoder.deinit();
+        const decoder = try ValuesDecoder.init(allocator, allocator);
+        defer decoder.deinit(allocator);
 
         // create mutable values array pointing to encoded bytes (before we transfer encoder.values)
         var decodedValues = try allocator.alloc([]const u8, encoder.values.items.len);
@@ -735,8 +735,8 @@ fn expectEncodeRoundtrip(
     const valueType = try encoder.encode(input, &cv);
     try testing.expectEqual(expectedType, valueType.type);
 
-    const decoder = try ValuesDecoder.init(allocator);
-    defer decoder.deinit();
+    const decoder = try ValuesDecoder.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     var decodedValues = try allocator.alloc([]const u8, encoder.values.items.len);
     defer allocator.free(decodedValues);
@@ -896,8 +896,8 @@ test "ValuesEncoder keeps buffered value slices stable after growth" {
         decodedValues[i] = encodedValue;
     }
 
-    const decoder = try ValuesDecoder.init(allocator);
-    defer decoder.deinit();
+    const decoder = try ValuesDecoder.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     try decoder.decode(io, decodedValues[0..decodedValues.len], valueType.type, cv.values.items);
     try testing.expectEqualDeep(&input, decodedValues[0..decodedValues.len]);

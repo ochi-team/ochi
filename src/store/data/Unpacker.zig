@@ -18,68 +18,134 @@ const UnpackError = error{
     DecompressionFailed,
 };
 
-const Self = @This();
-// TODO: get rid of collecting garbage
-garbage: std.ArrayList([]u8) = .empty,
-compressionPool: *DecompressionPool,
+/// leaky supposed be to be used with arena in order not to collect garbage to free later
+pub fn Unpacker(comptime leaky: bool) type {
+    return struct {
+        const Self = @This();
 
-pub fn init(alloc: Allocator, compressionPool: *DecompressionPool) !*Self {
-    const s = try alloc.create(Self);
-    s.* = .{ .compressionPool = compressionPool };
-    return s;
-}
-/// resetArena must be called whenever the arena backing allocator is reset,
-/// it doesn't use .clearRetainingCapacity in order not to retain dangling memory
-pub fn resetArena(self: *Self) void {
-    self.garbage = .empty;
-}
+        garbage: if (!leaky) std.ArrayList([]u8) else void,
+        compressionPool: *DecompressionPool,
 
-pub fn deinit(self: *Self, alloc: Allocator) void {
-    for (self.garbage.items) |buf| {
-        alloc.free(buf);
-    }
-    self.garbage.deinit(alloc);
-    alloc.destroy(self);
-}
-
-pub fn unpackValues(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize) ![][]const u8 {
-    const z = tracy.Zone.begin(.{
-        .name = "unpackValues",
-        .src = @src(),
-    });
-    defer z.end();
-    var offset: usize = 0;
-    const lengths = try self.unpackU64(io, alloc, encoded, count, &offset);
-    defer alloc.free(lengths);
-
-    const tail = encoded[offset..];
-    const buf = try self.unpackBytes(io, alloc, tail, &offset);
-    try self.garbage.append(alloc, buf);
-    std.debug.assert(offset == encoded.len);
-
-    var res = try alloc.alloc([]const u8, lengths.len);
-    // same values first
-    if (lengths.len >= 2 and buf.len == lengths[0] and areNumbersSame(lengths)) {
-        for (0..res.len) |i| {
-            res[i] = buf;
+        pub fn init(alloc: Allocator, compressionPool: *DecompressionPool) !*Self {
+            const s = try alloc.create(Self);
+            s.* = .{
+                .garbage = if (!leaky) .empty else {},
+                .compressionPool = compressionPool,
+            };
+            return s;
         }
-        return res;
-    }
 
-    offset = 0;
-    for (0..res.len) |i| {
-        const len = lengths[i];
-        std.debug.assert(buf[offset..].len >= len);
-        res[i] = buf[offset .. offset + len];
-        offset += len;
-    }
-    return res;
-}
+        /// resetArena must be called whenever the arena backing allocator is reset,
+        /// it doesn't use .clearRetainingCapacity in order not to retain dangling memory.
+        /// no-op when leaky, since garbage isn't tracked and the arena reclaims it wholesale.
+        pub fn resetArena(self: *Self) void {
+            if (!leaky) self.garbage = .empty;
+        }
 
-pub fn unpackU64(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize, offset: *usize) ![]u64 {
-    const buf = try self.unpackBytes(io, alloc, encoded, offset);
-    defer alloc.free(buf);
-    return unpackU64s(alloc, buf, count);
+        pub fn deinit(self: *Self, alloc: Allocator) void {
+            if (!leaky) {
+                for (self.garbage.items) |buf| {
+                    alloc.free(buf);
+                }
+                self.garbage.deinit(alloc);
+            }
+            alloc.destroy(self);
+        }
+
+        pub fn unpackValues(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize) ![][]const u8 {
+            const z = tracy.Zone.begin(.{
+                .name = "unpackValues",
+                .src = @src(),
+            });
+            defer z.end();
+            var offset: usize = 0;
+            const lengths = try self.unpackU64(io, alloc, encoded, count, &offset);
+            defer alloc.free(lengths);
+
+            const tail = encoded[offset..];
+            const buf = try self.unpackBytes(io, alloc, tail, &offset);
+            if (!leaky) try self.garbage.append(alloc, buf);
+            std.debug.assert(offset == encoded.len);
+
+            var res = try alloc.alloc([]const u8, lengths.len);
+            // same values first
+            if (lengths.len >= 2 and buf.len == lengths[0] and areNumbersSame(lengths)) {
+                for (0..res.len) |i| {
+                    res[i] = buf;
+                }
+                return res;
+            }
+
+            offset = 0;
+            for (0..res.len) |i| {
+                const len = lengths[i];
+                std.debug.assert(buf[offset..].len >= len);
+                res[i] = buf[offset .. offset + len];
+                offset += len;
+            }
+            return res;
+        }
+
+        pub fn unpackU64(
+            self: *Self,
+            io: Io,
+            alloc: Allocator,
+            encoded: []const u8,
+            count: usize,
+            offset: *usize,
+        ) ![]u64 {
+            const buf = try self.unpackBytes(io, alloc, encoded, offset);
+            defer alloc.free(buf);
+            return unpackU64s(alloc, buf, count);
+        }
+
+        fn unpackBytes(self: *Self, io: Io, alloc: Allocator, data: []const u8, offset: *usize) ![]u8 {
+            if (data.len == 0) {
+                return UnpackError.InsufficientData;
+            }
+
+            const compressionKind = data[0];
+
+            // TODO: memory copies are crap here
+            switch (compressionKind) {
+                Packer.compressionKindPlain => {
+                    // plain format: [kind:u8][len:u8][data]
+                    const len = data[1];
+                    const bytes = data[2..];
+                    if (bytes.len < len) {
+                        return UnpackError.InsufficientDataLen;
+                    }
+                    offset.* += 2 + len;
+                    return alloc.dupe(u8, bytes[0..len]);
+                },
+                Packer.compressionKindZstd => {
+                    // compressed format: [kind:u8][len:leb128][compressed_data]
+                    const compressedLen = Decoder.readVarIntFromBuf(data[1..]);
+                    offset.* += 1 + compressedLen.offset + compressedLen.value;
+                    var rest = data[1 + compressedLen.offset ..];
+                    if (rest.len < compressedLen.value) {
+                        return UnpackError.InsufficientDataLen;
+                    }
+                    const compressedData = rest[0..compressedLen.value];
+
+                    const decompressedSize = try encoding.getFrameContentSize(compressedData);
+
+                    const decompressed = try alloc.alloc(u8, decompressedSize);
+                    errdefer alloc.free(decompressed);
+
+                    // TODO: it must be fixed, we must not rely on the expected size
+                    const actualSize = try self.compressionPool.decompress(io, decompressed, compressedData);
+                    if (actualSize != decompressedSize) {
+                        alloc.free(decompressed);
+                        return UnpackError.DecompressionFailed;
+                    }
+
+                    return decompressed;
+                },
+                else => return UnpackError.InvalidCompressionKind,
+            }
+        }
+    };
 }
 
 fn unpackU64s(alloc: Allocator, data: []const u8, count: usize) ![]u64 {
@@ -171,53 +237,6 @@ fn unpackU64s(alloc: Allocator, data: []const u8, count: usize) ![]u64 {
         else => return UnpackError.InvalidBlockType,
     }
     return res;
-}
-
-fn unpackBytes(self: *Self, io: Io, alloc: Allocator, data: []const u8, offset: *usize) ![]u8 {
-    if (data.len == 0) {
-        return UnpackError.InsufficientData;
-    }
-
-    const compressionKind = data[0];
-
-    // TODO: memory copies are crap here
-    switch (compressionKind) {
-        Packer.compressionKindPlain => {
-            // plain format: [kind:u8][len:u8][data]
-            const len = data[1];
-            const bytes = data[2..];
-            if (bytes.len < len) {
-                return UnpackError.InsufficientDataLen;
-            }
-            offset.* += 2 + len;
-            return alloc.dupe(u8, bytes[0..len]);
-        },
-        Packer.compressionKindZstd => {
-            // compressed format: [kind:u8][len:leb128][compressed_data]
-            const compressedLen = Decoder.readVarIntFromBuf(data[1..]);
-            offset.* += 1 + compressedLen.offset + compressedLen.value;
-            var rest = data[1 + compressedLen.offset ..];
-            if (rest.len < compressedLen.value) {
-                return UnpackError.InsufficientDataLen;
-            }
-            const compressedData = rest[0..compressedLen.value];
-
-            const decompressedSize = try encoding.getFrameContentSize(compressedData);
-
-            const decompressed = try alloc.alloc(u8, decompressedSize);
-            errdefer alloc.free(decompressed);
-
-            // TODO: it must be fixed, we must not rely on the expected size
-            const actualSize = try self.compressionPool.decompress(io, decompressed, compressedData);
-            if (actualSize != decompressedSize) {
-                alloc.free(decompressed);
-                return UnpackError.DecompressionFailed;
-            }
-
-            return decompressed;
-        },
-        else => return UnpackError.InvalidCompressionKind,
-    }
 }
 
 const testing = std.testing;

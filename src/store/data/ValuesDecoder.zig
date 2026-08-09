@@ -13,8 +13,8 @@ values: std.ArrayList([]const u8),
 dictStrings: ?[]const []const u8 = null,
 allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
-    const vd = try allocator.create(Self);
+pub fn init(structAlloc: std.mem.Allocator, allocator: std.mem.Allocator) !*Self {
+    const vd = try structAlloc.create(Self);
     vd.* = .{
         .buf = std.ArrayList(u8).empty,
         .values = std.ArrayList([]const u8).empty,
@@ -31,13 +31,13 @@ pub fn resetArena(self: *Self) void {
     self.dictStrings = null;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Self, structAlloc: std.mem.Allocator) void {
     if (self.dictStrings) |ds| {
         self.allocator.free(ds);
     }
     self.buf.deinit(self.allocator);
     self.values.deinit(self.allocator);
-    self.allocator.destroy(self);
+    structAlloc.destroy(self);
 }
 
 pub fn decode(
@@ -299,8 +299,8 @@ const testing = std.testing;
 
 test "ValuesDecoder.decodeUint8String" {
     const allocator = testing.allocator;
-    const decoder = try Self.init(allocator);
-    defer decoder.deinit();
+    const decoder = try Self.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     // Ensure capacity for writing
     try decoder.buf.ensureUnusedCapacity(allocator, 16);
@@ -340,8 +340,8 @@ test "ValuesDecoder.decodeUint8String" {
 
 test "ValuesDecoder.decodeIPv4String" {
     const allocator = testing.allocator;
-    const decoder = try Self.init(allocator);
-    defer decoder.deinit();
+    const decoder = try Self.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     try decoder.buf.ensureUnusedCapacity(allocator, 16);
 
@@ -361,8 +361,8 @@ test "ValuesDecoder.decode uint8 grows output buffer" {
     const allocator = testing.allocator;
     const io = testing.io;
 
-    const decoder = try Self.init(allocator);
-    defer decoder.deinit();
+    const decoder = try Self.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     const encoded = [_][1]u8{
         .{0},
@@ -392,8 +392,8 @@ test "ValuesDecoder.decode ipv4 grows output buffer" {
     const allocator = testing.allocator;
     const io = testing.io;
 
-    const decoder = try Self.init(allocator);
-    defer decoder.deinit();
+    const decoder = try Self.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     const encoded = [_][4]u8{
         .{ 1, 2, 3, 4 },
@@ -420,8 +420,8 @@ test "ValuesDecoder.decode dict replaces previous dictionary" {
     const allocator = testing.allocator;
     const io = testing.io;
 
-    const decoder = try Self.init(allocator);
-    defer decoder.deinit();
+    const decoder = try Self.init(allocator, allocator);
+    defer decoder.deinit(allocator);
 
     const firstEncoded = [_][1]u8{
         .{0},

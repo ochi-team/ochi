@@ -23,7 +23,7 @@ const ColumnDict = @import("store/data/ColumnDict.zig");
 const ColumnHeader = @import("store/data/ColumnHeader.zig");
 const ColumnIDGen = @import("store/data/ColumnIDGen.zig");
 const IndexBlockHeader = @import("store/data/IndexBlockHeader.zig");
-const Unpacker = @import("store/data/Unpacker.zig");
+const Unpacker = @import("store/data/Unpacker.zig").Unpacker;
 const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 
 /// Selects which physical table file and decoder scooby should use.
@@ -702,7 +702,7 @@ fn inspectDictValues(
 
     const decompressionPool = try DecompressionPool.init(allocator, 1);
     defer decompressionPool.deinit(allocator);
-    var unpacker = try Unpacker.init(allocator, decompressionPool);
+    var unpacker = try Unpacker(true).init(allocator, decompressionPool);
     defer unpacker.deinit(allocator);
 
     const values = unpacker.unpackValues(io, allocator, packedValues, rowCount) catch |err| {

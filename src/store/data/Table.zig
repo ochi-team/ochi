@@ -14,7 +14,7 @@ const TableHeader = @import("../data/TableHeader.zig");
 const ColumnIDGen = @import("../data/ColumnIDGen.zig");
 const BlockData = @import("../data/BlockData.zig").BlockData;
 const Block = @import("../data/Block.zig");
-const Unpacker = @import("../data/Unpacker.zig");
+const Unpacker = @import("../data/Unpacker.zig").Unpacker;
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TableReader = @import("../data/TableReader.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
@@ -621,12 +621,15 @@ fn queryBlock(
     var blockData = BlockData.initEmpty();
     try blockData.readFrom(io, &blockDataArena, &blockHeader, tableReader);
 
-    const unpacker = try Unpacker.init(alloc, decompressionPool);
+    // rely on request arena
+    // TODO: it must be true, the practical use case to query is to use an arena
+    const unpackerIsLeaky = false;
+    const unpacker = try Unpacker(unpackerIsLeaky).init(alloc, decompressionPool);
     defer unpacker.deinit(alloc);
-    const decoder = try ValuesDecoder.init(alloc);
-    defer decoder.deinit();
+    const decoder = try ValuesDecoder.init(alloc, alloc);
+    defer decoder.deinit(alloc);
 
-    const block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, unpacker, decoder);
+    const block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, unpackerIsLeaky, unpacker, decoder);
     defer block.deinit(alloc);
 
     var i = dst.items.len;

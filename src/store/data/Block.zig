@@ -6,7 +6,7 @@ const Field = @import("../lines.zig").Field;
 const Line = @import("../lines.zig").Line;
 const Column = @import("Column.zig");
 const BlockData = @import("BlockData.zig").BlockData;
-const Unpacker = @import("Unpacker.zig");
+const Unpacker = @import("Unpacker.zig").Unpacker;
 const ValuesDecoder = @import("ValuesDecoder.zig");
 const TimestampsEncoder = @import("TimestampsEncoder.zig");
 const Table = @import("../data/Table.zig");
@@ -56,7 +56,15 @@ pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
     return b;
 }
 
-pub fn initFromData(io: Io, alloc: Allocator, timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool, data: *BlockData, unpacker: *Unpacker, decoder: *ValuesDecoder) !*Block {
+pub fn initFromData(
+    io: Io,
+    alloc: Allocator,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    data: *BlockData,
+    comptime leaky: bool,
+    unpacker: *Unpacker(leaky),
+    decoder: *ValuesDecoder,
+) !*Block {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "data.Block.initFromData",
@@ -495,13 +503,13 @@ test "initFromLines and initFromData produce identical blocks" {
         var bd = BlockData.initEmpty();
         try bd.readFrom(io, &bdArena, &bh, &sr);
 
-        const unpacker = try Unpacker.init(alloc, decompressionPool);
-        const decoder = try ValuesDecoder.init(alloc);
+        const unpacker = try Unpacker(false).init(alloc, decompressionPool);
+        const decoder = try ValuesDecoder.init(alloc, alloc);
 
-        const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, unpacker, decoder);
+        const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, false, unpacker, decoder);
         defer blockB.deinit(alloc);
         defer unpacker.deinit(alloc);
-        defer decoder.deinit();
+        defer decoder.deinit(alloc);
 
         try expectEqualBlocks(blockA, blockB);
 

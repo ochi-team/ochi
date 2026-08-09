@@ -24,7 +24,7 @@ const Table = @import("Table.zig");
 const Block = @import("../data/Block.zig");
 const BlockData = @import("../data/BlockData.zig").BlockData;
 const BlockReader = @import("../data/BlockReader.zig");
-const Unpacker = @import("../data/Unpacker.zig");
+const Unpacker = @import("../data/Unpacker.zig").Unpacker;
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
@@ -101,7 +101,8 @@ pub const StreamMerger = struct {
     // TODO: this can go away to arena
     blockValues: std.ArrayList([]const u8) = .empty,
 
-    unpacker: *Unpacker,
+    // leaky unpacker since we use arena for it
+    unpacker: *Unpacker(true),
     decoder: *ValuesDecoder,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 
@@ -122,10 +123,11 @@ pub const StreamMerger = struct {
         errdefer alloc.destroy(linesArena);
         errdefer linesArena.deinit();
         const linesArenaAlloc = linesArena.allocator();
-        const unpacker = try Unpacker.init(linesArenaAlloc, decompressionPool);
-        errdefer unpacker.deinit(linesArenaAlloc);
-        const decoder = try ValuesDecoder.init(linesArenaAlloc);
-        errdefer decoder.deinit();
+        const unpacker: *Unpacker(true) = try .init(alloc, decompressionPool);
+        errdefer unpacker.deinit(alloc);
+        // TODO: make it as a value, not a pointer, it removes second allocator as an argument
+        const decoder = try ValuesDecoder.init(alloc, linesArenaAlloc);
+        errdefer decoder.deinit(alloc);
 
         var i: usize = 0;
         while (i < readers.items.len) {
@@ -168,6 +170,8 @@ pub const StreamMerger = struct {
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
+        self.unpacker.deinit(alloc);
+        self.decoder.deinit(alloc);
         self.linesArena.deinit();
         alloc.destroy(self.linesArena);
     }
@@ -357,15 +361,12 @@ pub const StreamMerger = struct {
             alloc,
             self.timestampsEncoders,
             blockData,
+            true,
             self.unpacker,
             self.decoder,
         );
 
         defer block.deinit(alloc);
-        defer {
-            for (self.unpacker.garbage.items) |buf| alloc.free(buf);
-            self.unpacker.garbage.clearRetainingCapacity();
-        }
 
         const offset = self.lines.items.len;
         try block.gatherLines(alloc, &self.lines);
@@ -694,14 +695,14 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     var mergedReader = try BlockReader.initFromMemTable(io, alloc, mergedTable, decompressionPool);
     defer mergedReader.deinit(alloc);
 
-    const unpacker = try Unpacker.init(alloc, decompressionPool);
+    const unpacker = try Unpacker(false).init(alloc, decompressionPool);
     defer unpacker.deinit(alloc);
-    const decoder = try ValuesDecoder.init(alloc);
-    defer decoder.deinit();
+    const decoder = try ValuesDecoder.init(alloc, alloc);
+    defer decoder.deinit(alloc);
 
     var expectedI: usize = 0;
     while (try mergedReader.nextBlock(io, alloc)) {
-        const block = try Block.initFromData(io, alloc, timestampsEncoders, &mergedReader.blockData, unpacker, decoder);
+        const block = try Block.initFromData(io, alloc, timestampsEncoders, &mergedReader.blockData, false, unpacker, decoder);
         defer block.deinit(alloc);
 
         var lines = std.ArrayList(Line).empty;
