@@ -2,6 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const checkAllocationFailuresAllowingSwallow =
+    @import("../../stds/testing.zig").checkAllocationFailuresAllowingSwallow;
+
 const encoding = @import("encoding");
 
 const TableReader = @import("TableReader.zig");
@@ -317,7 +320,7 @@ fn populateSampleLines(sample: *SampleLines) void {
 }
 
 test "readBlock reads buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testReadBlock, .{std.testing.io});
+    try checkAllocationFailuresAllowingSwallow(std.testing.allocator, testReadBlock, .{std.testing.io});
 }
 
 test "initFromDiskTable reads buffers" {

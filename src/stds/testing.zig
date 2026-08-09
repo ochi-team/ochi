@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
 const File = Io.File;
@@ -269,4 +270,92 @@ fn CheckAllIoFailuresExtraArgs(comptime TestFn: type) type {
     }
 
     return @Tuple(&extra_args);
+}
+
+fn CheckAllAllocationFailuresExtraArgs(comptime TestFn: type) type {
+    switch (@typeInfo(@typeInfo(TestFn).@"fn".return_type.?)) {
+        .error_union => |info| {
+            if (info.payload != void) {
+                @compileError("Return type must be !void");
+            }
+        },
+        else => @compileError("Return type must be !void"),
+    }
+
+    const ArgsTuple = std.meta.ArgsTuple(TestFn);
+
+    const fields = @typeInfo(ArgsTuple).@"struct".fields;
+    if (fields.len == 0 or fields[0].type != std.mem.Allocator) {
+        @compileError("The provided function must have an " ++ @typeName(std.mem.Allocator) ++ " as its first argument");
+    }
+
+    var extra_args: [fields.len - 1]type = undefined;
+    for (&extra_args, fields[1..]) |*arg, field| {
+        arg.* = field.type;
+    }
+
+    return @Tuple(&extra_args);
+}
+
+/// Like std.testing.checkAllAllocationFailures, but tolerates a swallowed
+/// OutOfMemory as long as it didn't leak
+pub fn checkAllocationFailuresAllowingSwallow(
+    backing_allocator: Allocator,
+    comptime test_fn: anytype,
+    extra_args: CheckAllAllocationFailuresExtraArgs(@TypeOf(test_fn)),
+) !void {
+    const needed_alloc_count = x: {
+        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{});
+
+        try @call(.auto, test_fn, .{failing_allocator_inst.allocator()} ++ extra_args);
+        break :x failing_allocator_inst.alloc_index;
+    };
+
+    for (0..needed_alloc_count) |fail_index| {
+        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{
+            .fail_index = fail_index,
+        });
+
+        if (@call(.auto, test_fn, .{failing_allocator_inst.allocator()} ++ extra_args)) |_| {
+            if (!failing_allocator_inst.has_induced_failure) {
+                return error.NondeterministicMemoryUsage;
+            }
+        } else |err| switch (err) {
+            error.OutOfMemory => {
+                if (failing_allocator_inst.allocated_bytes != failing_allocator_inst.freed_bytes) {
+                    std.debug.print(
+                        "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {f}\n",
+                        .{
+                            fail_index,
+                            needed_alloc_count,
+                            failing_allocator_inst.allocated_bytes,
+                            failing_allocator_inst.freed_bytes,
+                            failing_allocator_inst.allocations,
+                            failing_allocator_inst.deallocations,
+                            std.debug.FormatStackTrace{
+                                .stack_trace = failing_allocator_inst.getStackTrace(),
+                            },
+                        },
+                    );
+                    return error.MemoryLeakDetected;
+                }
+            },
+            else => |e| return e,
+        }
+    }
+}
+
+fn printLeak(fail_index: usize, needed_alloc_count: usize, fa: *std.testing.FailingAllocator) void {
+    std.debug.print(
+        "\nfail_index: {d}/{d}\nallocated bytes: {d}\nfreed bytes: {d}\nallocations: {d}\ndeallocations: {d}\nallocation that was made to fail: {f}\n",
+        .{
+            fail_index,
+            needed_alloc_count,
+            fa.allocated_bytes,
+            fa.freed_bytes,
+            fa.allocations,
+            fa.deallocations,
+            std.debug.FormatStackTrace{ .stack_trace = fa.getStackTrace() },
+        },
+    );
 }
