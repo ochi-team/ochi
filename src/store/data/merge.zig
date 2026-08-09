@@ -151,7 +151,7 @@ pub const StreamMerger = struct {
         };
     }
 
-    fn reset(self: *StreamMerger, alloc: Allocator) void {
+    fn reset(self: *StreamMerger) void {
         self.totalKeys = 0;
         self.size = 0;
         self.sid = .{ .tenantID = 0, .id = 0 };
@@ -164,42 +164,17 @@ pub const StreamMerger = struct {
         self.unpacker.resetArena();
         _ = self.linesArena.reset(.retain_capacity);
 
-        self.resetBlock(alloc);
+        self.resetBlock();
     }
 
     fn deinit(self: *StreamMerger, alloc: Allocator) void {
-        self.freeBlockDicts(alloc);
-        self.blockValues.deinit(alloc);
-        self.block.deinit(alloc);
-
         self.linesArena.deinit();
         alloc.destroy(self.linesArena);
     }
 
-    fn freeBlockDicts(self: *StreamMerger, alloc: Allocator) void {
-        for (self.block.columnsData.items) |col| {
-            alloc.free(col.key);
-            // values container may have been freed by
-            // TableWriter.writeColumnData
-            col.dict.deinit(alloc);
-            alloc.destroy(col.dict);
-        }
-        if (self.block.invariantColumns) |cols| {
-            for (cols) |col| {
-                alloc.free(col.key);
-                // same as above: container may have been freed
-                // by Block.initFromData while decoding
-                alloc.free(col.values);
-            }
-            alloc.free(cols);
-        }
-        for (self.blockValues.items) |v| alloc.free(v);
-        self.blockValues.clearRetainingCapacity();
-    }
-
-    fn resetBlock(self: *StreamMerger, alloc: Allocator) void {
-        self.freeBlockDicts(alloc);
-        self.block.reset(alloc);
+    fn resetBlock(self: *StreamMerger) void {
+        self.block = BlockData.initEmpty();
+        self.blockValues = .empty;
     }
 
     pub fn writeBlock(
@@ -231,7 +206,7 @@ pub const StreamMerger = struct {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
                 // copy block to the merger, wait for the next block
-                try self.setBlock(alloc, blockData);
+                try self.setBlock(blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
@@ -240,7 +215,7 @@ pub const StreamMerger = struct {
             if (totalKeys >= Block.maxColumns) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
-                try self.setBlock(alloc, blockData);
+                try self.setBlock(blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (blockData.uncompressedSizeBytes >= maxBlockSize) {
@@ -264,11 +239,11 @@ pub const StreamMerger = struct {
         if (self.lines.items.len > 0) {
             try writer.writeLines(io, alloc, self.sid, self.lines.items, streamWriter);
         } else if (self.block.len > 0) {
-            // never merged with a second block for this stream, write the copy as-is
+            // never merged with a second block for this stream, write the copy as-is.
             try writer.writeData(io, alloc, &self.block, streamWriter);
         }
 
-        self.reset(alloc);
+        self.reset();
     }
 
     fn merge(
@@ -289,7 +264,7 @@ pub const StreamMerger = struct {
             // a single block was held for this stream, unpack it into lines now
             // that a second block forces an actual merge
             try self.decodeLines(io, &self.block);
-            self.resetBlock(alloc);
+            self.resetBlock();
         }
 
         const len = self.lines.items.len;
@@ -310,7 +285,10 @@ pub const StreamMerger = struct {
 
     // setBlock copies block into self.block so it can be written out later
     // without ever decoding it into lines. columnsHeaderBuf/columnsHeader are not copied.
-    fn setBlock(self: *StreamMerger, alloc: Allocator, block: *const BlockData) !void {
+    // the copy is allocated from linesArena, since self.block shares its lifetime with lines.
+    fn setBlock(self: *StreamMerger, block: *const BlockData) !void {
+        const alloc = self.linesArena.allocator();
+
         const timestampsBuf = try alloc.alloc(u8, block.timestampsData.data.len);
         errdefer alloc.free(timestampsBuf);
         const timestampsData = block.timestampsData.copy(timestampsBuf);
@@ -373,31 +351,31 @@ pub const StreamMerger = struct {
         });
         defer z.end();
 
-        const linesArena = self.linesArena.allocator();
+        const alloc = self.linesArena.allocator();
         const block = try Block.initFromData(
             io,
-            linesArena,
+            alloc,
             self.timestampsEncoders,
             blockData,
             self.unpacker,
             self.decoder,
         );
 
-        defer block.deinit(linesArena);
+        defer block.deinit(alloc);
         defer {
-            for (self.unpacker.garbage.items) |buf| linesArena.free(buf);
+            for (self.unpacker.garbage.items) |buf| alloc.free(buf);
             self.unpacker.garbage.clearRetainingCapacity();
         }
 
         const offset = self.lines.items.len;
-        try block.gatherLines(linesArena, &self.lines);
+        try block.gatherLines(alloc, &self.lines);
 
         for (offset..self.lines.items.len) |lineI| {
             const fields = self.lines.items[lineI].fields;
             // data is short living, so we need to copy key values buffers,
             // TODO: we may move field array instead of copying it, do it for every copyFields usage
             const copiedFields = try copyFields(self.linesArena.allocator(), fields);
-            linesArena.free(fields);
+            alloc.free(fields);
             self.lines.items[lineI].fields = copiedFields;
         }
 

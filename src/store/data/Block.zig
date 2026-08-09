@@ -166,11 +166,11 @@ pub fn getInvariantColumns(self: *const Block) []Column {
     return self.columns[self.firstInvariant..];
 }
 
-pub fn len(self: *Block) usize {
+pub fn len(self: *const Block) usize {
     return self.timestamps.len;
 }
 
-pub fn size(self: *Block) u32 {
+pub fn size(self: *const Block) u32 {
     return sizing.blockJsonSize(self);
 }
 

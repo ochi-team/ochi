@@ -20,11 +20,11 @@ invariantColumns: []Column,
 /// TODO: find a workaround for clear ownership instead of a flag
 ownsInvariantColumns: bool = false,
 
-pub fn initFromBlock(alloc: Allocator, block: *Block) !*ColumnsHeader {
+pub fn initFromBlock(alloc: Allocator, block: *const Block) !*ColumnsHeader {
     return init(alloc, block.getColumns().len, block.getInvariantColumns());
 }
 
-pub fn initFromData(alloc: Allocator, data: *BlockData) !*ColumnsHeader {
+pub fn initFromData(alloc: Allocator, data: *const BlockData) !*ColumnsHeader {
     return init(alloc, data.columnsData.items.len, data.invariantColumns orelse &[_]Column{});
 }
 

@@ -348,7 +348,7 @@ pub fn writeBlock(
     self: *TableWriter,
     io: Io,
     allocator: Allocator,
-    block: *Block,
+    block: *const Block,
     blockHeader: *BlockHeader,
 ) !void {
     const z = tracy.Zone.begin(.{
@@ -399,7 +399,7 @@ pub fn writeData(
     io: Io,
     alloc: Allocator,
     blockHeader: *BlockHeader,
-    data: *BlockData,
+    data: *const BlockData,
 ) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
@@ -566,8 +566,7 @@ fn writeColumnData(self: *TableWriter, io: Io, alloc: Allocator, col: ColumnData
     ch.min = col.min;
     ch.max = col.max;
 
-    // move the dict ownership to ch in order to avoid double free
-    std.mem.swap(std.ArrayList([]const u8), &ch.dict.values, &col.dict.values);
+    ch.dict.values.appendSliceAssumeCapacity(col.dict.values.items);
 
     const bloomBufI = self.getBloomBufferIndex(io, alloc, ch.key);
     const bloomValuesBuf = if (bloomBufI) |i| &self.bloomValuesList.items[i] else |err| switch (err) {

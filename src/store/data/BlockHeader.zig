@@ -61,7 +61,7 @@ columnsHeaderSize: usize,
 columnsHeaderIndexOffset: usize,
 columnsHeaderIndexSize: usize,
 
-pub fn initFromBlock(block: *Block, sid: SID) BlockHeader {
+pub fn initFromBlock(block: *const Block, sid: SID) BlockHeader {
     return .{
         .sid = sid,
         .size = block.size(),

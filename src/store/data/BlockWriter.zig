@@ -24,8 +24,8 @@ pub const indexBlockFlushThreshold = 128 * 1024;
 pub const metaIndexSize = 4 * 1024;
 
 const Content = union(enum) {
-    block: *Block,
-    data: *BlockData,
+    block: *const Block,
+    data: *const BlockData,
 };
 
 // state for the current index block (reset after flush)
@@ -110,7 +110,7 @@ pub fn writeData(
     self: *BlockWriter,
     io: Io,
     allocator: Allocator,
-    data: *BlockData,
+    data: *const BlockData,
     tableWriter: *TableWriter,
 ) !void {
     const c = Content{ .data = data };
