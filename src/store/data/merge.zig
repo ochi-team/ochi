@@ -84,11 +84,6 @@ pub const StreamMerger = struct {
 
     // state
 
-    // TODO: add block data as a merger state in order to do less decoding to lines,
-    // reference to:
-    // commit 0d6a3a45f7c4095101726ef1945c6988ea265fed
-    // remove block content from data merger state
-
     sid: SID = .{ .tenantID = 0, .id = 0 },
     totalKeys: usize = 0,
     size: usize = 0,
@@ -119,8 +114,6 @@ pub const StreamMerger = struct {
         decompressionPool: *DecompressionPool,
         readers: *std.ArrayList(*BlockReader),
     ) !StreamMerger {
-        // TODO: collect metrics and experiment with flat array on 1-3 elements
-
         // TODO: experiment with Loser tree intead of heap:
         // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
 
@@ -225,7 +218,8 @@ pub const StreamMerger = struct {
 
         self.assertState(blockData);
 
-        const totalKeys = blockData.columnsData.items.len + if (blockData.invariantColumns) |invariantCol| invariantCol.len else 0;
+        const totalKeys = blockData.columnsData.items.len +
+            if (blockData.invariantColumns) |invariantCol| invariantCol.len else 0;
 
         if (!blockData.sid.eql(self.sid)) {
             // it means next stream begins, we have to flush the data
@@ -233,21 +227,23 @@ pub const StreamMerger = struct {
             self.sid = blockData.sid;
 
             if (blockData.uncompressedSizeBytes >= maxBlockSize) {
+                // max block size, flush immediately
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
+                // copy block to the merger, wait for the next block
                 try self.setBlock(alloc, blockData);
                 self.totalKeys = totalKeys;
             }
         } else if (self.totalKeys + totalKeys > Block.maxColumns) {
-            // we have to flush the data before we can add more
+            // we have to flush the data before we can add more keys
             try self.flushStream(io, alloc, blockWriter, writer);
-            if (totalKeys > Block.maxColumns) {
+            if (totalKeys >= Block.maxColumns) {
                 try blockWriter.writeData(io, alloc, blockData, writer);
             } else {
                 try self.setBlock(alloc, blockData);
                 self.totalKeys = totalKeys;
             }
-        } else if (self.size >= maxBlockSize) {
+        } else if (blockData.uncompressedSizeBytes >= maxBlockSize) {
             try self.flushStream(io, alloc, blockWriter, writer);
             try blockWriter.writeData(io, alloc, blockData, writer);
         } else {
@@ -804,6 +800,63 @@ test "mergeData flushes maxLines for one stream" {
     }
 
     try testing.expectEqual(Block.maxLines, actualRows);
+}
+
+test "writeBlock flushes without merging when the incoming block is already full-sized" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+    const sid = SID{ .tenantID = 1, .id = 7 };
+
+    const memTable1 = try MemTable.init(alloc);
+    const table1 = try Table.fromMem(io, alloc, memTable1, decompressionPool);
+    defer table1.close(io);
+    var fields1 = [_]Field{.{ .key = "k", .value = "v1" }};
+    var lines1 = [_]Line{.{ .timestampNs = 1, .fields = fields1[0..] }};
+    try memTable1.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines1[0..]);
+    const reader1 = try BlockReader.initFromMemTable(io, alloc, table1, decompressionPool);
+    defer reader1.deinit(alloc);
+
+    const memTable2 = try MemTable.init(alloc);
+    const table2 = try Table.fromMem(io, alloc, memTable2, decompressionPool);
+    defer table2.close(io);
+    var fields2 = [_]Field{.{ .key = "k", .value = "v2" }};
+    var lines2 = [_]Line{.{ .timestampNs = 2, .fields = fields2[0..] }};
+    try memTable2.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines2[0..]);
+    const reader2 = try BlockReader.initFromMemTable(io, alloc, table2, decompressionPool);
+    defer reader2.deinit(alloc);
+
+    var readers = try std.ArrayList(*BlockReader).initCapacity(alloc, 1);
+    defer readers.deinit(alloc);
+    try readers.append(alloc, reader1);
+
+    var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, &readers);
+    defer merger.deinit(alloc);
+
+    const dstMemTable = try MemTable.init(alloc);
+    defer dstMemTable.deinit(alloc);
+    const streamWriter = try TableWriter.initMem(alloc, dstMemTable, timestampsEncoders, compressionPool);
+    defer streamWriter.deinit(alloc);
+    const blockWriter = try BlockWriter.init(alloc);
+    defer blockWriter.deinit(alloc);
+
+    try merger.writeBlock(io, alloc, blockWriter, streamWriter, &reader1.blockData);
+    try testing.expect(merger.block.len > 0);
+    try testing.expectEqual(0, merger.lines.items.len);
+
+    // force having second block max size in order to test it's flushed on write
+    try testing.expect(try reader2.nextBlock(io, alloc));
+    reader2.blockData.uncompressedSizeBytes = maxBlockSize;
+
+    try merger.writeBlock(io, alloc, blockWriter, streamWriter, &reader2.blockData);
+
+    // an already-full block must be flushed+written as-is, never decoded into lines
+    try testing.expectEqual(0, merger.lines.items.len);
 }
 
 test "mergeData multi tenant" {

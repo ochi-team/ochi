@@ -18,6 +18,7 @@ pub const Compression = enum(u8) {
 
         return error.CompressingNotSupported;
     }
+    // TODO: rename all uncompress* to decompress*
     pub fn uncompress(compression: Compression, allocator: std.mem.Allocator, compressed: []const u8) ![]const u8 {
         const z = tracy.Zone.begin(.{
             .src = @src(),
