@@ -23,6 +23,14 @@ pub fn init(allocator: std.mem.Allocator) !*Self {
     return vd;
 }
 
+/// resetArena must be called whenever the arena backing allocator is reset,
+/// it doesn't use .clearRetainingCapacity in order not to retain dangling memory
+pub fn resetArena(self: *Self) void {
+    self.buf = .empty;
+    self.values = .empty;
+    self.dictStrings = null;
+}
+
 pub fn deinit(self: *Self) void {
     if (self.dictStrings) |ds| {
         self.allocator.free(ds);

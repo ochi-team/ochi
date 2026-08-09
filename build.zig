@@ -17,6 +17,7 @@ fn addOption(
 }
 
 pub fn build(b: *std.Build) void {
+    // TODO: find what is baseline and how to setup a proper target including v3/v4
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 

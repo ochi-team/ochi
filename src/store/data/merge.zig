@@ -94,7 +94,7 @@ pub const StreamMerger = struct {
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
     mergeBufferLines: std.ArrayList(Line) = .empty,
-    linesArena: std.heap.ArenaAllocator,
+    linesArena: *std.heap.ArenaAllocator,
 
     // holds a current block copied until
     // either flushed as-is or merged with a second block for the same stream
@@ -124,7 +124,10 @@ pub const StreamMerger = struct {
         // TODO: experiment with Loser tree intead of heap:
         // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
 
-        var linesArena: std.heap.ArenaAllocator = .init(alloc);
+        const linesArena = try alloc.create(std.heap.ArenaAllocator);
+        linesArena.* = .init(alloc);
+        errdefer alloc.destroy(linesArena);
+        errdefer linesArena.deinit();
         const linesArenaAlloc = linesArena.allocator();
         const unpacker = try Unpacker.init(linesArenaAlloc, decompressionPool);
         errdefer unpacker.deinit(linesArenaAlloc);
@@ -160,7 +163,12 @@ pub const StreamMerger = struct {
         self.size = 0;
         self.sid = .{ .tenantID = 0, .id = 0 };
 
-        self.lines.clearRetainingCapacity();
+        // arena reset invalidates any capacity these held,
+        // so drop it rather than clearRetainingCapacity
+        self.lines = .empty;
+        self.mergeBufferLines = .empty;
+        self.decoder.resetArena();
+        self.unpacker.resetArena();
         _ = self.linesArena.reset(.retain_capacity);
 
         self.resetBlock(alloc);
@@ -172,6 +180,7 @@ pub const StreamMerger = struct {
         self.block.deinit(alloc);
 
         self.linesArena.deinit();
+        alloc.destroy(self.linesArena);
     }
 
     fn freeBlockDicts(self: *StreamMerger, alloc: Allocator) void {

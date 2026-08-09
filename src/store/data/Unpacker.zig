@@ -28,6 +28,12 @@ pub fn init(alloc: Allocator, compressionPool: *DecompressionPool) !*Self {
     s.* = .{ .compressionPool = compressionPool };
     return s;
 }
+/// resetArena must be called whenever the arena backing allocator is reset,
+/// it doesn't use .clearRetainingCapacity in order not to retain dangling memory
+pub fn resetArena(self: *Self) void {
+    self.garbage = .empty;
+}
+
 pub fn deinit(self: *Self, alloc: Allocator) void {
     for (self.garbage.items) |buf| {
         alloc.free(buf);
