@@ -25,6 +25,7 @@ const ColumnIDGen = @import("store/data/ColumnIDGen.zig");
 const IndexBlockHeader = @import("store/data/IndexBlockHeader.zig");
 const Unpacker = @import("store/data/Unpacker.zig").Unpacker;
 const DecompressionPool = @import("store/compression/DecompressionPool.zig");
+const Logger = @import("logging");
 
 /// Selects which physical table file and decoder scooby should use.
 /// These names are intentionally the command-line values accepted by
@@ -36,6 +37,7 @@ const HeaderKind = enum {
     index,
     columnsHeaderIndex,
     columnsHeader,
+    columnIdxs,
 };
 
 /// Parsed command-line state.
@@ -66,6 +68,17 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
+    try Logger.setup(io, allocator, .{
+        .level = .None,
+        .pool_size = 1,
+        .buffer_size = 4096,
+        .large_buffer_count = 1,
+        .large_buffer_size = 1 << 15,
+        .output = .stdout,
+        .encoding = .logfmt,
+    });
+    defer Logger.deinit();
+
     const args = try parseArgs(init.minimal.args, allocator);
     defer if (args.data.len > 0) allocator.free(args.data);
     if (args.data.len == 0 or args.header == null or args.size == null) {
@@ -94,6 +107,11 @@ pub fn main(init: std.process.Init) !void {
             const buf = try readHeaderSlice(io, allocator, args.data, filenames.columnsHeaderIndex, args.offset, args.size.?);
             defer allocator.free(buf);
             try inspectColumnsHeaderIndex(allocator, buf, keys);
+        },
+        .columnIdxs => {
+            const buf = try readHeaderSlice(io, allocator, args.data, filenames.columnIdxs, args.offset, args.size.?);
+            defer allocator.free(buf);
+            try inspectColumnIdxs(buf, keys);
         },
         .columnsHeader => {
             const buf = try readHeaderSlice(io, allocator, args.data, filenames.columnsHeader, args.offset, args.size.?);
@@ -189,6 +207,7 @@ fn usage() void {
         \\  zig build scooby -- --data:<absolute table path> --header:index --offset:<offset> --size:<size>
         \\  zig build scooby -- --data:<absolute table path> --header:columnsHeaderIndex --offset:<offset> --size:<size>
         \\  zig build scooby -- --data:<absolute table path> --header:columnsHeader --offset:<offset> --size:<size> [--index-offset:<offset> --index-size:<size>] [--count:<rows> --validate-values]
+        \\  zig build scooby -- --data:<absolute table path> --header:columnIdxs --offset:0 --size:<columnIdxs.bin size>
         \\
         \\notes:
         \\  --data must point to a data table directory, for example /path/to/.ochi/partitions/<date>/data/<table-id>
@@ -380,6 +399,32 @@ fn inspectColumnsHeaderIndex(allocator: std.mem.Allocator, buf: []const u8, keys
     }
 
     std.debug.print("consumed={d} remaining=0\n", .{buf.len});
+}
+
+/// Prints the columnID -> bloom tokens/values shard index mapping.
+/// This is the mapping TableReader.readBloomValues/readBloomTokens uses at
+/// query time to pick which values<N>/tokens<N> shard file a column's
+/// ch.offset/ch.bloomFilterOffset apply to, so it's the piece to check when a
+/// column's recorded offset/size looks fine but reading it still comes up short.
+fn inspectColumnIdxs(buf: []const u8, keys: ?*ColumnIDGen) !void {
+    std.debug.print("columnIdxs bytes={d}\n", .{buf.len});
+    if (buf.len == 0) return;
+
+    var dec = Decoder{ .buf = buf };
+    const count = dec.readVarInt();
+    std.debug.print("entries len={d}\n", .{count});
+    for (0..count) |i| {
+        const colID = dec.readVarInt();
+        const shardIdx = dec.readVarInt();
+        std.debug.print("colIdx[{d}] colID={d} shardIdx={d}", .{ i, colID, shardIdx });
+        if (keyForID(keys, std.math.cast(u16, colID) orelse std.math.maxInt(u16))) |key| {
+            std.debug.print(" key=\"{s}\"", .{key});
+        } else {
+            std.debug.print(" key=<unknown>", .{});
+        }
+        std.debug.print("\n", .{});
+    }
+    std.debug.print("consumed={d} remaining={d}\n", .{ dec.offset, buf.len - dec.offset });
 }
 
 /// Decompresses and prints IndexBlockHeader records from metaindex.

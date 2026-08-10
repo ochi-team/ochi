@@ -197,16 +197,15 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8, decompressionPool: *Deco
             filenames.bloomTokens,
             @intCast(shardIdx),
         );
+        const bloomTokensFile = try std.Io.Dir.openFileAbsolute(io, bloomTokensPath, .{});
+        errdefer bloomTokensFile.close(io);
+
         const bloomValuesPath = try filenames.writeBloomFilePath(
             &pathBuf,
             path,
             filenames.bloomValues,
             @intCast(shardIdx),
         );
-
-        const bloomTokensFile = try std.Io.Dir.openFileAbsolute(io, bloomTokensPath, .{});
-        errdefer bloomTokensFile.close(io);
-
         const bloomValuesFile = try std.Io.Dir.openFileAbsolute(io, bloomValuesPath, .{});
         errdefer bloomValuesFile.close(io);
 
@@ -714,6 +713,8 @@ pub fn lessThan(_: void, one: *Table, another: *Table) bool {
 const testing = std.testing;
 const stesting = @import("../../stds/testing.zig");
 
+const ColumnDict = @import("ColumnDict.zig");
+
 test "release keeps table unless toRemove is set, then removes table dir" {
     const alloc = testing.allocator;
     const io = testing.io;
@@ -978,6 +979,55 @@ test "open reads table from disk" {
     for (expectedHeaders, table.indexBlockHeaders) |expected, actual| {
         try testing.expectEqualDeep(expected, actual);
     }
+}
+
+test "open reads bloom buffers" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table-1" }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
+
+    const memTable = try MemTable.init(alloc);
+    defer memTable.deinit(alloc);
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const linesCount = 9;
+    // otherwise the data goes into a dict and it doesn't reproduce a bug
+    try testing.expect(linesCount > ColumnDict.maxDictColumnValuesLen);
+    var lines: [linesCount]Line = undefined;
+    var fields: [linesCount][1]Field = undefined;
+    var values: [linesCount][16]u8 = undefined;
+    for (0..linesCount) |i| {
+        const v = try std.fmt.bufPrint(&values[i], "unique-value-{d}", .{i});
+        fields[i] = .{.{ .key = "msg", .value = v }};
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = fields[i][0..] };
+    }
+
+    try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
+    try testing.expect(memTable.bloomTokensBuf.items.len > 0);
+
+    try memTable.storeToDisk(io, tablePath);
+
+    const tablePathOwned = try alloc.dupe(u8, tablePath);
+    const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);
+    defer table.release(io);
+
+    var buf: [512]u8 = undefined;
+    const n = try table.readBloomTokens(io, buf[0..memTable.bloomTokensBuf.items.len], 0, 0);
+    try testing.expectEqual(memTable.bloomTokensBuf.items.len, n);
+    try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, buf[0..n]);
 }
 
 fn testOpenAll(io: Io, alloc: Allocator, rootPath: []const u8, decompressionPool: *DecompressionPool) !void {
