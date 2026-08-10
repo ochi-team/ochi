@@ -94,12 +94,6 @@ pub const StreamMerger = struct {
     // holds a current block copied until
     // either flushed as-is or merged with a second block for the same stream
     block: BlockData = BlockData.initEmpty(),
-    // owns dict values and invariant column values duped into block. tracked
-    // separately because both containers can get their values swapped out,
-    // by downstream decode (Block.initFromData) or write (TableWriter.writeColumnData) steps,
-    // which only ever free the container
-    // TODO: this can go away to arena
-    blockValues: std.ArrayList([]const u8) = .empty,
 
     // leaky unpacker since we use arena for it
     unpacker: *Unpacker(true),
@@ -178,7 +172,6 @@ pub const StreamMerger = struct {
 
     fn resetBlock(self: *StreamMerger) void {
         self.block = BlockData.initEmpty();
-        self.blockValues = .empty;
     }
 
     pub fn writeBlock(
@@ -313,7 +306,7 @@ pub const StreamMerger = struct {
         }
         for (block.columnsData.items) |*src| {
             var dst: ColumnData = undefined;
-            try src.copy(alloc, &dst, &self.blockValues);
+            try src.copy(alloc, &dst);
             self.block.columnsData.appendAssumeCapacity(dst);
         }
 
@@ -326,11 +319,9 @@ pub const StreamMerger = struct {
                 errdefer alloc.free(key);
 
                 const values = try alloc.alloc([]const u8, col.values.len);
-                try self.blockValues.ensureUnusedCapacity(alloc, col.values.len);
                 for (col.values, 0..) |v, j| {
                     const value = try alloc.dupe(u8, v);
                     values[j] = value;
-                    self.blockValues.appendAssumeCapacity(value);
                 }
 
                 dup[i] = .{ .key = key, .values = values };

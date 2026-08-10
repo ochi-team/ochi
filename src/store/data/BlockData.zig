@@ -270,7 +270,7 @@ pub const ColumnData = struct {
     /// copies the column.
     /// ownedDictValues collects the duped dict value buffers so the caller can
     /// use them after BlockReader free
-    pub fn copy(self: *const ColumnData, alloc: Allocator, column: *ColumnData, ownedDictValues: *std.ArrayList([]const u8)) !void {
+    pub fn copy(self: *const ColumnData, alloc: Allocator, column: *ColumnData) !void {
         const key = try alloc.dupe(u8, self.key);
         errdefer alloc.free(key);
 
@@ -290,8 +290,6 @@ pub const ColumnData = struct {
         errdefer alloc.destroy(dict);
         dict.* = try self.dict.copy(alloc);
         errdefer dict.deinit(alloc);
-        try ownedDictValues.ensureUnusedCapacity(alloc, dict.values.items.len);
-        for (dict.values.items) |v| ownedDictValues.appendAssumeCapacity(v);
 
         column.* = .{
             .key = key,
