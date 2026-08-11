@@ -95,14 +95,14 @@ pub fn writeLines(
     });
     defer z.end();
 
-    const block = try Block.initFromLines(allocator, lines);
+    var block = try Block.initFromLines(allocator, lines);
     defer block.deinit(allocator);
 
     if (block.len() == 0) {
         return;
     }
 
-    const c = Content{ .block = block };
+    const c = Content{ .block = &block };
     try self.writeBlock(io, allocator, c, sid, tableWriter);
 }
 

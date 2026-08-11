@@ -664,7 +664,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
 
     var expectedI: usize = 0;
     while (try mergedReader.nextBlock(io, alloc)) {
-        const block = try Block.initFromData(io, alloc, timestampsEncoders, &mergedReader.blockData, false, &unpacker, &decoder);
+        var block = try Block.initFromData(io, alloc, timestampsEncoders, &mergedReader.blockData, false, &unpacker, &decoder);
         defer block.deinit(alloc);
 
         var lines = std.ArrayList(Line).empty;

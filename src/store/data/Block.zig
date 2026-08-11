@@ -39,11 +39,8 @@ firstInvariant: u32,
 columns: []Column,
 timestamps: []u64,
 
-pub fn initFromLines(allocator: Allocator, lines: []const Line) !*Block {
-    const b = try allocator.create(Block);
-    errdefer allocator.destroy(b);
-
-    b.* = .{
+pub fn initFromLines(allocator: Allocator, lines: []const Line) !Block {
+    var b: Block = .{
         .firstInvariant = undefined,
         .columns = undefined,
         .timestamps = undefined,
@@ -64,7 +61,7 @@ pub fn initFromData(
     comptime leaky: bool,
     unpacker: *Unpacker(leaky),
     decoder: *ValuesDecoder,
-) !*Block {
+) !Block {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "data.Block.initFromData",
@@ -105,14 +102,11 @@ pub fn initFromData(
         }
     }
 
-    const b = try alloc.create(Block);
-
-    b.* = .{
+    return .{
         .firstInvariant = firstInvariant,
         .columns = columns,
         .timestamps = tss,
     };
-    return b;
 }
 
 pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(Line)) !void {
@@ -163,7 +157,6 @@ pub fn deinit(self: *Block, allocator: Allocator) void {
     }
     allocator.free(self.columns);
     allocator.free(self.timestamps);
-    allocator.destroy(self);
 }
 
 pub fn getColumns(self: *const Block) []Column {
@@ -475,7 +468,7 @@ test "initFromLines and initFromData produce identical blocks" {
         const decompressionPool = try DecompressionPool.init(alloc, 1);
         defer decompressionPool.deinit(alloc);
 
-        const blockA = try Block.initFromLines(alloc, case.lines);
+        var blockA = try Block.initFromLines(alloc, case.lines);
         defer blockA.deinit(alloc);
 
         const memTable = try MemTable.init(alloc);
@@ -485,8 +478,8 @@ test "initFromLines and initFromData produce identical blocks" {
         const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders, compressionPool);
         defer writer.deinit(alloc);
 
-        var bh = BlockHeader.initFromBlock(blockA, sid);
-        try writer.writeBlock(io, alloc, blockA, &bh);
+        var bh = BlockHeader.initFromBlock(&blockA, sid);
+        try writer.writeBlock(io, alloc, &blockA, &bh);
 
         const sr = TableReader{
             .table = table,
@@ -506,10 +499,10 @@ test "initFromLines and initFromData produce identical blocks" {
         var decoder: ValuesDecoder = .{};
         defer decoder.deinit(alloc);
 
-        const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, false, &unpacker, &decoder);
+        var blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, false, &unpacker, &decoder);
         defer blockB.deinit(alloc);
 
-        try expectEqualBlocks(blockA, blockB);
+        try expectEqualBlocks(&blockA, &blockB);
 
         var gatheredLines = std.ArrayList(Line).empty;
         defer {
@@ -671,7 +664,7 @@ test "SelfInitMaxColumns" {
                 .timestampNs = 1,
             };
         }
-        const b = try Block.initFromLines(alloc, lines);
+        var b = try Block.initFromLines(alloc, lines);
         defer b.deinit(alloc);
 
         try testing.expectEqual(case.expectedLen, b.len());
@@ -690,7 +683,7 @@ test "initFromLines allows maxLines" {
         };
     }
 
-    const b = try Block.initFromLines(alloc, &lines);
+    var b = try Block.initFromLines(alloc, &lines);
     defer b.deinit(alloc);
 
     try testing.expectEqual(maxLines, b.len());
@@ -718,7 +711,7 @@ test "initFromLines drops a single invalid row with too many fields" {
 
     var lines = [_]Line{.{ .timestampNs = 1, .fields = fields }};
 
-    const b = try Block.initFromLines(alloc, &lines);
+    var b = try Block.initFromLines(alloc, &lines);
     defer b.deinit(alloc);
 
     try testing.expectEqual(0, b.len());

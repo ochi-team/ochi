@@ -750,11 +750,11 @@ test "writeBlock and writeData produce identical buffer output" {
     const writer1 = try TableWriter.initMem(alloc, memTable1, timestampsEncoders, compressionPool);
     defer writer1.deinit(alloc);
 
-    const block = try Block.initFromLines(alloc, &lines);
+    var block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);
 
-    var bh1 = BlockHeader.initFromBlock(block, sid);
-    try writer1.writeBlock(io, alloc, block, &bh1);
+    var bh1 = BlockHeader.initFromBlock(&block, sid);
+    try writer1.writeBlock(io, alloc, &block, &bh1);
 
     // Build StreamReader from writer1's buffers to populate BlockData
     const sr = TableReader{
@@ -836,9 +836,9 @@ test "writeBlock with many columns does not overflow columns header index buffer
     const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders, compressionPool);
     defer writer.deinit(alloc);
 
-    const block = try Block.initFromLines(alloc, &lines);
+    var block = try Block.initFromLines(alloc, &lines);
     defer block.deinit(alloc);
 
-    var bh = BlockHeader.initFromBlock(block, sid);
-    try writer.writeBlock(io, alloc, block, &bh);
+    var bh = BlockHeader.initFromBlock(&block, sid);
+    try writer.writeBlock(io, alloc, &block, &bh);
 }

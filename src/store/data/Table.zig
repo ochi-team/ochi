@@ -627,7 +627,7 @@ fn queryBlock(
     var decoder: ValuesDecoder = .{};
     defer decoder.deinit(alloc);
 
-    const block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, leakyUnpacking, &unpacker, &decoder);
+    var block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, leakyUnpacking, &unpacker, &decoder);
     defer block.deinit(alloc);
 
     var i = dst.items.len;

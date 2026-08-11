@@ -178,7 +178,7 @@ test "sizingBlockAndFieldsMatch" {
             fieldsSize += line.fieldsSize();
         }
 
-        const block = try Block.initFromLines(alloc, case.lines);
+        var block = try Block.initFromLines(alloc, case.lines);
         defer block.deinit(alloc);
         const blockSize = block.size();
 
