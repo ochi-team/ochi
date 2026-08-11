@@ -85,7 +85,7 @@ pub fn initFromData(
         var col = &columns[i];
         col.key = colData.key;
         col.values = try unpacker.unpackValues(io, alloc, colData.bloomValues, data.len);
-        try decoder.decode(io, col.values, colData.type, colData.dict.values.items);
+        try decoder.decode(io, alloc, col.values, colData.type, colData.dict.values.items);
     }
 
     var lastCopied: u16 = 0;
@@ -497,19 +497,17 @@ test "initFromLines and initFromData produce identical blocks" {
             .colIdx = &writer.colIdx,
         };
 
-        var bdArena: std.heap.ArenaAllocator = .init(alloc);
-        defer bdArena.deinit();
-
         var bd = BlockData.initEmpty();
-        try bd.readFrom(io, &bdArena, &bh, &sr);
+        defer bd.deinit(alloc);
+        try bd.readFrom(io, alloc, &bh, &sr);
 
-        const unpacker = try Unpacker(false).init(alloc, decompressionPool);
-        const decoder = try ValuesDecoder.init(alloc, alloc);
-
-        const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, false, unpacker, decoder);
-        defer blockB.deinit(alloc);
+        var unpacker = Unpacker(false).init(decompressionPool);
         defer unpacker.deinit(alloc);
+        var decoder: ValuesDecoder = .{};
         defer decoder.deinit(alloc);
+
+        const blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, false, &unpacker, &decoder);
+        defer blockB.deinit(alloc);
 
         try expectEqualBlocks(blockA, blockB);
 

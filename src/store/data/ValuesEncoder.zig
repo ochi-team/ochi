@@ -539,7 +539,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
         try testing.expectEqual(case.expectedMin, valueType.min);
         try testing.expectEqual(case.expectedMax, valueType.max);
 
-        const decoder = try ValuesDecoder.init(allocator, allocator);
+        var decoder: ValuesDecoder = .{};
         defer decoder.deinit(allocator);
 
         // create mutable values array pointing to encoded bytes (before we transfer encoder.values)
@@ -556,7 +556,7 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
 
         // Decode the values - decoder reads encoded bytes from decodedValues,
         // writes strings to decoder.buf, and updates decodedValues pointers
-        try decoder.decode(io, decodedValues, valueType.type, cv.values.items);
+        try decoder.decode(io, allocator, decodedValues, valueType.type, cv.values.items);
 
         // Compare decoded values with original values
         const expected = if (case.values.len == 0) &[_][]const u8{} else case.values;
@@ -735,7 +735,7 @@ fn expectEncodeRoundtrip(
     const valueType = try encoder.encode(input, &cv);
     try testing.expectEqual(expectedType, valueType.type);
 
-    const decoder = try ValuesDecoder.init(allocator, allocator);
+    var decoder: ValuesDecoder = .{};
     defer decoder.deinit(allocator);
 
     var decodedValues = try allocator.alloc([]const u8, encoder.values.items.len);
@@ -744,7 +744,7 @@ fn expectEncodeRoundtrip(
         decodedValues[i] = encodedValue;
     }
 
-    try decoder.decode(io, decodedValues, valueType.type, cv.values.items);
+    try decoder.decode(io, allocator, decodedValues, valueType.type, cv.values.items);
 
     switch (valueType.type) {
         .string, .dict => {
@@ -896,10 +896,10 @@ test "ValuesEncoder keeps buffered value slices stable after growth" {
         decodedValues[i] = encodedValue;
     }
 
-    const decoder = try ValuesDecoder.init(allocator, allocator);
+    var decoder: ValuesDecoder = .{};
     defer decoder.deinit(allocator);
 
-    try decoder.decode(io, decodedValues[0..decodedValues.len], valueType.type, cv.values.items);
+    try decoder.decode(io, allocator, decodedValues[0..decodedValues.len], valueType.type, cv.values.items);
     try testing.expectEqualDeep(&input, decodedValues[0..decodedValues.len]);
 }
 

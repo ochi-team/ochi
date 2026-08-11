@@ -23,16 +23,16 @@ pub fn Unpacker(comptime leaky: bool) type {
     return struct {
         const Self = @This();
 
-        garbage: if (!leaky) std.ArrayList([]u8) else void,
+        const GarbageType = if (!leaky) std.ArrayList([]u8) else void;
+        const gabageDefaultValue = if (!leaky) std.ArrayList([]u8).empty else {};
+
+        garbage: GarbageType = gabageDefaultValue,
         compressionPool: *DecompressionPool,
 
-        pub fn init(alloc: Allocator, compressionPool: *DecompressionPool) !*Self {
-            const s = try alloc.create(Self);
-            s.* = .{
-                .garbage = if (!leaky) .empty else {},
+        pub fn init(compressionPool: *DecompressionPool) Self {
+            return .{
                 .compressionPool = compressionPool,
             };
-            return s;
         }
 
         /// resetArena must be called whenever the arena backing allocator is reset,
@@ -49,7 +49,6 @@ pub fn Unpacker(comptime leaky: bool) type {
                 }
                 self.garbage.deinit(alloc);
             }
-            alloc.destroy(self);
         }
 
         pub fn unpackValues(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize) ![][]const u8 {
@@ -106,7 +105,6 @@ pub fn Unpacker(comptime leaky: bool) type {
 
             const compressionKind = data[0];
 
-            // TODO: memory copies are crap here
             switch (compressionKind) {
                 Packer.compressionKindPlain => {
                     // plain format: [kind:u8][len:u8][data]

@@ -747,8 +747,7 @@ fn inspectDictValues(
 
     const decompressionPool = try DecompressionPool.init(allocator, 1);
     defer decompressionPool.deinit(allocator);
-    var unpacker = try Unpacker(true).init(allocator, decompressionPool);
-    defer unpacker.deinit(allocator);
+    var unpacker = Unpacker(true).init(decompressionPool);
 
     const values = unpacker.unpackValues(io, allocator, packedValues, rowCount) catch |err| {
         std.debug.print("  values validation unpack_error={s} rows={d}\n", .{ @errorName(err), rowCount });

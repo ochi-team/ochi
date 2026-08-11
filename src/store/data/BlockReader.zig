@@ -202,7 +202,9 @@ pub fn nextBlock(self: *BlockReader, io: Io, alloc: Allocator) !bool {
     std.debug.assert(th.min >= ih.minTs);
     std.debug.assert(th.max <= ih.maxTs);
 
-    try self.blockData.readFrom(io, &self.arena, bh, self.tableReader);
+    _ = self.arena.reset(.retain_capacity);
+    self.blockData.resetArena();
+    try self.blockData.readFrom(io, self.arena.allocator(), bh, self.tableReader);
 
     self.globalUncompressedSizeBytes += bh.size;
     self.globalRowsCount += bh.len;

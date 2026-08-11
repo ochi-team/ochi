@@ -333,7 +333,7 @@ test "Packer.packValuesRoundtrip" {
         defer decompressionPool.deinit(alloc);
         const n = try packValues(compressionPool, testing.io, packedValues, bound);
 
-        const unpacker = try Unpacker(false).init(alloc, decompressionPool);
+        var unpacker: Unpacker(false) = .init(decompressionPool);
         defer unpacker.deinit(alloc);
         const unpacked = try unpacker.unpackValues(testing.io, alloc, packedValues[0..n], case.strings.len);
         defer alloc.free(unpacked);

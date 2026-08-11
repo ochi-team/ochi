@@ -52,7 +52,7 @@ pub fn mergeBlocks(
     defer writer.close(io);
 
     var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, readers);
-    defer merger.deinit(alloc);
+    defer merger.deinit();
 
     const blockWriter = try BlockWriter.init(alloc);
     defer blockWriter.deinit(alloc);
@@ -89,15 +89,15 @@ pub const StreamMerger = struct {
     size: usize = 0,
     lines: std.ArrayList(Line) = .empty,
     mergeBufferLines: std.ArrayList(Line) = .empty,
-    linesArena: *std.heap.ArenaAllocator,
+    linesArena: std.heap.ArenaAllocator,
 
     // holds a current block copied until
     // either flushed as-is or merged with a second block for the same stream
     block: BlockData = BlockData.initEmpty(),
 
     // leaky unpacker since we use arena for it
-    unpacker: *Unpacker(true),
-    decoder: *ValuesDecoder,
+    unpacker: Unpacker(true),
+    decoder: ValuesDecoder = .{},
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 
     /// init creates a StreamMerger instance from the readers
@@ -111,17 +111,6 @@ pub const StreamMerger = struct {
     ) !StreamMerger {
         // TODO: experiment with Loser tree intead of heap:
         // https://grafana.com/blog/the-loser-tree-data-structure-how-to-optimize-merges-and-make-your-programs-run-faster/
-
-        const linesArena = try alloc.create(std.heap.ArenaAllocator);
-        linesArena.* = .init(alloc);
-        errdefer alloc.destroy(linesArena);
-        errdefer linesArena.deinit();
-        const linesArenaAlloc = linesArena.allocator();
-        const unpacker: *Unpacker(true) = try .init(alloc, decompressionPool);
-        errdefer unpacker.deinit(alloc);
-        // TODO: make it as a value, not a pointer, it removes second allocator as an argument
-        const decoder = try ValuesDecoder.init(alloc, linesArenaAlloc);
-        errdefer decoder.deinit(alloc);
 
         var i: usize = 0;
         while (i < readers.items.len) {
@@ -138,10 +127,11 @@ pub const StreamMerger = struct {
         var heap = Heap(*BlockReader, BlockReader.blockReaderLessThan).init(alloc, readers);
         heap.heapify();
 
+        const linesArena: std.heap.ArenaAllocator = .init(alloc);
+        errdefer linesArena.deinit();
         return .{
             .heap = heap,
-            .unpacker = unpacker,
-            .decoder = decoder,
+            .unpacker = .init(decompressionPool),
             .linesArena = linesArena,
             .timestampsEncoders = timestampsEncoders,
         };
@@ -163,11 +153,8 @@ pub const StreamMerger = struct {
         self.resetBlock();
     }
 
-    fn deinit(self: *StreamMerger, alloc: Allocator) void {
-        self.unpacker.deinit(alloc);
-        self.decoder.deinit(alloc);
+    fn deinit(self: *StreamMerger) void {
         self.linesArena.deinit();
-        alloc.destroy(self.linesArena);
     }
 
     fn resetBlock(self: *StreamMerger) void {
@@ -287,23 +274,13 @@ pub const StreamMerger = struct {
         const alloc = self.linesArena.allocator();
 
         const timestampsBuf = try alloc.alloc(u8, block.timestampsData.data.len);
-        errdefer alloc.free(timestampsBuf);
         const timestampsData = block.timestampsData.copy(timestampsBuf);
 
         // self.block.columnsData is reused from a previous setBlock call
         std.debug.assert(self.block.columnsData.items.len == 0);
         try self.block.columnsData.ensureTotalCapacity(alloc, block.columnsData.items.len);
-        errdefer {
-            for (self.block.columnsData.items) |col| {
-                alloc.free(col.key);
-                // TODO: it shows vague ownership of dict, fix it and document
-                col.dict.deinit(alloc);
-                alloc.destroy(col.dict);
-                var c = col;
-                c.deinit(alloc);
-            }
-            self.block.columnsData.clearRetainingCapacity();
-        }
+        errdefer self.block.columnsData.clearRetainingCapacity();
+
         for (block.columnsData.items) |*src| {
             var dst: ColumnData = undefined;
             try src.copy(alloc, &dst);
@@ -311,13 +288,10 @@ pub const StreamMerger = struct {
         }
 
         var invariantColumns: ?[]Column = null;
-        errdefer if (invariantColumns) |inv| alloc.free(inv);
         if (block.invariantColumns) |cols| {
             const dup = try alloc.alloc(Column, cols.len);
             for (cols, 0..) |col, i| {
                 const key = try alloc.dupe(u8, col.key);
-                errdefer alloc.free(key);
-
                 const values = try alloc.alloc([]const u8, col.values.len);
                 for (col.values, 0..) |v, j| {
                     const value = try alloc.dupe(u8, v);
@@ -353,11 +327,9 @@ pub const StreamMerger = struct {
             self.timestampsEncoders,
             blockData,
             true,
-            self.unpacker,
-            self.decoder,
+            &self.unpacker,
+            &self.decoder,
         );
-
-        defer block.deinit(alloc);
 
         const offset = self.lines.items.len;
         try block.gatherLines(alloc, &self.lines);
@@ -367,7 +339,6 @@ pub const StreamMerger = struct {
             // data is short living, so we need to copy key values buffers,
             // TODO: we may move field array instead of copying it, do it for every copyFields usage
             const copiedFields = try copyFields(self.linesArena.allocator(), fields);
-            alloc.free(fields);
             self.lines.items[lineI].fields = copiedFields;
         }
 
@@ -599,7 +570,7 @@ test "StreamMerger.decodeLines frees unpacker garbage buffers" {
     try readers.append(alloc, reader);
 
     var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, &readers);
-    defer merger.deinit(alloc);
+    defer merger.deinit();
 
     try merger.decodeLines(io, &reader.blockData);
 }
@@ -686,14 +657,14 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
     var mergedReader = try BlockReader.initFromMemTable(io, alloc, mergedTable, decompressionPool);
     defer mergedReader.deinit(alloc);
 
-    const unpacker = try Unpacker(false).init(alloc, decompressionPool);
+    var unpacker = Unpacker(false).init(decompressionPool);
     defer unpacker.deinit(alloc);
-    const decoder = try ValuesDecoder.init(alloc, alloc);
+    var decoder: ValuesDecoder = .{};
     defer decoder.deinit(alloc);
 
     var expectedI: usize = 0;
     while (try mergedReader.nextBlock(io, alloc)) {
-        const block = try Block.initFromData(io, alloc, timestampsEncoders, &mergedReader.blockData, false, unpacker, decoder);
+        const block = try Block.initFromData(io, alloc, timestampsEncoders, &mergedReader.blockData, false, &unpacker, &decoder);
         defer block.deinit(alloc);
 
         var lines = std.ArrayList(Line).empty;
@@ -813,7 +784,7 @@ test "writeBlock flushes without merging when the incoming block is already full
     try readers.append(alloc, reader1);
 
     var merger = try StreamMerger.init(io, alloc, timestampsEncoders, decompressionPool, &readers);
-    defer merger.deinit(alloc);
+    defer merger.deinit();
 
     const dstMemTable = try MemTable.init(alloc);
     defer dstMemTable.deinit(alloc);

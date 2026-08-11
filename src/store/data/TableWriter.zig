@@ -766,12 +766,10 @@ test "writeBlock and writeData produce identical buffer output" {
         .colIdx = &writer1.colIdx,
     };
 
-    var bdArena: std.heap.ArenaAllocator = .init(alloc);
-    defer bdArena.deinit();
-
     var bd = BlockData.initEmpty();
+    defer bd.deinit(alloc);
     bd.sid = sid;
-    try bd.readFrom(io, &bdArena, &bh1, &sr);
+    try bd.readFrom(io, alloc, &bh1, &sr);
 
     // Writer 2: re-encode the same data via writeData
     const memTable2 = try MemTable.init(alloc);

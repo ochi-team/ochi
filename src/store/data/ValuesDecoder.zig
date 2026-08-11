@@ -1,27 +1,19 @@
 const std = @import("std");
 const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 const zeit = @import("zeit");
 
 const ColumnType = @import("ColumnHeader.zig").ColumnType;
 
+/// ValuesDecoder decodes values encoded by ValuesEncoder back to string representations.
 const Self = @This();
 
-/// ValuesDecoder decodes values encoded by ValuesEncoder back to string representations.
-buf: std.ArrayList(u8),
-values: std.ArrayList([]const u8),
+// since it's used only under arena allocator we never precisely allocate buf in advance,
+// that's why you won't see there .ensureUnusedCapacity call
+buf: std.ArrayList(u8) = .empty,
+values: std.ArrayList([]const u8) = .empty,
 dictStrings: ?[]const []const u8 = null,
-allocator: std.mem.Allocator,
-
-pub fn init(structAlloc: std.mem.Allocator, allocator: std.mem.Allocator) !*Self {
-    const vd = try structAlloc.create(Self);
-    vd.* = .{
-        .buf = std.ArrayList(u8).empty,
-        .values = std.ArrayList([]const u8).empty,
-        .allocator = allocator,
-    };
-    return vd;
-}
 
 /// resetArena must be called whenever the arena backing allocator is reset,
 /// it doesn't use .clearRetainingCapacity in order not to retain dangling memory
@@ -31,18 +23,18 @@ pub fn resetArena(self: *Self) void {
     self.dictStrings = null;
 }
 
-pub fn deinit(self: *Self, structAlloc: std.mem.Allocator) void {
+pub fn deinit(self: *Self, alloc: Allocator) void {
     if (self.dictStrings) |ds| {
-        self.allocator.free(ds);
+        alloc.free(ds);
     }
-    self.buf.deinit(self.allocator);
-    self.values.deinit(self.allocator);
-    structAlloc.destroy(self);
+    self.buf.deinit(alloc);
+    self.values.deinit(alloc);
 }
 
 pub fn decode(
     self: *Self,
     io: Io,
+    alloc: Allocator,
     values: [][]const u8,
     vt: ColumnType,
     dictValues: []const []const u8,
@@ -53,10 +45,10 @@ pub fn decode(
         },
         .dict => {
             if (self.dictStrings) |ds| {
-                if (ds.len > 0) self.allocator.free(ds);
+                if (ds.len > 0) alloc.free(ds);
             }
             // TODO: maybe move instead of dupe? document why if we can’t
-            self.dictStrings = try self.allocator.dupe([]const u8, dictValues);
+            self.dictStrings = try alloc.dupe([]const u8, dictValues);
             if (self.dictStrings) |ds| {
                 for (values, 0..) |v, i| {
                     if (v.len < 1) {
@@ -71,7 +63,9 @@ pub fn decode(
             }
         },
         .uint8 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 3);
+            // all these ensureUnusedCapacity are rudimental,
+            // decode is used only inside arena
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 3);
             for (values, 0..) |v, i| {
                 if (v.len < 1) {
                     return error.InvalidValueLength;
@@ -83,67 +77,67 @@ pub fn decode(
             }
         },
         .uint16 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 5);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 5);
             for (values, 0..) |v, i| {
                 if (v.len < 2) {
                     return error.InvalidValueLength;
                 }
                 const n = decodeInt(u16, v);
                 const start = self.buf.items.len;
-                try self.decodeUint64String(n);
+                try self.decodeUint64String(alloc, n);
                 values[i] = self.buf.items[start..];
             }
         },
         .uint32 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 10);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 10);
             for (values, 0..) |v, i| {
                 if (v.len < 4) {
                     return error.InvalidValueLength;
                 }
                 const n = decodeInt(u32, v);
                 const start = self.buf.items.len;
-                try self.decodeUint64String(n);
+                try self.decodeUint64String(alloc, n);
                 values[i] = self.buf.items[start..];
             }
         },
         .uint64 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 20);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 20);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
                 }
                 const n = decodeInt(u64, v);
                 const start = self.buf.items.len;
-                try self.decodeUint64String(n);
+                try self.decodeUint64String(alloc, n);
                 values[i] = self.buf.items[start..];
             }
         },
         .int64 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 20);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 20);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
                 }
                 const n = decodeInt(i64, v);
                 const start = self.buf.items.len;
-                try self.decodeInt64String(n);
+                try self.decodeInt64String(alloc, n);
                 values[i] = self.buf.items[start..];
             }
         },
         .float64 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 64);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 64);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
                 }
                 const f = decodeFloat64(v);
                 const start = self.buf.items.len;
-                try self.decodeFloat64String(f);
+                try self.decodeFloat64String(alloc, f);
                 values[i] = self.buf.items[start..];
             }
         },
         .ipv4 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 15);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 15);
             for (values, 0..) |v, i| {
                 if (v.len < 4) {
                     return error.InvalidValueLength;
@@ -155,14 +149,14 @@ pub fn decode(
             }
         },
         .timestampIso8601 => {
-            try self.buf.ensureUnusedCapacity(self.allocator, values.len * 30);
+            try self.buf.ensureUnusedCapacity(alloc, values.len * 30);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
                 }
                 const timestamp = decodeTimestampISO8601(v);
                 const start = self.buf.items.len;
-                try self.decodeTimestampISO8601String(io, timestamp);
+                try self.decodeTimestampISO8601String(io, alloc, timestamp);
                 values[i] = self.buf.items[start..];
             }
         },
@@ -206,22 +200,22 @@ fn decodeUint8String(self: *Self, n: u8) void {
     }
 }
 
-fn decodeUint64String(self: *Self, n: u64) !void {
+fn decodeUint64String(self: *Self, alloc: Allocator, n: u64) !void {
     var tmp: [20]u8 = undefined;
     const str = try std.fmt.bufPrint(&tmp, "{d}", .{n});
-    try self.buf.appendSlice(self.allocator, str);
+    try self.buf.appendSlice(alloc, str);
 }
 
-fn decodeInt64String(self: *Self, n: i64) !void {
+fn decodeInt64String(self: *Self, alloc: Allocator, n: i64) !void {
     var tmp: [21]u8 = undefined;
     const str = try std.fmt.bufPrint(&tmp, "{d}", .{n});
-    try self.buf.appendSlice(self.allocator, str);
+    try self.buf.appendSlice(alloc, str);
 }
 
-fn decodeFloat64String(self: *Self, f: f64) !void {
+fn decodeFloat64String(self: *Self, alloc: Allocator, f: f64) !void {
     var tmp: [64]u8 = undefined;
     const str = try std.fmt.bufPrint(&tmp, "{d}", .{f});
-    try self.buf.appendSlice(self.allocator, str);
+    try self.buf.appendSlice(alloc, str);
 }
 
 fn decodeIPv4String(self: *Self, n: u32) void {
@@ -234,7 +228,7 @@ fn decodeIPv4String(self: *Self, n: u32) void {
     self.decodeUint8String(@intCast(n & 0xFF));
 }
 
-fn decodeTimestampISO8601String(self: *Self, io: Io, nsecs: i64) !void {
+fn decodeTimestampISO8601String(self: *Self, io: Io, alloc: Allocator, nsecs: i64) !void {
     const instant = try zeit.instant(io, .{ .source = .{ .unix_nano = nsecs } });
     const time = instant.time();
 
@@ -274,7 +268,7 @@ fn decodeTimestampISO8601String(self: *Self, io: Io, nsecs: i64) !void {
             time.second,
             @as(u32, @intCast(nsecsInSecond)),
         });
-    try self.buf.appendSlice(self.allocator, str);
+    try self.buf.appendSlice(alloc, str);
 }
 
 fn decodeInt(comptime T: type, v: []const u8) T {
@@ -299,7 +293,7 @@ const testing = std.testing;
 
 test "ValuesDecoder.decodeUint8String" {
     const allocator = testing.allocator;
-    const decoder = try Self.init(allocator, allocator);
+    var decoder: Self = .{};
     defer decoder.deinit(allocator);
 
     // Ensure capacity for writing
@@ -340,7 +334,7 @@ test "ValuesDecoder.decodeUint8String" {
 
 test "ValuesDecoder.decodeIPv4String" {
     const allocator = testing.allocator;
-    const decoder = try Self.init(allocator, allocator);
+    var decoder: Self = .{};
     defer decoder.deinit(allocator);
 
     try decoder.buf.ensureUnusedCapacity(allocator, 16);
@@ -361,7 +355,7 @@ test "ValuesDecoder.decode uint8 grows output buffer" {
     const allocator = testing.allocator;
     const io = testing.io;
 
-    const decoder = try Self.init(allocator, allocator);
+    var decoder: Self = .{};
     defer decoder.deinit(allocator);
 
     const encoded = [_][1]u8{
@@ -378,7 +372,7 @@ test "ValuesDecoder.decode uint8 grows output buffer" {
     };
 
     try testing.expectEqual(0, decoder.buf.capacity);
-    try decoder.decode(io, values[0..], .uint8, &.{});
+    try decoder.decode(io, allocator, values[0..], .uint8, &.{});
 
     try testing.expectEqualDeep(&[_][]const u8{
         "0",
@@ -392,7 +386,7 @@ test "ValuesDecoder.decode ipv4 grows output buffer" {
     const allocator = testing.allocator;
     const io = testing.io;
 
-    const decoder = try Self.init(allocator, allocator);
+    var decoder: Self = .{};
     defer decoder.deinit(allocator);
 
     const encoded = [_][4]u8{
@@ -407,7 +401,7 @@ test "ValuesDecoder.decode ipv4 grows output buffer" {
     };
 
     try testing.expectEqual(0, decoder.buf.capacity);
-    try decoder.decode(io, values[0..], .ipv4, &.{});
+    try decoder.decode(io, allocator, values[0..], .ipv4, &.{});
 
     try testing.expectEqualDeep(&[_][]const u8{
         "1.2.3.4",
@@ -420,7 +414,7 @@ test "ValuesDecoder.decode dict replaces previous dictionary" {
     const allocator = testing.allocator;
     const io = testing.io;
 
-    const decoder = try Self.init(allocator, allocator);
+    var decoder: Self = .{};
     defer decoder.deinit(allocator);
 
     const firstEncoded = [_][1]u8{
@@ -433,7 +427,7 @@ test "ValuesDecoder.decode dict replaces previous dictionary" {
     };
     const firstDict = [_][]const u8{ "alpha", "beta" };
 
-    try decoder.decode(io, firstValues[0..], .dict, &firstDict);
+    try decoder.decode(io, allocator, firstValues[0..], .dict, &firstDict);
     try testing.expectEqualDeep(&[_][]const u8{ "alpha", "beta" }, firstValues[0..]);
 
     const secondEncoded = [_][1]u8{
@@ -448,6 +442,6 @@ test "ValuesDecoder.decode dict replaces previous dictionary" {
     };
     const secondDict = [_][]const u8{ "warn", "error" };
 
-    try decoder.decode(io, secondValues[0..], .dict, &secondDict);
+    try decoder.decode(io, allocator, secondValues[0..], .dict, &secondDict);
     try testing.expectEqualDeep(&[_][]const u8{ "error", "warn", "error" }, secondValues[0..]);
 }

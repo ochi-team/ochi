@@ -85,14 +85,10 @@ pub const BlockData = struct {
     pub fn readFrom(
         self: *BlockData,
         io: Io,
-        arena: *std.heap.ArenaAllocator,
+        alloc: std.mem.Allocator,
         bh: *const BlockHeader,
         sr: *const TableReader,
     ) !void {
-        _ = arena.reset(.retain_capacity);
-        self.resetArena();
-        const alloc = arena.allocator();
-
         self.sid = bh.sid;
         self.uncompressedSizeBytes = bh.size;
         self.len = bh.len;

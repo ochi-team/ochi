@@ -459,6 +459,7 @@ pub fn queryLines(
     self: *Table,
     io: Io,
     alloc: Allocator,
+    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
@@ -467,7 +468,7 @@ pub fn queryLines(
 ) !void {
     // TODO: assert sids are sorted
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
-        return self.queryLinesAllBlocks(io, alloc, timestampsEncoders, decompressionPool, dst, query);
+        return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
     }
 
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -526,7 +527,7 @@ pub fn queryLines(
                     continue;
                 }
 
-                try self.queryBlock(io, alloc, timestampsEncoders, decompressionPool, dst, blockHeader, query);
+                try self.queryBlock(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, blockHeader, query);
             }
 
             if (blockHeadersToRead.len == 0) {
@@ -550,6 +551,7 @@ fn queryLinesAllBlocks(
     self: *Table,
     io: Io,
     alloc: Allocator,
+    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
@@ -573,7 +575,7 @@ fn queryLinesAllBlocks(
                 continue;
             }
 
-            try self.queryBlock(io, alloc, timestampsEncoders, decompressionPool, dst, blockHeader, query);
+            try self.queryBlock(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, blockHeader, query);
         }
     }
 }
@@ -582,6 +584,7 @@ fn queryBlock(
     self: *const Table,
     io: Io,
     alloc: Allocator,
+    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
@@ -614,21 +617,17 @@ fn queryBlock(
     const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
     defer tableReader.deinit(alloc);
 
-    var blockDataArena: std.heap.ArenaAllocator = .init(alloc);
-    defer blockDataArena.deinit();
-
     var blockData = BlockData.initEmpty();
-    try blockData.readFrom(io, &blockDataArena, &blockHeader, tableReader);
+    try blockData.readFrom(io, alloc, &blockHeader, tableReader);
+    defer blockData.deinit(alloc);
 
     // rely on request arena
-    // TODO: it must be true, the practical use case to query is to use an arena
-    const unpackerIsLeaky = false;
-    const unpacker = try Unpacker(unpackerIsLeaky).init(alloc, decompressionPool);
+    var unpacker = Unpacker(leakyUnpacking).init(decompressionPool);
     defer unpacker.deinit(alloc);
-    const decoder = try ValuesDecoder.init(alloc, alloc);
+    var decoder: ValuesDecoder = .{};
     defer decoder.deinit(alloc);
 
-    const block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, unpackerIsLeaky, unpacker, decoder);
+    const block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, leakyUnpacking, &unpacker, &decoder);
     defer block.deinit(alloc);
 
     var i = dst.items.len;
@@ -1242,7 +1241,7 @@ test "queryLines" {
         const requested = try alloc.dupe(SID, case.requestedSIDs);
         defer alloc.free(requested);
 
-        try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &queried, requested, case.query);
+        try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested, case.query);
         try testing.expectEqual(case.expected.len, queried.items.len);
 
         for (case.expected, 0..) |expected, i| {
@@ -1300,7 +1299,7 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     const infoExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "info", .op = .equal } };
     const query = Query{ .start = 1, .end = streamsCount, .tagsExpr = null, .fieldsExpr = &infoExpr };
 
-    try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, &.{}, query);
     try testing.expectEqual(streamsCount, queried.items.len);
     try testing.expectEqual(1, queried.items[0].timestampNs);
     try testing.expectEqual(streamsCount, queried.items[queried.items.len - 1].timestampNs);
@@ -1348,7 +1347,7 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
 }
 
 test "queryLines reads disk table fields after open" {
@@ -1406,7 +1405,7 @@ test "queryLines reads disk table fields after open" {
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = &statusExpr };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
     try testing.expectEqual(@as(usize, 1), queried.items.len);
     try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
     try testing.expectEqualSlices(u8, "id", queried.items[0].fields[1].key);

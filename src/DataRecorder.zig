@@ -1108,7 +1108,7 @@ pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, qu
     var linesDst = std.ArrayList(Line).empty;
     errdefer linesDst.deinit(alloc);
     for (tables.items) |table| {
-        try table.queryLines(io, alloc, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
+        try table.queryLines(io, alloc, true, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
     }
 
     return linesDst;
