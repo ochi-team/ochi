@@ -125,7 +125,7 @@ pub fn createTagRecord(
     tenantID: u64,
     tag: Field,
     streamIDs: []const u128,
-) ![]const u8 {
+) ![]u8 {
     const bufSize = TagRecordsParser.encodeRecordBound(tag, streamIDs.len);
     const buf = try alloc.alloc(u8, bufSize);
     const recordLen = TagRecordsParser.encodeRecord(buf, tenantID, tag, streamIDs);
@@ -273,7 +273,7 @@ test "writeState" {
         var verifyState: TagRecordsParser = .{};
         defer verifyState.deinit(alloc);
 
-        try verifyState.setup(target.get(0));
+        try verifyState.setup(@constCast(target.get(0)));
         try verifyState.parseStreamIDs(alloc);
 
         try testing.expectEqualSlices(u128, case.expected, verifyState.streamIDs.items);

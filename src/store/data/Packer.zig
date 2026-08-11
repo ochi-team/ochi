@@ -73,7 +73,7 @@ const PackBound = struct {
     }
 };
 
-pub fn packValuesInterBound(self: *Self, values: [][]const u8) !PackBound {
+pub fn packValuesInterBound(self: *Self, values: []const []const u8) !PackBound {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "packValuesInterBound",
@@ -322,8 +322,7 @@ test "Packer.packValuesRoundtrip" {
         var encoder = try Self.init(alloc);
         defer encoder.deinit();
 
-        // TODO: audit all constCast usage and get rid of them
-        var bound = try encoder.packValuesInterBound(@constCast(case.strings));
+        var bound = try encoder.packValuesInterBound(case.strings);
         defer bound.deinit(alloc);
         const packedValues = try alloc.alloc(u8, bound.lensBound + bound.valuesBound);
         defer alloc.free(packedValues);

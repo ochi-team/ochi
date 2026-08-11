@@ -31,7 +31,7 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     self.streamIDs.deinit(alloc);
 }
 
-pub fn setup(self: *Self, item: []const u8) !void {
+pub fn setup(self: *Self, item: []u8) !void {
     self.streamIDs.clearRetainingCapacity();
 
     const kind = item[0];
@@ -43,7 +43,7 @@ pub fn setup(self: *Self, item: []const u8) !void {
 
     // We need to modify the buffer in-place for unescaping
     // This is safe because we're only unescaping (making it shorter)
-    const tagPortion = @constCast(item[tenantOffset..]);
+    const tagPortion = item[tenantOffset..];
     const offset = self.tag.decodeIndexTag(tagPortion);
 
     self.streamsRaw = item[tenantOffset + offset ..];
@@ -198,7 +198,7 @@ test "setupStreamsRaw resets parsed stream ids" {
     defer alloc.free(second);
 
     const tenantOffset = 1 + @sizeOf(u64);
-    const tagPortion = @constCast(first[tenantOffset..]);
+    const tagPortion = first[tenantOffset..];
     const offset = tag.decodeIndexTag(tagPortion);
 
     // make a slice of the streams part only

@@ -675,11 +675,12 @@ test "SelfInitMaxColumns" {
 test "initFromLines allows maxLines" {
     const alloc = testing.allocator;
 
+    var field = [_]Field{.{ .key = "level", .value = "info" }};
     var lines: [maxLines]Line = undefined;
     for (0..maxLines) |i| {
         lines[i] = .{
             .timestampNs = @intCast(i),
-            .fields = @constCast(&[_]Field{.{ .key = "level", .value = "info" }}),
+            .fields = &field,
         };
     }
 

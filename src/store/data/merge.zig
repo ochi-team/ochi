@@ -368,8 +368,8 @@ pub const StreamMerger = struct {
 };
 
 /// expects dst as a preallocated array,
-/// merges left and right into dst
-// TODO: find a way to make a merge inplace if possible
+/// merges left and right into dst.
+/// It uses intermediate buffer dst in order to reduce merge complexity
 fn mergeLines(dst: *std.ArrayList(Line), left: []const Line, right: []const Line) void {
     var i: usize = 0;
     var j: usize = 0;
@@ -402,6 +402,17 @@ test "mergeLines" {
         expected: []const Line,
     };
 
+    var la = [_]Field{.{ .key = "a", .value = "left" }};
+    var ra = [_]Field{.{ .key = "b", .value = "right" }};
+    var la1 = [_]Field{.{ .key = "a", .value = "left-1" }};
+    var la2 = [_]Field{.{ .key = "a", .value = "left-2" }};
+    var ra1 = [_]Field{.{ .key = "b", .value = "right-1" }};
+    var ra2 = [_]Field{.{ .key = "b", .value = "right-2" }};
+    var lb1 = [_]Field{.{ .key = "a", .value = "left-1" }};
+    var lb2 = [_]Field{.{ .key = "a", .value = "left-2" }};
+    var rb1 = [_]Field{.{ .key = "b", .value = "right-1" }};
+    var rb2 = [_]Field{.{ .key = "b", .value = "right-2" }};
+
     const cases = [_]Case{
         .{
             .left = &.{},
@@ -410,121 +421,55 @@ test "mergeLines" {
         },
         .{
             .left = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
-                },
+                .{ .timestampNs = 123, .fields = &la },
             },
             .right = &.{},
             .expected = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
-                },
+                .{ .timestampNs = 123, .fields = &la },
             },
         },
         .{
             .left = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
-                },
+                .{ .timestampNs = 123, .fields = &la },
             },
             .right = &[_]Line{
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
-                },
+                .{ .timestampNs = 456, .fields = &ra },
             },
             .expected = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right" }}),
-                },
+                .{ .timestampNs = 123, .fields = &la },
+                .{ .timestampNs = 456, .fields = &ra },
             },
         },
         .{
             .left = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
-                },
+                .{ .timestampNs = 123, .fields = &la1 },
+                .{ .timestampNs = 456, .fields = &la2 },
             },
             .right = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
-                },
+                .{ .timestampNs = 123, .fields = &ra1 },
+                .{ .timestampNs = 456, .fields = &ra2 },
             },
             .expected = &[_]Line{
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
-                },
-                .{
-                    .timestampNs = 123,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
-                },
+                .{ .timestampNs = 123, .fields = &la1 },
+                .{ .timestampNs = 123, .fields = &ra1 },
+                .{ .timestampNs = 456, .fields = &la2 },
+                .{ .timestampNs = 456, .fields = &ra2 },
             },
         },
         .{
             .left = &[_]Line{
-                .{
-                    .timestampNs = 12,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
-                },
-                .{
-                    .timestampNs = 123456,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
-                },
+                .{ .timestampNs = 12, .fields = &lb1 },
+                .{ .timestampNs = 123456, .fields = &lb2 },
             },
             .right = &[_]Line{
-                .{
-                    .timestampNs = 1,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
-                },
+                .{ .timestampNs = 1, .fields = &rb1 },
+                .{ .timestampNs = 456, .fields = &rb2 },
             },
             .expected = &[_]Line{
-                .{
-                    .timestampNs = 1,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-1" }}),
-                },
-                .{
-                    .timestampNs = 12,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-1" }}),
-                },
-                .{
-                    .timestampNs = 456,
-                    .fields = @constCast(&[_]Field{.{ .key = "b", .value = "right-2" }}),
-                },
-                .{
-                    .timestampNs = 123456,
-                    .fields = @constCast(&[_]Field{.{ .key = "a", .value = "left-2" }}),
-                },
+                .{ .timestampNs = 1, .fields = &rb1 },
+                .{ .timestampNs = 12, .fields = &lb1 },
+                .{ .timestampNs = 456, .fields = &rb2 },
+                .{ .timestampNs = 123456, .fields = &lb2 },
             },
         },
     };
@@ -704,11 +649,12 @@ test "mergeData flushes maxLines for one stream" {
     const srcTable = try Table.fromMem(io, alloc, srcMemTable, decompressionPool);
     defer srcTable.close(io);
 
+    var field = [_]Field{.{ .key = "level", .value = "info" }};
     var lines: [Block.maxLines]Line = undefined;
     for (0..Block.maxLines) |i| {
         lines[i] = .{
             .timestampNs = @intCast(i),
-            .fields = @constCast(&[_]Field{.{ .key = "level", .value = "info" }}),
+            .fields = &field,
         };
     }
 
