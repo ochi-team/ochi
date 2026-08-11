@@ -6,6 +6,8 @@ const tracy = @import("tracy");
 
 const fs = @import("../../fs.zig");
 
+const timedWait = @import("../../stds/sem.zig").timedWait;
+
 const cap = @import("../table/cap.zig");
 
 const Cache = @import("../../stds/Cache.zig").Cache;
@@ -469,25 +471,6 @@ fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *st
     memTables.appendSliceAssumeCapacity(mergedTables.items);
 }
 
-// TODO: replace to std Semaphore.waitTimout:
-// https://codeberg.org/ziglang/zig/commit/21980c82f48f239e50239d5af264706d15829268
-pub fn timedWait(sem: *Io.Semaphore, io: Io, timeout_ns: u64) !void {
-    sem.mutex.lockUncancelable(io);
-    defer sem.mutex.unlock(io);
-
-    while (sem.permits == 0) {
-        const elapsed = std.Io.Timestamp.now(io, .real).nanoseconds;
-        if (elapsed > timeout_ns)
-            return error.Timeout;
-
-        sem.cond.waitUncancelable(io, &sem.mutex);
-    }
-
-    sem.permits -= 1;
-    if (sem.permits > 0)
-        sem.cond.signal(io);
-}
-
 fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Table, force: bool) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
@@ -522,11 +505,13 @@ fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: *Tab
                             try self.flushMemTable(io, alloc, memTable.inner.mem, &[_]*Table{}, destinationTablePath, .disk);
                             memTable.release(io);
                         },
+                        error.Canceled => return err,
                     }
                 };
 
                 return;
             },
+            error.Canceled => return err,
         }
     };
 

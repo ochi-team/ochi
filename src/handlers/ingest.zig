@@ -229,6 +229,7 @@ test "large body is processed and appears in the query response" {
     const accumulatorPool = try AccumulatorPool.init(io, alloc, &store, timerLoop, 1);
     defer accumulatorPool.deinit(alloc);
 
+    var sem: std.Io.Semaphore = .{ .permits = 0 };
     var ctx = AppContext{
         .io = io,
         .allocator = alloc,
@@ -241,6 +242,7 @@ test "large body is processed and appears in the query response" {
             .tenantID = 0,
             .diagnostic = &diagnostic,
         },
+        .querySem = &sem,
     };
 
     var arena = std.heap.ArenaAllocator.init(alloc);

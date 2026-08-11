@@ -9,5 +9,6 @@ pub const ApiError = error{
     InvalidTimestamp,
     InvalidBody,
     FailedToWriteResponse,
+    Timeout,
     InternalError,
 };

@@ -63,7 +63,7 @@ pub const StartOptions = struct {
 };
 
 pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
-    const conf = Conf.default(alloc);
+    const conf = Conf.default();
     var cwdBuf: [std.fs.max_path_bytes]u8 = undefined;
 
     std.Io.Dir.cwd().createDir(io, conf.app.storePath, .default_dir) catch |err| switch (err) {
@@ -109,7 +109,7 @@ pub fn startApp(io: Io, alloc: std.mem.Allocator, options: StartOptions) !void {
 }
 
 pub fn startServer(io: Io, allocator: std.mem.Allocator, conf: Conf, runtime: *Runtime, store: *Store) !void {
-    var dispatcher = try Dispatcher.init(io, allocator, &conf.app, store);
+    var dispatcher = try Dispatcher.init(io, allocator, &conf.app, runtime, store);
     defer {
         dispatcher.accumulatorPool.flushAll(io) catch |err| {
             Logger.log(.err, "failed to flush accumulator pool", .{ .err = err });

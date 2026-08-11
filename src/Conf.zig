@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const Runtime = @import("Runtime.zig");
+
 // TODO: investigate the sysmte's limits
 // Potential aspects to limit:
 // ingestion
@@ -41,6 +43,8 @@ pub const AppConfig = struct {
     // TODO: make it supporting absolute path
     storePath: []const u8 = ".ochi",
     storeRetentionDays: u16 = 30,
+
+    queryTimeoutMs: u64 = std.time.ms_per_s * 10,
     // TODO: confogure max cache size,
     // this pool can be preallocated and given away only for the caches:
     // - index queries
@@ -51,6 +55,13 @@ pub const AppConfig = struct {
 
     pub fn storeRetentionNs(self: *const AppConfig) u64 {
         return std.time.ns_per_day * @as(u64, @intCast(self.storeRetentionDays));
+    }
+
+    // defiens max concurrent queries running simultaneously
+    pub fn maxQueryConnectionsLimit(_: *const AppConfig, runtime: *const Runtime) u16 {
+        const defaultMin = 4;
+        const defaultMax = 16;
+        return @min(defaultMax, @max(defaultMin, runtime.cpus));
     }
 };
 
@@ -66,7 +77,7 @@ pub fn getConf() Conf {
     return conf;
 }
 
-pub fn default(_: Allocator) Conf {
+pub fn default() Conf {
     conf = .{};
     return conf;
 }
@@ -77,6 +88,17 @@ server: ServerConfig = .{},
 // app config, defines application level settings
 app: AppConfig = .{},
 
-// TODO: ideal solution would be:
-// 1. have a global config instannce
-// 2. easy override per test, so another runnig parallel test doesn't impact it
+const testing = std.testing;
+test "maxQueryConnectionsLimit" {
+    const c = default();
+    const r1: Runtime = .{ .cpus = 1, .maxMem = undefined, .cacheSize = undefined, .diskSpace = undefined, .path = undefined };
+    const r2: Runtime = .{ .cpus = 4, .maxMem = undefined, .cacheSize = undefined, .diskSpace = undefined, .path = undefined };
+    const r3: Runtime = .{ .cpus = 8, .maxMem = undefined, .cacheSize = undefined, .diskSpace = undefined, .path = undefined };
+    const r4: Runtime = .{ .cpus = 16, .maxMem = undefined, .cacheSize = undefined, .diskSpace = undefined, .path = undefined };
+    const r5: Runtime = .{ .cpus = 32, .maxMem = undefined, .cacheSize = undefined, .diskSpace = undefined, .path = undefined };
+    try testing.expectEqual(4, c.app.maxQueryConnectionsLimit(&r1));
+    try testing.expectEqual(4, c.app.maxQueryConnectionsLimit(&r2));
+    try testing.expectEqual(8, c.app.maxQueryConnectionsLimit(&r3));
+    try testing.expectEqual(16, c.app.maxQueryConnectionsLimit(&r4));
+    try testing.expectEqual(16, c.app.maxQueryConnectionsLimit(&r5));
+}

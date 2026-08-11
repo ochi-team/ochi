@@ -7,6 +7,7 @@ const DispatchMeter = @import("observe/DispatchMeter.zig");
 const StoreMeter = @import("observe/StoreMeter.zig");
 const Logger = @import("logging");
 const AppConfig = @import("Conf.zig").AppConfig;
+const Runtime = @import("Runtime.zig");
 
 const Store = @import("Store.zig").Store;
 const AccumulatorPool = @import("AccumulatorPool.zig");
@@ -16,15 +17,23 @@ const ApiError = @import("server/error.zig").ApiError;
 const QueryError = @import("query/Loql.zig").QueryError;
 
 pub const AppContext = struct {
+    // global dependencies
     io: Io,
     allocator: Allocator,
     conf: *const AppConfig,
     store: *Store,
 
+    // observing
     dispatchMeter: *DispatchMeter,
     storeMeter: *StoreMeter,
+
+    // app dependencies
     accumulatorPool: *AccumulatorPool,
 
+    // app state
+    querySem: *std.Io.Semaphore,
+
+    // request lifecycle
     request: *const RequestContext,
 };
 
@@ -40,8 +49,15 @@ pub const Dispatcher = struct {
     store: *Store,
     meter: DispatchMeter,
     accumulatorPool: *AccumulatorPool,
+    querySem: std.Io.Semaphore,
 
-    pub fn init(io: Io, allocator: Allocator, conf: *const AppConfig, store: *Store) !Dispatcher {
+    pub fn init(
+        io: Io,
+        allocator: Allocator,
+        conf: *const AppConfig,
+        runtime: *const Runtime,
+        store: *Store,
+    ) !Dispatcher {
         var meter = try DispatchMeter.init(allocator, io);
         errdefer meter.deinit();
 
@@ -55,6 +71,7 @@ pub const Dispatcher = struct {
             .store = store,
             .meter = meter,
             .accumulatorPool = accumulatorPool,
+            .querySem = .{ .permits = conf.maxQueryConnectionsLimit(runtime) },
         };
     }
 
@@ -98,6 +115,7 @@ pub const Dispatcher = struct {
                 .tenantID = tenantID,
                 .diagnostic = &diagnostic,
             },
+            .querySem = &self.querySem,
         };
 
         if (req.body()) |body| {
@@ -136,6 +154,12 @@ pub const Dispatcher = struct {
                 ApiError.MaxBodySize => {
                     res.status = 413;
                     res.body = "max body size is exceeded";
+                },
+                ApiError.Timeout => {
+                    res.status = 400;
+                    res.body =
+                        \\{"code": "TIMEOUT", "message": "timeout, try again"}
+                    ;
                 },
                 QueryError.EmptyQuery => {
                     res.status = 400;

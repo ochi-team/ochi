@@ -4,6 +4,8 @@ const Io = std.Io;
 
 const httpz = @import("httpz");
 
+const timedWait = @import("../stds/sem.zig").timedWait;
+
 const Line = @import("../store/lines.zig").Line;
 const putJsonArrayLines = @import("../store/lines.zig").putJsonArrayLines;
 const Query = @import("../query/Query.zig");
@@ -22,16 +24,17 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
 
     const body = r.body() orelse return ApiError.EmptyBody;
 
-    // -64 for timestamps,
     if (body.len > maxQueryBodyLength) {
         return ApiError.MaxBodySize;
     }
 
+    timedWait(ctx.querySem, ctx.io, ctx.conf.queryTimeoutMs * std.time.ns_per_ms) catch
+        return ApiError.Timeout;
+    defer ctx.querySem.post(ctx.io);
+
     // init loql outside of the query block,
     // because the underluying query memory must live til the query is done
     var loql: Loql = .{};
-    defer loql.deinit(res.arena);
-
     const query = q: {
         if (contentType == null or std.mem.eql(u8, "application/loql", contentType.?)) {
             const now = Io.Timestamp.now(ctx.io, .real);
@@ -77,10 +80,9 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
         .query = body,
     });
 
-    var lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query) catch {
+    const lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query) catch {
         return ApiError.FailedToProccess;
     };
-    defer lines.deinit(res.arena);
 
     writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;
 

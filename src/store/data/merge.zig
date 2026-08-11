@@ -338,7 +338,7 @@ pub const StreamMerger = struct {
             const fields = self.lines.items[lineI].fields;
             // data is short living, so we need to copy key values buffers,
             // TODO: we may move field array instead of copying it, do it for every copyFields usage
-            const copiedFields = try copyFields(self.linesArena.allocator(), fields);
+            const copiedFields = try copyFields(alloc, fields);
             self.lines.items[lineI].fields = copiedFields;
         }
 
