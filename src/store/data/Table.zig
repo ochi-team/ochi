@@ -579,6 +579,21 @@ fn queryLinesAllBlocks(
     }
 }
 
+fn printNodes(arena: std.heap.ArenaAllocator) void {
+    var l1 = arena.state.used_list;
+    var l2 = arena.state.free_list;
+
+    std.debug.print("printNodes\n", .{});
+    while (l1) |node| {
+        std.debug.print("node={d}\n", .{@intFromPtr(node)});
+        l1 = node.next;
+    }
+    while (l2) |node| {
+        l2 = node.next;
+        std.debug.print("node={d}\n", .{@intFromPtr(node)});
+    }
+}
+
 fn queryBlock(
     self: *const Table,
     io: Io,
@@ -618,11 +633,15 @@ fn queryBlock(
     var blockDataArena: std.heap.ArenaAllocator = .init(alloc);
     defer blockDataArena.deinit();
 
+    // defer printNodes(blockDataArena);
+
     var blockData = BlockData.initEmpty();
     try blockData.readFrom(io, &blockDataArena, &blockHeader, tableReader);
 
+    // printNodes(blockDataArena);
+
     const unpacker = try Unpacker.init(alloc, decompressionPool);
-    defer unpacker.deinit(alloc);
+    defer unpacker.deinitA(alloc, blockDataArena);
     const decoder = try ValuesDecoder.init(alloc);
     defer decoder.deinit();
 

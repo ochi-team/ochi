@@ -42,6 +42,35 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     alloc.destroy(self);
 }
 
+fn printNodes(arena: std.heap.ArenaAllocator) void {
+    var l1 = arena.state.used_list;
+    var l2 = arena.state.free_list;
+
+    std.debug.print("printNodes\n", .{});
+    while (l1) |node| {
+        std.debug.print("node={d}\n", .{@intFromPtr(node)});
+        std.debug.print("node.next addr: {*}\n", .{&node.next});
+        l1 = node.next;
+    }
+    while (l2) |node| {
+        l2 = node.next;
+        std.debug.print("node={d}\n", .{@intFromPtr(node)});
+        std.debug.print("node.next addr: {*}\n", .{&node.next});
+    }
+}
+
+pub fn deinitA(self: *Self, alloc: Allocator, arena: std.heap.ArenaAllocator) void {
+    for (self.garbage.items) |buf| {
+        alloc.free(buf);
+    }
+
+    printNodes(arena);
+    self.garbage.deinit(alloc);
+    std.debug.print("self.garbage addr: {*}\n", .{&self.garbage});
+    printNodes(arena);
+    alloc.destroy(self);
+}
+
 pub fn unpackValues(self: *Self, io: Io, alloc: Allocator, encoded: []const u8, count: usize) ![][]const u8 {
     const z = tracy.Zone.begin(.{
         .name = "unpackValues",
