@@ -171,7 +171,7 @@ pub fn decodeFew(
         buf = buf[res.offset..];
     }
 
-    if (builtin.mode == .Debug) validateBlockHeaders(dst.items[dstLen..]);
+    validateBlockHeaders(dst.items[dstLen..]);
 }
 
 pub fn decodeIndexWindow(
@@ -188,8 +188,6 @@ pub fn decodeIndexWindow(
     std.debug.assert(src.len == index.size);
     const decompressedSize = try encoding.getFrameContentSize(src);
 
-    // TODO: we probably can put it on stack,
-    // since index is passed the window must be narrow enough
     var decompressedBuf = try alloc.alloc(u8, decompressedSize);
     defer alloc.free(decompressedBuf);
 

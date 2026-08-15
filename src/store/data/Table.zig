@@ -466,7 +466,6 @@ pub fn queryLines(
     sids: []SID,
     query: Query,
 ) !void {
-    // TODO: assert sids are sorted
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
         return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
     }
@@ -479,6 +478,8 @@ pub fn queryLines(
         var indexBlockHeader = indexBlockHeaders[0];
 
         if (sid.lessThan(indexBlockHeader.sid)) {
+            // minimum value in the block is higher, so we bump it to the first given in the block
+            sid = indexBlockHeader.sid;
             const n = std.sort.lowerBound(SID, sidsToFind, indexBlockHeader.sid, SID.order);
             if (n == sidsToFind.len) {
                 sidsToFind = sidsToFind[0..0];

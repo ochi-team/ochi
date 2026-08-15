@@ -38,7 +38,6 @@ pub fn streamIDsHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Respons
     };
     defer streamIDs.deinit(res.arena);
 
-    // TODO: test values beyond u64, stream ids are u128
     const payload = .{ .streamIDs = streamIDs.keys() };
     const buf = std.json.Stringify.valueAlloc(res.arena, payload, .{}) catch return ApiError.FailedToWriteResponse;
 
