@@ -180,6 +180,8 @@ pub fn querySIDs(
     lookup.mx.lockUncancelable(io);
     defer lookup.mx.unlock(io);
 
+    // TODO: lookup pool is not useful here,
+    // we use request arena anyway, so it only adds lock contentioon
     try lookup.val.setup(io, alloc, self.recorder, memBlocksCache);
     defer lookup.val.reset(io, alloc);
 
