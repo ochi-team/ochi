@@ -67,7 +67,7 @@ pub fn hasStream(
     defer lookup.mx.unlock(io);
 
     // TODO: remove lookup pool, useless, better to use arenas
-    try lookup.val.setup(io, alloc, self.recorder, blocksCache);
+    try lookup.val.setup(io, alloc, alloc, self.recorder, blocksCache);
     defer lookup.val.reset(io, alloc);
 
     const sidBuf = try alloc.alloc(u8, 1 + SID.encodeBound);
@@ -96,7 +96,7 @@ pub fn queryAllStreamIDs(
     lookup.mx.lockUncancelable(io);
     defer lookup.mx.unlock(io);
 
-    try lookup.val.setup(io, alloc, self.recorder, memBlocksCache);
+    try lookup.val.setup(io, alloc, alloc, self.recorder, memBlocksCache);
     defer lookup.val.reset(io, alloc);
 
     const suffixLen: usize = 1 + @sizeOf(u64);
