@@ -135,11 +135,6 @@ pub fn findAllStreamIDsByPrefixes(
     var state: TagRecordsParser = .{};
     defer state.deinit(alloc);
 
-    // TODO: optimize so we dont iterate over next entries multiple times,
-    // the isuue is seek resets the state and for every key we must restart the seek
-    // we can pass a sorted list of prefixes and:
-    // 1. split them into groups so we know if they share the same block/prefix
-    // 2. if they ordered in .seek call we can skip previous block and continue from the current position
     for (prefixes) |prefix| {
         try self.seek(io, alloc, prefix);
 

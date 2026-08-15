@@ -199,12 +199,13 @@ pub fn querySIDs(
     }
 
     // import to sort it since the data query expected sorted set of streams
-    std.sort.pdq(SID, sids.items, {}, sidLessThan);
+    std.sort.pdq(SID, sids.items, {}, SID.sortLessThan);
 
     return .{ .sids = sids, .cutOff = result.cutOff };
 }
 
-// TODO: pass destination AutoArrayHashMapUnmanaged to collect the keys
+// TODO: pass destination AutoArrayHashMapUnmanaged to collect the keys,
+// it allows not to allocate on Or operation
 fn querySIDsFromExpr(
     io: Io,
     alloc: Allocator,
@@ -213,6 +214,15 @@ fn querySIDsFromExpr(
     expr: *const FilterExpression,
 ) !StreamIDsByPrefixesResult {
     switch (expr.*) {
+        // TODO: having only 2 predicates per bool operation gives no flexibility to collect the data
+        // and increases recursion, so worth having them as a slice
+        // TODO: consider or document the opposite if we apply condition mat ching at the scaning stage,
+        // most of the time the keys comparison is the same, so pushing them down to scan make it executing less often,
+        // it requires a sorted list of prefixes/keys/predicates and:
+        // 1. split them into groups so we know if they share the same block/prefix
+        // 2. if they ordered in .seek call we can skip previous block and continue from the current position
+        // or find the next block via binary search
+
         .predicate => |p| return querySIDsFromPredicate(io, alloc, lookup, tenantID, p),
         .andOp => |ops| {
             var left = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[0]);
@@ -265,11 +275,4 @@ fn querySIDsFromPredicate(
         },
         else => return error.QueryMatchOperationNotImplemented,
     }
-}
-
-// TODO: when we collect only streams we can sort them without tenant,
-// and we can remove this function
-pub fn sidLessThan(_: void, self: SID, another: SID) bool {
-    return self.tenantID < another.tenantID or
-        (self.tenantID == another.tenantID and self.id < another.id);
 }
