@@ -218,7 +218,7 @@ pub fn addLines(
     try self.data.addLines(io, allocator, lines.items, sid);
 }
 
-// TODO: this api is not used, but if we want to collect more sids in the accumulator
+// this api is not used, but if we want to collect more sids in the accumulator
 // we can ressurect it back
 // const bufSize = 1024;
 // pub fn addLinesWithSidChunks(
@@ -279,7 +279,7 @@ pub fn addLines(
 // }
 
 // TODO: experiment with scan sharing,
-// we could hash the query for a very short time (3s)
+// we could cache the query for a very short time (3s)
 // and if the query hash matches we could bypass index lookup and data blocks discovery,
 // but it has to come after table cache eviction implementation
 pub fn queryLines(
@@ -292,8 +292,6 @@ pub fn queryLines(
     memBlocksCache: *Cache(*MemBlock),
     lookupPool: *LookupPool,
 ) !std.ArrayList(Line) {
-    // TODO: query cancelation
-
     var sidsRes: QuerySIDsResult = sids: {
         // if streamIDs are passed in a query we don't need to query them,
         // just sort and join with tenant

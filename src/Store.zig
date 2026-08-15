@@ -40,6 +40,7 @@ pub const Store = @This();
 lockFile: Io.File,
 
 // TODO: review all the Mutex usage and replace to RwMutex if possible
+// TODO: this collection rarely gets updated, it's better to use a sequence lock with retries
 partitionsMx: Io.Mutex = .init,
 partitions: std.ArrayList(*Partition) = .empty,
 lruPartition: ?*Partition = null,
