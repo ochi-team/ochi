@@ -1,4 +1,5 @@
 const std = @import("std");
+const Encoder = @import("encoding").Encoder;
 
 pub const Query = @This();
 
@@ -162,6 +163,33 @@ pub const FilterExpression = union(enum) {
 
         return n;
     }
+
+    pub fn encodeCacheKey(self: *const FilterExpression, buf: []u8) usize {
+        var enc = Encoder.init(buf);
+        self.encodeCacheKeyExpr(&enc);
+        return enc.offset;
+    }
+
+    fn encodeCacheKeyExpr(self: *const FilterExpression, enc: *Encoder) void {
+        switch (self.*) {
+            .predicate => |p| {
+                enc.writeInt(u8, 0);
+                enc.writeInt(u8, @intFromEnum(p.op));
+                enc.writeString(p.key);
+                enc.writeString(p.value);
+            },
+            .andOp => |ops| {
+                enc.writeInt(u8, 1);
+                ops[0].encodeCacheKeyExpr(enc);
+                ops[1].encodeCacheKeyExpr(enc);
+            },
+            .orOp => |ops| {
+                enc.writeInt(u8, 2);
+                ops[0].encodeCacheKeyExpr(enc);
+                ops[1].encodeCacheKeyExpr(enc);
+            },
+        }
+    }
 };
 
 const testing = std.testing;
@@ -255,4 +283,40 @@ test "stringifyLimited" {
     var bufLonger: [64]u8 = undefined;
     n = orExpr.stringifyLimited(&bufLonger);
     try testing.expectEqualStrings("((env = prod) OR (service != worker))", bufLonger[0..n]);
+}
+
+test "encodeCacheKey" {
+    const andExpr: Query.FilterExpression = .{
+        .andOp = .{
+            &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+            &.{ .predicate = .{ .key = "service", .value = "worker", .op = .notEqual } },
+        },
+    };
+    const orExpr: Query.FilterExpression = .{
+        .orOp = .{
+            &.{ .predicate = .{ .key = "env", .value = "prod", .op = .equal } },
+            &.{ .predicate = .{ .key = "service", .value = "worker", .op = .notEqual } },
+        },
+    };
+
+    const Case = struct {
+        expr: Query.FilterExpression,
+        expected: []const u8,
+    };
+    const cases = [_]Case{
+        .{
+            .expr = andExpr,
+            .expected = "\x01\x00\x00\x03env\x04prod\x00\x01\x07service\x06worker",
+        },
+        .{
+            .expr = orExpr,
+            .expected = "\x02\x00\x00\x03env\x04prod\x00\x01\x07service\x06worker",
+        },
+    };
+
+    for (cases) |case| {
+        var buf: [64]u8 = undefined;
+        const n = case.expr.encodeCacheKey(&buf);
+        try testing.expectEqualSlices(u8, case.expected, buf[0..n]);
+    }
 }

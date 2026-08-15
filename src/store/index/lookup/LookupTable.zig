@@ -52,7 +52,13 @@ memBlockPin: ?Cache(*MemBlock).Pinned,
 memBlockIdx: usize,
 
 /// Creates a reusable lookup cursor for a single Table
-pub fn init(alloc: Allocator, table: *Table, maxMemBlockSize: u32, cache: *Cache(*MemBlock), decompressionPool: *DecompressionPool) LookupTable {
+pub fn init(
+    alloc: Allocator,
+    table: *Table,
+    maxMemBlockSize: u32,
+    cache: *Cache(*MemBlock),
+    decompressionPool: *DecompressionPool,
+) LookupTable {
     return .{
         .table = table,
         .memBlocksCache = cache,

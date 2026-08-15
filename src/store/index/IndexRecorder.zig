@@ -133,7 +133,7 @@ memTablesSem: Io.Semaphore = .{
 },
 
 needInvalidate: std.atomic.Value(bool) = .init(false),
-indexCacheKeyVersion: std.atomic.Value(u64) = .init(0),
+indexCacheKeyVersion: std.atomic.Value(u32) = .init(0),
 
 mergeIdx: std.atomic.Value(u64),
 path: []const u8,
@@ -228,6 +228,7 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     try self.timerLoop.addWakeHandler(self, deadlineWakeHandler);
 
     try self.timerLoop.addTimer(std.time.ns_per_s, &self.taskCtx, memBlockFlusherTick);
+    try self.timerLoop.addTimer(std.time.ns_per_s * 5, &self.taskCtx, cacheInvalidationTick);
     try self.timerLoop.start();
 }
 
@@ -724,6 +725,17 @@ fn memBlockFlusherTick(ctx: *anyopaque) void {
     self.flushBlocksDestination.clearRetainingCapacity();
 }
 
+fn cacheInvalidationTick(ctx: *anyopaque) void {
+    const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
+    const self = tickCtx.recorder;
+
+    if (self.stopped.isStopped()) return;
+
+    if (self.needInvalidate.cmpxchgStrong(true, false, .acq_rel, .monotonic)) |invalidate| {
+        if (invalidate) self.invalidateStreamFilterCache();
+    }
+}
+
 /// it's not supposed to run at the beginning in backrgound,
 /// we run it only on demand
 pub fn startMemTablesMerge(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
@@ -831,7 +843,6 @@ fn tablesMerger(
     }
 }
 
-// TODO: make it used in the partition cache
 fn invalidateStreamFilterCache(self: *IndexRecorder) void {
     _ = self.indexCacheKeyVersion.fetchAdd(1, .monotonic);
 }

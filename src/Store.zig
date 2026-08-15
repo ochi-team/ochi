@@ -32,6 +32,7 @@ const TimestampsEncoder = @import("store/data/TimestampsEncoder.zig");
 const CompressionPool = @import("store/compression/CompressionPool.zig");
 const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 const LookupPool = @import("store/index/lookup/LookupPool.zig");
+const QueryIndexCacheValue = @import("store/index/Index.zig").QueryIndexCacheValue;
 
 pub const Store = @This();
 
@@ -48,7 +49,8 @@ lruPartition: ?*Partition = null,
 /// streamCache is a stream id cache for ingestion,
 /// shared across all partitions, injected from a store to them
 streamCache: *Cache(void),
-memBlocksCache: *Cache(*MemBlock),
+indexMemBlocksCache: *Cache(*MemBlock),
+indexQueryCache: *Cache(*QueryIndexCacheValue),
 timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
 decompressionPool: *DecompressionPool,
@@ -101,8 +103,11 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     var streamCache = try Cache(void).init(io, alloc, .{ .meter = .{ .name = "stream" } });
     errdefer streamCache.deinit();
 
-    const memBlocksCache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "mem_blocks" } });
-    errdefer memBlocksCache.deinit();
+    const indexMemBlocksCache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "mem_blocks" } });
+    errdefer indexMemBlocksCache.deinit();
+
+    const indexQueryCache = try Cache(*QueryIndexCacheValue).init(io, alloc, .{ .meter = .{ .name = "index_query" } });
+    errdefer indexQueryCache.deinit();
 
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, runtime.cpus);
     errdefer timestampsEncoders.deinit(alloc);
@@ -134,7 +139,8 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .lockFile = file,
         .partitions = partitions,
         .streamCache = streamCache,
-        .memBlocksCache = memBlocksCache,
+        .indexMemBlocksCache = indexMemBlocksCache,
+        .indexQueryCache = indexQueryCache,
         .timestampsEncoders = timestampsEncoders,
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
@@ -208,7 +214,8 @@ pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
     self.pathsBuf.deinit(alloc);
 
     self.streamCache.deinit();
-    self.memBlocksCache.deinit();
+    self.indexMemBlocksCache.deinit();
+    self.indexQueryCache.deinit();
 
     self.meter.deinit();
 
@@ -240,7 +247,8 @@ fn diskUsageSamplerTick(ctx: *anyopaque) void {
 fn cacheEvicterTick(ctx: *anyopaque) void {
     const taskCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
     taskCtx.store.streamCache.clean();
-    taskCtx.store.memBlocksCache.clean();
+    taskCtx.store.indexMemBlocksCache.clean();
+    taskCtx.store.indexQueryCache.clean();
 }
 
 fn writeStoreMeter(self: *Store, io: Io, alloc: Allocator) void {
@@ -387,7 +395,7 @@ pub fn addLines(
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
-        try partition.addLines(io, allocator, list, tags, encodedTags, sid, self.memBlocksCache, self.lookupPool);
+        try partition.addLines(io, allocator, list, tags, encodedTags, sid, self.indexMemBlocksCache, self.lookupPool);
 
         // Return early since all lines are added to the same Partition
         if (list.items.len == lines.len) return;
@@ -437,7 +445,7 @@ pub fn addLines(
         };
         defer partition.release(io);
 
-        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, sid, self.memBlocksCache, self.lookupPool);
+        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, sid, self.indexMemBlocksCache, self.lookupPool);
     }
 }
 
@@ -465,8 +473,6 @@ pub fn queryLines(
     tenantID: u64,
     query: Query,
 ) !std.ArrayList(Line) {
-    // TODO: query cancelation
-
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
 
@@ -484,8 +490,8 @@ pub fn queryLines(
             alloc,
             tenantID,
             query,
-            self.memBlocksCache,
-            self.lookupPool,
+            self.indexMemBlocksCache,
+            self.indexQueryCache,
         );
         defer partResults.deinit(requestArena);
 
@@ -494,7 +500,7 @@ pub fn queryLines(
 
     // TODO: we need to make a real pagination, it's a plug not to overload the ui,
     // otherwise it fetches 10k lines and becomes unusable
-    keepLatestLines(requestArena, &results, 200);
+    keepLatestLines(requestArena, &results, 2000);
     return results;
 }
 
@@ -536,7 +542,7 @@ pub fn queryStreamIDs(
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
 
     for (parts.items) |part| {
-        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.memBlocksCache, self.lookupPool);
+        var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.indexMemBlocksCache, self.lookupPool);
         defer partStreamIDs.deinit(alloc);
 
         for (partStreamIDs.keys()) |sid| {

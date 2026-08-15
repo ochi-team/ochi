@@ -17,6 +17,7 @@ const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 const Query = @import("query/Query.zig");
+const QueryIndexCacheValue = @import("store/index/Index.zig").QueryIndexCacheValue;
 const LookupPool = @import("store/index/lookup/LookupPool.zig");
 
 const Runtime = @import("Runtime.zig");
@@ -28,7 +29,7 @@ const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 const fs = @import("fs.zig");
 const Logger = @import("logging");
 
-const partitionKeySize = 8;
+pub const partitionKeySize = 8;
 
 // TODO: redesign a partition range to rely not on the time, but the size:
 // 1. limit the max amount of tables to 32
@@ -290,17 +291,16 @@ pub fn queryLines(
     tenantID: u64,
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
-    lookupPool: *LookupPool,
+    indexQueryCache: *Cache(*QueryIndexCacheValue),
 ) !std.ArrayList(Line) {
     var sidsRes: QuerySIDsResult = sids: {
         // if streamIDs are passed in a query we don't need to query them,
         // just sort and join with tenant
         if (query.streamIDs) |streamIDs| {
-            var sids = try std.ArrayList(SID).initCapacity(alloc, streamIDs.len);
+            var sids = try std.ArrayList(SID).initCapacity(requestArena, streamIDs.len);
 
             for (streamIDs) |streamID| {
-                // TODO: this is a signal of idiotism, we have to split stream and tenants
-                // in query path
+                // TODO: we have to split stream and tenant in query path
                 sids.appendAssumeCapacity(.{
                     .tenantID = tenantID,
                     .id = streamID,
@@ -309,28 +309,16 @@ pub fn queryLines(
 
             std.sort.pdq(SID, sids.items, {}, SID.sortLessThan);
 
-            break :sids .{ .sids = sids, .cutOff = false };
+            break :sids .{ .sids = sids };
         } else {
             if (query.tagsExpr) |tags| {
-                break :sids try self.index.querySIDs(io, alloc, tenantID, tags, memBlocksCache, lookupPool);
+                break :sids try self.index.querySIDs(io, requestArena, alloc, tenantID, self.key, tags, memBlocksCache, indexQueryCache);
             }
 
-            break :sids .{ .cutOff = false, .sids = .empty };
+            break :sids .{ .sids = .empty };
         }
     };
-    defer sidsRes.sids.deinit(alloc);
-
-    if (sidsRes.cutOff) {
-        // TODO: add a message to a response
-        // so a user could narrow a query
-        var tagsBuf: [128]u8 = undefined;
-        const tagsN = if (query.tagsExpr) |tagsExpr| tagsExpr.stringifyLimited(&tagsBuf) else 0;
-        Logger.log(.warn, "query is cut off by index", .{
-            .tenantID = tenantID,
-            .partition = self.key,
-            .query = tagsBuf[0..tagsN],
-        });
-    }
+    defer sidsRes.sids.deinit(requestArena);
 
     return self.data.queryLines(io, requestArena, sidsRes.sids.items, query);
 }

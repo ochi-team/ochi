@@ -49,21 +49,34 @@ pub const empty: Lookup = .{
     .seekedIsCurrent = false,
 };
 
-pub fn init(io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !Lookup {
+pub fn init(
+    io: Io,
+    requestArena: Allocator,
+    cacheAlloc: Allocator,
+    recorder: *IndexRecorder,
+    cache: *Cache(*MemBlock),
+) !Lookup {
     var self: Lookup = .empty;
-    errdefer self.deinit(io, alloc);
-    try self.setup(io, alloc, recorder, cache);
+    errdefer self.deinit(io, requestArena);
+    try self.setup(io, requestArena, cacheAlloc, recorder, cache);
     return self;
 }
 
-pub fn setup(self: *Lookup, io: Io, alloc: Allocator, recorder: *IndexRecorder, cache: *Cache(*MemBlock)) !void {
+pub fn setup(
+    self: *Lookup,
+    io: Io,
+    alloc: Allocator,
+    cacheAlloc: Allocator,
+    recorder: *IndexRecorder,
+    cache: *Cache(*MemBlock),
+) !void {
     self.recorder = recorder;
 
     try recorder.collectTables(io, alloc, &self.tables);
 
     try self.lookupTables.ensureUnusedCapacity(alloc, self.tables.items.len);
     for (self.tables.items) |t| {
-        self.lookupTables.appendAssumeCapacity(LookupTable.init(alloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool));
+        self.lookupTables.appendAssumeCapacity(LookupTable.init(cacheAlloc, t, recorder.maxMemBlockSize, cache, recorder.decompressionPool));
     }
 }
 
@@ -117,7 +130,6 @@ pub fn findFirstByPrefix(self: *Lookup, io: Io, alloc: Allocator, prefix: []cons
 const resultLimit = 1000;
 pub const StreamIDsByPrefixesResult = struct {
     streamIDs: std.AutoArrayHashMapUnmanaged(u128, void),
-    cutOff: bool,
 };
 pub fn findAllStreamIDsByPrefixes(
     self: *Lookup,
@@ -156,18 +168,12 @@ pub fn findAllStreamIDsByPrefixes(
 
             if (streamIDs.count() >= resultLimit) {
                 Logger.log(.warn, "stream ids count reached the limit, return index earlier", .{ .limit = resultLimit });
-                return .{
-                    .streamIDs = streamIDs,
-                    .cutOff = true,
-                };
+                return .{ .streamIDs = streamIDs };
             }
         }
     }
 
-    return .{
-        .streamIDs = streamIDs,
-        .cutOff = false,
-    };
+    return .{ .streamIDs = streamIDs };
 }
 
 fn seek(self: *Lookup, io: Io, alloc: Allocator, key: []const u8) !void {
@@ -353,7 +359,7 @@ test "Lookup.findFirstByPrefix returns null on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -401,7 +407,7 @@ test "Lookup.findAllStreamIDsByPrefixes returns empty on empty recorder" {
 
     const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     const prefixes = [_][]const u8{
@@ -503,7 +509,7 @@ test "Lookup.findFirstByPrefix matches lower-bound prefix behavior on mixed tabl
 
     const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -645,7 +651,7 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
     const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     for (cases) |case| {
@@ -654,7 +660,6 @@ test "Lookup.findAllStreamIDsByPrefixes matches lower-bound prefix behavior on m
 
         if (case.expected) |want| {
             try testing.expectEqualSlices(u128, want, actual.streamIDs.keys());
-            try testing.expect(!actual.cutOff);
         } else {
             try testing.expectEqual(actual.streamIDs.keys().len, 0);
         }
@@ -709,7 +714,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
     defer cache.deinit();
 
     {
-        var lookup = try Lookup.init(io, alloc, recorder, cache);
+        var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
         defer lookup.deinit(io, alloc);
 
         const actual = try lookup.findFirstByPrefix(io, alloc, "tenant-a-stream-0002");
@@ -756,7 +761,7 @@ test "Lookup cached disk mem block keeps prefix alive across lookups" {
         .{ .prefix = "tenant-a-stream-", .expected = "tenant-a-stream-0001" },
     };
 
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
     for (cases) |case| {
         const actual = try lookup.findFirstByPrefix(io, alloc, case.prefix);
@@ -819,7 +824,7 @@ test "Lookup.deinit after scan across multiple table blocks" {
 
     const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     try lookup.seek(io, alloc, "key:");
@@ -889,14 +894,13 @@ test "Lookup.findAllStreamIDsByPrefixes respects result limit cutoff" {
 
     const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
     defer cache.deinit();
-    var lookup = try Lookup.init(io, alloc, recorder, cache);
+    var lookup = try Lookup.init(io, alloc, alloc, recorder, cache);
     defer lookup.deinit(io, alloc);
 
     var actual = try lookup.findAllStreamIDsByPrefixes(io, alloc, &[_][]const u8{keyValue});
     defer actual.streamIDs.deinit(alloc);
 
     try testing.expect(actual.streamIDs.keys().len != 0);
-    try testing.expect(actual.cutOff);
     try testing.expectEqual(@as(usize, resultLimit), actual.streamIDs.keys().len);
     try testing.expectEqual(0, actual.streamIDs.keys()[0]);
     try testing.expectEqual(999, actual.streamIDs.keys()[resultLimit - 1]);

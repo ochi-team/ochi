@@ -13,6 +13,9 @@ const TagRecordsParser = @import("TagRecordsParser.zig");
 
 pub const tracy = @import("tracy");
 
+const maxQueryLength = @import("../../query/Loql.zig").maxQueryLength;
+const partitionKeySize = @import("../../Partition.zig").partitionKeySize;
+
 const Lookup = @import("lookup/Lookup.zig");
 const LookupPool = @import("lookup/LookupPool.zig");
 const StreamIDsByPrefixesResult = Lookup.StreamIDsByPrefixesResult;
@@ -164,44 +167,104 @@ pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Fiel
     try self.recorder.add(io, alloc, entries);
 }
 
-// TODO: this bool flag under big question, redesign it later after solid query design
-pub const QuerySIDsResult = struct { sids: std.ArrayList(SID), cutOff: bool };
+// max query + 8 partitionKey + version
+const queryIndexCacheBufferSize = maxQueryLength + partitionKeySize + @sizeOf(u64) + @sizeOf(u32);
+const QueryIndexCacheKey = struct {
+    partition: []const u8,
+    tenantID: u64,
+    version: u32,
+    tagsFilter: []const u8,
+
+    fn encode(self: *const QueryIndexCacheKey, buf: []u8) usize {
+        var enc = Encoder.init(buf);
+        enc.writeString(self.partition);
+        enc.writeInt(u64, self.tenantID);
+        enc.writeInt(u32, self.version);
+        enc.writeString(self.tagsFilter);
+        return enc.offset;
+    }
+};
+pub const QueryIndexCacheValue = struct {
+    sids: []const SID,
+
+    pub fn init(alloc: Allocator, sids: []const SID) !*QueryIndexCacheValue {
+        const self = try alloc.create(QueryIndexCacheValue);
+        errdefer alloc.destroy(self);
+
+        const sidsCopy = try alloc.dupe(SID, sids);
+        errdefer alloc.free(sidsCopy);
+
+        self.* = .{
+            .sids = sidsCopy,
+        };
+
+        return self;
+    }
+
+    pub fn deinit(self: *QueryIndexCacheValue, alloc: Allocator) void {
+        alloc.free(self.sids);
+        alloc.destroy(self);
+    }
+};
+
+pub const QuerySIDsResult = struct { sids: std.ArrayList(SID) };
 pub fn querySIDs(
     self: *Self,
     io: Io,
+    requestArena: Allocator,
     alloc: Allocator,
     tenantID: u64,
+    partitionKey: []const u8,
     tags: *const FilterExpression,
-    memBlocksCache: *Cache(*MemBlock),
-    lookupPool: *LookupPool,
+    indexMemBlocksCache: *Cache(*MemBlock),
+    indexQueryCache: *Cache(*QueryIndexCacheValue),
 ) !QuerySIDsResult {
-    // TODO: cache query => stream
-    const lookup = lookupPool.next();
-    lookup.mx.lockUncancelable(io);
-    defer lookup.mx.unlock(io);
+    var tagsKeyBuf: [maxQueryLength]u8 = undefined;
+    const tagsKeyLen = tags.encodeCacheKey(&tagsKeyBuf);
+    const indexCacheVersion = self.recorder.indexCacheKeyVersion.load(.acquire);
+    const cacheKey: QueryIndexCacheKey = .{
+        .partition = partitionKey,
+        .tenantID = tenantID,
+        .tagsFilter = tagsKeyBuf[0..tagsKeyLen],
+        .version = indexCacheVersion,
+    };
 
-    // TODO: lookup pool is not useful here,
-    // we use request arena anyway, so it only adds lock contentioon
-    try lookup.val.setup(io, alloc, self.recorder, memBlocksCache);
-    defer lookup.val.reset(io, alloc);
+    var cacheKeyBuf: [queryIndexCacheBufferSize]u8 = undefined;
+    const cacheKeyLen = cacheKey.encode(&cacheKeyBuf);
 
-    var result = try querySIDsFromExpr(io, alloc, &lookup.val, tenantID, tags);
-    defer result.streamIDs.deinit(alloc);
+    const maybeStreams = indexQueryCache.get(io, cacheKeyBuf[0..cacheKeyLen]);
+    if (maybeStreams) |streams| {
+        var sids: std.ArrayList(SID) = try .initCapacity(requestArena, streams.sids.len);
+        for (streams.sids) |s| {
+            sids.appendAssumeCapacity(s);
+        }
+        return .{ .sids = sids };
+    }
 
-    if (result.streamIDs.keys().len == 0)
-        return .{ .sids = .empty, .cutOff = false };
+    var lookup = try Lookup.init(io, requestArena, alloc, self.recorder, indexMemBlocksCache);
+    defer lookup.deinit(io, requestArena);
 
-    var sids: std.ArrayList(SID) = try .initCapacity(alloc, result.streamIDs.keys().len);
+    var result = try querySIDsFromExpr(io, requestArena, &lookup, tenantID, tags);
+    defer result.streamIDs.deinit(requestArena);
+
+    const streamKeys = result.streamIDs.keys();
+
+    var sids: std.ArrayList(SID) = try .initCapacity(requestArena, streamKeys.len);
     for (result.streamIDs.keys()) |s| {
         // TODO: ideally we look only for streams, the tenant is known in advance,
         // we must design the API to return only Array(streams)
         sids.appendAssumeCapacity(.{ .id = s, .tenantID = tenantID });
     }
 
-    // import to sort it since the data query expected sorted set of streams
+    // important to sort it since the data query expected sorted set of streams
     std.sort.pdq(SID, sids.items, {}, SID.sortLessThan);
 
-    return .{ .sids = sids, .cutOff = result.cutOff };
+    const cachedObj = try QueryIndexCacheValue.init(alloc, sids.items);
+    errdefer cachedObj.deinit(alloc);
+
+    _ = try indexQueryCache.put(io, cacheKeyBuf[0..cacheKeyLen], cachedObj);
+
+    return .{ .sids = sids };
 }
 
 // TODO: pass destination AutoArrayHashMapUnmanaged to collect the keys,
@@ -229,7 +292,7 @@ fn querySIDsFromExpr(
             defer left.streamIDs.deinit(alloc);
 
             if (left.streamIDs.keys().len == 0)
-                return .{ .streamIDs = .empty, .cutOff = left.cutOff };
+                return .{ .streamIDs = .empty };
 
             var right = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[1]);
             defer right.streamIDs.deinit(alloc);
@@ -241,7 +304,7 @@ fn querySIDsFromExpr(
                     try intersection.put(alloc, sid, {});
                 }
             }
-            return .{ .streamIDs = intersection, .cutOff = left.cutOff or right.cutOff };
+            return .{ .streamIDs = intersection };
         },
         .orOp => |ops| {
             var left = try querySIDsFromExpr(io, alloc, lookup, tenantID, ops[0]);
@@ -253,7 +316,7 @@ fn querySIDsFromExpr(
             for (right.streamIDs.keys()) |sid| {
                 try left.streamIDs.put(alloc, sid, {});
             }
-            return .{ .streamIDs = left.streamIDs, .cutOff = left.cutOff or right.cutOff };
+            return .{ .streamIDs = left.streamIDs };
         },
     }
 }

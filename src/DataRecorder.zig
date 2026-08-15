@@ -1083,17 +1083,17 @@ fn requestTableTimer(self: *DataRecorder, table: *Table) void {
     self.timerLoop.notify();
 }
 
-pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
-    var tables = try self.getTables(io, alloc, query.start, query.end);
+pub fn queryLines(self: *DataRecorder, io: Io, requestArena: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
+    var tables = try self.getTables(io, requestArena, query.start, query.end);
     defer {
         for (tables.items) |table| table.release(io);
-        tables.deinit(alloc);
+        tables.deinit(requestArena);
     }
 
     var linesDst = std.ArrayList(Line).empty;
-    errdefer linesDst.deinit(alloc);
+    errdefer linesDst.deinit(requestArena);
     for (tables.items) |table| {
-        try table.queryLines(io, alloc, true, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
+        try table.queryLines(io, requestArena, true, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
     }
 
     return linesDst;

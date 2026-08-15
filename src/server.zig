@@ -32,8 +32,8 @@ fn metrics(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     try ctx.storeMeter.write(w);
     try ctx.store.streamCache.hitRate.write(w);
     try ctx.store.streamCache.missRate.write(w);
-    try ctx.store.memBlocksCache.hitRate.write(w);
-    try ctx.store.memBlocksCache.missRate.write(w);
+    try ctx.store.indexMemBlocksCache.hitRate.write(w);
+    try ctx.store.indexMemBlocksCache.missRate.write(w);
 }
 
 fn registerSigtermHandler() void {
