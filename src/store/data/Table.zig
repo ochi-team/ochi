@@ -576,6 +576,8 @@ fn queryLinesAllBlocks(
                 continue;
             }
 
+            _ = @import("BlockQuery.zig");
+
             try self.queryBlock(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, blockHeader, query);
         }
     }

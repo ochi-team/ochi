@@ -714,7 +714,7 @@ fn fuzzMixedShortValues(_: void, smith: *testing.Smith) !void {
                 value.* = try time.time().bufPrint(&storage[i], .rfc3339Nano);
             }
         },
-        .unknown => unreachable,
+        .unknown => std.debug.panic("unknown value type: {s}\n", .{valueType}),
     }
 
     try expectEncodeRoundtrip(io, allocator, values[0..count], valueType);
@@ -988,6 +988,6 @@ fn maxDays(year: i32, month: u5) u5 {
         10 => 31,
         11 => 30,
         12 => 31,
-        else => unreachable,
+        else => std.debug.panic("the month number doesn't exist: {d}\n", .{month}),
     };
 }
