@@ -1,0 +1,12 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "655ac93f12b2830644e5f6a09009a2616033d2ac",
+  "prompts": {},
+  "humans": {
+    "h_2dd3d53392047d": {
+      "author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
