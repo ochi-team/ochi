@@ -714,7 +714,7 @@ fn fuzzMixedShortValues(_: void, smith: *testing.Smith) !void {
                 value.* = try time.time().bufPrint(&storage[i], .rfc3339Nano);
             }
         },
-        .unknown => std.debug.panic("unknown value type: {s}\n", .{valueType}),
+        .unknown => std.debug.panic("unknown value type: {s}\n", .{@tagName(valueType)}),
     }
 
     try expectEncodeRoundtrip(io, allocator, values[0..count], valueType);
