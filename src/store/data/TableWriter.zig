@@ -466,12 +466,6 @@ fn writeTimestamps(
 // 1. allocate the necessary space in the buffers
 // 2. define cleaners on top of such writes
 // 3. execute the most error prone operations at the beginning
-// TODO: we might experiment with indexing every N lines (8192 let's say)
-// We can start from timestamp.
-// To speedup the search we can write not only timestamps itself,
-// but also values between the intervals in order to specify the range.
-// It could be especially useful for large files that contains 100k+ lines,
-// it must help speed up queries with a narrow time range for stale data
 fn writeTimestampsData(
     self: *TableWriter,
     io: Io,

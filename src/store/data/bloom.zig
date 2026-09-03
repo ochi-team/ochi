@@ -299,6 +299,9 @@ pub const BloomFilter = struct {
         var buf: [8]u8 align(@alignOf(u64)) = undefined;
         const p: *u64 = @ptrCast(&buf);
 
+        // TODO: measure the hitmap of the maxBits,
+        // if the value makes sense - vectorize the calculation,
+        // or document why we can't
         const maxBits = dst.len << 3; // * 8
         for (src) |srcHash| {
             p.* = srcHash;

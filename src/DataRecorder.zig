@@ -1931,7 +1931,7 @@ test "flushShard resets checkpointsLen on semaphore timeout so the next appendLi
     try recorder.flushForce(io, alloc);
 }
 
-// TODO: benchmark different filesystems
+// TODO: benchmark different filesystems (btrfs)
 // TODO: benchmark different IO schedulers
 // TODO: try tagging fadvise with different access patterns
 // TODO: experiment with mmap files in merges

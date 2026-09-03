@@ -571,10 +571,14 @@ fn queryLinesAllBlocks(
         std.debug.assert(indexBuffer.len == n);
         try BlockHeader.decodeIndexWindow(io, alloc, decompressionPool, &blockHeaders, indexBuffer, indexBlockHeader);
 
+        // TODO: research apache fusion query pushdown for almost sorted data,
+        // it's our case when the blocks may intersect, but the sorting is "Inexact":
+        // https://datafusion.apache.org/blog/2026/07/20/sort-pushdown/
         for (blockHeaders.items) |blockHeader| {
             if (query.start > blockHeader.timestampsHeader.max or query.end < blockHeader.timestampsHeader.min) {
                 continue;
             }
+
 
             _ = @import("BlockQuery.zig");
 
