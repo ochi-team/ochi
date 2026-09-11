@@ -1,10 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Table = @import("Table.zig");
-const BlockHeader = @import("BlockHeader.zig");
+const Table = @import("../data/Table.zig");
+const BlockHeader = @import("../data/BlockHeader.zig");
 const Query = @import("../../query/Query.zig");
 const FilterExpression = Query.FilterExpression;
+
+const BlockResponseSlice = @import("BlockResponseSlice.zig");
 
 const BlockQuery = @This();
 
@@ -27,7 +29,7 @@ pub fn deinit(self: *BlockQuery, alloc: Allocator) void {
 }
 
 pub fn query(
-    self: *BlockQuery,
+    self: *const BlockQuery,
     table: *const Table,
     blockHeader: *const BlockHeader,
     q: *const Query,
@@ -42,10 +44,10 @@ pub fn query(
         return;
     }
 
-    unreachable;
+    return BlockResponseSlice.init();
 }
 
-fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression) !void {
+fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !void {
     switch (fieldsExpr) {
         .orOp => |orExpr| try self.filterOr(orExpr),
         .andOp => |andExpr| try self.filterAnd(andExpr),
@@ -53,7 +55,7 @@ fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression) !void {
     }
 }
 
-fn filterOr(self: *BlockQuery, expr: [2]*const FilterExpression) !void {
+fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) !void {
     if (!self.matchBloomFilterOr(expr)) {
         self.bitset.unsetAll();
         return;
@@ -61,6 +63,13 @@ fn filterOr(self: *BlockQuery, expr: [2]*const FilterExpression) !void {
 
     unreachable;
 }
+
+fn matchBloomFilterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) bool {
+    // TODO: tokens must be calculated ones and cached per expression,
+    // probably better to calculate it once a level above
+    unreachable;
+}
+
 
 fn bitsetIsEmpty(bitset: *const std.bit_set.DynamicBitSetUnmanaged) bool {
     const tail: usize = if (bitset.bit_length % @bitSizeOf(std.bit_set.DynamicBitSetUnmanaged.MaskInt) > 0) 1 else 0;
