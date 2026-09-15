@@ -10,13 +10,9 @@ const Tokenizer = @import("../bloom/Tokenizer.zig");
 
 const BlockResponseSlice = @import("BlockResponseSlice.zig");
 
-pub const Ctx = struct {
-    alloc: Allocator,
-    tokenizer: *Tokenizer,
-};
-
 const BlockQuery = @This();
 
+alloc: Allocator,
 bitset: std.bit_set.DynamicBitSetUnmanaged,
 
 pub fn init(
@@ -26,30 +22,26 @@ pub fn init(
 ) !BlockQuery {
     const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(alloc, len);
     self.* = .{
+        .alloc = alloc,
         .bitset = bitset,
     };
     self.bitset.setAll();
 }
 
-pub fn deinit(self: *BlockQuery, alloc: Allocator) void {
-    self.bitset.deinit(alloc);
+pub fn deinit(self: *BlockQuery) void {
+    self.bitset.deinit(self.alloc);
 }
 
 pub fn query(
     self: *const BlockQuery,
-    alloc: Allocator,
     table: *const Table,
     blockHeader: *const BlockHeader,
     q: *const Query,
 ) !void {
-    // FIXME
-    unreachable;
-
-    var ctx: Ctx = undefined;
     _ = table;
     _ = blockHeader;
     if (q.fieldsExpr) |fieldsExpr| {
-        try filterByExpr(&ctx, fieldsExpr);
+        try self.filterByExpr(fieldsExpr);
     }
 
     if (bitsetIsEmpty(&self.bitset)) {
@@ -59,15 +51,15 @@ pub fn query(
     return BlockResponseSlice.init();
 }
 
-fn filterByExpr(fieldsExpr: *const FilterExpression) !void {
+fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !void {
     switch (fieldsExpr) {
-        .orOp => |orExpr| try filterOr(orExpr),
-        .andOp => |andExpr| try filterAnd(andExpr),
-        .predicate => |predicate| try filterPredicate(predicate),
+        .orOp => |orExpr| try self.filterOr(orExpr),
+        .andOp => |andExpr| try self.filterAnd(andExpr),
+        .predicate => |predicate| try self.filterPredicate(predicate),
     }
 }
 
-fn filterOr(expr: [2]*const FilterExpression) !void {
+fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) !void {
     if (!self.matchBloomFilterOr(expr)) {
         self.bitset.unsetAll();
         return;
@@ -88,14 +80,14 @@ const KeyTokens = struct {
     hashes: []u64,
 };
 
-fn fieldsOrTokens(ctx: *Ctx, expr: [2]*const FilterExpression) !KeyTokens {
+fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) !KeyTokens {
     // TODO: tokens must be calculated ones and cached per expression,
     // probably better to calculate it once a level above
 
-    var m = std.StringHashMap([]const []const u8).init(ctx.alloc);
+    var m = std.StringHashMap([]const []const u8).init(self.alloc);
     defer m.deinit();
     var fieldKeys = std.ArrayList([]const u8).empty;
-    defer fieldKeys.deinit(ctx.alloc);
+    defer fieldKeys.deinit(self.alloc);
 
     var tokensBuf: [16][]const u8 = undefined;
     const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
@@ -108,8 +100,8 @@ fn fieldsOrTokens(ctx: *Ctx, expr: [2]*const FilterExpression) !KeyTokens {
                 if (e.predicate.op != .equal) {
                     continue;
                 }
-                try getTokens(&tokensArray, e.predicate.value);
-                mergeTokens(ctx.alloc, &m, &fieldKeys, e.predicate.key, tokensArray.items);
+                try self.getTokens(&tokensArray, e.predicate.value);
+                mergeTokens(self.alloc, &m, &fieldKeys, e.predicate.key, tokensArray.items);
             },
         }
     }
@@ -117,8 +109,8 @@ fn fieldsOrTokens(ctx: *Ctx, expr: [2]*const FilterExpression) !KeyTokens {
     unreachable;
 }
 
-fn getTokens(ctx: *Ctx, dst: *std.ArrayList([]const u8), predicate: []const u8) !void {
-    return Tokenizer.tokenize(ctx.alloc, dst, predicate);
+fn getTokens(self: *const BlockQuery, dst: *std.ArrayList([]const u8), predicate: []const u8) !void {
+    return Tokenizer.tokenize(self.alloc, dst, predicate);
 }
 
 fn mergeTokens(
