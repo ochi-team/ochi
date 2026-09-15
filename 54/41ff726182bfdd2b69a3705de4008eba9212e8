@@ -1,0 +1,30 @@
+src/store/query/BlockQuery.zig
+  s_8b69b39301169b::t_f5f19aa68d20b6 47,64,87,102,129
+  s_8b69b39301169b::t_ea49c2be6a1be2 86,94-96,100-101,103-116,120-122,124,128,137
+  s_8b69b39301169b::t_01f328dec59bec 97-99
+  s_8b69b39301169b::t_6bb5a337fe106c 45-46
+  s_8b69b39301169b::t_c8f312db7cf369 48
+  s_8b69b39301169b::t_944671aec74f5b 65-66
+  s_8b69b39301169b::t_2e8411acc64e51 83-85
+  s_8b69b39301169b::t_66dc32d50cdc07 88-90
+  s_8b69b39301169b::t_90d6e70cf443bc 123
+  s_8b69b39301169b::t_842059de29520f 125-127
+  s_8b69b39301169b::t_1a46a000c9dbcc 130-132,134-136
+  s_8b69b39301169b::t_2cf3abebd55e66 138-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "5441ff726182bfdd2b69a3705de4008eba9212e8",
+  "prompts": {},
+  "sessions": {
+    "s_8b69b39301169b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0921b-db7a-78a3-9557-d5ab73a7900a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
