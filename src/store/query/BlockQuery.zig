@@ -6,7 +6,14 @@ const BlockHeader = @import("../data/BlockHeader.zig");
 const Query = @import("../../query/Query.zig");
 const FilterExpression = Query.FilterExpression;
 
+const Tokenizer = @import("../bloom/Tokenizer.zig");
+
 const BlockResponseSlice = @import("BlockResponseSlice.zig");
+
+pub const Ctx = struct {
+    alloc: Allocator,
+    tokenizer: *Tokenizer,
+};
 
 const BlockQuery = @This();
 
@@ -30,14 +37,19 @@ pub fn deinit(self: *BlockQuery, alloc: Allocator) void {
 
 pub fn query(
     self: *const BlockQuery,
+    alloc: Allocator,
     table: *const Table,
     blockHeader: *const BlockHeader,
     q: *const Query,
 ) !void {
+    // FIXME
+    unreachable;
+
+    var ctx: Ctx = undefined;
     _ = table;
     _ = blockHeader;
     if (q.fieldsExpr) |fieldsExpr| {
-        try self.filterByExpr(fieldsExpr);
+        try filterByExpr(&ctx, fieldsExpr);
     }
 
     if (bitsetIsEmpty(&self.bitset)) {
@@ -47,15 +59,15 @@ pub fn query(
     return BlockResponseSlice.init();
 }
 
-fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !void {
+fn filterByExpr(fieldsExpr: *const FilterExpression) !void {
     switch (fieldsExpr) {
-        .orOp => |orExpr| try self.filterOr(orExpr),
-        .andOp => |andExpr| try self.filterAnd(andExpr),
-        .predicate => |predicate| try self.filterPredicate(predicate),
+        .orOp => |orExpr| try filterOr(orExpr),
+        .andOp => |andExpr| try filterAnd(andExpr),
+        .predicate => |predicate| try filterPredicate(predicate),
     }
 }
 
-fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) !void {
+fn filterOr(expr: [2]*const FilterExpression) !void {
     if (!self.matchBloomFilterOr(expr)) {
         self.bitset.unsetAll();
         return;
@@ -65,11 +77,71 @@ fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) !void {
 }
 
 fn matchBloomFilterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) bool {
-    // TODO: tokens must be calculated ones and cached per expression,
-    // probably better to calculate it once a level above
+    const fieldsTokens = self.fieldsOrTokens(expr);
+    _ = fieldsTokens;
     unreachable;
 }
 
+const KeyTokens = struct {
+    key: []const u8,
+    tokens: []const []const u8,
+    hashes: []u64,
+};
+
+fn fieldsOrTokens(ctx: *Ctx, expr: [2]*const FilterExpression) !KeyTokens {
+    // TODO: tokens must be calculated ones and cached per expression,
+    // probably better to calculate it once a level above
+
+    var m = std.StringHashMap([]const []const u8).init(ctx.alloc);
+    defer m.deinit();
+    var fieldKeys = std.ArrayList([]const u8).empty;
+    defer fieldKeys.deinit(ctx.alloc);
+
+    var tokensBuf: [16][]const u8 = undefined;
+    const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
+
+    for (expr) |f| {
+        switch (f) {
+            .andOp => {},
+            .orOp => {},
+            .predicate => |e| {
+                if (e.predicate.op != .equal) {
+                    continue;
+                }
+                try getTokens(&tokensArray, e.predicate.value);
+                mergeTokens(ctx.alloc, &m, &fieldKeys, e.predicate.key, tokensArray.items);
+            },
+        }
+    }
+
+    unreachable;
+}
+
+fn getTokens(ctx: *Ctx, dst: *std.ArrayList([]const u8), predicate: []const u8) !void {
+    return Tokenizer.tokenize(ctx.alloc, dst, predicate);
+}
+
+fn mergeTokens(
+    alloc: Allocator,
+    m: *std.StringHashMap(std.ArrayList([]const []const u8)),
+    keys: *std.ArrayList([]const u8),
+    key: []const u8,
+    tokens: []const []const u8,
+) !void {
+    if (tokens.len == 0) {
+        return;
+    }
+
+    var g = try m.getOrPut(key);
+    if (!g.found_existing) {
+        try keys.append(alloc, key);
+        g.value_ptr.* = std.ArrayList([]const u8).empty;
+    }
+    // tokens belong to a stack buffer, so we copy
+    const tokensCopy = try alloc.dupe([]const u8, tokens);
+    errdefer alloc.free(tokensCopy);
+    try g.value_ptr.append(alloc, tokensCopy);
+}
 
 fn bitsetIsEmpty(bitset: *const std.bit_set.DynamicBitSetUnmanaged) bool {
     const tail: usize = if (bitset.bit_length % @bitSizeOf(std.bit_set.DynamicBitSetUnmanaged.MaskInt) > 0) 1 else 0;
