@@ -7,6 +7,9 @@ const Query = @import("../../query/Query.zig");
 const FilterExpression = Query.FilterExpression;
 
 const Tokenizer = @import("../bloom/Tokenizer.zig");
+const tokenHashes = @import("../bloom/bloom.zig").tokenHashes;
+
+const Logger = @import("logging");
 
 const BlockResponseSlice = @import("BlockResponseSlice.zig");
 
@@ -59,8 +62,8 @@ fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !v
     }
 }
 
-fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) !void {
-    if (!self.matchBloomFilterOr(expr)) {
+fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) Allocator.Error!void {
+    if (!try self.matchBloomFilterOr(expr)) {
         self.bitset.unsetAll();
         return;
     }
@@ -68,9 +71,61 @@ fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) !void {
     unreachable;
 }
 
-fn matchBloomFilterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) bool {
-    const fieldsTokens = self.fieldsOrTokens(expr);
-    _ = fieldsTokens;
+fn matchBloomFilterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) Allocator.Error!bool {
+    const keysTokens = try self.fieldsOrTokens(expr);
+    if (keysTokens.len == 0) return true;
+
+    for (keysTokens) |keyTokens| {
+        const v = self.getInvariantColumnValue(keyTokens.key);
+        if (v.len != 0) {
+            if (self.matchPredicateByAll(v, keyTokens.tokens)) return true;
+
+            continue;
+        }
+
+        const columnHeader = self.getColumnHeader(expr, keyTokens.key) orelse continue;
+        switch (columnHeader.type) {
+            .dict => {
+                if (self.matchDict(columnHeader.dict.items, keyTokens.tokens)) return true;
+            },
+            else => {
+                if (self.matchBloomFilter(expr, columnHeader, keyTokens.hashes)) return true;
+            },
+        }
+    }
+
+    return false;
+}
+
+fn getInvariantColumnValue(self: *const BlockQuery, key: []const u8) []const u8 {
+    const id = self.getColumnId(key);
+    _ = id;
+    unreachable;
+}
+fn matchPredicateByAll(self: *const BlockQuery, key: []const u8) []const u8 {
+    _ = self;
+    _ = key;
+    unreachable;
+}
+fn getColumnHeader(self: *const BlockQuery, key: []const u8) []const u8 {
+    _ = self;
+    _ = key;
+    unreachable;
+}
+fn matchDict(self: *const BlockQuery, key: []const u8) []const u8 {
+    _ = self;
+    _ = key;
+    unreachable;
+}
+fn matchBloomFilter(self: *const BlockQuery, key: []const u8) []const u8 {
+    _ = self;
+    _ = key;
+    unreachable;
+}
+
+fn getColumnId(self: *const BlockQuery, key: []const u8) u16 {
+    _ = self;
+    _ = key;
     unreachable;
 }
 
@@ -80,22 +135,36 @@ const KeyTokens = struct {
     hashes: []u64,
 };
 
-fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) !KeyTokens {
-    // TODO: tokens must be calculated ones and cached per expression,
-    // probably better to calculate it once a level above
-
+fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![]KeyTokens {
+    // TODO: see if it's executed more than once and cache the tokens calculation
+    // or make a lazy access
     var m = std.StringHashMap([]const []const u8).init(self.alloc);
     defer m.deinit();
     var fieldKeys = std.ArrayList([]const u8).empty;
     defer fieldKeys.deinit(self.alloc);
 
-    var tokensBuf: [16][]const u8 = undefined;
+    var tokensBuf: [32][]const u8 = undefined;
     const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
 
-    for (expr) |f| {
-        switch (f) {
-            .andOp => {},
-            .orOp => {},
+    var orsBuffer: [32]*const FilterExpression = undefined;
+    var orsArray = std.ArrayList(*const FilterExpression).initBuffer(&orsBuffer);
+
+    orsArray.appendSliceAssumeCapacity(expr[0..]);
+
+    while (orsArray.pop()) |ex| {
+        switch (ex) {
+            .andOp => |e| {
+                const kTokens = try self.fieldsandtokens(e.andOp);
+                for (kTokens) |kt| {
+                    mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt);
+                }
+            },
+            .orOp => |e| {
+                orsArray.appendSliceBounded(e.orOp[0..]) catch {
+                    Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
+                    continue;
+                };
+            },
             .predicate => |e| {
                 if (e.predicate.op != .equal) {
                     continue;
@@ -106,11 +175,93 @@ fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) !Ke
         }
     }
 
-    unreachable;
+    return self.collectMergedKeyTokens(&m, &fieldKeys);
 }
 
 fn getTokens(self: *const BlockQuery, dst: *std.ArrayList([]const u8), predicate: []const u8) !void {
     return Tokenizer.tokenize(self.alloc, dst, predicate);
+}
+
+fn fieldsAndTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![]KeyTokens {
+    var m = std.StringHashMap([]const []const u8).init(self.alloc);
+    defer m.deinit();
+    var fieldKeys = std.ArrayList([]const u8).empty;
+    defer fieldKeys.deinit(self.alloc);
+
+    var tokensBuf: [32][]const u8 = undefined;
+    const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
+
+    var andsBuffer: [32]*const FilterExpression = undefined;
+    var andsArray = std.ArrayList(*const FilterExpression).initBuffer(&andsBuffer);
+
+    andsArray.appendSliceAssumeCapacity(expr[0..]);
+
+    while (andsArray.pop()) |ex| {
+        switch (ex) {
+            .andOp => |e| {
+                andsArray.appendSliceBounded(e.andOp[0..]) catch {
+                    Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
+                    continue;
+                };
+            },
+            .orOp => |e| {
+                const kTokens = try self.fieldsOrTokens(e.andOp);
+                for (kTokens) |kt| {
+                    mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt);
+                }
+            },
+            .predicate => |e| {
+                if (e.predicate.op != .equal) {
+                    continue;
+                }
+                try self.getTokens(&tokensArray, e.predicate.value);
+                mergeTokens(self.alloc, &m, &fieldKeys, e.predicate.key, tokensArray.items);
+            },
+        }
+    }
+
+    return self.collectMergedKeyTokens(&m, &fieldKeys);
+}
+
+fn collectMergedKeyTokens(
+    self: *const BlockQuery,
+    m: *const std.StringHashMap([]const []const u8),
+    fieldKeys: *const std.ArrayList([]const u8),
+) ![]KeyTokens {
+    var keyTokens: std.ArrayList([]KeyTokens) = try .initCapacity(self.alloc, 16);
+    errdefer keyTokens.deinit(self.alloc);
+    var processedSet: std.StringHashMap(void) = .init(self.alloc);
+    defer processedSet.deinit();
+
+    for (fieldKeys) |fieldKey| {
+        defer processedSet.clearRetainingCapacity();
+
+        const mergedTokens = m.get(fieldKey) orelse continue;
+
+        const tokens = try self.alloc.alloc([]const u8, mergedTokens.len);
+        errdefer self.alloc.free(tokens);
+        var i: usize = 0;
+
+        for (mergedTokens) |token| {
+            const gop = processedSet.getOrPut(token);
+            if (gop.found_existing) continue;
+
+            processedSet.put(token, .{});
+            tokens[i] = tokens;
+            i += 1;
+        }
+
+        const hashes = try tokenHashes(self.alloc, tokens);
+        errdefer self.alloc.free(hashes);
+
+        try keyTokens.append(self.alloc, .{
+            .key = fieldKey,
+            .tokens = tokens,
+            .hashes = hashes,
+        });
+    }
+
+    return keyTokens.toOwnedSlice(self.alloc);
 }
 
 fn mergeTokens(

@@ -4,6 +4,8 @@ const tracy = @import("tracy");
 
 const bloom = @import("bloom.zig");
 const bucketsSize = bloom.bucketsSize;
+const hashRounds = bloom.hashRounds;
+
 const Bucket = bloom.Bucket;
 
 const HashTokenizer = @import("HashTokenizer.zig");
@@ -12,7 +14,6 @@ pub const BloomFilter = @This();
 bits: []u64,
 
 const bitsPerEntry = 16;
-const hashRounds = 6;
 
 pub inline fn boundHashes(hashes: []const u64) usize {
     // +63 to have a gap rounding to upper value

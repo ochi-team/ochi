@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const hashRounds = 6;
+
 // TODO: it could be vectorize and be x100 faster
 // https://www.yagiz.co/eliminating-branches-in-cpp-loops
 pub fn isASCII(s: []const u8) bool {
@@ -31,3 +33,17 @@ pub const Bucket = struct {
     value: u64,
     overflows: std.ArrayList(u64),
 };
+
+pub fn tokenHashes(alloc: std.mem.Allocator, tokens: []const u8) ![]u64 {
+    var buf: [8]u8 align(@alignOf(u64)) = undefined;
+    const p: *u64 = @ptrCast(&buf);
+    p.* = std.hash.XxHash64.hash(0, tokens);
+
+    var hashes: [hashRounds]u64 = undefined;
+    for (0..hashRounds) |i| {
+        hashes[i] = std.hash.XxHash64.hash(0, &buf);
+        p.* += 1;
+    }
+
+    return alloc.dupe(u64, &hashes);
+}
