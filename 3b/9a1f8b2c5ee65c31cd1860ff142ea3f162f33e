@@ -1,0 +1,22 @@
+src/store/query/BlockQuery.zig
+  s_8b69b39301169b::t_ea49c2be6a1be2 151,164-166
+  s_8b69b39301169b::t_86aca9bb1eefd1 149-150
+  s_8b69b39301169b::t_182225ca4829b0 152-154,161-163
+  s_8b69b39301169b::t_33202be60d85e1 167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "3b9a1f8b2c5ee65c31cd1860ff142ea3f162f33e",
+  "prompts": {},
+  "sessions": {
+    "s_8b69b39301169b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0921b-db7a-78a3-9557-d5ab73a7900a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
