@@ -85,6 +85,8 @@ pub fn encode(self: *Self, values: []const []const u8, columnValues: *ColumnDict
     }
 
     // fall back to string encoding
+    // TODO: consider using FSST/snappy/lz4 instead of direct zstd or combination of either,
+    // zstd feels not the best compression/throughput
     for (values) |v| {
         try self.values.append(self.allocator, v);
     }
