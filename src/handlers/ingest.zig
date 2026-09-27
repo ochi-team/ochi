@@ -52,10 +52,6 @@ pub fn ingestLokiJsonHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Re
     const params = Params{ .tenantID = ctx.request.tenantID };
 
     try process(ctx.io, res.arena, ctx, uncompressed, params);
-    // process(ctx.io, res.arena, ctx, uncompressed, params) catch |err| switch (err) {
-    //     ApiError.InvalidTimestamp => return err,
-    //     else => return ApiError.FailedToProccess,
-    // };
 
     res.status = 200;
 }
