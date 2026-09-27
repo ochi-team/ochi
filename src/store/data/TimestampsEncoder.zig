@@ -16,7 +16,7 @@ pub const EncodedTimestamps = struct {
     offset: usize,
 };
 
-// TODO: benchmark against gorilla and deltas
+// TODO: benchmark against gorilla and deltas(frame of reference)
 const Self = @This();
 // TODO: we should inline zint package, it must reduce the build size
 // and give a leverate to make it more optimal

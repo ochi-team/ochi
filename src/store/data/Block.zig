@@ -522,6 +522,90 @@ test "initFromLines and initFromData produce identical blocks" {
     }
 }
 
+test "initFromData decodes multiple typed columns in one block without cross-column corruption" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    const sid = SID{ .id = 1, .tenantID = 1111 };
+
+    var fieldsStorage: [10][2]Field = undefined;
+    var lines: [10]Line = undefined;
+    for (0..10) |i| {
+        fieldsStorage[i] = .{
+            .{ .key = "client", .value = try std.fmt.allocPrint(alloc, "10.1.0.{d}", .{i}) },
+            .{ .key = "seen", .value = try std.fmt.allocPrint(alloc, "2026-08-01T00:00:{d:0>2}.000Z", .{i}) },
+        };
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = fieldsStorage[i][0..] };
+    }
+    defer {
+        for (fieldsStorage) |fields| {
+            for (fields) |f| alloc.free(f.value);
+        }
+    }
+
+    var blockA = try Block.initFromLines(alloc, &lines);
+    defer blockA.deinit(alloc);
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    const memTable = try MemTable.init(alloc);
+    const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
+    defer table.close(io);
+
+    const writer = try TableWriter.initMem(alloc, memTable, timestampsEncoders, compressionPool);
+    defer writer.deinit(alloc);
+
+    var bh = BlockHeader.initFromBlock(&blockA, sid);
+    try writer.writeBlock(io, alloc, &blockA, &bh);
+
+    const sr = TableReader{
+        .table = table,
+        .metaIndexBuf = writer.metaindexDst.buffer.items,
+        .columnsKeysBuf = writer.columnKeysDst.buffer.items,
+        .columnIdxsBuf = writer.columnIdxsDst.buffer.items,
+        .columnIDGen = writer.columnIDGen,
+        .colIdx = &writer.colIdx,
+    };
+
+    var bd = BlockData.initEmpty();
+    defer bd.deinit(alloc);
+    try bd.readFrom(io, alloc, &bh, &sr);
+
+    var unpacker = Unpacker(false).init(decompressionPool);
+    defer unpacker.deinit(alloc);
+    var decoder: ValuesDecoder = .{};
+    defer decoder.deinit(alloc);
+
+    var blockB = try Block.initFromData(io, alloc, timestampsEncoders, &bd, false, &unpacker, &decoder);
+    defer blockB.deinit(alloc);
+
+    var gatheredLines = std.ArrayList(Line).empty;
+    defer {
+        for (gatheredLines.items) |line| alloc.free(line.fields);
+        gatheredLines.deinit(alloc);
+    }
+    try blockB.gatherLines(alloc, &gatheredLines);
+
+    try testing.expectEqual(lines.len, gatheredLines.items.len);
+    for (lines, gatheredLines.items) |origLine, gatheredLine| {
+        for (origLine.fields) |of| {
+            var found = false;
+            for (gatheredLine.fields) |gf| {
+                if (std.mem.eql(u8, of.key, gf.key)) {
+                    found = true;
+                    try testing.expectEqualStrings(of.value, gf.value);
+                }
+            }
+            try testing.expect(found);
+        }
+    }
+}
+
 test "areSameFields: happy path" {
     var fields1 = [_]Field{
         .{ .key = "level", .value = "info" },

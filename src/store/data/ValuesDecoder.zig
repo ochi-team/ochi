@@ -9,9 +9,10 @@ const ColumnType = @import("ColumnHeader.zig").ColumnType;
 /// ValuesDecoder decodes values encoded by ValuesEncoder back to string representations.
 const Self = @This();
 
-// since it's used only under arena allocator we never precisely allocate buf in advance,
-// that's why you won't see there .ensureUnusedCapacity call
+// buf holds the currently decoded column's bytes.
+// the previously processed columns are collected in the decodedBuffer
 buf: std.ArrayList(u8) = .empty,
+decodedBuffer: std.ArrayList([]u8) = .empty,
 values: std.ArrayList([]const u8) = .empty,
 dictStrings: ?[]const []const u8 = null,
 
@@ -19,6 +20,7 @@ dictStrings: ?[]const []const u8 = null,
 /// it doesn't use .clearRetainingCapacity in order not to retain dangling memory
 pub fn resetArena(self: *Self) void {
     self.buf = .empty;
+    self.decodedBuffer = .empty;
     self.values = .empty;
     self.dictStrings = null;
 }
@@ -27,8 +29,24 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     if (self.dictStrings) |ds| {
         alloc.free(ds);
     }
+    for (self.decodedBuffer.items) |b| alloc.free(b);
+    self.decodedBuffer.deinit(alloc);
     self.buf.deinit(alloc);
     self.values.deinit(alloc);
+}
+
+fn refreshBuf(self: *Self, alloc: Allocator, capacity: usize) !void {
+    if (self.buf.capacity > 0) {
+        try self.decodedBuffer.append(alloc, self.buf.allocatedSlice());
+        self.buf = .empty;
+    }
+    // TODO: although it's all on arena it compplicates the development,
+    // this buffer must not be freshed,
+    // but rather popped from decodedBuffer if we know the capacity in advance and passed further to the decoding API,
+    // so that it allows to remove self.buf usage.
+    // in general implementation must be reconsidered from scratch to use the allocations api less as possible
+    // to cause less `try`
+    self.buf = try std.ArrayList(u8).initCapacity(alloc, capacity);
 }
 
 pub fn decode(
@@ -63,9 +81,7 @@ pub fn decode(
             }
         },
         .uint8 => {
-            // all these ensureUnusedCapacity are rudimental,
-            // decode is used only inside arena
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 3);
+            try self.refreshBuf(alloc, values.len * 3);
             for (values, 0..) |v, i| {
                 if (v.len < 1) {
                     return error.InvalidValueLength;
@@ -77,7 +93,7 @@ pub fn decode(
             }
         },
         .uint16 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 5);
+            try self.refreshBuf(alloc, values.len * 5);
             for (values, 0..) |v, i| {
                 if (v.len < 2) {
                     return error.InvalidValueLength;
@@ -89,7 +105,7 @@ pub fn decode(
             }
         },
         .uint32 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 10);
+            try self.refreshBuf(alloc, values.len * 10);
             for (values, 0..) |v, i| {
                 if (v.len < 4) {
                     return error.InvalidValueLength;
@@ -101,7 +117,7 @@ pub fn decode(
             }
         },
         .uint64 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 20);
+            try self.refreshBuf(alloc, values.len * 20);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -113,7 +129,7 @@ pub fn decode(
             }
         },
         .int64 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 20);
+            try self.refreshBuf(alloc, values.len * 20);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -125,7 +141,7 @@ pub fn decode(
             }
         },
         .float64 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 64);
+            try self.refreshBuf(alloc, values.len * 64);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
@@ -137,7 +153,7 @@ pub fn decode(
             }
         },
         .ipv4 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 15);
+            try self.refreshBuf(alloc, values.len * 15);
             for (values, 0..) |v, i| {
                 if (v.len < 4) {
                     return error.InvalidValueLength;
@@ -149,7 +165,7 @@ pub fn decode(
             }
         },
         .timestampIso8601 => {
-            try self.buf.ensureUnusedCapacity(alloc, values.len * 30);
+            try self.refreshBuf(alloc, values.len * 32);
             for (values, 0..) |v, i| {
                 if (v.len < 8) {
                     return error.InvalidValueLength;
