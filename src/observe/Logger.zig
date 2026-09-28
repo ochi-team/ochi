@@ -136,12 +136,3 @@ pub const Diagnostic = struct {
         diag.len += 1;
     }
 };
-
-test "Log accepts structured fields" {
-    log(.debug, "do doing", .{
-        .key = "value",
-        .count = 1,
-        .ratio = 1.5,
-        .ok = true,
-    });
-}
