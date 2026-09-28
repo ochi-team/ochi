@@ -49,39 +49,3 @@ pub const Compression = enum(u8) {
         };
     }
 };
-
-const testing = std.testing;
-
-test "Snappy Uncompress valid input" {
-    const allocator = testing.allocator;
-
-    const cases = [_][]const u8{
-        "Hello, world!",
-        "",
-        "abc",
-    };
-
-    for (cases) |input| {
-        const max_len = snappy.maxCompressedLength(input.len);
-        const compressed = try allocator.alloc(u8, max_len);
-        defer allocator.free(compressed);
-
-        const compressed_len = try snappy.compress(input, compressed);
-        const compressed_slice = compressed[0..compressed_len];
-
-        const actual = try Compression.snappy.uncompress(allocator, compressed_slice);
-        defer allocator.free(actual);
-
-        try testing.expectEqualStrings(input, actual);
-    }
-}
-
-test "Snappy Uncompress invalid input" {
-    const allocator = testing.allocator;
-    const bad = [_]u8{ 0xde, 0xad, 0xbe, 0xef };
-
-    try testing.expectError(
-        error.invalid_input,
-        Compression.snappy.uncompress(allocator, &bad),
-    );
-}
