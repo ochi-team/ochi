@@ -1,0 +1,25 @@
+src/store/data/BlockReader_test.zig
+  s_4ade8ac029ac09::t_d7be17e12b40ea 1-238
+src/store/data/Packer.zig
+  s_4ade8ac029ac09::t_215b275eb35445 40,45,54,58,74,188-192,214-215
+src/store/data/Packer_test.zig
+  s_4ade8ac029ac09::t_e0fe2f66c4c856 1-173
+src/store/data/StreamDestination_test.zig
+  s_4ade8ac029ac09::t_c7a00c74df1563 1-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "fcd9145edc5252ea884e4177e1cd51b5f9f327b7",
+  "prompts": {},
+  "sessions": {
+    "s_4ade8ac029ac09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7e915cb-11b1-4282-a8ea-6e4550b9f89c",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
