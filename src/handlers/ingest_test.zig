@@ -1,4 +1,3 @@
-/// insert module provides write path for Ochi
 const std = @import("std");
 const Io = std.Io;
 
