@@ -9,7 +9,7 @@ const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
-const Self = @This();
+const IndexBlockHeader = @This();
 
 // Maximum size for an index block (8MB)
 pub const maxIndexBlockSize: u64 = 8 * 1024 * 1024;
@@ -22,7 +22,7 @@ offset: u64 = 0,
 size: u64 = 0,
 
 pub fn writeIndexBlock(
-    self: *Self,
+    self: *IndexBlockHeader,
     io: Io,
     allocator: Allocator,
     indexBlockBuf: *std.ArrayList(u8),
@@ -51,7 +51,7 @@ pub fn writeIndexBlock(
 
 // sid 24 + self 32 = 56
 pub const encodeExpectedSize = 56;
-pub fn encode(self: Self, buf: []u8) usize {
+pub fn encode(self: IndexBlockHeader, buf: []u8) usize {
     var enc = Encoder.init(buf);
     self.sid.encode(&enc);
     enc.writeInt(u64, self.minTs);
@@ -61,7 +61,7 @@ pub fn encode(self: Self, buf: []u8) usize {
     return enc.offset;
 }
 
-pub fn decode(buf: []const u8) Self {
+pub fn decode(buf: []const u8) IndexBlockHeader {
     var decoder = Decoder.init(buf);
     const sid = SID.decode(buf);
     decoder.offset += SID.encodeBound;
@@ -83,7 +83,7 @@ pub fn readIndexBlockHeaders(
     allocator: Allocator,
     decompressionPool: *DecompressionPool,
     compressed: []const u8,
-) ![]Self {
+) ![]IndexBlockHeader {
     const decompressedSize = try encoding.getFrameContentSize(compressed);
 
     var decompressedBuf = try allocator.alloc(u8, decompressedSize);
@@ -96,7 +96,7 @@ pub fn readIndexBlockHeaders(
 
     const count = decompressed.len / encodeExpectedSize;
 
-    var dst = try allocator.alloc(Self, count);
+    var dst = try allocator.alloc(IndexBlockHeader, count);
     var i: usize = 0;
     errdefer allocator.free(dst);
 
@@ -115,7 +115,7 @@ pub fn readIndexBlockHeaders(
 
 // TODO: consider to move it under builtin.is_test condition or have it in the testing.assert,
 // have it in release safe also must be vaible
-fn validateIndexBlockHeaders(headers: []const Self) void {
+fn validateIndexBlockHeaders(headers: []const IndexBlockHeader) void {
     for (1..headers.len) |i| {
         std.debug.assert(!headers[i].sid.lessThan(headers[i - 1].sid));
     }

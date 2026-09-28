@@ -6,20 +6,20 @@ const Locked = @import("../../../stds/Locked.zig").Locked;
 const Ring = @import("../../../stds/Ring.zig").Ring;
 const Lookup = @import("Lookup.zig");
 
-const Self = @This();
+const LookupPool = @This();
 
 const LockedLookup = Locked(Lookup);
 
 lookups: []LockedLookup,
 ring: Ring(LockedLookup),
 
-pub fn init(allocator: Allocator, count: usize) !*Self {
+pub fn init(allocator: Allocator, count: usize) !*LookupPool {
     std.debug.assert(count > 0);
 
     const lookups = try allocator.alloc(LockedLookup, count);
     for (lookups) |*l| l.* = .{ .val = .empty };
 
-    const pool = try allocator.create(Self);
+    const pool = try allocator.create(LookupPool);
     pool.* = .{
         .lookups = lookups,
         .ring = Ring(LockedLookup).init(lookups),
@@ -27,12 +27,12 @@ pub fn init(allocator: Allocator, count: usize) !*Self {
     return pool;
 }
 
-pub fn deinit(self: *Self, io: Io, allocator: Allocator) void {
+pub fn deinit(self: *LookupPool, io: Io, allocator: Allocator) void {
     for (self.lookups) |*l| l.val.deinit(io, allocator);
     allocator.free(self.lookups);
     allocator.destroy(self);
 }
 
-pub fn next(self: *Self) *LockedLookup {
+pub fn next(self: *LookupPool) *LockedLookup {
     return self.ring.next();
 }

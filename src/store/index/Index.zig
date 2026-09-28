@@ -38,18 +38,18 @@ comptime {
     }
 }
 
-const Self = @This();
+const Index = @This();
 
 recorder: *IndexRecorder,
 
-pub fn init(recorder: *IndexRecorder) Self {
+pub fn init(recorder: *IndexRecorder) Index {
     return .{
         .recorder = recorder,
     };
 }
 
 pub fn hasStream(
-    self: *Self,
+    self: *Index,
     io: Io,
     alloc: Allocator,
     sid: SID,
@@ -85,7 +85,7 @@ pub fn hasStream(
 }
 
 pub fn queryAllStreamIDs(
-    self: *Self,
+    self: *Index,
     io: Io,
     alloc: Allocator,
     tenantID: u64,
@@ -112,7 +112,7 @@ pub fn queryAllStreamIDs(
     );
 }
 
-pub fn indexStream(self: *Self, io: Io, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
+pub fn indexStream(self: *Index, io: Io, alloc: Allocator, sid: SID, tags: []Field, encodedTags: []const u8) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "Index.indexStream",
@@ -209,7 +209,7 @@ pub const QueryIndexCacheValue = struct {
 
 pub const QuerySIDsResult = struct { sids: std.ArrayList(SID) };
 pub fn querySIDs(
-    self: *Self,
+    self: *Index,
     io: Io,
     requestArena: Allocator,
     alloc: Allocator,

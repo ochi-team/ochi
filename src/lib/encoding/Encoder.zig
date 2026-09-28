@@ -1,17 +1,17 @@
 const std = @import("std");
 
-const Self = @This();
+const Encoder = @This();
 
 /// Serializer provides a single point for encoding values into byte buffers.
 buf: []u8,
 offset: usize = 0,
 
-pub fn init(buf: []u8) Self {
+pub fn init(buf: []u8) Encoder {
     return .{ .buf = buf };
 }
 
 /// Write a typed integer value to the buffer using big-endian encoding
-pub fn writeInt(self: *Self, comptime T: type, value: T) void {
+pub fn writeInt(self: *Encoder, comptime T: type, value: T) void {
     const slice = self.buf[self.offset .. self.offset + @sizeOf(T)];
     self.offset += @sizeOf(T);
     var bytes: [@sizeOf(T)]u8 = undefined;
@@ -20,19 +20,19 @@ pub fn writeInt(self: *Self, comptime T: type, value: T) void {
 }
 
 /// Write raw bytes to the buffer
-pub fn writeBytes(self: *Self, bytes: []const u8) void {
+pub fn writeBytes(self: *Encoder, bytes: []const u8) void {
     const slice = self.buf[self.offset .. self.offset + bytes.len];
     self.offset += bytes.len;
     @memcpy(slice, bytes[0..]);
 }
 
-pub fn writeString(self: *Self, str: []const u8) void {
+pub fn writeString(self: *Encoder, str: []const u8) void {
     self.writeVarInt(str.len);
     self.writeBytes(str);
 }
 
 /// Write bytes padded to a fixed size (padding with zeros)
-pub fn writePadded(self: *Self, bytes: []const u8, totalSize: usize) void {
+pub fn writePadded(self: *Encoder, bytes: []const u8, totalSize: usize) void {
     if (bytes.len > totalSize) @panic("negative padding not allowed");
 
     const slice = self.buf[self.offset .. self.offset + totalSize];
@@ -71,7 +71,7 @@ pub fn varIntsBound(comptime T: type, values: []T) usize {
 /// - vlq: https://en.wikipedia.org/wiki/Variable-length_quantity
 /// - Bijou64: https://www.inkandswitch.com/tangents/bijou64/
 /// - vu128 ?
-pub fn writeVarInt(self: *Self, value: u64) void {
+pub fn writeVarInt(self: *Encoder, value: u64) void {
     const slice = self.buf[self.offset..];
 
     var i: u8 = 0;
@@ -86,13 +86,13 @@ pub fn writeVarInt(self: *Self, value: u64) void {
     self.offset += i + 1;
 }
 
-pub inline fn writeVarInts(self: *Self, T: type, values: []T) void {
+pub inline fn writeVarInts(self: *Encoder, T: type, values: []T) void {
     for (values) |v| {
         self.writeVarInt(v);
     }
 }
 
-pub fn writeIntBytes(self: *Self, size: usize, value: u64) void {
+pub fn writeIntBytes(self: *Encoder, size: usize, value: u64) void {
     var buf: [8]u8 = undefined;
     std.mem.writeInt(u64, &buf, value, .big);
     // For big-endian, the least significant bytes are at the end

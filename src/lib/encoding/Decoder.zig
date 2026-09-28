@@ -1,17 +1,17 @@
 const std = @import("std");
 
-const Self = @This();
+const Decoder = @This();
 
 /// Decoder provides a single point for reading values from byte buffers.
 buf: []const u8,
 offset: usize = 0,
 
-pub fn init(buf: []const u8) Self {
+pub fn init(buf: []const u8) Decoder {
     return .{ .buf = buf };
 }
 
 /// Read a typed integer value from the buffer using big-endian decoding
-pub fn readInt(self: *Self, comptime T: type) T {
+pub fn readInt(self: *Decoder, comptime T: type) T {
     const size = @sizeOf(T);
     const bytes: [size]u8 = self.buf[self.offset..][0..size].*;
     self.offset += size;
@@ -19,38 +19,38 @@ pub fn readInt(self: *Self, comptime T: type) T {
 }
 
 /// Read raw bytes from the buffer
-pub fn readBytes(self: *Self, len: usize) []const u8 {
+pub fn readBytes(self: *Decoder, len: usize) []const u8 {
     const result = self.buf[self.offset .. self.offset + len];
     self.offset += len;
     return result;
 }
 
-pub fn readString(self: *Self) []const u8 {
+pub fn readString(self: *Decoder) []const u8 {
     const size = self.readVarInt();
     return self.readBytes(size);
 }
 
 /// Read padded bytes (fixed size with zero padding), return the actual content without padding
-pub fn readPadded(self: *Self, totalSize: usize) []const u8 {
+pub fn readPadded(self: *Decoder, totalSize: usize) []const u8 {
     const bytes = self.readBytes(totalSize);
     // Find the length of actual content (before padding zeros)
     const len = std.mem.indexOfScalar(u8, bytes, 0) orelse totalSize;
     return bytes[0..len];
 }
 
-pub fn readPaddedToBuf(self: *Self, totalSize: usize, buf: []u8) void {
+pub fn readPaddedToBuf(self: *Decoder, totalSize: usize, buf: []u8) void {
     const src = self.readPadded(totalSize);
     @memcpy(buf[0..src.len], src);
     @memset(buf[src.len..], 0);
 }
 
-pub fn readVarInt(self: *Self) u64 {
+pub fn readVarInt(self: *Decoder) u64 {
     const v = readVarIntFromBuf(self.buf[self.offset..]);
     self.offset += v.offset;
     return v.value;
 }
 
-pub fn readVarInts(self: *Self, dst: []u64) void {
+pub fn readVarInts(self: *Decoder, dst: []u64) void {
     for (0..dst.len) |i| {
         dst[i] = self.readVarInt();
     }

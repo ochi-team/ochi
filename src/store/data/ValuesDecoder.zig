@@ -7,7 +7,7 @@ const zeit = @import("zeit");
 const ColumnType = @import("ColumnHeader.zig").ColumnType;
 
 /// ValuesDecoder decodes values encoded by ValuesEncoder back to string representations.
-const Self = @This();
+const ValuesDecoder = @This();
 
 // buf holds the currently decoded column's bytes.
 // the previously processed columns are collected in the decodedBuffer
@@ -18,14 +18,14 @@ dictStrings: ?[]const []const u8 = null,
 
 /// resetArena must be called whenever the arena backing allocator is reset,
 /// it doesn't use .clearRetainingCapacity in order not to retain dangling memory
-pub fn resetArena(self: *Self) void {
+pub fn resetArena(self: *ValuesDecoder) void {
     self.buf = .empty;
     self.decodedBuffer = .empty;
     self.values = .empty;
     self.dictStrings = null;
 }
 
-pub fn deinit(self: *Self, alloc: Allocator) void {
+pub fn deinit(self: *ValuesDecoder, alloc: Allocator) void {
     if (self.dictStrings) |ds| {
         alloc.free(ds);
     }
@@ -35,7 +35,7 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     self.values.deinit(alloc);
 }
 
-fn refreshBuf(self: *Self, alloc: Allocator, capacity: usize) !void {
+fn refreshBuf(self: *ValuesDecoder, alloc: Allocator, capacity: usize) !void {
     if (self.buf.capacity > 0) {
         try self.decodedBuffer.append(alloc, self.buf.allocatedSlice());
         self.buf = .empty;
@@ -50,7 +50,7 @@ fn refreshBuf(self: *Self, alloc: Allocator, capacity: usize) !void {
 }
 
 pub fn decode(
-    self: *Self,
+    self: *ValuesDecoder,
     io: Io,
     alloc: Allocator,
     values: [][]const u8,
@@ -182,7 +182,7 @@ pub fn decode(
     }
 }
 
-pub fn decodeUint8String(self: *Self, n: u8) void {
+pub fn decodeUint8String(self: *ValuesDecoder, n: u8) void {
     if (n < 10) {
         self.buf.appendAssumeCapacity('0' + n);
         return;
@@ -216,25 +216,25 @@ pub fn decodeUint8String(self: *Self, n: u8) void {
     }
 }
 
-fn decodeUint64String(self: *Self, alloc: Allocator, n: u64) !void {
+fn decodeUint64String(self: *ValuesDecoder, alloc: Allocator, n: u64) !void {
     var tmp: [20]u8 = undefined;
     const str = try std.fmt.bufPrint(&tmp, "{d}", .{n});
     try self.buf.appendSlice(alloc, str);
 }
 
-fn decodeInt64String(self: *Self, alloc: Allocator, n: i64) !void {
+fn decodeInt64String(self: *ValuesDecoder, alloc: Allocator, n: i64) !void {
     var tmp: [21]u8 = undefined;
     const str = try std.fmt.bufPrint(&tmp, "{d}", .{n});
     try self.buf.appendSlice(alloc, str);
 }
 
-fn decodeFloat64String(self: *Self, alloc: Allocator, f: f64) !void {
+fn decodeFloat64String(self: *ValuesDecoder, alloc: Allocator, f: f64) !void {
     var tmp: [64]u8 = undefined;
     const str = try std.fmt.bufPrint(&tmp, "{d}", .{f});
     try self.buf.appendSlice(alloc, str);
 }
 
-pub fn decodeIPv4String(self: *Self, n: u32) void {
+pub fn decodeIPv4String(self: *ValuesDecoder, n: u32) void {
     self.decodeUint8String(@intCast((n >> 24) & 0xFF));
     self.buf.appendAssumeCapacity('.');
     self.decodeUint8String(@intCast((n >> 16) & 0xFF));
@@ -244,7 +244,7 @@ pub fn decodeIPv4String(self: *Self, n: u32) void {
     self.decodeUint8String(@intCast(n & 0xFF));
 }
 
-fn decodeTimestampISO8601String(self: *Self, io: Io, alloc: Allocator, nsecs: i64) !void {
+fn decodeTimestampISO8601String(self: *ValuesDecoder, io: Io, alloc: Allocator, nsecs: i64) !void {
     const instant = try zeit.instant(io, .{ .source = .{ .unix_nano = nsecs } });
     const time = instant.time();
 

@@ -17,7 +17,7 @@ pub const EncodedTimestamps = struct {
 };
 
 // TODO: benchmark against gorilla and deltas(frame of reference)
-const Self = @This();
+const TimestampsEncoder = @This();
 // TODO: we should inline zint package, it must reduce the build size
 // and give a leverate to make it more optimal
 const zType = zint.Zint(u64);
@@ -25,7 +25,7 @@ const zType = zint.Zint(u64);
 ctx: zint.Ctx,
 
 pub const TimestampsEncoderPool = struct {
-    const LockedEncoder = Locked(Self);
+    const LockedEncoder = Locked(TimestampsEncoder);
 
     encoders: []LockedEncoder,
     ring: Ring(LockedEncoder),
@@ -90,19 +90,19 @@ pub const TimestampsEncoderPool = struct {
     }
 };
 
-pub fn init(allocator: std.mem.Allocator) !*Self {
+pub fn init(allocator: std.mem.Allocator) !*TimestampsEncoder {
     const ctx = try zint.Ctx.init(allocator);
     errdefer ctx.deinit(allocator);
-    const s = try allocator.create(Self);
+    const s = try allocator.create(TimestampsEncoder);
     s.* = .{ .ctx = ctx };
     return s;
 }
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *TimestampsEncoder, allocator: std.mem.Allocator) void {
     self.ctx.deinit(allocator);
     allocator.destroy(self);
 }
 
-pub fn encode(self: *Self, dst: []u8, tss: []const u64) !EncodedTimestamps {
+pub fn encode(self: *TimestampsEncoder, dst: []u8, tss: []const u64) !EncodedTimestamps {
     const compressedSize = try zType.deltapack_compress(self.ctx, tss, dst);
 
     return .{
@@ -110,7 +110,7 @@ pub fn encode(self: *Self, dst: []u8, tss: []const u64) !EncodedTimestamps {
         .offset = compressedSize,
     };
 }
-pub fn decode(self: *Self, dst: []u64, src: []const u8) !void {
+pub fn decode(self: *TimestampsEncoder, dst: []u64, src: []const u8) !void {
     _ = try zType.deltapack_decompress(self.ctx, src, dst);
 }
 

@@ -13,14 +13,14 @@ const Consts = @import("Consts.zig");
 
 const flushSizeThreshold = Consts.flushSizeThreshold;
 
-const Self = @This();
+const AccumulatorPool = @This();
 
 pub const Slot = struct {
     accumulator: Accumulator,
     mx: Io.Mutex = .init,
 
     // flush deadline timer, armed at flushAtUs
-    parent: *Self = undefined,
+    parent: *AccumulatorPool = undefined,
     xevTimer: xev.Timer,
     timerC: xev.Completion = .{},
     timerCancelC: xev.Completion = .{},
@@ -35,7 +35,7 @@ timerLoop: *TimerLoop,
 pendingMx: std.atomic.Mutex = .unlocked,
 pendingArms: std.ArrayList(*Slot) = .empty,
 
-pub fn init(io: Io, alloc: Allocator, store: *Store, timerLoop: *TimerLoop, count: usize) !*Self {
+pub fn init(io: Io, alloc: Allocator, store: *Store, timerLoop: *TimerLoop, count: usize) !*AccumulatorPool {
     std.debug.assert(count > 0);
 
     const slots = try alloc.alloc(Slot, count);
@@ -53,7 +53,7 @@ pub fn init(io: Io, alloc: Allocator, store: *Store, timerLoop: *TimerLoop, coun
         inited += 1;
     }
 
-    const pool = try alloc.create(Self);
+    const pool = try alloc.create(AccumulatorPool);
     pool.* = .{
         .slots = slots,
         .ring = Ring(Slot).init(slots),
@@ -68,18 +68,18 @@ pub fn init(io: Io, alloc: Allocator, store: *Store, timerLoop: *TimerLoop, coun
     return pool;
 }
 
-pub fn deinit(self: *Self, alloc: Allocator) void {
+pub fn deinit(self: *AccumulatorPool, alloc: Allocator) void {
     for (self.slots) |*slot| slot.accumulator.deinit(alloc);
     alloc.free(self.slots);
     self.pendingArms.deinit(alloc);
     alloc.destroy(self);
 }
 
-pub fn next(self: *Self) *Slot {
+pub fn next(self: *AccumulatorPool) *Slot {
     return self.ring.next();
 }
 
-pub fn acquire(self: *Self, io: Io, bodySize: usize) !*Slot {
+pub fn acquire(self: *AccumulatorPool, io: Io, bodySize: usize) !*Slot {
     const slot = self.next();
     slot.mx.lockUncancelable(io);
     errdefer slot.mx.unlock(io);
@@ -95,13 +95,13 @@ pub fn acquire(self: *Self, io: Io, bodySize: usize) !*Slot {
     return slot;
 }
 
-pub fn release(_: *const Self, io: Io, slot: *Slot) void {
+pub fn release(_: *const AccumulatorPool, io: Io, slot: *Slot) void {
     slot.mx.unlock(io);
 }
 
 /// afterAppend flushes the slot once its buffer crosses flushThresholdPercent,
 /// otherwise arms an idle flush deadline the first time the slot holds data.
-pub fn afterAppend(self: *Self, io: Io, slot: *Slot) !void {
+pub fn afterAppend(self: *AccumulatorPool, io: Io, slot: *Slot) !void {
     const buf = &slot.accumulator.buffer;
     if (buf.end_index >= flushSizeThreshold) {
         try slot.accumulator.flush(io, self.alloc);
@@ -117,7 +117,7 @@ pub fn afterAppend(self: *Self, io: Io, slot: *Slot) !void {
 
 /// flushAll force-flushes every slot; used by the test-only /flush endpoint
 /// to make ingested data visible without waiting on threshold/idle triggers.
-pub fn flushAll(self: *Self, io: Io) !void {
+pub fn flushAll(self: *AccumulatorPool, io: Io) !void {
     for (self.slots) |*slot| {
         slot.mx.lockUncancelable(io);
         defer slot.mx.unlock(io);
@@ -126,7 +126,7 @@ pub fn flushAll(self: *Self, io: Io) !void {
     }
 }
 
-fn requestArm(self: *Self, slot: *Slot) void {
+fn requestArm(self: *AccumulatorPool, slot: *Slot) void {
     {
         TimerLoop.spinLock(&self.pendingMx);
         defer self.pendingMx.unlock();
@@ -139,7 +139,7 @@ fn requestArm(self: *Self, slot: *Slot) void {
 }
 
 fn wakeHandler(ctx: *anyopaque, loop: *xev.Loop) void {
-    const self: *Self = @ptrCast(@alignCast(ctx));
+    const self: *AccumulatorPool = @ptrCast(@alignCast(ctx));
 
     var arms: std.ArrayList(*Slot) = undefined;
     {
@@ -153,7 +153,7 @@ fn wakeHandler(ctx: *anyopaque, loop: *xev.Loop) void {
     for (arms.items) |slot| self.armTimer(loop, slot);
 }
 
-fn armTimer(self: *Self, loop: *xev.Loop, slot: *Slot) void {
+fn armTimer(self: *AccumulatorPool, loop: *xev.Loop, slot: *Slot) void {
     // flushed early before the arm was drained
     const flushAtUs = slot.accumulator.flushAtUs orelse return;
     const nowUs: u64 = @intCast(Io.Timestamp.now(self.io, .real).toMicroseconds());

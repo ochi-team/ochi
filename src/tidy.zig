@@ -59,7 +59,6 @@ test "projectIsFormatted" {
 // TODO: validate git history has no large files (256kb+)
 // TODO: ensure the licenses are ok and there are no AGPL
 // TODO: restrict constCast usage
-// TODO: restrict Self = @This(), use proper type name
 // TODO: restrict std.debug.print
 // TODO: add a ast grep rule to use *const isntead of * everywhere as possible
 // TODO: restrict short path to error.xxx, use only full path

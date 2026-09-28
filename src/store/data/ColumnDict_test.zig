@@ -6,12 +6,12 @@ const Decoder = @import("encoding").Decoder;
 pub const maxDictColumnValueSize = 256;
 pub const maxDictColumnValuesLen = 8;
 
-const Self = @import("ColumnDict.zig");
+const ColumnDict = @import("ColumnDict.zig");
 
 const testing = std.testing;
 
 test "setReturnsNullOnExceedingMaxColumnValueSize" {
-    var cv = try Self.init(testing.allocator);
+    var cv = try ColumnDict.init(testing.allocator);
     defer cv.deinit(testing.allocator);
 
     const oversized_value = try testing.allocator.alloc(u8, maxDictColumnValueSize + 1);
@@ -22,7 +22,7 @@ test "setReturnsNullOnExceedingMaxColumnValueSize" {
 }
 
 test "setReturnsNullOnExceedingTotalValueSize" {
-    var cv = try Self.init(testing.allocator);
+    var cv = try ColumnDict.init(testing.allocator);
     defer cv.deinit(testing.allocator);
 
     const v1 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
@@ -48,7 +48,7 @@ test "setReturnsNullOnExceedingTotalValueSize" {
 }
 
 test "setReturnsNullOnExceedingTotalValuesLen" {
-    var cv = try Self.init(testing.allocator);
+    var cv = try ColumnDict.init(testing.allocator);
     defer cv.deinit(testing.allocator);
 
     var testValues: [8][]const u8 = undefined;
@@ -97,7 +97,7 @@ test "ColumnDictEncode" {
     };
 
     for (cases) |case| {
-        var dict = try Self.init(alloc);
+        var dict = try ColumnDict.init(alloc);
         defer dict.deinit(alloc);
 
         // Populate dict
@@ -115,7 +115,7 @@ test "ColumnDictEncode" {
 
         // Decode
         var dec = Decoder.init(buf[0..enc.offset]);
-        var decoded = try Self.decode(&dec, alloc);
+        var decoded = try ColumnDict.decode(&dec, alloc);
         defer decoded.deinit(alloc);
 
         // Verify - now we can use expectEqualDeep since capacity is consistent
