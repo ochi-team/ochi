@@ -20,18 +20,18 @@ const IndexKind = @import("Index.zig").IndexKind;
 
 const Field = @import("../lines.zig").Field;
 
-const Self = @This();
+const TagRecordsParser = @This();
 
 streamIDs: std.ArrayList(u128) = .empty,
 tenantID: u64 = 0,
 tag: Field = undefined,
 streamsRaw: []const u8 = undefined,
 
-pub fn deinit(self: *Self, alloc: Allocator) void {
+pub fn deinit(self: *TagRecordsParser, alloc: Allocator) void {
     self.streamIDs.deinit(alloc);
 }
 
-pub fn setup(self: *Self, item: []u8) !void {
+pub fn setup(self: *TagRecordsParser, item: []u8) !void {
     self.streamIDs.clearRetainingCapacity();
 
     const kind = item[0];
@@ -49,17 +49,17 @@ pub fn setup(self: *Self, item: []u8) !void {
     self.streamsRaw = item[tenantOffset + offset ..];
 }
 
-pub fn setupStreamsRaw(self: *Self, streamsRaw: []const u8) !void {
+pub fn setupStreamsRaw(self: *TagRecordsParser, streamsRaw: []const u8) !void {
     self.streamIDs.clearRetainingCapacity();
 
     self.streamsRaw = streamsRaw;
 }
 
-pub fn streamsLen(self: *const Self) usize {
+pub fn streamsLen(self: *const TagRecordsParser) usize {
     return self.streamsRaw.len / 16;
 }
 
-pub fn parseStreamIDs(self: *Self, alloc: Allocator) !void {
+pub fn parseStreamIDs(self: *TagRecordsParser, alloc: Allocator) !void {
     if (self.streamsRaw.len == 0) {
         return;
     }
@@ -104,112 +104,6 @@ pub fn encodeRecord(buf: []u8, tenantID: u64, tag: Field, streamIDs: []const u12
     return 1 + @sizeOf(u64) + tagOffset + streamEnc.offset;
 }
 
-const testing = std.testing;
-
-test "setup parses tag record" {
-    const alloc = testing.allocator;
-    var state: Self = .{};
-    defer state.deinit(alloc);
-
-    const tag = Field{ .key = "env", .value = "prod" };
-    const streamIDs = &[_]u128{ 100, 200 };
-    const bufSize = encodeRecordBound(tag, streamIDs.len);
-    const buf = try alloc.alloc(u8, bufSize);
-    defer alloc.free(buf);
-    const totalLen = encodeRecord(buf, 42, tag, streamIDs);
-
-    try state.setup(buf[0..totalLen]);
-
-    try testing.expectEqual(@as(u64, 42), state.tenantID);
-    try testing.expectEqualStrings("env", state.tag.key);
-    try testing.expectEqualStrings("prod", state.tag.value);
-    try testing.expectEqual(@as(usize, 2), state.streamsLen());
-
-    // Test parsing stream IDs
-    try state.parseStreamIDs(alloc);
-
-    try testing.expectEqual(@as(usize, 2), state.streamIDs.items.len);
-    try testing.expectEqual(@as(u128, 100), state.streamIDs.items[0]);
-    try testing.expectEqual(@as(u128, 200), state.streamIDs.items[1]);
-
-    // Test encodePrefix
-    const prefixLen = Self.encodePrefixBound(state.tag);
-    var outBuf: [128]u8 = undefined;
-    Self.encodePrefix(&outBuf, state.tenantID, state.tag);
-
-    try testing.expectEqualSlices(u8, buf[0..prefixLen], outBuf[0..prefixLen]);
-}
-
-test "parseStreamIDs empty" {
-    const alloc = testing.allocator;
-    var state: Self = .{};
-    defer state.deinit(alloc);
-
-    const tag = Field{ .key = "k", .value = "v" };
-    const streamIDs = &[_]u128{};
-    const bufSize = encodeRecordBound(tag, streamIDs.len);
-    const buf = try alloc.alloc(u8, bufSize);
-    defer alloc.free(buf);
-    const totalLen = encodeRecord(buf, 1, tag, streamIDs);
-
-    try state.setup(buf[0..totalLen]);
-    try state.parseStreamIDs(alloc);
-
-    try testing.expectEqual(@as(usize, 0), state.streamIDs.items.len);
-}
-
-test "setup resets parsed stream ids" {
-    const alloc = testing.allocator;
-    var state: Self = .{};
-    defer state.deinit(alloc);
-
-    const tag = Field{ .key = "k", .value = "v" };
-    const firstBuf = try alloc.alloc(u8, encodeRecordBound(tag, 3));
-    const first = firstBuf[0..encodeRecord(firstBuf, 42, tag, &[_]u128{ 1, 2, 3 })];
-    defer alloc.free(first);
-    const secondBuf = try alloc.alloc(u8, encodeRecordBound(tag, 1));
-    const second = secondBuf[0..encodeRecord(secondBuf, 42, tag, &[_]u128{9})];
-    defer alloc.free(second);
-
-    try state.setup(first);
-    try state.parseStreamIDs(alloc);
-    try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
-    try testing.expectEqualDeep(tag, state.tag);
-
-    try state.setup(second);
-    try state.parseStreamIDs(alloc);
-    try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
-    try testing.expectEqualDeep(tag, state.tag);
-}
-
-test "setupStreamsRaw resets parsed stream ids" {
-    const alloc = testing.allocator;
-    var state: Self = .{};
-    defer state.deinit(alloc);
-
-    var tag = Field{ .key = "k", .value = "v" };
-
-    const firstBuf = try alloc.alloc(u8, encodeRecordBound(tag, 3));
-    const first = firstBuf[0..encodeRecord(firstBuf, 42, tag, &[_]u128{ 1, 2, 3 })];
-    defer alloc.free(first);
-
-    const secondBuf = try alloc.alloc(u8, encodeRecordBound(tag, 1));
-    const second = secondBuf[0..encodeRecord(secondBuf, 42, tag, &[_]u128{9})];
-    defer alloc.free(second);
-
-    const tenantOffset = 1 + @sizeOf(u64);
-    const tagPortion = first[tenantOffset..];
-    const offset = tag.decodeIndexTag(tagPortion);
-
-    // make a slice of the streams part only
-    const firstStreamsRaw = first[tenantOffset + offset ..];
-    const secondStreamsRaw = second[tenantOffset + offset ..];
-
-    try state.setupStreamsRaw(firstStreamsRaw);
-    try state.parseStreamIDs(alloc);
-    try testing.expectEqualSlices(u128, &[_]u128{ 1, 2, 3 }, state.streamIDs.items);
-
-    try state.setupStreamsRaw(secondStreamsRaw);
-    try state.parseStreamIDs(alloc);
-    try testing.expectEqualSlices(u128, &[_]u128{9}, state.streamIDs.items);
+test {
+    _ = @import("TagRecordsParser_test.zig");
 }

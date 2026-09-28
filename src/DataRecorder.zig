@@ -488,7 +488,9 @@ pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
 
 fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
     while (self.pendingMerges.load(.acquire) != 0) {
-        Io.sleep(io, .fromMilliseconds(1), .real) catch {};
+        Io.sleep(io, .fromMilliseconds(1), .real) catch {
+            return;
+        };
     }
 }
 
