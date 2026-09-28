@@ -137,7 +137,7 @@ fn writeSyntaxErrorResponse(res: *httpz.Response, errs: []const ErrorReporter.Sy
 /// parseQuery unmarshals a JSON body into a Query.
 /// TODO: implement our zero allloc json parser to eliminate double parsing,
 /// default json parser panics on attempt to parse float64 into u128
-fn parseQuery(alloc: Allocator, data: []const u8) !Query {
+pub fn parseQuery(alloc: Allocator, data: []const u8) !Query {
     const value = try std.json.parseFromSliceLeaky(std.json.Value, alloc, data, .{
         .allocate = .alloc_if_needed,
         .parse_numbers = false,
@@ -175,60 +175,6 @@ fn validateStreamIDs(value: std.json.Value) !void {
     }
 }
 
-test "parseQuery rejects exponent formatted streamIDs outside i128 range" {
-    const Case = struct {
-        content: []const u8,
-        expected: ?Query = null,
-        expectedErr: ?anyerror = null,
-    };
-
-    const validStreamIDs = [_]u128{170141183460469231731687303715884105727};
-    const cases = [_]Case{
-        .{
-            .content =
-            \\{
-            \\  "streamIDs": [170141183460469231731687303715884105727],
-            \\  "start": 0,
-            \\  "end": 1
-            \\}
-            ,
-            .expected = .{
-                .streamIDs = &validStreamIDs,
-                .start = 0,
-                .end = 1,
-            },
-        },
-        .{
-            .content =
-            \\{
-            \\  "streamIDs": [2e38],
-            \\  "start": 0,
-            \\  "end": 1
-            \\}
-            ,
-            .expectedErr = error.InvalidNumber,
-        },
-        .{
-            .content =
-            \\{
-            \\  "streamIDs": ["2e38"],
-            \\  "start": 0,
-            \\  "end": 1
-            \\}
-            ,
-            .expectedErr = error.InvalidNumber,
-        },
-    };
-
-    for (cases) |case| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-
-        if (case.expectedErr) |expectedErr| {
-            try testing.expectError(expectedErr, parseQuery(arena.allocator(), case.content));
-        } else {
-            const query = try parseQuery(arena.allocator(), case.content);
-            try testing.expectEqualDeep(case.expected.?, query);
-        }
-    }
+test {
+    _ = @import("query_test.zig");
 }
