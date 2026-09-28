@@ -3,9 +3,7 @@ const Allocator = std.mem.Allocator;
 const encoding = @import("encoding");
 const tracy = @import("tracy");
 const Encoder = encoding.Encoder;
-const Unpacker = @import("Unpacker.zig").Unpacker;
 const CompressionPool = @import("../compression/CompressionPool.zig");
-const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const Io = std.Io;
 
 const Width = struct {
@@ -39,12 +37,12 @@ fn pickWidth(maxLen: u64) Width {
 pub const compressionKindPlain: u8 = 0;
 pub const compressionKindZstd: u8 = 1;
 
-const Self = @This();
+const Packer = @This();
 
 allocator: Allocator,
 lengths: std.ArrayList(u64),
 
-pub fn init(allocator: Allocator) !Self {
+pub fn init(allocator: Allocator) !Packer {
     return .{
         .allocator = allocator,
         // TODO: reuse a buffer from values encoder,
@@ -53,11 +51,11 @@ pub fn init(allocator: Allocator) !Self {
     };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Packer) void {
     self.lengths.deinit(self.allocator);
 }
 
-pub fn reset(self: *Self) void {
+pub fn reset(self: *Packer) void {
     self.lengths.clearRetainingCapacity();
 }
 
@@ -73,7 +71,7 @@ const PackBound = struct {
     }
 };
 
-pub fn packValuesInterBound(self: *Self, values: []const []const u8) !PackBound {
+pub fn packValuesInterBound(self: *Packer, values: []const []const u8) !PackBound {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "packValuesInterBound",
@@ -187,7 +185,11 @@ fn packBytes(pool: *CompressionPool, io: Io, dest: []u8, src: []u8) !usize {
     if (enc.offset != compressedOffset) {
         // the actual compressed content size is known only after compression,
         // so we have to move the written data if the variable size doesn't match the expectation
-        std.mem.copyForwards(u8, enc.buf[enc.offset..][0..compressedSize], enc.buf[compressedOffset..][0..compressedSize]);
+        std.mem.copyForwards(
+            u8,
+            enc.buf[enc.offset..][0..compressedSize],
+            enc.buf[compressedOffset..][0..compressedSize],
+        );
     }
     enc.offset += compressedSize;
     return enc.offset;
@@ -209,137 +211,6 @@ fn areValuesSame(values: []const []const u8) bool {
     return true;
 }
 
-const testing = std.testing;
-
-// TODO: there must be more properties besides rount-trippness,
-// e.g. size of the output is less
-test "Packer.packValuesRoundtrip" {
-    const alloc = testing.allocator;
-
-    const Case = struct {
-        strings: []const []const u8,
-    };
-
-    var veryLongString: [2 << 15]u8 = undefined;
-    @memset(&veryLongString, 'x');
-    var manyStrings: [512][]const u8 = undefined;
-    for (0..manyStrings.len) |i| {
-        manyStrings[i] = try std.fmt.allocPrint(alloc, "{d}", .{1000 + i});
-    }
-    defer {
-        for (manyStrings) |str| {
-            alloc.free(str);
-        }
-    }
-
-    // u16-width lengths 256..65535, non-invariant block
-    var mediumA: [300]u8 = undefined;
-    @memset(&mediumA, 'a');
-    var mediumB: [500]u8 = undefined;
-    @memset(&mediumB, 'b');
-
-    // u16-width lengths 256..65535, invariant block
-    var mediumC: [400]u8 = undefined;
-    @memset(&mediumC, 'c');
-    var mediumD: [400]u8 = undefined;
-    @memset(&mediumD, 'd');
-
-    // u32-width lengths 65536+, non-invariant block
-    var bigA: [70000]u8 = undefined;
-    @memset(&bigA, 'p');
-    var bigB: [70001]u8 = undefined;
-    @memset(&bigB, 'q');
-
-    // u32-width lengths 65536+, invariant block
-    var bigC: [70000]u8 = undefined;
-    @memset(&bigC, 'e');
-    var bigD: [70000]u8 = undefined;
-    @memset(&bigD, 'f');
-
-    // NOTE: uintBlockType64/uintBlockTypeInvariant64 require a length >= 1<<32
-    // (a 4GiB+ string) to trigger, which isn't practical to allocate in a test.
-    // The u8/u16/u32 cases above exercise the same code path structurally.
-
-    const cases = [_]Case{
-        .{
-            .strings = &[_][]const u8{
-                "192.168.0.1 - - [10/May/2025:13:00:00 +0000]" ++
-                    " \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
-                "192.168.0.1 - - [10/May/2025:13:00:01 +0000]" ++
-                    " \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
-                "192.168.0.1 - - [10/May/2025:13:00:02 +0000]" ++
-                    " \"GET /index.html HTTP/1.1\" 200 1024 \"-\" \"Mozilla/5.0\"",
-            },
-        },
-        .{
-            .strings = &[_][]const u8{
-                "foo",
-                "bar",
-            },
-        },
-        .{
-            .strings = &[_][]const u8{
-                "foo",
-                "foo",
-                "foo",
-            },
-        },
-        .{
-            .strings = &[_][]const u8{
-                &veryLongString,
-            },
-        },
-        .{
-            .strings = manyStrings[0..],
-        },
-        .{
-            // non-invariant, u8-width lengths
-            .strings = &[_][]const u8{ "a", "bb", "ccc" },
-        },
-        .{
-            // empty input
-            .strings = &[_][]const u8{},
-        },
-        .{
-            // zero-length strings mixed with non-zero
-            .strings = &[_][]const u8{ "", "abc", "" },
-        },
-        .{
-            .strings = &[_][]const u8{ &mediumA, &mediumB },
-        },
-        .{
-            .strings = &[_][]const u8{ &mediumC, &mediumD },
-        },
-        .{
-            .strings = &[_][]const u8{ &bigA, &bigB },
-        },
-        .{
-            .strings = &[_][]const u8{ &bigC, &bigD },
-        },
-    };
-
-    for (cases) |case| {
-        var encoder = try Self.init(alloc);
-        defer encoder.deinit();
-
-        var bound = try encoder.packValuesInterBound(case.strings);
-        defer bound.deinit(alloc);
-        const packedValues = try alloc.alloc(u8, bound.lensBound + bound.valuesBound);
-        defer alloc.free(packedValues);
-        const compressionPool = try CompressionPool.init(alloc, 1);
-        defer compressionPool.deinit(alloc);
-        const decompressionPool = try DecompressionPool.init(alloc, 1);
-        defer decompressionPool.deinit(alloc);
-        const n = try packValues(compressionPool, testing.io, packedValues, bound);
-
-        var unpacker: Unpacker(false) = .init(decompressionPool);
-        defer unpacker.deinit(alloc);
-        const unpacked = try unpacker.unpackValues(testing.io, alloc, packedValues[0..n], case.strings.len);
-        defer alloc.free(unpacked);
-
-        try testing.expectEqual(case.strings.len, unpacked.len);
-        for (case.strings, unpacked) |original, decoded| {
-            try testing.expectEqualStrings(original, decoded);
-        }
-    }
+test {
+    _ = @import("Packer_test.zig");
 }

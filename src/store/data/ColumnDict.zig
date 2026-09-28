@@ -6,26 +6,25 @@ const Decoder = @import("encoding").Decoder;
 pub const maxDictColumnValueSize = 256;
 pub const maxDictColumnValuesLen = 8;
 
-// TODO: rename all Self's to its name
-const Self = @This();
+const ColumnDict = @This();
 
 values: std.ArrayList([]const u8),
 
-pub fn init(allocator: std.mem.Allocator) !Self {
+pub fn init(allocator: std.mem.Allocator) !ColumnDict {
     const values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
     return .{
         .values = values,
     };
 }
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *ColumnDict, allocator: std.mem.Allocator) void {
     self.values.deinit(allocator);
 }
 
-pub fn reset(self: *Self) void {
+pub fn reset(self: *ColumnDict) void {
     self.values.clearRetainingCapacity();
 }
 
-pub fn copy(self: *const Self, allocator: std.mem.Allocator) !Self {
+pub fn copy(self: *const ColumnDict, allocator: std.mem.Allocator) !ColumnDict {
     var values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
     errdefer {
         for (values.items) |v| allocator.free(v);
@@ -37,7 +36,7 @@ pub fn copy(self: *const Self, allocator: std.mem.Allocator) !Self {
     return .{ .values = values };
 }
 
-pub fn set(self: *Self, v: []const u8) ?u8 {
+pub fn set(self: *ColumnDict, v: []const u8) ?u8 {
     if (v.len > maxDictColumnValueSize) return null;
 
     var valSize: u16 = 0;
@@ -56,7 +55,7 @@ pub fn set(self: *Self, v: []const u8) ?u8 {
     return @intCast(self.values.items.len - 1);
 }
 
-pub fn bound(self: *const Self) usize {
+pub fn bound(self: *const ColumnDict) usize {
     // 1 byte for count + varint length + string data for each value
     var size: usize = 1; // u8 for count
     for (self.values.items) |str| {
@@ -66,14 +65,14 @@ pub fn bound(self: *const Self) usize {
     return size;
 }
 
-pub fn encode(self: *const Self, enc: *Encoder) void {
+pub fn encode(self: *const ColumnDict, enc: *Encoder) void {
     enc.writeInt(u8, @intCast(self.values.items.len));
     for (self.values.items) |str| {
         enc.writeString(str);
     }
 }
 
-pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !Self {
+pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !ColumnDict {
     const len = dec.readInt(u8);
     var values = try std.ArrayList([]const u8).initCapacity(allocator, maxDictColumnValuesLen);
     for (0..len) |_| {
@@ -85,117 +84,6 @@ pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !Self {
     };
 }
 
-const testing = std.testing;
-
-test "setReturnsNullOnExceedingMaxColumnValueSize" {
-    var cv = try Self.init(testing.allocator);
-    defer cv.deinit(testing.allocator);
-
-    const oversized_value = try testing.allocator.alloc(u8, maxDictColumnValueSize + 1);
-    defer testing.allocator.free(oversized_value);
-
-    const result = cv.set(oversized_value);
-    try testing.expect(result == null);
-}
-
-test "setReturnsNullOnExceedingTotalValueSize" {
-    var cv = try Self.init(testing.allocator);
-    defer cv.deinit(testing.allocator);
-
-    const v1 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    const v2 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    const v3 = try testing.allocator.alloc(u8, maxDictColumnValueSize / 2);
-    defer testing.allocator.free(v1);
-    defer testing.allocator.free(v2);
-    defer testing.allocator.free(v3);
-
-    // fill with some data
-    @memset(v1, 'a');
-    const r1 = cv.set(v1);
-    try testing.expect(r1 != null);
-
-    @memset(v2, 'b');
-    const r2 = cv.set(v2);
-    try testing.expect(r2 != null);
-
-    // this should fail
-    @memset(v3, 'c');
-    const r3 = cv.set(v3);
-    try testing.expect(r3 == null);
-}
-
-test "setReturnsNullOnExceedingTotalValuesLen" {
-    var cv = try Self.init(testing.allocator);
-    defer cv.deinit(testing.allocator);
-
-    var testValues: [8][]const u8 = undefined;
-    for (0..8) |i| {
-        testValues[i] = try testing.allocator.dupe(u8, &[_]u8{@intCast(i)});
-    }
-    defer {
-        for (0..8) |i| {
-            testing.allocator.free(testValues[i]);
-        }
-    }
-
-    // fill with some data
-    for (0..8) |i| {
-        const r = cv.set(testValues[i]);
-        try testing.expect(r != null);
-    }
-
-    const r = cv.set("1a");
-    try testing.expect(r == null);
-}
-
-test "ColumnDictEncode" {
-    const alloc = testing.allocator;
-
-    const Case = struct {
-        values: []const []const u8,
-    };
-
-    const cases = &[_]Case{
-        .{
-            .values = &[_][]const u8{},
-        },
-        .{
-            .values = &[_][]const u8{"value1"},
-        },
-        .{
-            .values = &[_][]const u8{ "value1", "value2", "value3" },
-        },
-        .{
-            .values = &[_][]const u8{ "a", "b", "c", "d", "e", "f", "g", "h" },
-        },
-        .{
-            .values = &[_][]const u8{ "", "non-empty", "another" },
-        },
-    };
-
-    for (cases) |case| {
-        var dict = try Self.init(alloc);
-        defer dict.deinit(alloc);
-
-        // Populate dict
-        for (case.values) |value| {
-            dict.values.appendAssumeCapacity(value);
-        }
-
-        // Encode
-        const bufSize = dict.bound();
-        const buf = try alloc.alloc(u8, bufSize);
-        defer alloc.free(buf);
-
-        var enc = Encoder.init(buf);
-        dict.encode(&enc);
-
-        // Decode
-        var dec = Decoder.init(buf[0..enc.offset]);
-        var decoded = try Self.decode(&dec, alloc);
-        defer decoded.deinit(alloc);
-
-        // Verify - now we can use expectEqualDeep since capacity is consistent
-        try testing.expectEqualDeep(dict, decoded);
-    }
+test {
+    _ = @import("ColumnDict_test.zig");
 }

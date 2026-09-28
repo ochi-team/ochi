@@ -7,7 +7,6 @@ const TableWriter = @import("TableWriter.zig");
 const encoding = @import("encoding");
 const Encoder = encoding.Encoder;
 const Decoder = encoding.Decoder;
-const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Self = @This();
@@ -122,53 +121,6 @@ fn validateIndexBlockHeaders(headers: []const Self) void {
     }
 }
 
-const testing = std.testing;
-
-test "IndexBlockHeaderEncode" {
-    const Case = struct {
-        header: Self,
-        expectedLen: usize,
-    };
-
-    const cases = &[_]Case{
-        .{
-            .header = .{
-                .sid = .{
-                    .tenantID = 42,
-                    .id = 42,
-                },
-                .minTs = 100,
-                .maxTs = 200,
-                .offset = 1,
-                .size = 1234,
-            },
-            .expectedLen = encodeExpectedSize,
-        },
-        .{
-            .header = std.mem.zeroInit(Self, .{}),
-            .expectedLen = encodeExpectedSize,
-        },
-        .{
-            .header = .{
-                .sid = .{
-                    .tenantID = 42,
-                    .id = std.math.maxInt(u128),
-                },
-                .minTs = std.math.maxInt(u64),
-                .maxTs = std.math.maxInt(u64),
-                .offset = std.math.maxInt(u64),
-                .size = std.math.maxInt(u64),
-            },
-            .expectedLen = encodeExpectedSize,
-        },
-    };
-
-    for (cases) |case| {
-        var encodeBuf: [encodeExpectedSize]u8 = undefined;
-        const offset = case.header.encode(&encodeBuf);
-        try testing.expectEqual(case.expectedLen, offset);
-
-        const h = Self.decode(encodeBuf[0..offset]);
-        try testing.expectEqualDeep(case.header, h);
-    }
+test {
+    _ = @import("IndexBlockHeader_test.zig");
 }
