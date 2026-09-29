@@ -9,6 +9,7 @@ const TableHeader = @import("TableHeader.zig");
 const MemTable = @import("MemTable.zig");
 const MetaIndex = @import("MetaIndex.zig");
 const BlockWriter = @import("BlockWriter.zig");
+const BlockWriterTest = @import("BlockWriter_test.zig");
 const MemBlock = @import("MemBlock.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
@@ -193,13 +194,13 @@ test "open reads table from disk" {
 
     try testing.expect(table.inner == .disk);
 
-    const expectedIndex = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.index);
+    const expectedIndex = try BlockWriterTest.readTableFile(io, alloc, tablePath, filenames.index);
     defer alloc.free(expectedIndex);
-    const expectedEntries = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.entries);
+    const expectedEntries = try BlockWriterTest.readTableFile(io, alloc, tablePath, filenames.entries);
     defer alloc.free(expectedEntries);
-    const expectedLens = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.lens);
+    const expectedLens = try BlockWriterTest.readTableFile(io, alloc, tablePath, filenames.lens);
     defer alloc.free(expectedLens);
-    const expectedMetaindexCompressed = try BlockWriter.readTableFile(io, alloc, tablePath, filenames.metaindex);
+    const expectedMetaindexCompressed = try BlockWriterTest.readTableFile(io, alloc, tablePath, filenames.metaindex);
     defer alloc.free(expectedMetaindexCompressed);
 
     var buf = try alloc.alloc(u8, @max(expectedIndex.len, @max(expectedEntries.len, expectedLens.len)));

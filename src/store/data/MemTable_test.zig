@@ -25,32 +25,9 @@ const BlockReader = @import("BlockReader.zig").BlockReader;
 const sampleSid = SID{ .tenantID = 1234, .id = 1 };
 const makeUniqueFieldLines = @import("../../testing/fixtures.zig").makeUniqueFieldLines;
 
-const SampleLines = struct {
-    fields1: [2]Field,
-    fields2: [2]Field,
-    lines: [2]Line,
-};
-
-fn populateSampleLines(sample: *SampleLines) void {
-    sample.fields1 = .{
-        .{ .key = "level", .value = "info" },
-        .{ .key = "app", .value = "seq" },
-    };
-    sample.fields2 = .{
-        .{ .key = "level", .value = "warn" },
-        .{ .key = "app", .value = "seq" },
-    };
-    sample.lines = .{
-        .{
-            .timestampNs = 2,
-            .fields = sample.fields2[0..],
-        },
-        .{
-            .timestampNs = 1,
-            .fields = sample.fields1[0..],
-        },
-    };
-}
+const fixtures = @import("../../testing/fixtures.zig");
+const SampleLines = fixtures.SampleLines;
+const populateSampleLinesUnordered = fixtures.populateSampleLinesUnordered;
 
 fn readFileAll(io: Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{});
@@ -74,12 +51,13 @@ fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(allocator, 1);
     defer timestampsEncoders.deinit(allocator);
 
-    var sample: SampleLines = SampleLines{
+    var sample: SampleLines = .{
         .fields1 = undefined,
         .fields2 = undefined,
+        .fields3 = undefined,
         .lines = undefined,
     };
-    populateSampleLines(&sample);
+    populateSampleLinesUnordered(&sample);
 
     // unordered timestamps in lines so that it tests its sorting
     var lines = [2]Line{
@@ -708,12 +686,13 @@ test "tableHeader timestamp range matches all index blocks" {
 }
 
 fn testFlushToDisk(allocator: std.mem.Allocator, io: Io) !void {
-    var sample: SampleLines = SampleLines{
+    var sample: SampleLines = .{
         .fields1 = undefined,
         .fields2 = undefined,
+        .fields3 = undefined,
         .lines = undefined,
     };
-    populateSampleLines(&sample);
+    populateSampleLinesUnordered(&sample);
     var lines = [2]Line{
         sample.lines[0],
         sample.lines[1],

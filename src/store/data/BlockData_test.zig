@@ -25,41 +25,9 @@ test "BlockData initEmpty and deinit without header" {
     bd.deinit(testing.allocator);
 }
 
-const SampleLines = struct {
-    fields1: [2]Field,
-    fields2: [2]Field,
-    fields3: [2]Field,
-    lines: [3]Line,
-};
-
-fn populateSampleLines(sample: *SampleLines) void {
-    sample.fields1 = .{
-        .{ .key = "level", .value = "info" },
-        .{ .key = "app", .value = "seq" },
-    };
-    sample.fields2 = .{
-        .{ .key = "level", .value = "warn" },
-        .{ .key = "app", .value = "seq" },
-    };
-    sample.fields3 = .{
-        .{ .key = "level", .value = "warn" },
-        .{ .key = "app", .value = "seq" },
-    };
-    sample.lines = .{
-        .{
-            .timestampNs = 1,
-            .fields = sample.fields1[0..],
-        },
-        .{
-            .timestampNs = 2,
-            .fields = sample.fields2[0..],
-        },
-        .{
-            .timestampNs = 3,
-            .fields = sample.fields3[0..],
-        },
-    };
-}
+const fixtures = @import("../../testing/fixtures.zig");
+const SampleLines = fixtures.SampleLines;
+const populateSampleLines = fixtures.populateSampleLines;
 
 test "BlockData readFrom populates columnsData and invariantColumns" {
     const allocator = testing.allocator;

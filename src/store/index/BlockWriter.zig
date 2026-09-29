@@ -261,10 +261,3 @@ fn compressIntoArrayList(self: *BlockWriter, io: Io, alloc: Allocator, dst: *std
 test {
     _ = @import("BlockWriter_test.zig");
 }
-
-pub fn readTableFile(io: Io, alloc: Allocator, tablePath: []const u8, fileName: []const u8) ![]u8 {
-    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
-    var pathWriter = std.Io.Writer.fixed(&pathBuf);
-    try std.fs.path.fmtJoin(&.{ tablePath, fileName }).format(&pathWriter);
-    return fs.readAll(io, alloc, pathWriter.buffered());
-}

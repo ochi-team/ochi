@@ -20,7 +20,7 @@ const MemBlock = @import("MemBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const IndexKind = @import("Index.zig").IndexKind;
-const TagRecordsParser = @import("TagRecordsParser.zig");
+const TagRecordsMergerTest = @import("TagRecordsMerger_test.zig");
 const MemTable = @import("MemTable.zig");
 const Table = @import("Table.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
@@ -32,18 +32,6 @@ const testing = std.testing;
 const SID = @import("../lines.zig").SID;
 const Field = @import("../lines.zig").Field;
 const Encoder = @import("encoding").Encoder;
-
-pub fn createTagRecord(
-    alloc: Allocator,
-    tenantID: u64,
-    tag: Field,
-    streamIDs: []const u128,
-) ![]u8 {
-    const bufSize = TagRecordsParser.encodeRecordBound(tag, streamIDs.len);
-    const buf = try alloc.alloc(u8, bufSize);
-    const recordLen = TagRecordsParser.encodeRecord(buf, tenantID, tag, streamIDs);
-    return buf[0..recordLen];
-}
 
 fn createTestMemBlock(alloc: Allocator, entries: []const []const u8, maxIndexBlockSize: u32) !*MemBlock {
     const block = try MemBlock.init(alloc, .{
@@ -328,7 +316,7 @@ test "BlockMerger.merge tag records" {
                         for (entries.items) |entry| a.free(entry);
                         entries.deinit(a);
                     }
-                    const entry = try createTagRecord(a, 1, t, &[_]u128{ 100, 200 });
+                    const entry = try TagRecordsMergerTest.createTagRecord(a, 1, t, &[_]u128{ 100, 200 });
                     entries.appendAssumeCapacity(entry);
                     return entries.toOwnedSlice(a);
                 }
@@ -347,9 +335,9 @@ test "BlockMerger.merge tag records" {
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, 0, 50));
                     entries.appendAssumeCapacity(try createSidEntry(a, 1, 60));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 2, t, &[_]u128{100}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 2, t, &[_]u128{200}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 3, t, &[_]u128{300}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 2, t, &[_]u128{100}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 2, t, &[_]u128{200}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 3, t, &[_]u128{300}));
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -367,9 +355,9 @@ test "BlockMerger.merge tag records" {
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, 0, 50));
                     entries.appendAssumeCapacity(try createSidEntry(a, 1, 60));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 2, t, &[_]u128{100}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 3, t, &[_]u128{200}));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 4, t, &[_]u128{300}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 2, t, &[_]u128{100}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 3, t, &[_]u128{200}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 4, t, &[_]u128{300}));
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -386,7 +374,7 @@ test "BlockMerger.merge tag records" {
                         entries.deinit(a);
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, 1, 100));
-                    entries.appendAssumeCapacity(try createTagRecord(a, 1, t, &[_]u128{100}));
+                    entries.appendAssumeCapacity(try TagRecordsMergerTest.createTagRecord(a, 1, t, &[_]u128{100}));
                     return entries.toOwnedSlice(a);
                 }
             }.f,
@@ -417,13 +405,13 @@ test "BlockMerger.merge tag records" {
                     }
                     streamIDs1.appendAssumeCapacity(50);
                     entries.appendAssumeCapacity(
-                        try createTagRecord(a, 1, t, streamIDs1.items),
+                        try TagRecordsMergerTest.createTagRecord(a, 1, t, streamIDs1.items),
                     );
                     // Second record with streamIDs: [100, 400]
                     // Would come after deduplicated first record [100, 500]
                     // but 500 > 400, making merged output unsorted
                     entries.appendAssumeCapacity(
-                        try createTagRecord(a, 1, t, &[_]u128{ 10, 40 }),
+                        try TagRecordsMergerTest.createTagRecord(a, 1, t, &[_]u128{ 10, 40 }),
                     );
                     entries.appendAssumeCapacity(try createSidEntry(a, 2, 60));
                     return entries.toOwnedSlice(a);
@@ -451,7 +439,7 @@ test "BlockMerger.merge tag records" {
                             streamIDs.appendAssumeCapacity(i * 100 + j);
                         }
                         entries.appendAssumeCapacity(
-                            try createTagRecord(a, tenantID, t, streamIDs.items),
+                            try TagRecordsMergerTest.createTagRecord(a, tenantID, t, streamIDs.items),
                         );
                     }
                     entries.appendAssumeCapacity(try createSidEntry(a, 100, 999));
