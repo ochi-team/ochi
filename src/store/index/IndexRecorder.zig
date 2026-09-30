@@ -105,6 +105,8 @@ diskMergeSem: Io.Semaphore,
 memMergeSem: Io.Semaphore,
 
 stopped: Stop = .{},
+// counter to complete all the active ticks before handling stopped event
+activeTicks: std.atomic.Value(usize) = .init(0),
 timerLoop: *TimerLoop,
 taskCtx: TaskCtx = undefined,
 mergePool: *xev.ThreadPool,
@@ -233,6 +235,7 @@ pub fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
 // another problem it's hard to test it via checkAllAllocationFailures
 pub fn stop(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
+    self.waitForTicksToDrain(io);
     self.waitForMergesToDrain(io);
 
     try self.flushForce(io, alloc);
@@ -244,6 +247,7 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     defer blocksDestination.deinit(alloc);
 
     try self.flushMemEntries(io, alloc, &blocksDestination, true);
+    self.waitForMergesToDrain(io);
     try self.flushMemTables(io, alloc, true);
 }
 
@@ -572,6 +576,14 @@ pub fn waitForMergesToDrain(self: *IndexRecorder, io: Io) void {
     }
 }
 
+fn waitForTicksToDrain(self: *IndexRecorder, io: Io) void {
+    while (self.activeTicks.load(.acquire) != 0) {
+        Io.sleep(io, .fromMilliseconds(1), .real) catch {
+            return;
+        };
+    }
+}
+
 fn deltaMs(deadlineUs: i64, nowUs: i64) u64 {
     if (deadlineUs <= nowUs) return 0;
     const deltaUs: u64 = @intCast(deadlineUs - nowUs);
@@ -662,6 +674,9 @@ fn tableTimerCallback(
         slot.table = null;
     }
 
+    _ = self.activeTicks.fetchAdd(1, .acquire);
+    defer _ = self.activeTicks.fetchSub(1, .release);
+
     if (self.stopped.isStopped()) return .disarm;
 
     const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
@@ -710,6 +725,9 @@ fn memBlockFlusherTick(ctx: *anyopaque) void {
 
     const tickCtx: *TaskCtx = @ptrCast(@alignCast(ctx));
     const self = tickCtx.recorder;
+
+    _ = self.activeTicks.fetchAdd(1, .acquire);
+    defer _ = self.activeTicks.fetchSub(1, .release);
 
     if (self.stopped.isStopped()) return;
 

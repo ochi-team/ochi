@@ -316,6 +316,8 @@ tableTimerSlots: [maxMemTables]TableTimerSlot,
 // TODO: implement atomic value that change it's value depending on how many times it's read,
 // the idea is to test every break on stop.load() similar to check all allocations failure
 stopped: Stop = .{},
+// counter to complete all the active ticks before handling stopped event
+activeTicks: std.atomic.Value(usize) = .init(0),
 mergeIdx: std.atomic.Value(usize),
 path: []const u8,
 runtime: *Runtime,
@@ -430,6 +432,7 @@ pub fn startTasks(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 // either lock stop or find another way to make sure none of the task are running after g.wait
 pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     self.stopped.stop(io);
+    self.waitForTicksToDrain(io);
     // we ignore canceled error, we stop anyway
     // TODO: make sure it's not possible to run a job after we await,
     // so we block the following scenario:
@@ -450,13 +453,14 @@ pub fn stop(self: *DataRecorder, io: Io, alloc: Allocator) !void {
 
 pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     try self.flushDataShards(io, alloc, true);
+    self.waitForMergesToDrain(io);
     try self.flushMemTables(io, alloc, true);
 }
 
 pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
-    std.debug.assert(self.memTables.items.len == 0);
-
     self.waitForMergesToDrain(io);
+
+    std.debug.assert(self.memTables.items.len == 0);
 
     for (self.pendingTableArms.items) |table| table.release(io);
     for (&self.tableTimerSlots) |*slot| {
@@ -484,6 +488,14 @@ pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
 
 fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
     while (self.pendingMerges.load(.acquire) != 0) {
+        Io.sleep(io, .fromMilliseconds(1), .real) catch {
+            return;
+        };
+    }
+}
+
+fn waitForTicksToDrain(self: *DataRecorder, io: Io) void {
+    while (self.activeTicks.load(.acquire) != 0) {
         Io.sleep(io, .fromMilliseconds(1), .real) catch {
             return;
         };
@@ -534,6 +546,9 @@ fn shardTimerCallback(
     };
     const shard = ud.?;
     const self = shard.parent;
+
+    _ = self.activeTicks.fetchAdd(1, .acquire);
+    defer _ = self.activeTicks.fetchSub(1, .release);
 
     if (self.stopped.isStopped()) return .disarm;
 
@@ -620,6 +635,9 @@ fn tableTimerCallback(
         table.release(io);
         slot.table = null;
     }
+
+    _ = self.activeTicks.fetchAdd(1, .acquire);
+    defer _ = self.activeTicks.fetchSub(1, .release);
 
     if (self.stopped.isStopped()) return .disarm;
 

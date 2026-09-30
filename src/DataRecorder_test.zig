@@ -131,6 +131,7 @@ test "tablesMerger handles more source tables than merge window" {
 
     var table: Table = undefined;
     table.inMerge = true;
+    table.size = 1;
 
     var tablesBuf = [_]*Table{&table} ** (amountOfTablesToMerge + 1);
     var tables = std.ArrayList(*Table).initBuffer(&tablesBuf);
