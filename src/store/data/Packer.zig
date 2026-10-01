@@ -31,6 +31,7 @@ fn pickWidth(maxLen: u64) Width {
     for (widths) |w| {
         if (maxLen < w.max) return w;
     }
+    // TODO: audit all the panics usage and find if we can apply total functions well
     std.debug.panic("unexpected int width, given len={}", .{maxLen});
 }
 
