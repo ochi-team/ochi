@@ -208,6 +208,7 @@ fn tryIntEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValu
 
     return .{
         .type = .int64,
+        // TODO: validate it's searchable (the value fits in rnage after bitCast)
         .min = @bitCast(minVal),
         .max = @bitCast(maxVal),
     };

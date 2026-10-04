@@ -69,4 +69,4 @@ test "projectIsFormatted" {
 // 3. test all failures: allocations, io, disk, etc.
 // 4. setup limits to everything
 // 5. fix allocations
-// 6. work on improved testing: failovers, branch testing, fuzz, properties
+// 6. work on improved testing: failovers, branch testing, fuzz (llvm libfuzzer), profile guided fuzz, properties, mutation testing, mutation testing
