@@ -1,0 +1,22 @@
+src/store/data/ValuesEncoder_test.zig
+  s_61bb197b0d6b1f::t_f88b306174343c 81-119,123-163
+  s_61bb197b0d6b1f::t_c86113a061f39e 120-122
+src/store/data/ValuesEncoder.zig
+  s_61bb197b0d6b1f::t_95fd8280eafbe8 211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "b761afe0ad000bdef2778ccf1348d2c99e6ee1e6",
+  "prompts": {},
+  "sessions": {
+    "s_61bb197b0d6b1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b27f3456-2961-4d38-804a-0c8bef2d9a1c",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
