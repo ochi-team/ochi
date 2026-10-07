@@ -388,7 +388,3 @@ pub fn mergeLines(dst: *std.ArrayList(Line), left: []const Line, right: []const 
         dst.appendSliceAssumeCapacity(right[j..]);
     }
 }
-
-test {
-    _ = @import("merge_test.zig");
-}

@@ -121,7 +121,3 @@ fn getCpuCount() usize {
     };
     return cpus;
 }
-
-test {
-    _ = @import("Runtime_test.zig");
-}

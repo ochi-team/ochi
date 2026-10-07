@@ -1173,7 +1173,3 @@ pub fn selectTablesInRange(
         try dst.append(alloc, table);
     }
 }
-
-test {
-    _ = @import("DataRecorder_test.zig");
-}

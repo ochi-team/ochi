@@ -257,7 +257,3 @@ fn compressIntoArrayList(self: *BlockWriter, io: Io, alloc: Allocator, dst: *std
     dst.items.len += n;
     return n;
 }
-
-test {
-    _ = @import("BlockWriter_test.zig");
-}

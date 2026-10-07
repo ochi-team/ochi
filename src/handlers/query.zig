@@ -174,7 +174,3 @@ fn validateStreamIDs(value: std.json.Value) !void {
         _ = try std.fmt.parseInt(u128, sid, 10);
     }
 }
-
-test {
-    _ = @import("query_test.zig");
-}

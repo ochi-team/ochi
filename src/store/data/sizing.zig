@@ -69,7 +69,3 @@ fn keyValSize(key: []const u8, val: []const u8) u32 {
     const keySize = if (key.len == 0) msgKey.len else key.len;
     return @intCast(lineSurroundSize + keySize + val.len);
 }
-
-test {
-    _ = @import("sizing_test.zig");
-}

@@ -151,7 +151,3 @@ pub fn Heap(comptime T: type, comptime lessFn: fn (a: T, b: T) bool) type {
         }
     };
 }
-
-test {
-    _ = @import("heap_test.zig");
-}

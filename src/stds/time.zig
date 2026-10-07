@@ -124,7 +124,3 @@ fn isDigits(v: []const u8) bool {
 }
 
 const testing = std.testing;
-
-test {
-    _ = @import("time_test.zig");
-}

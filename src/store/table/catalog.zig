@@ -102,7 +102,3 @@ pub fn removeUnusedTables(io: Io, path: []const u8, tableNames: []const []const 
         try fs.deleteTreeAbsolute(io, pathToDeleteWriter.buffered());
     }
 }
-
-test {
-    _ = @import("catalog_test.zig");
-}

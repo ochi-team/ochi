@@ -1049,7 +1049,3 @@ fn openCreatedTable(
 
     return Table.open(io, alloc, tablePath, decompressionPool);
 }
-
-test {
-    _ = @import("IndexRecorder_test.zig");
-}

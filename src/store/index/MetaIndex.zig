@@ -159,7 +159,3 @@ pub fn compareToKey(key: []const u8, record: MetaIndex) std.math.Order {
         .gt => .gt,
     };
 }
-
-test {
-    _ = @import("MetaIndex_test.zig");
-}

@@ -230,7 +230,3 @@ fn nextBlock(self: *Lookup, io: Io, alloc: Allocator) !bool {
     self.current = self.tablesHeap.array.items[0].current;
     return true;
 }
-
-test {
-    _ = @import("Lookup_test.zig");
-}

@@ -211,7 +211,3 @@ fn areValuesSame(values: []const []const u8) bool {
     }
     return true;
 }
-
-test {
-    _ = @import("Packer_test.zig");
-}

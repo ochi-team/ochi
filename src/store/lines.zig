@@ -405,7 +405,3 @@ pub fn fieldLessThan(_: void, one: Field, another: Field) bool {
 }
 
 const testing = std.testing;
-
-test {
-    _ = @import("lines_test.zig");
-}

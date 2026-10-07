@@ -226,7 +226,3 @@ fn bloomBound(self: *const ColumnHeader) usize {
 fn valuesAndBloomBound(self: *const ColumnHeader) usize {
     return self.valuesBound() + self.bloomBound();
 }
-
-test {
-    _ = @import("ColumnHeader_test.zig");
-}

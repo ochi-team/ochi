@@ -304,7 +304,3 @@ fn decodeTimestampISO8601(v: []const u8) i64 {
     const n = decodeInt(u64, v);
     return @bitCast(n);
 }
-
-test {
-    _ = @import("ValuesDecoder_test.zig");
-}

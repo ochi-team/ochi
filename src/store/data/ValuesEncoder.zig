@@ -364,7 +364,3 @@ pub fn parseIPv4(s: []const u8) !u32 {
         (@as(u32, octets[2]) << 8) |
         @as(u32, octets[3]);
 }
-
-test {
-    _ = @import("ValuesEncoder_test.zig");
-}

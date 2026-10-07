@@ -185,7 +185,3 @@ pub fn process(
         tags.clearRetainingCapacity();
     }
 }
-
-test {
-    _ = @import("ingest_test.zig");
-}

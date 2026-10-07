@@ -18,7 +18,3 @@ pub fn Ring(comptime T: type) type {
         }
     };
 }
-
-test {
-    _ = @import("Ring_test.zig");
-}

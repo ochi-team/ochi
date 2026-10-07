@@ -183,7 +183,3 @@ pub fn sample(self: *PprofAllocator, len: usize) bool {
     }
     return res;
 }
-
-test {
-    _ = @import("PprofAllocator_test.zig");
-}

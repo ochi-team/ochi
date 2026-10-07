@@ -120,7 +120,3 @@ fn validateIndexBlockHeaders(headers: []const IndexBlockHeader) void {
         std.debug.assert(!headers[i].sid.lessThan(headers[i - 1].sid));
     }
 }
-
-test {
-    _ = @import("IndexBlockHeader_test.zig");
-}

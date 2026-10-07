@@ -193,7 +193,3 @@ pub const FilterExpression = union(enum) {
         }
     }
 };
-
-test {
-    _ = @import("Query_test.zig");
-}

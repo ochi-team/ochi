@@ -295,7 +295,3 @@ fn mergeTagsRecords(self: *BlockMerger, alloc: Allocator) !void {
         }
     }
 }
-
-test {
-    _ = @import("BlockMerger_test.zig");
-}

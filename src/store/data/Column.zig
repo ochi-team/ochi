@@ -56,7 +56,3 @@ pub fn decodeAsInvariant(dec: *Decoder, allocator: std.mem.Allocator, comptime d
         .values = values,
     };
 }
-
-test {
-    _ = @import("Column_test.zig");
-}

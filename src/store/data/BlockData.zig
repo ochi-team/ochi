@@ -138,7 +138,3 @@ pub fn readFrom(
 
     self.invariantColumns = columnsHeader.invariantColumns;
 }
-
-test {
-    _ = @import("BlockData_test.zig");
-}

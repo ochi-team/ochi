@@ -51,7 +51,3 @@ pub fn createDir(io: Io, path: []const u8, partitionsPath: []const u8) !void {
 
     try fs.syncPathAndParentDir(io, path);
 }
-
-test {
-    _ = @import("Layout_test.zig");
-}

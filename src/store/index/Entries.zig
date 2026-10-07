@@ -200,7 +200,3 @@ pub fn deinit(self: *Entries, alloc: Allocator) void {
     alloc.free(self.shards);
     alloc.destroy(self);
 }
-
-test {
-    _ = @import("Entries_test.zig");
-}

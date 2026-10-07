@@ -142,7 +142,3 @@ pub fn decodeColumnIdxs(columnIDGen: *ColumnIDGen, alloc: Allocator, src: []cons
     std.debug.assert(dec.offset == src.len);
     return columnIdxs;
 }
-
-test {
-    _ = @import("ColumnIDGen_test.zig");
-}

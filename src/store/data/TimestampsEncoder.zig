@@ -113,7 +113,3 @@ pub fn encode(self: *TimestampsEncoder, dst: []u8, tss: []const u64) !EncodedTim
 pub fn decode(self: *TimestampsEncoder, dst: []u64, src: []const u8) !void {
     _ = try zType.deltapack_decompress(self.ctx, src, dst);
 }
-
-test {
-    _ = @import("TimestampsEncoder_test.zig");
-}

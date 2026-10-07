@@ -334,7 +334,3 @@ pub fn Cache(comptime V: type) type {
         }
     };
 }
-
-test {
-    _ = @import("Cache_test.zig");
-}

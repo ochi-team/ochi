@@ -69,7 +69,3 @@ pub fn writeFile(self: *const TableHeader, io: Io, tablePath: []const u8) !void 
 
     try fs.writeBufferValToFile(io, metadataPathWriter.buffered(), w.buffered());
 }
-
-test {
-    _ = @import("TableHeader_test.zig");
-}

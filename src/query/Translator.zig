@@ -162,7 +162,3 @@ fn allocFilterExpression(
     node.* = expr;
     return node;
 }
-
-test {
-    _ = @import("Translator_test.zig");
-}

@@ -213,7 +213,3 @@ pub fn validateBlockHeaders(bhs: []const BlockHeader) void {
         std.debug.assert(th_curr.min >= th_prev.min);
     }
 }
-
-test {
-    _ = @import("BlockHeader_test.zig");
-}

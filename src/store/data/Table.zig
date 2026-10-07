@@ -736,7 +736,3 @@ fn blockHeaderSidLowerBoundOrder(ctx: SID, bh: BlockHeader) std.math.Order {
 pub fn lessThan(_: void, one: *Table, another: *Table) bool {
     return one.size < another.size;
 }
-
-test {
-    _ = @import("Table_test.zig");
-}

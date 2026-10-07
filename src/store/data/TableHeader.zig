@@ -60,7 +60,3 @@ pub fn readFile(
 
     return parsed.value;
 }
-
-test {
-    _ = @import("TableHeader_test.zig");
-}

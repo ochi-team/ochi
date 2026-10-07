@@ -859,7 +859,3 @@ fn netLookup(userdata: ?*anyopaque, host_name: net.HostName, results: *std.Io.Qu
     const s = debug(userdata);
     return s.base.vtable.netLookup(s.base.userdata, host_name, results, options);
 }
-
-test {
-    _ = @import("DebugIo_test.zig");
-}

@@ -103,7 +103,3 @@ pub fn encodeRecord(buf: []u8, tenantID: u64, tag: Field, streamIDs: []const u12
     }
     return 1 + @sizeOf(u64) + tagOffset + streamEnc.offset;
 }
-
-test {
-    _ = @import("TagRecordsParser_test.zig");
-}

@@ -335,7 +335,3 @@ fn advancePosition(self: *Scanner, consumed: []const u8) void {
         }
     }
 }
-
-test {
-    _ = @import("Scanner_test.zig");
-}

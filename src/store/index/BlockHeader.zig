@@ -117,7 +117,3 @@ pub fn compareToKey(key: []const u8, header: BlockHeader) std.math.Order {
         .gt => .gt,
     };
 }
-
-test {
-    _ = @import("BlockHeader_test.zig");
-}

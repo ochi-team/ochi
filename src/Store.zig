@@ -766,7 +766,3 @@ pub fn dayFromKey(io: Io, key: []const u8) !u32 {
     const ts: u64 = @intCast(inst.timestamp);
     return @intCast(ts / std.time.ns_per_day);
 }
-
-test {
-    _ = @import("Store_test.zig");
-}

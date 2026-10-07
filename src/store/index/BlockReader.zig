@@ -341,7 +341,3 @@ fn logInvalidIndexRange(
         });
     }
 }
-
-test {
-    _ = @import("BlockReader_test.zig");
-}

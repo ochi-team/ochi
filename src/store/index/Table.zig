@@ -303,7 +303,3 @@ pub fn release(self: *Table, io: Io) void {
 
     self.close(io);
 }
-
-test {
-    _ = @import("Table_test.zig");
-}

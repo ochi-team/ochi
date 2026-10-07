@@ -86,7 +86,3 @@ server: ServerConfig = .{},
 
 // app config, defines application level settings
 app: AppConfig = .{},
-
-test {
-    _ = @import("Conf_test.zig");
-}

@@ -83,7 +83,3 @@ pub fn moveParsedState(self: *TagRecordsMerger, alloc: Allocator) !void {
     try self.streamIDs.appendSlice(alloc, self.state.streamIDs.items);
     std.mem.swap(TagRecordsParser, &self.state, &self.prevState);
 }
-
-test {
-    _ = @import("TagRecordsMerger_test.zig");
-}

@@ -231,7 +231,3 @@ pub fn flush(self: *Accumulator, io: Io, alloc: Allocator) !void {
     }
     self.resetBuffered();
 }
-
-test {
-    _ = @import("Accumulator_test.zig");
-}

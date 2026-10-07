@@ -166,7 +166,3 @@ pub fn decode(
 
     return ch;
 }
-
-test {
-    _ = @import("ColumnsHeader_test.zig");
-}

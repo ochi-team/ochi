@@ -56,7 +56,3 @@ pub fn translateQuery(
 
     return query;
 }
-
-test {
-    _ = @import("Loql_test.zig");
-}

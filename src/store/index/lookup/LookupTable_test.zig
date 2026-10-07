@@ -386,7 +386,3 @@ fn readMemBlock(self: *LookupTable, io: Io, alloc: Allocator, blockHeader: Block
         blockHeader.encodingType,
     );
 }
-
-test {
-    _ = @import("LookupTable_test.zig");
-}

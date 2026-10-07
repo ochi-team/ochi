@@ -275,7 +275,3 @@ fn readIndexBlock(
     _ = try decompressionPool.decompress(io, decompressed, compressed);
     return decompressed;
 }
-
-test {
-    _ = @import("BlockReader_test.zig");
-}

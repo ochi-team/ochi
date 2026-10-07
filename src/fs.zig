@@ -130,7 +130,3 @@ pub fn deleteTreeAbsolute(io: Io, absolute_path: []const u8) !void {
 }
 
 const testing = std.testing;
-
-test {
-    _ = @import("fs_test.zig");
-}

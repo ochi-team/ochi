@@ -177,7 +177,3 @@ fn isUnicodeLetter(c: u8) bool {
 fn isUnicodeNumber(c: u8) bool {
     return c == 0;
 }
-
-test {
-    _ = @import("HashTokenizer_test.zig");
-}

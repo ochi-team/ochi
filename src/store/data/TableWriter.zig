@@ -697,7 +697,3 @@ fn writeColumnsHeader(
     bh.columnsHeaderIndexSize = cshIdxOffset;
     try self.columnsHeaderIndexDst.appendAllocated(io, dstIdx, cshIdxOffset);
 }
-
-test {
-    _ = @import("TableWriter_test.zig");
-}

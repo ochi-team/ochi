@@ -5,11 +5,14 @@ pub const hashRounds = 6;
 // TODO: it could be vectorize and be x100 faster
 // https://www.yagiz.co/eliminating-branches-in-cpp-loops
 pub fn isASCII(s: []const u8) bool {
-    var ok: bool = true;
     for (s) |b| {
-        ok &= (b >= 0) & (b < 0x80);
+        // TODO: make it unrolled via &= ?
+        if (!((b >= 0) & (b < 0x80))) {
+            return false;
+        }
     }
-    return ok;
+
+    return true;
 }
 
 pub inline fn isChar(c: u8) bool {

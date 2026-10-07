@@ -391,7 +391,3 @@ pub fn addLinesForSid(
     var linesBySid = [_][]Line{lines};
     return self.addLines(io, allocator, timestampsEncoders, compressionPool, sids[0..], linesBySid[0..]);
 }
-
-test {
-    _ = @import("MemTable_test.zig");
-}

@@ -224,7 +224,3 @@ pub fn Merger(
         }
     };
 }
-
-test {
-    _ = @import("merge_test.zig");
-}

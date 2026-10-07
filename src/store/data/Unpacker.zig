@@ -236,7 +236,3 @@ pub fn unpackU64s(alloc: Allocator, data: []const u8, count: usize) ![]u64 {
     }
     return res;
 }
-
-test {
-    _ = @import("Unpacker_test.zig");
-}

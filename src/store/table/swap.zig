@@ -81,7 +81,3 @@ pub fn Swapper(
         }
     };
 }
-
-test {
-    _ = @import("swap_test.zig");
-}

@@ -121,7 +121,3 @@ fn decodeColumnDescs(dec: *Decoder, ids: *std.ArrayList(u16), offsets: *std.Arra
 }
 
 const testing = std.testing;
-
-test {
-    _ = @import("ColumnsHeaderIndex_test.zig");
-}

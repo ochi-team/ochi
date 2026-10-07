@@ -527,7 +527,3 @@ pub fn decodePlain(
     std.debug.assert(itemsSlice.len == 0);
     std.debug.assert(self.buf.items.len == dataLen);
 }
-
-test {
-    _ = @import("MemBlock_test.zig");
-}

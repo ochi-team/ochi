@@ -383,7 +383,3 @@ pub fn assert(self: *const Block) void {
         std.debug.assert(col.values.len == self.timestamps.len);
     }
 }
-
-test {
-    _ = @import("Block_test.zig");
-}

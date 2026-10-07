@@ -384,7 +384,3 @@ fn allocExpression(self: *Parser, allocator: Allocator, expr: Expression) !*Expr
     node.* = expr;
     return node;
 }
-
-test {
-    _ = @import("Parser_test.zig");
-}

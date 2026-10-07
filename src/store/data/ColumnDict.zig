@@ -83,7 +83,3 @@ pub fn decode(dec: *Decoder, allocator: std.mem.Allocator) !ColumnDict {
         .values = values,
     };
 }
-
-test {
-    _ = @import("ColumnDict_test.zig");
-}

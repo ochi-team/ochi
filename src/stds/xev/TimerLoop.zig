@@ -226,7 +226,3 @@ pub fn join(self: *TimerLoop) void {
         self.thread = null;
     }
 }
-
-test {
-    _ = @import("TimerLoop_test.zig");
-}

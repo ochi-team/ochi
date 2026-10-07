@@ -108,7 +108,3 @@ pub const StreamDestination = union(Tag) {
         }
     }
 };
-
-test {
-    _ = @import("StreamDestination_test.zig");
-}
