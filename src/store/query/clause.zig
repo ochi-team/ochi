@@ -13,9 +13,9 @@ pub fn collectOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const 
         const n = dst.items[i];
 
         i += 1;
-        switch (n) {
+        switch (n.*) {
             .orOp => |e| {
-                dst.appendSliceBounded(e.orOp[0..]) catch {
+                dst.appendSliceBounded(e[0..]) catch {
                     Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
                     continue;
                 };
@@ -24,4 +24,3 @@ pub fn collectOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const 
         }
     }
 }
-
