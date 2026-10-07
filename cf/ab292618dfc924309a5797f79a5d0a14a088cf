@@ -1,0 +1,23 @@
+src/store/query/clause_test.zig
+  s_d8782ca096dc88::t_3d01e31180289a 2-5,9-25,28-35,39-46,49
+  s_d8782ca096dc88::t_6c9ad091e28804 47-48
+  s_d8782ca096dc88::t_162832e09b4575 50-52
+src/store/query/clause.zig
+  s_d8782ca096dc88::t_9c53494a9f5931 16,18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "cfab292618dfc924309a5797f79a5d0a14a088cf",
+  "prompts": {},
+  "sessions": {
+    "s_d8782ca096dc88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0eaa81b1-31c5-423b-9e74-2e8ddb1c87c1",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
