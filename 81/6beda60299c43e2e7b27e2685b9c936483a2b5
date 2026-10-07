@@ -1,0 +1,36 @@
+design.md
+  s_bdefc70f4fdeec::t_5ff70d7e8d2015 236
+  s_bdefc70f4fdeec::t_45825cb6d682a7 1-21,23-26,28-182,184-198,200-235,238-242,244-245
+  s_bdefc70f4fdeec::t_96b403e5f8dcb6 22,27,183,199,237,243
+src/main.zig
+  s_ab682dce51e44f::t_9a49c98529be46 80-81
+  s_ab682dce51e44f::t_54d8c96122d78a 82
+build.zig
+  s_ab682dce51e44f::t_6b5c3bfced32cb 22-33,35-44
+  s_ab682dce51e44f::t_66330ade37ae78 34
+  s_ab682dce51e44f::t_49b0de298cdfa3 45-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "816beda60299c43e2e7b27e2685b9c936483a2b5",
+  "prompts": {},
+  "sessions": {
+    "s_ab682dce51e44f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4f5c7cb7-c373-4013-81c2-d85f2c4ced47",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_bdefc70f4fdeec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9208e65d-5b24-4f3c-9e3c-8621d7f2f566",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
