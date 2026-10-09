@@ -1,0 +1,30 @@
+src/store/query/clause_test.zig
+  s_d8782ca096dc88::t_3d01e31180289a 32
+  s_ac15e698079014::t_d5ee0499877de6 35-37,55-58,66
+src/store/query/clause.zig
+  s_ac15e698079014::t_d5ee0499877de6 13,15-18,20,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "65d304c85eb728e8425e9625c0b120f0c0035cf0",
+  "prompts": {},
+  "sessions": {
+    "s_ac15e698079014": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7f853219-dcdc-4e2c-8f41-5dbf74e313be",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": null
+    },
+    "s_d8782ca096dc88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0eaa81b1-31c5-423b-9e74-2e8ddb1c87c1",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
