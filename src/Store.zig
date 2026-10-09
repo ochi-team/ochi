@@ -524,25 +524,17 @@ pub fn queryStreamIDs(
     from: u64,
     to: u64,
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
-    self.partitionsMx.lockUncancelable(io);
-
     const minDay: u32 = @intCast(from / std.time.ns_per_day);
     const maxDay: u32 = @intCast(to / std.time.ns_per_day);
 
-    const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
     var partsBuf: [retentionDays]*Partition = undefined;
-    var parts = std.ArrayList(*Partition).initBuffer(&partsBuf);
-    defer for (parts.items) |part| part.release(io);
-    for (slice) |part| {
-        part.retain();
-        parts.appendAssumeCapacity(part);
-    }
-
-    self.partitionsMx.unlock(io);
+    const partsLen = self.getPartitions(io, minDay, maxDay, &partsBuf);
+    const parts = partsBuf[0..partsLen];
+    defer for (parts) |part| part.release(io);
 
     var streamIDs: std.AutoArrayHashMapUnmanaged(u128, void) = .empty;
 
-    for (parts.items) |part| {
+    for (parts) |part| {
         var partStreamIDs = try part.queryStreamIDs(io, alloc, tenantID, self.indexMemBlocksCache, self.lookupPool);
         defer partStreamIDs.deinit(alloc);
 
@@ -555,20 +547,12 @@ pub fn queryStreamIDs(
 }
 
 pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
-    var parts = try std.ArrayList(*Partition).initCapacity(alloc, self.partitions.items.len);
-    defer {
-        for (parts.items) |part| part.release(io);
-        parts.deinit(alloc);
-    }
+    var partsBuf: [retentionDays]*Partition = undefined;
+    const partsLen = self.getPartitions(io, 0, std.math.maxInt(u32), &partsBuf);
+    const parts = partsBuf[0..partsLen];
+    defer for (parts) |part| part.release(io);
 
-    self.partitionsMx.lockUncancelable(io);
-    for (self.partitions.items) |part| {
-        parts.appendAssumeCapacity(part);
-        part.retain();
-    }
-    self.partitionsMx.unlock(io);
-
-    for (self.partitions.items) |part| {
+    for (parts) |part| {
         try part.flushForce(io, alloc);
     }
 }
