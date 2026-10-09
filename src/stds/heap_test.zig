@@ -7,7 +7,7 @@
 const std = @import("std");
 const ArrayList = std.ArrayList;
 
-const Heap = @import("Heap.zig").Heap;
+const Heap = @import("heap.zig").Heap;
 const testing = std.testing;
 
 fn lessInt(a: i32, b: i32) bool {
