@@ -1,0 +1,19 @@
+src/store/query/clause_test.zig
+  s_d8782ca096dc88::t_3d01e31180289a 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "ef4d5c8dc52ace669def6319f9a12a3d30941841",
+  "prompts": {},
+  "sessions": {
+    "s_d8782ca096dc88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0eaa81b1-31c5-423b-9e74-2e8ddb1c87c1",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
