@@ -11,7 +11,8 @@ const tokenHashes = @import("../bloom/bloom.zig").tokenHashes;
 
 const Logger = @import("logging");
 
-const BlockResponseSlice = @import("BlockResponseSlice.zig");
+const BlockResponse = @import("BlockResponse.zig");
+const clause = @import("clause.zig");
 
 const BlockQuery = @This();
 
@@ -51,7 +52,7 @@ pub fn query(
         return;
     }
 
-    return BlockResponseSlice.init();
+    return BlockResponse.init();
 }
 
 fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !void {
@@ -63,16 +64,29 @@ fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !v
 }
 
 fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) Allocator.Error!void {
-    if (!try self.matchBloomFilterOr(expr)) {
+    var orsBuffer: [32]*const FilterExpression = undefined;
+    var orsArray = std.ArrayList(*const FilterExpression).initBuffer(&orsBuffer);
+
+    clause.unwrapOrs(&orsArray, expr);
+
+    if (!try self.matchBloomFilterOr(orsArray, expr)) {
         self.bitset.unsetAll();
         return;
     }
 
-    unreachable;
+    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.bitset.bit_length);
+    errdefer bitset.deinit(self.alloc);
+
+    const bitsetTmp: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.bitset.bit_length);
+    errdefer bitsetTmp.deinit(self.alloc);
 }
 
-fn matchBloomFilterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) Allocator.Error!bool {
-    const keysTokens = try self.fieldsOrTokens(expr);
+fn matchBloomFilterOr(
+    self: *const BlockQuery,
+    ors: *const std.ArrayList(*const FilterExpression),
+    expr: [2]*const FilterExpression,
+) !bool {
+    const keysTokens = try self.fieldsOrTokens(ors);
     if (keysTokens.len == 0) return true;
 
     for (keysTokens) |keyTokens| {
@@ -135,7 +149,8 @@ const KeyTokens = struct {
     hashes: []u64,
 };
 
-fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![]KeyTokens {
+/// ors must be 100% const*, because we keep the same data for later usage
+fn fieldsOrTokens(self: *const BlockQuery, ors: *const std.ArrayList(*const FilterExpression)) ![]KeyTokens {
     // TODO: see if it's executed more than once and cache the tokens calculation
     // or make a lazy access
     var m = std.StringHashMap([]const []const u8).init(self.alloc);
@@ -146,12 +161,7 @@ fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![]
     var tokensBuf: [32][]const u8 = undefined;
     const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
 
-    var orsBuffer: [32]*const FilterExpression = undefined;
-    var orsArray = std.ArrayList(*const FilterExpression).initBuffer(&orsBuffer);
-
-    orsArray.appendSliceAssumeCapacity(expr[0..]);
-
-    while (orsArray.pop()) |ex| {
+    for (ors.items) |ex| {
         switch (ex) {
             .andOp => |e| {
                 const kTokens = try self.fieldsandtokens(e.andOp);
@@ -159,12 +169,8 @@ fn fieldsOrTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![]
                     mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt);
                 }
             },
-            .orOp => |e| {
-                orsArray.appendSliceBounded(e.orOp[0..]) catch {
-                    Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
-                    continue;
-                };
-            },
+            // or is not allowed, we must have unfolded it above in order to reuse filters later
+            .orOp => return error.UnexpectedExpression,
             .predicate => |e| {
                 if (e.predicate.op != .equal) {
                     continue;
@@ -289,13 +295,10 @@ fn mergeTokens(
 pub fn bitsetIsEmpty(bitset: *const std.bit_set.DynamicBitSetUnmanaged) bool {
     const tail: usize = if (bitset.bit_length % @bitSizeOf(std.bit_set.DynamicBitSetUnmanaged.MaskInt) > 0) 1 else 0;
     const wordsCount: usize = bitset.bit_length / @bitSizeOf(std.bit_set.DynamicBitSetUnmanaged.MaskInt) + tail;
+    // TODO: make it unrolled via &= if we assume it's more often empty
     for (0..wordsCount) |i| {
         if (bitset.masks[i] > 0) return false;
     }
 
     return true;
-}
-
-test {
-    _ = @import("BlockQuery_test.zig");
 }

@@ -12,7 +12,7 @@ pub fn unwrapOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const F
     while (i < dst.items.len) {
         switch (dst.items[i].*) {
             .orOp => |e| {
-                // don't accumulate or expressions, override them,
+                // don't accumulate ors, override them
 
                 // but first insert to i+1 in order to validated the array has enough space
                 dst.insertBounded(i + 1, e[1]) catch {
