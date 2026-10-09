@@ -5,22 +5,25 @@ const FilterExpression = Query.FilterExpression;
 
 const Logger = @import("logging");
 
-pub fn collectOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const FilterExpression) void {
+pub fn unwrapOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const FilterExpression) void {
     dst.appendSliceAssumeCapacity(expr[0..]);
 
     var i: usize = 0;
     while (i < dst.items.len) {
-        const n = dst.items[i];
-
-        i += 1;
-        switch (n.*) {
+        switch (dst.items[i].*) {
             .orOp => |e| {
-                dst.appendSliceBounded(e[0..]) catch {
+                // don't accumulate or expressions, override them,
+
+                // but first insert to i+1 in order to validated the array has enough space
+                dst.insertBounded(i + 1, e[1]) catch {
                     Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
+                    i += 1;
                     continue;
                 };
+                dst.items[i] = e[0];
             },
-            else => continue,
+            // otherwise move to the next item
+            else => i += 1,
         }
     }
 }

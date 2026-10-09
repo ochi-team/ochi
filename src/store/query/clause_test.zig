@@ -29,10 +29,12 @@ test "collectOrs" {
             var buf: [32]*const FilterExpression = undefined;
             var ors = std.ArrayList(*const FilterExpression).initBuffer(&buf);
 
-            clause.collectOrs(&ors, expr);
+            clause.unwrapOrs(&ors, expr);
 
             try testing.expectEqual(expected.len, ors.items.len);
-            try testing.expectEqualDeep(expected, ors.items);
+            for (0..expected.len) |i| {
+                try testing.expectEqualDeep(expected[i], ors.items[i]);
+            }
         }
     }.f;
 
@@ -50,10 +52,10 @@ test "collectOrs" {
     const xOryOrz = try orOp(alloc, xOry, z);
 
     try f(&.{ x, y }, .{ x, y });
-    // xOrz unwraps to x and z
-    try f(&.{ x, yOrz, y, z }, .{ x, yOrz });
-    try f(&.{ xOry, z, x, y }, .{ xOry, z });
-    try f(&.{ xOry, yOrz, x, y, y, z }, .{ xOry, yOrz });
+    // yOrz unwraps to y and z
+    try f(&.{ x, y, z }, .{ x, yOrz });
+    try f(&.{ x, y, z }, .{ xOry, z });
+    try f(&.{ x, y, y, z }, .{ xOry, yOrz });
     try f(&.{ x, y, z, x }, .{ xOryOrz, x });
 
     const a = try pred(alloc, "a", "1");
@@ -61,7 +63,7 @@ test "collectOrs" {
     const c = try pred(alloc, "c", "3");
 
     const aAndb = try andOp(alloc, a, b);
-    const bAndc = try andOp(alloc, a, b);
+    const bAndc = try andOp(alloc, b, c);
 
     try f(&.{ a, b }, .{ a, b });
     // doesn't unwrap b and c
