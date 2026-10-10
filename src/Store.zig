@@ -11,6 +11,7 @@ const xev = @import("xev");
 
 const Layout = @import("Layout.zig");
 const Stop = @import("stds/Stop.zig");
+const StringsTable = @import("stds/strings.zig").StringsTable;
 
 const StoreMeter = @import("observe/StoreMeter.zig");
 const Logger = @import("logging");
@@ -287,20 +288,15 @@ fn readStoreUsage(self: *Store, io: Io, alloc: Allocator) !u64 {
 }
 
 fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
-    var stack: std.ArrayList([]u8) = try .initCapacity(alloc, 32);
-    defer {
-        for (stack.items) |path| alloc.free(path);
-        stack.deinit(alloc);
-    }
+    var strings = try StringsTable.init(alloc, 2048, 64);
+    defer strings.deinit(alloc);
 
-    const rootPath = try alloc.dupe(u8, root);
-    stack.appendAssumeCapacity(rootPath);
+    _ = try strings.intern(alloc, root);
 
     var total: u64 = 0;
 
-    while (stack.pop()) |path| {
-        defer alloc.free(path);
-
+    while (strings.items.pop()) |slice| {
+        const path = strings.buf.items[slice.start..slice.end];
         var dir = if (std.fs.path.isAbsolute(path))
             try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true })
         else
@@ -311,9 +307,9 @@ fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
         while (try it.next(io)) |entry| {
             switch (entry.kind) {
                 .directory => {
-                    const childPath = try std.fs.path.join(alloc, &.{ path, entry.name });
-                    errdefer alloc.free(childPath);
-                    try stack.append(alloc, childPath);
+                    var w = strings.writer();
+                    try std.fs.path.fmtJoin(&.{ path, entry.name }).format(&w);
+                    _ = try strings.flushWriter(alloc, &w);
                 },
                 .file => {
                     total += (try dir.statFile(io, entry.name, .{})).size;
