@@ -17,7 +17,7 @@ pub const MeterOpt = struct {
 const HitRateMeter = m.Counter(u32);
 const MissRateMeter = m.Counter(u32);
 
-// TODO: make it support comptime meter misses/total
+// TODO: make it pointerless, makes no sense allocate every node on heap
 // TODO: redesign the cache, it feels Node is too large to hold especially for small key
 // as 64 bytes it's doubling the size
 // TODO: try a simple TTL cache if it consumes much less memory and gives enough miss/total ratio

@@ -52,6 +52,7 @@ pub const MemBlockOpts = struct {
     blocksCountHint: usize = 0,
 };
 
+// TODO: use strings table, make the table data configurable (it uses u32 now, comptime type let's us support u16)
 pub const MemEntry = struct {
     start: u16,
     end: u16,
