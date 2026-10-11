@@ -357,3 +357,34 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);
 }
+
+test "flush doesn't crash overflow when the store has more partitions than retention days" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
+
+    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const layout = try Layout.make(io, rootPath, &partitionsPathBuf);
+    var store = try Store.init(io, alloc, &conf, runtime, layout);
+    defer store.deinit(io, alloc);
+
+    // flush requests every partition through a retentionDays-entry buffer,
+    // creating max + 1 partitions makes getPartitions write parts[30],
+    // validate it doesn't fail on out of bound
+    for (0..Store.retentionDays + 1) |day| {
+        const partition = try store.getPartition(io, alloc, @intCast(day));
+        partition.release(io);
+    }
+    try testing.expectEqual(31, store.partitions.items.len);
+
+    // test it doesn't crash
+    try store.flush(io, alloc);
+}

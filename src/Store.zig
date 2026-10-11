@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
+const assert = std.debug.assert;
 
 const zeit = @import("zeit");
 
@@ -73,7 +74,17 @@ runtime: *Runtime,
 conf: *const Conf,
 
 // 30 is a default retention
-const retentionDays = 30;
+pub const retentionDays = 30;
+// TODO: it's a buttplug to solve a problem when the actual amount of partitions larger than retention:
+// 1. when due to lock an old retention wasn't removed on time
+// 2. on upgrade an admin oreduced retention
+// real fix could be an iterator the gives partitions by chunks in order to avoid allocations,
+// the buffer size could be large enough to hold 99% of the cases like 128,
+// currently keep comptime assert to make sure retention is 4x less then the buffer size
+const partitionsBufferSize = 128;
+comptime {
+    assert(retentionDays * 4 < partitionsBufferSize);
+}
 
 const diskUsageSampleIntervalNs = 20 * std.time.ns_per_s;
 const cacheCleanIntervalNs = 30 * std.time.ns_per_s;
@@ -316,7 +327,7 @@ fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
 }
 
 fn writeTableStats(self: *Store, io: Io) !void {
-    var partsBuf: [retentionDays]*Partition = undefined;
+    var partsBuf: [partitionsBufferSize]*Partition = undefined;
     const partsLen = self.getPartitions(io, 0, std.math.maxInt(u32), &partsBuf);
     const parts = partsBuf[0..partsLen];
     defer for (parts) |part| part.release(io);
@@ -477,7 +488,7 @@ pub fn queryLines(
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
 
-    var partsBuf: [retentionDays]*Partition = undefined;
+    var partsBuf: [partitionsBufferSize]*Partition = undefined;
     const partsLen = self.getPartitions(io, minDay, maxDay, &partsBuf);
     const parts = partsBuf[0..partsLen];
     defer for (parts) |part| part.release(io);
@@ -527,7 +538,7 @@ pub fn queryStreamIDs(
     const minDay: u32 = @intCast(from / std.time.ns_per_day);
     const maxDay: u32 = @intCast(to / std.time.ns_per_day);
 
-    var partsBuf: [retentionDays]*Partition = undefined;
+    var partsBuf: [partitionsBufferSize]*Partition = undefined;
     const partsLen = self.getPartitions(io, minDay, maxDay, &partsBuf);
     const parts = partsBuf[0..partsLen];
     defer for (parts) |part| part.release(io);
@@ -547,7 +558,7 @@ pub fn queryStreamIDs(
 }
 
 pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
-    var partsBuf: [retentionDays]*Partition = undefined;
+    var partsBuf: [partitionsBufferSize]*Partition = undefined;
     const partsLen = self.getPartitions(io, 0, std.math.maxInt(u32), &partsBuf);
     const parts = partsBuf[0..partsLen];
     defer for (parts) |part| part.release(io);
@@ -607,7 +618,7 @@ pub fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partitio
 
     var partitionKey: [8]u8 = undefined;
     const partitionKeySlice = try partitionKeyBuf(io, &partitionKey, day);
-    std.debug.assert(std.mem.eql(u8, partitionKeySlice, partitionKey[0..]));
+    assert(std.mem.eql(u8, partitionKeySlice, partitionKey[0..]));
 
     const partitionPath = try std.fs.path.join(alloc, &.{ self.runtime.path, filenames.partitions, partitionKeySlice });
     errdefer alloc.free(partitionPath);
@@ -694,7 +705,7 @@ fn orderPartitions(day: u32, part: *Partition) std.math.Order {
 }
 
 fn createLockFile(io: Io, path: []const u8) !Io.File {
-    std.debug.assert(path[path.len - 1] != std.fs.path.sep);
+    assert(path[path.len - 1] != std.fs.path.sep);
 
     var lockFilePathBuf: [std.fs.max_path_bytes]u8 = undefined;
     const lockFilePath = try std.fmt.bufPrint(
@@ -734,7 +745,7 @@ pub fn partitionKeyBuf(io: Io, buf: []u8, day: u64) ![]u8 {
 }
 
 pub fn dayFromKey(io: Io, key: []const u8) !u32 {
-    std.debug.assert(key.len == 8);
+    assert(key.len == 8);
 
     const day = try std.fmt.parseInt(u64, key[0..2], 10);
     const month = try std.fmt.parseInt(u64, key[2..4], 10);
