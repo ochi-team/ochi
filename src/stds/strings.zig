@@ -58,18 +58,7 @@ pub const StringsTable = struct {
         return slice;
     }
 
-    pub fn writer(self: *StringsTable) std.Io.Writer {
-        return std.Io.Writer.fromArrayList(&self.buf);
-    }
-
-    pub fn flushWriter(self: *StringsTable, alloc: std.mem.Allocator, w: *const std.Io.Writer) !Slice {
-        if (self.buf.items.len + w.end >= std.math.maxInt(u32)) return Error.BoundError;
-
-        const start: u32 = @intCast(self.buf.items.len - w.end);
-        const end: u32 = @intCast(self.buf.items.len);
-
-        const slice: Slice = .{ .start = start, .end = end };
-        try self.items.append(alloc, slice);
-        return slice;
+    pub inline fn get(self: *const StringsTable, slice: Slice) []u8 {
+        return self.buf.items[slice.start..slice.end];
     }
 };

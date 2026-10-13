@@ -296,20 +296,23 @@ fn readDirUsage(io: Io, alloc: Allocator, root: []const u8) !u64 {
     var total: u64 = 0;
 
     while (strings.items.pop()) |slice| {
-        const path = strings.buf.items[slice.start..slice.end];
-        var dir = if (std.fs.path.isAbsolute(path))
-            try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true })
+        var dir = if (std.fs.path.isAbsolute(strings.get(slice)))
+            try std.Io.Dir.openDirAbsolute(io, strings.get(slice), .{ .iterate = true })
         else
-            try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+            try std.Io.Dir.cwd().openDir(io, strings.get(slice), .{ .iterate = true });
         defer dir.close(io);
 
+        // TODO: add a test to cover a very long nested directory structure
         var it = dir.iterate();
         while (try it.next(io)) |entry| {
             switch (entry.kind) {
                 .directory => {
-                    var w = strings.writer();
-                    try std.fs.path.fmtJoin(&.{ path, entry.name }).format(&w);
-                    _ = try strings.flushWriter(alloc, &w);
+                    // we can't use path const here anymore, we mutate buffer in this loop
+                    // so it can become dangling
+                    var joinedBuf: [std.fs.max_path_bytes]u8 = undefined;
+                    var w = std.Io.Writer.fixed(&joinedBuf);
+                    try std.fs.path.fmtJoin(&.{ strings.get(slice), entry.name }).format(&w);
+                    _ = try strings.intern(alloc, w.buffered());
                 },
                 .file => {
                     total += (try dir.statFile(io, entry.name, .{})).size;
