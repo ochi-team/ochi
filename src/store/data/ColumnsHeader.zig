@@ -152,7 +152,7 @@ pub fn decode(
 
     for (0..invariantLen) |i| {
         const colID = cshIdx.invariantColumnID(i);
-        invariantColumns[i] = try Column.decodeAsInvariant(&dec, allocator, false);
+        invariantColumns[i] = try Column.decodeAsInvariant(allocator, &dec, false);
         invariantColumns[i].key = columnIDGen.keyIDs.keys()[colID];
         invariantDecoded = i + 1;
     }

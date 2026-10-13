@@ -43,7 +43,7 @@ pub fn invariantBound(self: *const Column, comptime encodeKey: bool) usize {
     return size;
 }
 
-pub fn decodeAsInvariant(dec: *Decoder, allocator: std.mem.Allocator, comptime decodeKey: bool) !Column {
+pub fn decodeAsInvariant(allocator: std.mem.Allocator, dec: *Decoder, comptime decodeKey: bool) !Column {
     var key: []const u8 = undefined;
     if (decodeKey) {
         key = dec.readString();

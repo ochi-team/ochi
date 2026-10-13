@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 const Table = @import("../data/Table.zig");
 const BlockHeader = @import("../data/BlockHeader.zig");
@@ -10,16 +11,21 @@ const Tokenizer = @import("../bloom/Tokenizer.zig");
 const tokenHashes = @import("../bloom/bloom.zig").tokenHashes;
 
 const Logger = @import("logging");
+const Decoder = @import("encoding").Decoder;
 
 const BlockResponse = @import("BlockResponse.zig");
 const clause = @import("clause.zig");
 
 const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
+const Column = @import("../../store/data/Column.zig");
 
 const BlockQuery = @This();
 
 alloc: Allocator,
 columnIdxs: *const std.StringHashMapUnmanaged(u16),
+
+// caches, initialized empty
+invariantColumnCache: std.ArrayList(Column) = .empty,
 
 pub fn init(
     self: *BlockQuery,
@@ -103,7 +109,7 @@ fn matchBloomFilterOr(
     if (keysTokens.len == 0) return true;
 
     for (keysTokens) |keyTokens| {
-        const v = self.getInvariantColumnValue(keyTokens.key);
+        const v = try self.getInvariantColumnValue(keyTokens.key);
         if (v.len != 0) {
             if (self.matchPredicateByAll(v, keyTokens.tokens)) return true;
 
@@ -124,17 +130,30 @@ fn matchBloomFilterOr(
     return false;
 }
 
-fn getInvariantColumnValue(self: *const BlockQuery, key: []const u8) []const u8 {
+fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
     const id = self.columnIdxs.get(key) orelse return "";
 
-    for (self.invariantColumnCache) |*c| {
-        if (std.mem.eql(u8, c.key, key)) {
-            return c.value;
-        }
+    for (self.invariantColumnCache.items) |*c| {
+        if (std.mem.eql(u8, c.key, key)) return c.value;
     }
 
     const headerIndex = try self.columnsHeaderIndex();
+    for (headerIndex.invariantColumnsIDs.items, 0..) |colID, i| {
+        if (colID != id) continue;
+
+        const block = try self.columnsHeaderBlock();
+        const offset = headerIndex.invariantColumnOffset(i);
+        assert(offset <= block.len);
+
+        var dec = Decoder.init(block[offset..]);
+        const col = Column.ecodeAsInvariant(self.alloc, &dec, false);
+        try self.invariantColumnCache.append(self.alloc, col);
+        return col.values[0];
+    }
+
+    return "";
 }
+
 fn matchPredicateByAll(self: *const BlockQuery, key: []const u8) []const u8 {
     _ = self;
     _ = key;
@@ -156,7 +175,12 @@ fn matchBloomFilter(self: *const BlockQuery, key: []const u8) []const u8 {
     unreachable;
 }
 
-fn columnsHeaderIndex(self: *const BlockQuery) ColumnsHeaderIndex {
+fn columnsHeaderIndex(self: *BlockQuery) !*const ColumnsHeaderIndex {
+    _ = self;
+    unreachable;
+}
+
+fn columnsHeaderBlock(self: *BlockQuery) ![]const u8 {
     _ = self;
     unreachable;
 }
@@ -323,7 +347,7 @@ pub fn bitsetIsEmpty(bitset: *const std.bit_set.DynamicBitSetUnmanaged) bool {
 
 /// clears in bitset every bit that is set in input, both must have the same len
 pub fn bitsetAndNot(bm: *std.bit_set.DynamicBitSetUnmanaged, x: *const std.bit_set.DynamicBitSetUnmanaged) void {
-    std.debug.assert(bm.bit_length == x.bit_length);
+    assert(bm.bit_length == x.bit_length);
     if (bitsetIsEmpty(x)) return;
 
     const wordBits = @bitSizeOf(std.bit_set.DynamicBitSetUnmanaged.MaskInt);

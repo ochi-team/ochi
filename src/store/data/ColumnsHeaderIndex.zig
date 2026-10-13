@@ -57,11 +57,11 @@ pub fn columnOffset(self: *const ColumnsHeaderIndex, i: usize) u32 {
     return self.columnOffsets.items[i];
 }
 
-pub fn invariantColumnID(self: *const ColumnsHeaderIndex, i: usize) u16 {
+pub inline fn invariantColumnID(self: *const ColumnsHeaderIndex, i: usize) u16 {
     return self.invariantColumnsIDs.items[i];
 }
 
-pub fn invariantColumnOffset(self: *const ColumnsHeaderIndex, i: usize) u32 {
+pub inline fn invariantColumnOffset(self: *const ColumnsHeaderIndex, i: usize) u32 {
     return self.invariantColumnOffsets.items[i];
 }
 

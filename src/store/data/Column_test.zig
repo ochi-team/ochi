@@ -49,7 +49,7 @@ test "Self.encodeAsInvariant" {
 
             // Decode
             var dec = Decoder.init(buf[0..enc.offset]);
-            const decoded = try Column.decodeAsInvariant(&dec, alloc, toEncodeKey);
+            const decoded = try Column.decodeAsInvariant(alloc, &dec, toEncodeKey);
             defer alloc.free(decoded.values);
 
             // Verify
