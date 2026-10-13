@@ -14,16 +14,21 @@ const Logger = @import("logging");
 const BlockResponse = @import("BlockResponse.zig");
 const clause = @import("clause.zig");
 
+const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
+
 const BlockQuery = @This();
 
 alloc: Allocator,
+columnIdxs: *const std.StringHashMapUnmanaged(u16),
 
 pub fn init(
     self: *BlockQuery,
     alloc: Allocator,
+    columnIdxs: *const std.StringHashMapUnmanaged(u16),
 ) !BlockQuery {
     self.* = .{
         .alloc = alloc,
+        .columnIdxs = columnIdxs,
     };
 }
 
@@ -120,9 +125,15 @@ fn matchBloomFilterOr(
 }
 
 fn getInvariantColumnValue(self: *const BlockQuery, key: []const u8) []const u8 {
-    const id = self.getColumnId(key);
-    _ = id;
-    unreachable;
+    const id = self.columnIdxs.get(key) orelse return "";
+
+    for (self.invariantColumnCache) |*c| {
+        if (std.mem.eql(u8, c.key, key)) {
+            return c.value;
+        }
+    }
+
+    const headerIndex = try self.columnsHeaderIndex();
 }
 fn matchPredicateByAll(self: *const BlockQuery, key: []const u8) []const u8 {
     _ = self;
@@ -145,9 +156,8 @@ fn matchBloomFilter(self: *const BlockQuery, key: []const u8) []const u8 {
     unreachable;
 }
 
-fn getColumnId(self: *const BlockQuery, key: []const u8) u16 {
+fn columnsHeaderIndex(self: *const BlockQuery) ColumnsHeaderIndex {
     _ = self;
-    _ = key;
     unreachable;
 }
 
