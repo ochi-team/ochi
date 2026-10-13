@@ -17,23 +17,14 @@ const clause = @import("clause.zig");
 const BlockQuery = @This();
 
 alloc: Allocator,
-bitset: std.bit_set.DynamicBitSetUnmanaged,
 
 pub fn init(
     self: *BlockQuery,
     alloc: Allocator,
-    len: usize,
 ) !BlockQuery {
-    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(alloc, len);
     self.* = .{
         .alloc = alloc,
-        .bitset = bitset,
     };
-    self.bitset.setAll();
-}
-
-pub fn deinit(self: *BlockQuery) void {
-    self.bitset.deinit(self.alloc);
 }
 
 pub fn query(
@@ -41,44 +32,61 @@ pub fn query(
     table: *const Table,
     blockHeader: *const BlockHeader,
     q: *const Query,
+    len: usize,
 ) !void {
+    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, len);
+    defer bitset.deinit(self.alloc);
+    self.bitset.setAll();
+
     _ = table;
     _ = blockHeader;
     if (q.fieldsExpr) |fieldsExpr| {
-        try self.filterByExpr(fieldsExpr);
+        try self.filterByExpr(fieldsExpr, &bitset);
     }
 
-    if (bitsetIsEmpty(&self.bitset)) {
+    if (bitsetIsEmpty(&bitset)) {
         return;
     }
 
     return BlockResponse.init();
 }
 
-fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression) !void {
+fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) !void {
     switch (fieldsExpr) {
-        .orOp => |orExpr| try self.filterOr(orExpr),
+        .orOp => |orExpr| try self.filterOr(orExpr, bitset),
         .andOp => |andExpr| try self.filterAnd(andExpr),
         .predicate => |predicate| try self.filterPredicate(predicate),
     }
 }
 
-fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression) Allocator.Error!void {
+fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Allocator.Error!void {
     var orsBuffer: [32]*const FilterExpression = undefined;
     var orsArray = std.ArrayList(*const FilterExpression).initBuffer(&orsBuffer);
 
-    clause.unwrapOrs(&orsArray, expr);
+    if (!clause.unwrapOrs(&orsArray, expr)) {
+        return error.PartialExpressionUnwrap;
+    }
 
     if (!try self.matchBloomFilterOr(orsArray, expr)) {
         self.bitset.unsetAll();
         return;
     }
 
-    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.bitset.bit_length);
-    errdefer bitset.deinit(self.alloc);
+    const res = try bitset.clone(self.alloc);
+    errdefer res.deinit(self.alloc);
 
-    const bitsetTmp: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.bitset.bit_length);
-    errdefer bitsetTmp.deinit(self.alloc);
+    for (orsArray.items) |filter| {
+        const bitsetTmp = try res.clone(self.alloc);
+        defer bitsetTmp.deinit(self.alloc);
+
+        try self.filterByExpr(filter, bitsetTmp);
+        bitsetAndNot(&res, &bitsetTmp);
+        if (bitsetIsEmpty(&res)) {
+            return;
+        }
+    }
+
+    bitsetAndNot(&bitset, &res);
 }
 
 fn matchBloomFilterOr(
@@ -301,4 +309,15 @@ pub fn bitsetIsEmpty(bitset: *const std.bit_set.DynamicBitSetUnmanaged) bool {
     }
 
     return true;
+}
+
+/// clears in bitset every bit that is set in input, both must have the same len
+pub fn bitsetAndNot(bm: *std.bit_set.DynamicBitSetUnmanaged, x: *const std.bit_set.DynamicBitSetUnmanaged) void {
+    std.debug.assert(bm.bit_length == x.bit_length);
+    if (bitsetIsEmpty(x)) return;
+
+    const wordBits = @bitSizeOf(std.bit_set.DynamicBitSetUnmanaged.MaskInt);
+    const wordsCount = (bm.bit_length + wordBits - 1) / wordBits;
+    // padding bits of the last word stay zero: 0 & ~b == 0
+    for (bm.masks[0..wordsCount], x.masks[0..wordsCount]) |*a, b| a.* &= ~b;
 }

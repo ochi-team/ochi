@@ -29,8 +29,9 @@ test "collectOrs" {
             var buf: [32]*const FilterExpression = undefined;
             var ors = std.ArrayList(*const FilterExpression).initBuffer(&buf);
 
-            clause.unwrapOrs(&ors, expr);
+            const res = clause.unwrapOrs(&ors, expr);
 
+            try testing.expectEqual(true, res);
             try testing.expectEqual(expected.len, ors.items.len);
             for (0..expected.len) |i| {
                 try testing.expectEqualDeep(expected[i], ors.items[i]);

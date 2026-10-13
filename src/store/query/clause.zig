@@ -5,8 +5,10 @@ const FilterExpression = Query.FilterExpression;
 
 const Logger = @import("logging");
 
-pub fn unwrapOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const FilterExpression) void {
+pub fn unwrapOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const FilterExpression) bool {
     dst.appendSliceAssumeCapacity(expr[0..]);
+
+    var res: bool = true;
 
     var i: usize = 0;
     while (i < dst.items.len) {
@@ -18,6 +20,7 @@ pub fn unwrapOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const F
                 dst.insertBounded(i + 1, e[1]) catch {
                     Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
                     i += 1;
+                    res = false;
                     continue;
                 };
                 dst.items[i] = e[0];
@@ -26,4 +29,6 @@ pub fn unwrapOrs(dst: *std.ArrayList(*const FilterExpression), expr: [2]*const F
             else => i += 1,
         }
     }
+
+    return res;
 }
