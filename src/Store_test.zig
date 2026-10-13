@@ -11,6 +11,7 @@ const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
 const freeFields = @import("store/lines.zig").freeFields;
 const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
+const copyFields = @import("store/lines.zig").copyFields;
 
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
@@ -273,12 +274,7 @@ test "keepLatestLines sorts by timestamp and trims old rows" {
 
     const makeLine = struct {
         fn run(allocator: Allocator, timestampNs: u64, value: []const u8) !Line {
-            const fields = try allocator.alloc(Field, 1);
-            errdefer allocator.free(fields);
-            const key = try allocator.dupe(u8, "id");
-            errdefer allocator.free(key);
-            const copiedValue = try allocator.dupe(u8, value);
-            fields[0] = .{ .key = key, .value = copiedValue };
+            const fields = try copyFields(allocator, &.{.{ .key = "id", .value = value }});
             return .{ .timestampNs = timestampNs, .fields = fields };
         }
     }.run;
