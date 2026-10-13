@@ -117,11 +117,9 @@ pub fn readAll(io: Io, alloc: Allocator, path: []const u8) ![]u8 {
 
 pub fn deleteTreeAbsolute(io: Io, absolute_path: []const u8) !void {
     std.debug.assert(std.fs.path.isAbsolute(absolute_path));
-    const dirname = std.fs.path.dirname(absolute_path) orelse return error{
-        /// Attempt to remove the root file system path.
-        /// This error is unreachable if `absolute_path` is relative.
-        CannotDeleteRootDirectory,
-    }.CannotDeleteRootDirectory;
+
+    // attempt to remove the root file system path if no dir found
+    const dirname = std.fs.path.dirname(absolute_path) orelse return error.CannotDeleteRootDirectory;
 
     var dir = try Dir.cwd().openDir(io, dirname, .{});
     defer dir.close(io);

@@ -18,6 +18,7 @@ const clause = @import("clause.zig");
 
 const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
 const Column = @import("../../store/data/Column.zig");
+const ColumnHeader = @import("../../store/data/ColumnHeader.zig");
 
 const BlockQuery = @This();
 
@@ -26,6 +27,7 @@ columnIdxs: *const std.StringHashMapUnmanaged(u16),
 
 // caches, initialized empty
 invariantColumnCache: std.ArrayList(Column) = .empty,
+columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
 
 pub fn init(
     self: *BlockQuery,
@@ -116,7 +118,7 @@ fn matchBloomFilterOr(
             continue;
         }
 
-        const columnHeader = self.getColumnHeader(expr, keyTokens.key) orelse continue;
+        const columnHeader = (try self.getColumnHeader(keyTokens.key)) orelse continue;
         switch (columnHeader.type) {
             .dict => {
                 if (self.matchDict(columnHeader.dict.items, keyTokens.tokens)) return true;
@@ -159,16 +161,37 @@ fn matchPredicateByAll(self: *const BlockQuery, key: []const u8) []const u8 {
     _ = key;
     unreachable;
 }
-fn getColumnHeader(self: *const BlockQuery, key: []const u8) []const u8 {
-    _ = self;
-    _ = key;
-    unreachable;
+
+fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
+    const id = self.columnIdxs.get(key) orelse return null;
+
+    for (self.columnHeaderCache.items) |ch| {
+        if (std.mem.eql(u8, ch.key, key)) return ch;
+    }
+
+    const headerIndex = try self.columnsHeaderIndex();
+    for (headerIndex.columnsIDs.items, 0..) |colID, i| {
+        if (colID != id) continue;
+
+        const block = try self.columnsHeaderBlock();
+        const offset = headerIndex.columnOffset(i);
+        assert(offset <= block.len);
+
+        var dec = Decoder.init(block[offset..]);
+        const ch = try ColumnHeader.decode(&dec, key, self.alloc);
+        try self.columnHeaderCache.append(self.alloc, ch);
+        return ch;
+    }
+
+    return null;
 }
+
 fn matchDict(self: *const BlockQuery, key: []const u8) []const u8 {
     _ = self;
     _ = key;
     unreachable;
 }
+
 fn matchBloomFilter(self: *const BlockQuery, key: []const u8) []const u8 {
     _ = self;
     _ = key;
