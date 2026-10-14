@@ -245,7 +245,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         var lines = std.ArrayList(Line).empty;
         defer {
             for (lines.items) |line| {
-                alloc.free(line.fields.fields);
+                alloc.free(line.fields.items);
             }
             lines.deinit(alloc);
         }
@@ -254,9 +254,9 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         for (lines.items) |line| {
             try testing.expect(expectedI < expected.len);
             try testing.expectEqual(expected[expectedI].timestampNs, line.timestampNs);
-            try testing.expectEqual(@as(usize, 1), line.fields.fields.len);
-            try testing.expectEqualStrings(fieldKey, line.fields.fields[0].key);
-            try testing.expectEqualStrings(expected[expectedI].value, line.fields.fields[0].value);
+            try testing.expectEqual(@as(usize, 1), line.fields.items.len);
+            try testing.expectEqualStrings(fieldKey, line.fields.items[0].key);
+            try testing.expectEqualStrings(expected[expectedI].value, line.fields.items[0].value);
             expectedI += 1;
         }
     }

@@ -103,7 +103,7 @@ fn stringifyJsonValueList(writer: *std.Io.Writer, values: []const std.json.Value
 }
 
 fn lineID(line: Line) ?[]const u8 {
-    for (line.fields.fields) |field| {
+    for (line.fields.items) |field| {
         if (std.mem.eql(u8, field.key, "id")) {
             return field.value;
         }
@@ -384,7 +384,7 @@ fn expectResponseLine(expected: Line, actual: std.json.Value) !void {
     var timeBuf: [32]u8 = undefined;
     try testing.expectEqualStrings(try expectedTime.time().bufPrint(&timeBuf, .rfc3339), timestamp);
 
-    for (expected.fields.fields) |field| {
+    for (expected.fields.items) |field| {
         const key = if (field.key.len == 0) msgKey else field.key;
         const actualValue = responseObjectString(actual, key) orelse return error.MissingField;
         try testing.expectEqualStrings(field.value, actualValue);

@@ -557,7 +557,7 @@ test "queryLines" {
         for (case.expected, 0..) |expected, i| {
             try testing.expectEqual(expected.timestampNs, queried.items[i].timestampNs);
             var app: ?[]const u8 = null;
-            for (queried.items[i].fields.fields) |field| {
+            for (queried.items[i].fields.items) |field| {
                 if (std.mem.eql(u8, field.key, "app")) {
                     app = field.value;
                     break;
@@ -718,6 +718,6 @@ test "queryLines reads disk table fields after open" {
     try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
     try testing.expectEqual(@as(usize, 1), queried.items.len);
     try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
-    try testing.expectEqualSlices(u8, "id", queried.items[0].fields.fields[1].key);
-    try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields.fields[1].value);
+    try testing.expectEqualSlices(u8, "id", queried.items[0].fields.items[1].key);
+    try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields.items[1].value);
 }

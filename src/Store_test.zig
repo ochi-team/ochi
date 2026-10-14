@@ -301,9 +301,9 @@ test "keepLatestLines sorts by timestamp and trims old rows" {
     try testing.expectEqual(50, lines.items[0].timestampNs);
     try testing.expectEqual(40, lines.items[1].timestampNs);
     try testing.expectEqual(30, lines.items[2].timestampNs);
-    try testing.expectEqualStrings("newest", lines.items[0].fields.fields[0].value);
-    try testing.expectEqualStrings("newer", lines.items[1].fields.fields[0].value);
-    try testing.expectEqualStrings("middle", lines.items[2].fields.fields[0].value);
+    try testing.expectEqualStrings("newest", lines.items[0].fields.items[0].value);
+    try testing.expectEqualStrings("newer", lines.items[1].fields.items[0].value);
+    try testing.expectEqualStrings("middle", lines.items[2].fields.items[0].value);
 }
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {

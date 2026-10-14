@@ -56,7 +56,7 @@ pub fn linesJsonSize(lines: []const Line) u32 {
 
 pub fn fieldsJsonSize(self: Line) u32 {
     var res: u32 = lineTsSize;
-    for (self.fields.fields) |f| {
+    for (self.fields.items) |f| {
         if (f.value.len == 0) continue;
 
         res += keyValSize(f.key, f.value);

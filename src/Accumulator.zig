@@ -99,7 +99,7 @@ pub fn reinit(
     const tagsCopy = try copyFields(alloc, tags);
     errdefer freeFields(alloc, tagsCopy);
 
-    if (self.currentTags.fields.len > 0) freeFields(alloc, self.currentTags);
+    if (self.currentTags.items.len > 0) freeFields(alloc, self.currentTags);
     if (self.currentEncodedTags.len > 0) alloc.free(self.currentEncodedTags);
 
     self.currentTags = tagsCopy;
@@ -109,7 +109,7 @@ pub fn reinit(
 
 pub fn deinit(self: *Accumulator, alloc: Allocator) void {
     if (self.currentEncodedTags.len > 0) alloc.free(self.currentEncodedTags);
-    if (self.currentTags.fields.len > 0) freeFields(alloc, self.currentTags);
+    if (self.currentTags.items.len > 0) freeFields(alloc, self.currentTags);
     self.resetBuffered();
     self.lines.deinit(alloc);
     alloc.free(self.buffer.buffer);
@@ -133,7 +133,7 @@ fn ensureActiveCheckpoint(self: *Accumulator, io: Io, alloc: Allocator) !void {
     // since checkpoint doesn't survive flush we must restore it
     self.checkpoints[self.checkpointsLen] = .{
         .sid = self.currentSid,
-        .tags = try copyFields(bufferAlloc, self.currentTags.fields),
+        .tags = try copyFields(bufferAlloc, self.currentTags.items),
         .encodedTags = try bufferAlloc.dupe(u8, self.currentEncodedTags),
         .i = self.lines.items.len,
     };
@@ -221,7 +221,7 @@ pub fn flush(self: *Accumulator, io: Io, alloc: Allocator) !void {
         start = checkpoint.i;
         if (chunk.len == 0) continue;
 
-        try self.store.addLines(io, alloc, chunk, checkpoint.tags.fields, checkpoint.encodedTags, checkpoint.sid);
+        try self.store.addLines(io, alloc, chunk, checkpoint.tags.items, checkpoint.encodedTags, checkpoint.sid);
     }
     self.resetBuffered();
 }

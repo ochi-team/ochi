@@ -151,7 +151,7 @@ pub const DataShard = struct {
 
         const bufferAlloc = shard.buffer.allocator();
         for (lines) |line| {
-            validate(line.fields.fields) catch |err| {
+            validate(line.fields.items) catch |err| {
                 switch (err) {
                     error.MaxFieldsPerLineExceeded => {
                         Logger.log(.warn, "DataShard: max fields per line exceeded", .{});
@@ -176,10 +176,10 @@ pub const DataShard = struct {
                 shard.lines.items[shard.lines.items.len - 1]
             else
                 null;
-            var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields.fields else null;
+            var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields.items else null;
 
-            const fieldsCopy = try bufferAlloc.alloc(Field, line.fields.fields.len);
-            for (line.fields.fields, 0..) |field, fieldIndex| {
+            const fieldsCopy = try bufferAlloc.alloc(Field, line.fields.items.len);
+            for (line.fields.items, 0..) |field, fieldIndex| {
                 const prevField: ?Field = if (prevFields) |pfs|
                     if (fieldIndex < pfs.len) pfs[fieldIndex] else null
                 else

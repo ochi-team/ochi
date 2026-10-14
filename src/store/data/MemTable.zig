@@ -283,7 +283,7 @@ pub fn addLines(
         var streamI: usize = 0;
         var blockSize: u32 = 0;
         for (lines, 0..) |line, i| {
-            std.sort.pdq(Field, line.fields.fields, {}, fieldLessThan);
+            std.sort.pdq(Field, line.fields.items, {}, fieldLessThan);
 
             // TODO: the tables splits blocks by stream ids,
             // we might want to split them by log level as well,

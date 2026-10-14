@@ -127,7 +127,7 @@ test "sizingBlockAndFieldsMatch" {
             defer obj.deinit(alloc);
 
             try obj.put(alloc, timestampKey, .{ .string = now });
-            for (line.fields.fields) |f| {
+            for (line.fields.items) |f| {
                 if (f.value.len == 0) continue;
                 const key = if (f.key.len == 0) msgKey else f.key;
                 try obj.put(alloc, key, .{ .string = f.value });

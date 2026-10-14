@@ -136,15 +136,15 @@ test "initFromLines and initFromData produce identical blocks" {
 
         var gatheredLines = std.ArrayList(Line).empty;
         defer {
-            for (gatheredLines.items) |line| alloc.free(line.fields.fields);
+            for (gatheredLines.items) |line| alloc.free(line.fields.items);
             gatheredLines.deinit(alloc);
         }
         try blockA.gatherLines(alloc, &gatheredLines);
         try testing.expectEqual(case.lines.len, gatheredLines.items.len);
         for (case.lines, gatheredLines.items) |origLine, gatheredLine| {
             try testing.expectEqual(origLine.timestampNs, gatheredLine.timestampNs);
-            try testing.expectEqual(origLine.fields.fields.len, gatheredLine.fields.fields.len);
-            for (origLine.fields.fields, gatheredLine.fields.fields) |of, gf| {
+            try testing.expectEqual(origLine.fields.items.len, gatheredLine.fields.items.len);
+            for (origLine.fields.items, gatheredLine.fields.items) |of, gf| {
                 try testing.expectEqualStrings(of.key, gf.key);
                 try testing.expectEqualStrings(of.value, gf.value);
             }
@@ -216,16 +216,16 @@ test "initFromData decodes multiple typed columns in one block without cross-col
 
     var gatheredLines = std.ArrayList(Line).empty;
     defer {
-        for (gatheredLines.items) |line| alloc.free(line.fields.fields);
+        for (gatheredLines.items) |line| alloc.free(line.fields.items);
         gatheredLines.deinit(alloc);
     }
     try blockB.gatherLines(alloc, &gatheredLines);
 
     try testing.expectEqual(lines.len, gatheredLines.items.len);
     for (lines, gatheredLines.items) |origLine, gatheredLine| {
-        for (origLine.fields.fields) |of| {
+        for (origLine.fields.items) |of| {
             var found = false;
-            for (gatheredLine.fields.fields) |gf| {
+            for (gatheredLine.fields.items) |gf| {
                 if (std.mem.eql(u8, of.key, gf.key)) {
                     found = true;
                     try testing.expectEqualStrings(of.value, gf.value);
@@ -358,11 +358,11 @@ test "BlockInitMaxColumns" {
         var keyNum: usize = 0;
         defer {
             for (lines) |l| {
-                for (l.fields.fields) |f| {
+                for (l.fields.items) |f| {
                     alloc.free(f.key);
                     alloc.free(f.value);
                 }
-                alloc.free(l.fields.fields);
+                alloc.free(l.fields.items);
             }
             alloc.free(lines);
         }
@@ -623,7 +623,7 @@ test "Block.put" {
         break :blk &lines;
     };
     const expectedCols5 = blk: {
-        const longValue = linesArray5[0].fields.fields[1].value;
+        const longValue = linesArray5[0].fields.items[1].value;
         var appVal = [_][]const u8{ longValue, longValue };
         var cols = [_]Column{
             .{ .key = "message", .values = appVal[0..] },

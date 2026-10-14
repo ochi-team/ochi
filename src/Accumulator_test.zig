@@ -26,7 +26,7 @@ test "Accumulator.reinit owns stream tags after caller reuses tag storage" {
         .{ .key = "app", .value = "api" },
         .{ .key = "env", .value = "prod" },
     };
-    try testing.expectEqualDeep(expected[0..], accumulator.currentTags.fields);
+    try testing.expectEqualDeep(expected[0..], accumulator.currentTags.items);
 }
 
 test "Accumulator buffers multiple streams and flushes them as separate checkpoints" {

@@ -114,7 +114,7 @@ test "large body is processed and appears in the query response" {
     try testing.expectEqual(lineCount, lines.items.len);
     for (lines.items) |line| {
         var found = false;
-        for (line.fields.fields) |field| {
+        for (line.fields.items) |field| {
             // _msg found
             if (field.key.len == 0) {
                 try testing.expectEqualStrings(message, field.value);

@@ -261,11 +261,11 @@ pub const Fields = struct {
 
     // owns all the memory belong to fields, it's keys and values
     buf: []align(alignment.toByteUnits()) u8,
-    fields: []Field,
+    items: []Field,
 
     /// borrow fields to make freeFields is a no-op for it
     pub fn view(fields: []Field) Fields {
-        return .{ .buf = &.{}, .fields = fields };
+        return .{ .buf = &.{}, .items = fields };
     }
 
     pub const empty: Fields = .view(&.{});
@@ -308,7 +308,7 @@ pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) !Fields {
         copiedFields[i] = .{ .key = key, .value = value };
     }
 
-    return .{ .buf = buf, .fields = copiedFields };
+    return .{ .buf = buf, .items = copiedFields };
 }
 
 pub fn deinitLinesFull(alloc: std.mem.Allocator, lines: *std.ArrayList(Line)) void {
@@ -337,7 +337,7 @@ pub const Line = struct {
         try jw.beginObject();
         try jw.objectField(timestampKey);
         try jw.write(timestamp);
-        for (self.fields.fields) |field| {
+        for (self.fields.items) |field| {
             if (field.value.len == 0) {
                 continue;
             }
