@@ -125,7 +125,7 @@ fn matchBloomFilterOr(
         const columnHeader = (try self.getColumnHeader(keyTokens.key)) orelse continue;
         switch (columnHeader.type) {
             .dict => {
-                if (self.matchDict(columnHeader.dict.items, keyTokens.tokens)) return true;
+                if (try self.matchDict(columnHeader.dict.items, keyTokens.tokens)) return true;
             },
             else => {
                 if (self.matchBloomFilter(expr, columnHeader, keyTokens.hashes)) return true;
@@ -184,10 +184,10 @@ fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
     return null;
 }
 
-fn matchDict(self: *const BlockQuery, key: []const u8) []const u8 {
-    _ = self;
-    _ = key;
-    unreachable;
+fn matchDict(tmpAlloc: Allocator, values: []const []const u8, tokens: []const []const u8) !bool {
+    const valuesJoined = try std.mem.join(tmpAlloc, ",", values);
+    defer tmpAlloc.free(valuesJoined);
+    return match.matchPredicateByAll(valuesJoined, tokens);
 }
 
 fn matchBloomFilter(self: *const BlockQuery, key: []const u8) []const u8 {
