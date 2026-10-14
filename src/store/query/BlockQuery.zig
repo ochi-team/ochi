@@ -20,6 +20,7 @@ const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
 const Column = @import("../../store/data/Column.zig");
 const ColumnHeader = @import("../../store/data/ColumnHeader.zig");
 const bloom = @import("../bloom/bloom.zig");
+const match = @import("match.zig").matchPredicateByAll;
 
 const BlockQuery = @This();
 
@@ -114,7 +115,7 @@ fn matchBloomFilterOr(
     for (keysTokens) |keyTokens| {
         const v = try self.getInvariantColumnValue(keyTokens.key);
         if (v.len != 0) {
-            if (self.matchPredicateByAll(v, keyTokens.tokens)) {
+            if (match.matchPredicateByAll(v, keyTokens.tokens)) {
                 return true;
             }
 
@@ -157,52 +158,6 @@ fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
     }
 
     return "";
-}
-
-/// by all means every token must match
-fn matchPredicateByAll(self: *const BlockQuery, value: []const u8, tokens: []const []const u8) []const u8 {
-    for (tokens) |token| {
-        if (!matchPredicate(value, token)) return false;
-    }
-
-    return true;
-}
-
-fn matchPredicate(v: []const u8, token: []const u8) bool {
-    if (token.len == 0) return v.len == 0;
-
-    if (token.len > v.len) return false;
-
-    return tokenPosition(v, token) != null;
-}
-
-/// returns the offset of the first token sequence occurrence in value
-fn tokenPosition(v: []const u8, token: []const u8) ?usize {
-    if (token.len == 0) return 0;
-    if (token.len > v.len) return null;
-
-    // TODO: support unicode. Now every non-ASCII byte is treated as a separator,
-    const startsWithToken = bloom.isChar(token[0]);
-    const endsWithToken = bloom.isChar(token[token.len - 1]);
-
-    var pos: usize = 0;
-    while (std.mem.indexOfPos(u8, v, pos, token)) |n| {
-        pos = n;
-        const end = pos + token.len;
-
-        if (startsWithToken and pos > 0 and bloom.isChar(v[pos - 1])) {
-            pos += 1;
-            continue;
-        }
-        if (endsWithToken and end < v.len and bloom.isChar(v[end])) {
-            pos += 1;
-            continue;
-        }
-
-        return pos;
-    }
-
-    return null;
 }
 
 fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
