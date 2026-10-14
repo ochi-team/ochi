@@ -50,8 +50,29 @@ pub fn writeBits(dst: []u8, src: []const u64) void {
     }
 }
 
+pub fn containsAll(src: []const u8, hashes: []const u64) bool {
+    if (src.len == 0) return true;
+
+    const maxBits = src.len << 3; // * 8
+    for (hashes) |hash| {
+        const idx = hash % maxBits;
+        const wordIndex = idx / 64;
+        const bitOrder: u6 = @intCast(idx % 64);
+        if (!isEncodedBitSet(src, wordIndex, bitOrder)) return false;
+    }
+
+    return true;
+}
+
+fn isEncodedBitSet(src: []const u8, wordIndex: usize, bitOrder: u6) bool {
+    const byteIndex = wordIndex * @sizeOf(u64) + (7 - bitOrder / 8);
+    const byteBit: u3 = @intCast(bitOrder % 8);
+    return src[byteIndex] & (@as(u8, 1) << byteBit) != 0;
+}
+
 fn setEncodedBit(dst: []u8, wordIndex: usize, bitOrder: u6) void {
     const byteIndex = wordIndex * @sizeOf(u64) + (7 - bitOrder / 8);
     const byteBit: u3 = @intCast(bitOrder % 8);
     dst[byteIndex] |= @as(u8, 1) << byteBit;
 }
+

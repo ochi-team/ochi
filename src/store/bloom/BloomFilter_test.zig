@@ -66,3 +66,35 @@ test "BloomFilter" {
         }
     }
 }
+
+test "containsAll" {
+    const f = struct {
+        fn f(size: usize, written: []const []const u8, queried: []const []const u8, expected: bool) !void {
+            const alloc = std.testing.allocator;
+            var buf: [64]u8 = undefined;
+            const dst = buf[0..size];
+
+            var base: [4]u64 = undefined;
+            for (written, 0..) |token, i| base[i] = std.hash.XxHash64.hash(0, token);
+            BloomFilter.writeBits(dst, base[0..written.len]);
+
+            var hashes: std.ArrayList(u64) = .empty;
+            defer hashes.deinit(alloc);
+            for (queried) |token| {
+                const h = try bloom.tokenHashes(alloc, token);
+                defer alloc.free(h);
+                try hashes.appendSlice(alloc, h);
+            }
+
+            try std.testing.expectEqual(expected, BloomFilter.containsAll(dst, hashes.items));
+        }
+    }.f;
+
+    try f(0, &.{}, &.{"a"}, true);
+    try f(8, &.{}, &.{}, true);
+    try f(8, &.{}, &.{"a"}, false);
+    try f(64, &.{"foo"}, &.{"foo"}, true);
+    try f(64, &.{ "foo", "bar" }, &.{ "bar", "foo" }, true);
+    try f(64, &.{ "foo", "bar" }, &.{"bar"}, true);
+    try f(64, &.{"foo"}, &.{ "foo", "missing" }, false);
+}
