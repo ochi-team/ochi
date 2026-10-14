@@ -75,4 +75,3 @@ fn setEncodedBit(dst: []u8, wordIndex: usize, bitOrder: u6) void {
     const byteBit: u3 = @intCast(bitOrder % 8);
     dst[byteIndex] |= @as(u8, 1) << byteBit;
 }
-

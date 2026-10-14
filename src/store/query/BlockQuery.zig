@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const assert = std.debug.assert;
 
 const Table = @import("../data/Table.zig");
@@ -20,11 +21,16 @@ const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
 const Column = @import("../../store/data/Column.zig");
 const ColumnHeader = @import("../../store/data/ColumnHeader.zig");
 const bloom = @import("../bloom/bloom.zig");
+const BloomFilter = @import("../bloom/BloomFilter.zig");
 const match = @import("match.zig").matchPredicateByAll;
+
+const maxBloomTokensBlockSize = @import("../../store/data/BlockData.zig").maxBloomTokensBlockSize;
 
 const BlockQuery = @This();
 
+io: Io,
 alloc: Allocator,
+table: *const Table,
 columnIdxs: *const std.StringHashMapUnmanaged(u16),
 
 // caches, initialized empty
@@ -33,18 +39,21 @@ columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
 
 pub fn init(
     self: *BlockQuery,
+    io: Io,
     alloc: Allocator,
+    table: *const Table,
     columnIdxs: *const std.StringHashMapUnmanaged(u16),
 ) !BlockQuery {
     self.* = .{
+        .io = io,
         .alloc = alloc,
+        .table = table,
         .columnIdxs = columnIdxs,
     };
 }
 
 pub fn query(
     self: *const BlockQuery,
-    table: *const Table,
     blockHeader: *const BlockHeader,
     q: *const Query,
     len: usize,
@@ -53,7 +62,6 @@ pub fn query(
     defer bitset.deinit(self.alloc);
     self.bitset.setAll();
 
-    _ = table;
     _ = blockHeader;
     if (q.fieldsExpr) |fieldsExpr| {
         try self.filterByExpr(fieldsExpr, &bitset);
@@ -82,7 +90,7 @@ fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression, bitset: *
         return error.PartialExpressionUnwrap;
     }
 
-    if (!try self.matchBloomFilterOr(orsArray, expr)) {
+    if (!try self.matchBloomFilterOr(orsArray)) {
         self.bitset.unsetAll();
         return;
     }
@@ -107,7 +115,6 @@ fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression, bitset: *
 fn matchBloomFilterOr(
     self: *const BlockQuery,
     ors: *const std.ArrayList(*const FilterExpression),
-    expr: [2]*const FilterExpression,
 ) !bool {
     const keysTokens = try self.fieldsOrTokens(ors);
     if (keysTokens.len == 0) return true;
@@ -128,7 +135,7 @@ fn matchBloomFilterOr(
                 if (try self.matchDict(columnHeader.dict.items, keyTokens.tokens)) return true;
             },
             else => {
-                if (self.matchBloomFilter(expr, columnHeader, keyTokens.hashes)) return true;
+                if (try self.matchBloomFilter(&columnHeader, keyTokens.hashes)) return true;
             },
         }
     }
@@ -190,10 +197,30 @@ fn matchDict(tmpAlloc: Allocator, values: []const []const u8, tokens: []const []
     return match.matchPredicateByAll(valuesJoined, tokens);
 }
 
-fn matchBloomFilter(self: *const BlockQuery, key: []const u8) []const u8 {
-    _ = self;
-    _ = key;
-    unreachable;
+fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes: []const u64) !bool {
+    assert(header.bloomFilterSize <= maxBloomTokensBlockSize);
+    if (hashes.len == 0) return true;
+
+    const buf = try self.alloc.alloc(u8, header.bloomFilterSize);
+    defer self.alloc.free(buf);
+
+    const colid = self.columnIdxs.get(header.key) orelse {
+        Logger.log(.err, "column id not found", .{ .key = header.key, .table = self.table.path });
+        return false;
+    };
+
+    const n = if (header.key.len == 0)
+        try self.table.readMessageBloomTokens(self.io, buf, header.bloomFilterOffset)
+    else
+        try self.table.readBloomTokens(
+            self.io,
+            buf,
+            header.bloomFilterOffset,
+            colid,
+        );
+    assert(n == buf.len);
+
+    return BloomFilter.containsAll(buf, hashes);
 }
 
 fn columnsHeaderIndex(self: *BlockQuery) !*const ColumnsHeaderIndex {
