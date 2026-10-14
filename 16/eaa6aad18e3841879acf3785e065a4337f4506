@@ -1,0 +1,121 @@
+src/store/data/Table.zig
+  s_278ec7b7cfac19::t_117cc3faca74c6 666,671-672
+  s_278ec7b7cfac19::t_daabe053fa1091 687
+src/store/data/BlockReader_test.zig
+  s_278ec7b7cfac19::t_dd7efecd4de395 143
+  s_278ec7b7cfac19::t_f4e83b90d41255 147
+src/store/data/MemTable_test.zig
+  s_278ec7b7cfac19::t_dd7efecd4de395 179,660
+  s_278ec7b7cfac19::t_0378de293d1763 242
+  s_278ec7b7cfac19::t_43b822e1af0ac5 246
+  s_278ec7b7cfac19::t_9af2b0928666fc 247
+  s_278ec7b7cfac19::t_f4e83b90d41255 243
+src/store/lines.zig
+  s_278ec7b7cfac19::t_4ee9c2b4713575 266-272,325-326
+  s_278ec7b7cfac19::t_e4ba2647520c28 334
+  s_278ec7b7cfac19::t_c43a65c003c3f5 344
+  s_278ec7b7cfac19::t_95eeb1aabdeae8 277,290-291,293,296-297,299-300,315
+  s_278ec7b7cfac19::t_3aa81148ed908f 263-265
+  s_278ec7b7cfac19::t_6d5a1a4c8d7108 273-276
+  s_278ec7b7cfac19::t_32ce693f058436 298
+  s_278ec7b7cfac19::t_2db01f06f9ca76 327-328
+src/test/server.zig
+  s_278ec7b7cfac19::t_c1ac2a3f8ac8f7 505
+  s_278ec7b7cfac19::t_c43a65c003c3f5 106,387
+src/DataRecorder_test.zig
+  s_278ec7b7cfac19::t_dd7efecd4de395 383
+  s_278ec7b7cfac19::t_c1ac2a3f8ac8f7 68
+src/store/data/merge_test.zig
+  s_278ec7b7cfac19::t_fd09a04e8636ab 58
+  s_278ec7b7cfac19::t_daabe053fa1091 95-96,99-101,257-259
+  s_278ec7b7cfac19::t_43b822e1af0ac5 66,194-195
+  s_278ec7b7cfac19::t_117cc3faca74c6 92,102
+  s_278ec7b7cfac19::t_9af2b0928666fc 69
+  s_278ec7b7cfac19::t_c43a65c003c3f5 63
+  s_278ec7b7cfac19::t_dd7efecd4de395 135,190,344,433
+  s_278ec7b7cfac19::t_f4e83b90d41255 136,191
+  s_278ec7b7cfac19::t_9ab6f884af7ee9 70,75-76,79-80,83-86,91,353
+  s_278ec7b7cfac19::t_a745396f9ab2fe 248
+  s_278ec7b7cfac19::t_c1ac2a3f8ac8f7 54,287
+src/store/data/sizing_test.zig
+  s_278ec7b7cfac19::t_fd09a04e8636ab 31
+  s_278ec7b7cfac19::t_43b822e1af0ac5 50
+  s_278ec7b7cfac19::t_9ab6f884af7ee9 69,81,85,130
+  s_278ec7b7cfac19::t_c1ac2a3f8ac8f7 27
+  s_278ec7b7cfac19::t_c43a65c003c3f5 46
+  s_278ec7b7cfac19::t_9af2b0928666fc 65
+src/store/data/Block_test.zig
+  s_278ec7b7cfac19::t_dd7efecd4de395 251,274,297,321
+  s_278ec7b7cfac19::t_117cc3faca74c6 146-147
+  s_278ec7b7cfac19::t_9ab6f884af7ee9 74-75,226,228,516,533,537,572,576,580,616,620,626
+  s_278ec7b7cfac19::t_9af2b0928666fc 71,377
+  s_278ec7b7cfac19::t_f4e83b90d41255 255,278,301,325
+  s_278ec7b7cfac19::t_c43a65c003c3f5 69,361
+  s_278ec7b7cfac19::t_0378de293d1763 168,427
+  s_278ec7b7cfac19::t_c1ac2a3f8ac8f7 65,397,466
+  s_278ec7b7cfac19::t_da4b2377187f72 139,219,365
+  s_278ec7b7cfac19::t_43b822e1af0ac5 70,508,512
+  s_278ec7b7cfac19::t_fd09a04e8636ab 66,469
+src/Accumulator.zig
+  s_278ec7b7cfac19::t_365fb3a05c075f 136
+  s_278ec7b7cfac19::t_e7a1f095ff6135 13,40,59,102,112,175
+  s_278ec7b7cfac19::t_c43a65c003c3f5 224
+src/store/data/TableWriter_test.zig
+  s_278ec7b7cfac19::t_c1ac2a3f8ac8f7 45,136
+  s_278ec7b7cfac19::t_fd09a04e8636ab 46
+  s_278ec7b7cfac19::t_c43a65c003c3f5 47
+src/testing/fixtures.zig
+  s_278ec7b7cfac19::t_43b822e1af0ac5 57,86
+  s_278ec7b7cfac19::t_0378de293d1763 49,78
+  s_278ec7b7cfac19::t_f4e83b90d41255 53,82
+src/store/data/Block.zig
+  s_278ec7b7cfac19::t_daabe053fa1091 118,345-346
+  s_278ec7b7cfac19::t_117cc3faca74c6 341
+  s_278ec7b7cfac19::t_43b822e1af0ac5 202,268,370
+  s_278ec7b7cfac19::t_9ab6f884af7ee9 145,216,225,238,244
+  s_278ec7b7cfac19::t_9af2b0928666fc 205,305
+  s_278ec7b7cfac19::t_c43a65c003c3f5 194,255,332,361
+src/Store_test.zig
+  s_278ec7b7cfac19::t_c43a65c003c3f5 304
+  s_278ec7b7cfac19::t_9af2b0928666fc 306
+  s_278ec7b7cfac19::t_43b822e1af0ac5 305
+src/store/data/sizing.zig
+  s_278ec7b7cfac19::t_9ab6f884af7ee9 59
+src/store/data/Table_test.zig
+  s_278ec7b7cfac19::t_0378de293d1763 324,588
+  s_278ec7b7cfac19::t_9ab6f884af7ee9 438-444
+  s_278ec7b7cfac19::t_43b822e1af0ac5 436-437
+  s_278ec7b7cfac19::t_dd7efecd4de395 60,148,221,383,434,637,691
+  s_278ec7b7cfac19::t_f4e83b90d41255 64,152,225,435,638,692
+  s_278ec7b7cfac19::t_daabe053fa1091 560,721-722
+src/DataRecorder.zig
+  s_278ec7b7cfac19::t_daabe053fa1091 182,206
+  s_278ec7b7cfac19::t_117cc3faca74c6 179,181
+  s_278ec7b7cfac19::t_c43a65c003c3f5 154
+src/store/data/MemTable.zig
+  s_278ec7b7cfac19::t_c43a65c003c3f5 286
+src/Accumulator_test.zig
+  s_278ec7b7cfac19::t_117cc3faca74c6 29
+src/store/data/merge.zig
+  s_278ec7b7cfac19::t_117cc3faca74c6 337
+src/store/lines_test.zig
+  s_278ec7b7cfac19::t_dd7efecd4de395 101
+src/handlers/ingest_test.zig
+  s_278ec7b7cfac19::t_a8abacc6865b1d 117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "16eaa6aad18e3841879acf3785e065a4337f4506",
+  "prompts": {},
+  "sessions": {
+    "s_278ec7b7cfac19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d1ea19f8-7141-486c-ad86-965d17eb359c",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
