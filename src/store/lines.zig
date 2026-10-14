@@ -299,14 +299,19 @@ pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
 }
 
 pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
+    defer alloc.free(fields);
+    if (fields.len == 0) return;
+
+    var start = fields[0].key.ptr;
     var totalSize: usize = 0;
+
     for (fields) |field| {
         totalSize += field.key.len + field.value.len;
+        // fields may be sorted: the lowest key is the buffer start
+        if (@intFromPtr(field.key.ptr) < @intFromPtr(start)) start = field.key.ptr;
     }
 
-    // skip if empty: no fields[0], no bytes to free
-    if (fields.len > 0) alloc.free(fields[0].key.ptr[0..totalSize]);
-    alloc.free(fields);
+    alloc.free(start[0..totalSize]);
 }
 
 pub fn deinitLinesFull(alloc: std.mem.Allocator, lines: *std.ArrayList(Line)) void {
