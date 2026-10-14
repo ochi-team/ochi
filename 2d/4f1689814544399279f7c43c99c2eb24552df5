@@ -1,0 +1,20 @@
+src/store/bloom/BloomFilter.zig
+  s_c687a63cd95e24::t_008d7fc8fa7a08 53-72
+  s_c687a63cd95e24::t_c55bed8532f863 78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "2d4f1689814544399279f7c43c99c2eb24552df5",
+  "prompts": {},
+  "sessions": {
+    "s_c687a63cd95e24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0088865c-0b9c-4264-9070-88b7f3654b65",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
