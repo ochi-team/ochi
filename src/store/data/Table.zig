@@ -470,7 +470,14 @@ pub fn queryLines(
     sids: []SID,
     query: Query,
 ) !void {
-    if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
+    //FIXME: 
+    // 1. apply time range filter to lines
+    // 2. what about queryLinesAllBlocks
+    // 3. implement and filter
+    // 4. predicate eq/not eq filter
+    // 5. collect the blocks
+    // 6. return down the result into the response
+    if (sids.len == 0) {
         return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
     }
 

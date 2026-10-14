@@ -11,6 +11,7 @@ pub const Error = error{
 
 /// allows to skip indexing phase, testing only, but exposed as public api,
 /// internally used to validate ingested data sets
+/// NOTE: completely replaces tagsExpr filter
 streamIDs: ?[]const u128 = null,
 
 // fields come from the query language
