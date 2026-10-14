@@ -269,35 +269,49 @@ pub const LinesSizeError = error{
 };
 
 pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
-    const copiedFields = try alloc.alloc(Field, fields.len);
-    var copied: usize = 0;
-    errdefer {
-        for (copiedFields[0..copied]) |field| {
-            alloc.free(field.key);
-            alloc.free(field.value);
-        }
-        alloc.free(copiedFields);
+    var totalSize: usize = 0;
+
+    for (fields) |field| {
+        totalSize += field.key.len + field.value.len;
     }
 
+    const bytes = try alloc.alloc(u8, totalSize);
+    errdefer alloc.free(bytes);
+
+    const copiedFields = try alloc.alloc(Field, fields.len);
+    errdefer alloc.free(copiedFields);
+
+    var offset: usize = 0;
     for (fields, 0..) |field, i| {
-        const key = try alloc.dupe(u8, field.key);
-        errdefer alloc.free(key);
-        const value = try alloc.dupe(u8, field.value);
-        errdefer alloc.free(value);
+        // the same as bytes[offset .. offset + field.key.len]
+        const key = bytes[offset..][0..field.key.len];
+        @memcpy(key, field.key);
+        offset += field.key.len;
+
+        const value = bytes[offset..][0..field.value.len];
+        @memcpy(value, field.value);
+        offset += field.value.len;
 
         copiedFields[i] = .{ .key = key, .value = value };
-        copied += 1;
     }
 
     return copiedFields;
 }
 
 pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
+    defer alloc.free(fields);
+    if (fields.len == 0) return;
+
+    var start = fields[0].key.ptr;
+    var totalSize: usize = 0;
+
     for (fields) |field| {
-        alloc.free(field.key);
-        alloc.free(field.value);
+        totalSize += field.key.len + field.value.len;
+        // fields may be sorted: the lowest key is the buffer start
+        if (@intFromPtr(field.key.ptr) < @intFromPtr(start)) start = field.key.ptr;
     }
-    alloc.free(fields);
+
+    alloc.free(start[0..totalSize]);
 }
 
 pub fn deinitLinesFull(alloc: std.mem.Allocator, lines: *std.ArrayList(Line)) void {
