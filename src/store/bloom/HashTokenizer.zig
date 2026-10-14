@@ -72,6 +72,7 @@ fn appendToken(
     }
     // TODO: support unicode tokens
     // https://github.com/jacobsandlund/uucode
+    // pay attention to isUnicodeLetter and others
     // try self.appendUnicodeToken(allocator, dst, value);
     return;
 }
