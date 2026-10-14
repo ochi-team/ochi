@@ -65,7 +65,7 @@ fn stableLine(ts: u64, variant: usize) Line {
     const fields = stableFields[variant % stableFields.len][0..];
     return .{
         .timestampNs = ts,
-        .fields = fields,
+        .fields = .view(fields),
     };
 }
 
@@ -380,7 +380,7 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
                     };
                     lines[i] = .{
                         .timestampNs = @intCast(i + 1),
-                        .fields = fields[i .. i + 1],
+                        .fields = .view(fields[i .. i + 1]),
                     };
                 }
 

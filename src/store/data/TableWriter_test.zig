@@ -42,9 +42,9 @@ test "writeBlock and writeData produce identical buffer output" {
         .{ .key = "level", .value = "warn" },
     };
     const sid = SID{ .id = 1, .tenantID = 1111 };
-    const line1 = Line{ .timestampNs = 1, .fields = &fields1 };
-    const line2 = Line{ .timestampNs = 2, .fields = &fields2 };
-    const line3 = Line{ .timestampNs = 3, .fields = &fields3 };
+    const line1 = Line{ .timestampNs = 1, .fields = .view(&fields1) };
+    const line2 = Line{ .timestampNs = 2, .fields = .view(&fields2) };
+    const line3 = Line{ .timestampNs = 3, .fields = .view(&fields3) };
     var lines = [_]Line{ line1, line2, line3 };
 
     // Writer 1: encode via writeBlock
@@ -133,7 +133,7 @@ test "writeBlock with many columns does not overflow columns header index buffer
     };
 
     const sid = SID{ .id = 1, .tenantID = 1111 };
-    const line = Line{ .timestampNs = 1, .fields = &fields };
+    const line = Line{ .timestampNs = 1, .fields = .view(&fields) };
     var lines = [_]Line{line};
 
     const memTable = try MemTable.init(alloc);

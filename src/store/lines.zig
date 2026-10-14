@@ -256,6 +256,25 @@ pub const Field = struct {
     }
 };
 
+pub const Fields = struct {
+    const alignment: std.mem.Alignment = .of(Field);
+
+    // owns all the memory belong to fields, it's keys and values
+    buf: []align(alignment.toByteUnits()) u8,
+    fields: []Field,
+
+    /// borrow fields to make freeFields is a no-op for it
+    pub fn view(fields: []Field) Fields {
+        return .{ .buf = &.{}, .fields = fields };
+    }
+
+    pub const empty: Fields = .view(&.{});
+
+    pub fn deinit(self: *Fields, alloc: std.mem.Allocator) void {
+        alloc.free(self.buf);
+    }
+};
+
 pub const defaultMaxFieldsPerLine: usize = 512;
 pub const defaultMaxFieldKeySize: usize = 128;
 pub const defaultMaxFieldValueSize: usize = 16 * 1024;
@@ -268,22 +287,20 @@ pub const LinesSizeError = error{
     MaxLineSizeExceeded,
 };
 
-pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
-    var totalSize: usize = 0;
-
+pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) !Fields {
+    var bytesSize: usize = 0;
     for (fields) |field| {
-        totalSize += field.key.len + field.value.len;
+        bytesSize += field.key.len + field.value.len;
     }
 
-    const bytes = try alloc.alloc(u8, totalSize);
-    errdefer alloc.free(bytes);
-
-    const copiedFields = try alloc.alloc(Field, fields.len);
-    errdefer alloc.free(copiedFields);
+    // one allocation: [Field x N][key/value bytes], the Field array goes first to keep its alignment
+    const fieldsSize = fields.len * @sizeOf(Field);
+    const buf = try alloc.alignedAlloc(u8, Fields.alignment, fieldsSize + bytesSize);
+    const copiedFields: []Field = @ptrCast(buf[0..fieldsSize]);
+    const bytes = buf[fieldsSize..];
 
     var offset: usize = 0;
     for (fields, 0..) |field, i| {
-        // the same as bytes[offset .. offset + field.key.len]
         const key = bytes[offset..][0..field.key.len];
         @memcpy(key, field.key);
         offset += field.key.len;
@@ -295,23 +312,7 @@ pub fn copyFields(alloc: std.mem.Allocator, fields: []const Field) ![]Field {
         copiedFields[i] = .{ .key = key, .value = value };
     }
 
-    return copiedFields;
-}
-
-pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
-    defer alloc.free(fields);
-    if (fields.len == 0) return;
-
-    var start = fields[0].key.ptr;
-    var totalSize: usize = 0;
-
-    for (fields) |field| {
-        totalSize += field.key.len + field.value.len;
-        // fields may be sorted: the lowest key is the buffer start
-        if (@intFromPtr(field.key.ptr) < @intFromPtr(start)) start = field.key.ptr;
-    }
-
-    alloc.free(start[0..totalSize]);
+    return .{ .buf = buf, .fields = copiedFields };
 }
 
 pub fn deinitLinesFull(alloc: std.mem.Allocator, lines: *std.ArrayList(Line)) void {
@@ -321,12 +322,16 @@ pub fn deinitLinesFull(alloc: std.mem.Allocator, lines: *std.ArrayList(Line)) vo
     lines.deinit(alloc);
 }
 
+pub fn freeFields(alloc: std.mem.Allocator, fields: Fields) void {
+    alloc.free(fields.buf);
+}
+
 // Line is an internal representation of a log line,
 pub const Line = struct {
     timestampNs: u64,
     // field.key can be empty meaning it's a message field (msgKey by fefault in the API)
     // can't be const because we reorder fields
-    fields: []Field,
+    fields: Fields,
 
     pub fn stringifyJSON(self: Line, jw: *std.json.Stringify) !void {
         const inst: zeit.Instant = .{ .timestamp = self.timestampNs, .timezone = &zeit.utc };
@@ -336,7 +341,7 @@ pub const Line = struct {
         try jw.beginObject();
         try jw.objectField(timestampKey);
         try jw.write(timestamp);
-        for (self.fields) |field| {
+        for (self.fields.fields) |field| {
             if (field.value.len == 0) {
                 continue;
             }

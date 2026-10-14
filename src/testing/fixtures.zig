@@ -46,15 +46,15 @@ pub fn populateSampleLines(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 1,
-            .fields = sample.fields1[0..],
+            .fields = .view(sample.fields1[0..]),
         },
         .{
             .timestampNs = 2,
-            .fields = sample.fields2[0..],
+            .fields = .view(sample.fields2[0..]),
         },
         .{
             .timestampNs = 3,
-            .fields = sample.fields3[0..],
+            .fields = .view(sample.fields3[0..]),
         },
     };
 }
@@ -75,15 +75,15 @@ pub fn populateSampleLinesUnordered(sample: *SampleLines) void {
     sample.lines = .{
         .{
             .timestampNs = 2,
-            .fields = sample.fields2[0..],
+            .fields = .view(sample.fields2[0..]),
         },
         .{
             .timestampNs = 1,
-            .fields = sample.fields1[0..],
+            .fields = .view(sample.fields1[0..]),
         },
         .{
             .timestampNs = 3,
-            .fields = sample.fields3[0..],
+            .fields = .view(sample.fields3[0..]),
         },
     };
 }

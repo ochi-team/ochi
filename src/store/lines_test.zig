@@ -98,7 +98,7 @@ test "Line.stringifyJSON emits query response line object" {
         defer writer.deinit();
 
         var jw: std.json.Stringify = .{ .writer = &writer.writer };
-        const line = Line{ .timestampNs = case.timestampNs, .fields = case.fields };
+        const line = Line{ .timestampNs = case.timestampNs, .fields = .view(case.fields) };
         try line.stringifyJSON(&jw);
 
         try testing.expectEqualStrings(case.expected, writer.written());

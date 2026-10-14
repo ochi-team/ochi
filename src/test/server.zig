@@ -103,7 +103,7 @@ fn stringifyJsonValueList(writer: *std.Io.Writer, values: []const std.json.Value
 }
 
 fn lineID(line: Line) ?[]const u8 {
-    for (line.fields) |field| {
+    for (line.fields.fields) |field| {
         if (std.mem.eql(u8, field.key, "id")) {
             return field.value;
         }
@@ -384,7 +384,7 @@ fn expectResponseLine(expected: Line, actual: std.json.Value) !void {
     var timeBuf: [32]u8 = undefined;
     try testing.expectEqualStrings(try expectedTime.time().bufPrint(&timeBuf, .rfc3339), timestamp);
 
-    for (expected.fields) |field| {
+    for (expected.fields.fields) |field| {
         const key = if (field.key.len == 0) msgKey else field.key;
         const actualValue = responseObjectString(actual, key) orelse return error.MissingField;
         try testing.expectEqualStrings(field.value, actualValue);
@@ -502,7 +502,7 @@ fn expectedLinesCorpus(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![
 
             expected[logI] = .{
                 .timestampNs = try logTimestampNs(nowNs, log.offsetMin),
-                .fields = fields,
+                .fields = .view(fields),
             };
             logI += 1;
         }

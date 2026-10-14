@@ -10,6 +10,7 @@ const SID = @import("store/lines.zig").SID;
 const validate = @import("store/lines.zig").validate;
 const copyFields = @import("store/lines.zig").copyFields;
 const freeFields = @import("store/lines.zig").freeFields;
+const Fields = @import("store/lines.zig").Fields;
 const encodeTags = @import("store/lines.zig").encodeTags;
 const makeStreamID = @import("store/lines.zig").makeStreamID;
 
@@ -36,7 +37,7 @@ const Accumulator = @This();
 pub const Checkpoint = struct {
     sid: SID,
     // tags are borrowed from the parental buffer
-    tags: []Field,
+    tags: Fields,
     encodedTags: []const u8,
     i: usize,
 };
@@ -55,7 +56,7 @@ currentCheckpoint: u16 = 0,
 // identity of the stream currently being appended to since
 // checkpoint buffers don't survives flush,
 // it allows us to recreate a checkpoint
-currentTags: []Field = &[_]Field{},
+currentTags: Fields = .empty,
 currentEncodedTags: []const u8 = "",
 currentSid: SID = .{ .tenantID = 0, .id = 0 },
 
@@ -98,7 +99,7 @@ pub fn reinit(
     const tagsCopy = try copyFields(alloc, tags);
     errdefer freeFields(alloc, tagsCopy);
 
-    if (self.currentTags.len > 0) freeFields(alloc, self.currentTags);
+    if (self.currentTags.fields.len > 0) freeFields(alloc, self.currentTags);
     if (self.currentEncodedTags.len > 0) alloc.free(self.currentEncodedTags);
 
     self.currentTags = tagsCopy;
@@ -108,7 +109,7 @@ pub fn reinit(
 
 pub fn deinit(self: *Accumulator, alloc: Allocator) void {
     if (self.currentEncodedTags.len > 0) alloc.free(self.currentEncodedTags);
-    if (self.currentTags.len > 0) freeFields(alloc, self.currentTags);
+    if (self.currentTags.fields.len > 0) freeFields(alloc, self.currentTags);
     self.resetBuffered();
     self.lines.deinit(alloc);
     alloc.free(self.buffer.buffer);
@@ -132,7 +133,7 @@ fn ensureActiveCheckpoint(self: *Accumulator, io: Io, alloc: Allocator) !void {
     // since checkpoint doesn't survive flush we must restore it
     self.checkpoints[self.checkpointsLen] = .{
         .sid = self.currentSid,
-        .tags = try copyFields(bufferAlloc, self.currentTags),
+        .tags = try copyFields(bufferAlloc, self.currentTags.fields),
         .encodedTags = try bufferAlloc.dupe(u8, self.currentEncodedTags),
         .i = self.lines.items.len,
     };
@@ -169,16 +170,9 @@ fn appendLine(
     try self.ensureActiveCheckpoint(io, alloc);
 
     const bufferAlloc = self.buffer.allocator();
-    const fieldsCopy = try bufferAlloc.alloc(Field, fields.len);
-    for (fields, 0..) |field, i| {
-        fieldsCopy[i] = .{
-            .key = try bufferAlloc.dupe(u8, field.key),
-            .value = try bufferAlloc.dupe(u8, field.value),
-        };
-    }
     const line = Line{
         .timestampNs = timestampNs,
-        .fields = fieldsCopy,
+        .fields = try copyFields(bufferAlloc, fields),
     };
 
     validate(fields) catch |err| {
@@ -227,7 +221,7 @@ pub fn flush(self: *Accumulator, io: Io, alloc: Allocator) !void {
         start = checkpoint.i;
         if (chunk.len == 0) continue;
 
-        try self.store.addLines(io, alloc, chunk, checkpoint.tags, checkpoint.encodedTags, checkpoint.sid);
+        try self.store.addLines(io, alloc, chunk, checkpoint.tags.fields, checkpoint.encodedTags, checkpoint.sid);
     }
     self.resetBuffered();
 }

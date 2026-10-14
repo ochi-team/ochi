@@ -663,13 +663,13 @@ fn queryBlock(
     var converted: usize = 0;
     errdefer {
         for (dst.items[i .. i + converted]) |line| freeFields(alloc, line.fields);
-        for (dst.items[i + converted ..]) |line| alloc.free(line.fields);
+        for (dst.items[i + converted ..]) |line| alloc.free(line.fields.fields);
         dst.shrinkRetainingCapacity(i);
     }
     for (dst.items[i..]) |*line| {
         const gatheredFields = line.fields;
-        const copiedFields = try copyFields(alloc, gatheredFields);
-        alloc.free(gatheredFields);
+        const copiedFields = try copyFields(alloc, gatheredFields.fields);
+        alloc.free(gatheredFields.fields);
         line.fields = copiedFields;
         converted += 1;
     }
@@ -684,7 +684,7 @@ fn queryBlock(
             continue;
         }
         if (query.fieldsExpr) |expr| {
-            if (!try matchesFilterExpression(line.fields, expr)) {
+            if (!try matchesFilterExpression(line.fields.fields, expr)) {
                 const removed = dst.swapRemove(i);
                 freeFields(alloc, removed.fields);
                 continue;

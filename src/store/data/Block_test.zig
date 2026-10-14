@@ -62,17 +62,17 @@ test "initFromLines and initFromData produce identical blocks" {
     var f3 = [_]Field{ .{ .key = "app", .value = "seq" }, .{ .key = "level", .value = "error" } };
     var f4 = [_]Field{ .{ .key = "cpu", .value = "0.8" }, .{ .key = "memory", .value = "512MB" } };
     var lines1 = [_]Line{
-        .{ .timestampNs = 1, .fields = &f1 },
-        .{ .timestampNs = 2, .fields = &f1 },
+        .{ .timestampNs = 1, .fields = .view(&f1) },
+        .{ .timestampNs = 2, .fields = .view(&f1) },
     };
     var lines2 = [_]Line{
-        .{ .timestampNs = 1, .fields = &f1 },
-        .{ .timestampNs = 2, .fields = &f2 },
-        .{ .timestampNs = 3, .fields = &f3 },
+        .{ .timestampNs = 1, .fields = .view(&f1) },
+        .{ .timestampNs = 2, .fields = .view(&f2) },
+        .{ .timestampNs = 3, .fields = .view(&f3) },
     };
     var lines3 = [_]Line{
-        .{ .timestampNs = 1, .fields = &f1 },
-        .{ .timestampNs = 2, .fields = &f4 },
+        .{ .timestampNs = 1, .fields = .view(&f1) },
+        .{ .timestampNs = 2, .fields = .view(&f4) },
     };
 
     const Case = struct {
@@ -136,15 +136,15 @@ test "initFromLines and initFromData produce identical blocks" {
 
         var gatheredLines = std.ArrayList(Line).empty;
         defer {
-            for (gatheredLines.items) |line| alloc.free(line.fields);
+            for (gatheredLines.items) |line| alloc.free(line.fields.fields);
             gatheredLines.deinit(alloc);
         }
         try blockA.gatherLines(alloc, &gatheredLines);
         try testing.expectEqual(case.lines.len, gatheredLines.items.len);
         for (case.lines, gatheredLines.items) |origLine, gatheredLine| {
             try testing.expectEqual(origLine.timestampNs, gatheredLine.timestampNs);
-            try testing.expectEqual(origLine.fields.len, gatheredLine.fields.len);
-            for (origLine.fields, gatheredLine.fields) |of, gf| {
+            try testing.expectEqual(origLine.fields.fields.len, gatheredLine.fields.fields.len);
+            for (origLine.fields.fields, gatheredLine.fields.fields) |of, gf| {
                 try testing.expectEqualStrings(of.key, gf.key);
                 try testing.expectEqualStrings(of.value, gf.value);
             }
@@ -165,7 +165,7 @@ test "initFromData decodes multiple typed columns in one block without cross-col
             .{ .key = "client", .value = try std.fmt.allocPrint(alloc, "10.1.0.{d}", .{i}) },
             .{ .key = "seen", .value = try std.fmt.allocPrint(alloc, "2026-08-01T00:00:{d:0>2}.000Z", .{i}) },
         };
-        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = fieldsStorage[i][0..] };
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = .view(fieldsStorage[i][0..]) };
     }
     defer {
         for (fieldsStorage) |fields| {
@@ -216,16 +216,16 @@ test "initFromData decodes multiple typed columns in one block without cross-col
 
     var gatheredLines = std.ArrayList(Line).empty;
     defer {
-        for (gatheredLines.items) |line| alloc.free(line.fields);
+        for (gatheredLines.items) |line| alloc.free(line.fields.fields);
         gatheredLines.deinit(alloc);
     }
     try blockB.gatherLines(alloc, &gatheredLines);
 
     try testing.expectEqual(lines.len, gatheredLines.items.len);
     for (lines, gatheredLines.items) |origLine, gatheredLine| {
-        for (origLine.fields) |of| {
+        for (origLine.fields.fields) |of| {
             var found = false;
-            for (gatheredLine.fields) |gf| {
+            for (gatheredLine.fields.fields) |gf| {
                 if (std.mem.eql(u8, of.key, gf.key)) {
                     found = true;
                     try testing.expectEqualStrings(of.value, gf.value);
@@ -248,11 +248,11 @@ test "areSameFields: happy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .fields = fields1[0..],
+            .fields = .view(fields1[0..]),
         },
         .{
             .timestampNs = 2,
-            .fields = fields2[0..],
+            .fields = .view(fields2[0..]),
         },
     };
 
@@ -271,11 +271,11 @@ test "areSameFields: unhappy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .fields = fields1[0..],
+            .fields = .view(fields1[0..]),
         },
         .{
             .timestampNs = 2,
-            .fields = fields2[0..],
+            .fields = .view(fields2[0..]),
         },
     };
 
@@ -294,11 +294,11 @@ test "areSameValuesWithinColumn: happy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .fields = fields1[0..],
+            .fields = .view(fields1[0..]),
         },
         .{
             .timestampNs = 2,
-            .fields = fields2[0..],
+            .fields = .view(fields2[0..]),
         },
     };
 
@@ -318,11 +318,11 @@ test "areSameValuesWithinColumn: unhappy path" {
     var lines = [_]Line{
         .{
             .timestampNs = 1,
-            .fields = fields1[0..],
+            .fields = .view(fields1[0..]),
         },
         .{
             .timestampNs = 2,
-            .fields = fields2[0..],
+            .fields = .view(fields2[0..]),
         },
     };
 
@@ -358,11 +358,11 @@ test "BlockInitMaxColumns" {
         var keyNum: usize = 0;
         defer {
             for (lines) |l| {
-                for (l.fields) |f| {
+                for (l.fields.fields) |f| {
                     alloc.free(f.key);
                     alloc.free(f.value);
                 }
-                alloc.free(l.fields);
+                alloc.free(l.fields.fields);
             }
             alloc.free(lines);
         }
@@ -374,7 +374,7 @@ test "BlockInitMaxColumns" {
                 keyNum += 1;
             }
             lines[i] = Line{
-                .fields = fields,
+                .fields = .view(fields),
                 .timestampNs = 1,
             };
         }
@@ -394,7 +394,7 @@ test "initFromLines allows maxLines" {
     for (0..maxLines) |i| {
         lines[i] = .{
             .timestampNs = @intCast(i),
-            .fields = &field,
+            .fields = .view(&field),
         };
     }
 
@@ -424,7 +424,7 @@ test "initFromLines drops a single invalid row with too many fields" {
         };
     }
 
-    var lines = [_]Line{.{ .timestampNs = 1, .fields = fields }};
+    var lines = [_]Line{.{ .timestampNs = 1, .fields = .view(fields) }};
 
     var b = try Block.initFromLines(alloc, &lines);
     defer b.deinit(alloc);
@@ -463,10 +463,10 @@ test "Block.put" {
         };
         var arr = [_]Line{ .{
             .timestampNs = 100,
-            .fields = &fields1,
+            .fields = .view(&fields1),
         }, .{
             .timestampNs = 200,
-            .fields = &fields2,
+            .fields = .view(&fields2),
         } };
         break :blk &arr;
     };
@@ -505,15 +505,15 @@ test "Block.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .fields = fields1[0..],
+                .fields = .view(fields1[0..]),
             },
             .{
                 .timestampNs = 200,
-                .fields = fields2[0..],
+                .fields = .view(fields2[0..]),
             },
             .{
                 .timestampNs = 300,
-                .fields = fields3[0..],
+                .fields = .view(fields3[0..]),
             },
         };
         break :blk &lines;
@@ -530,11 +530,11 @@ test "Block.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .fields = fields1[0..],
+                .fields = .view(fields1[0..]),
             },
             .{
                 .timestampNs = 200,
-                .fields = fields2[0..],
+                .fields = .view(fields2[0..]),
             },
         };
         break :blk &lines;
@@ -569,15 +569,15 @@ test "Block.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .fields = fields1[0..],
+                .fields = .view(fields1[0..]),
             },
             .{
                 .timestampNs = 200,
-                .fields = fields2[0..],
+                .fields = .view(fields2[0..]),
             },
             .{
                 .timestampNs = 300,
-                .fields = fields3[0..],
+                .fields = .view(fields3[0..]),
             },
         };
         break :blk &lines;
@@ -613,17 +613,17 @@ test "Block.put" {
         var lines = [_]Line{
             .{
                 .timestampNs = 100,
-                .fields = fields1[0..],
+                .fields = .view(fields1[0..]),
             },
             .{
                 .timestampNs = 200,
-                .fields = fields2[0..],
+                .fields = .view(fields2[0..]),
             },
         };
         break :blk &lines;
     };
     const expectedCols5 = blk: {
-        const longValue = linesArray5[0].fields[1].value;
+        const longValue = linesArray5[0].fields.fields[1].value;
         var appVal = [_][]const u8{ longValue, longValue };
         var cols = [_]Column{
             .{ .key = "message", .values = appVal[0..] },

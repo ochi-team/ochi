@@ -51,55 +51,55 @@ test "mergeLines" {
         },
         .{
             .left = &[_]Line{
-                .{ .timestampNs = 123, .fields = &la },
+                .{ .timestampNs = 123, .fields = .view(&la) },
             },
             .right = &.{},
             .expected = &[_]Line{
-                .{ .timestampNs = 123, .fields = &la },
+                .{ .timestampNs = 123, .fields = .view(&la) },
             },
         },
         .{
             .left = &[_]Line{
-                .{ .timestampNs = 123, .fields = &la },
+                .{ .timestampNs = 123, .fields = .view(&la) },
             },
             .right = &[_]Line{
-                .{ .timestampNs = 456, .fields = &ra },
+                .{ .timestampNs = 456, .fields = .view(&ra) },
             },
             .expected = &[_]Line{
-                .{ .timestampNs = 123, .fields = &la },
-                .{ .timestampNs = 456, .fields = &ra },
+                .{ .timestampNs = 123, .fields = .view(&la) },
+                .{ .timestampNs = 456, .fields = .view(&ra) },
             },
         },
         .{
             .left = &[_]Line{
-                .{ .timestampNs = 123, .fields = &la1 },
-                .{ .timestampNs = 456, .fields = &la2 },
+                .{ .timestampNs = 123, .fields = .view(&la1) },
+                .{ .timestampNs = 456, .fields = .view(&la2) },
             },
             .right = &[_]Line{
-                .{ .timestampNs = 123, .fields = &ra1 },
-                .{ .timestampNs = 456, .fields = &ra2 },
+                .{ .timestampNs = 123, .fields = .view(&ra1) },
+                .{ .timestampNs = 456, .fields = .view(&ra2) },
             },
             .expected = &[_]Line{
-                .{ .timestampNs = 123, .fields = &la1 },
-                .{ .timestampNs = 123, .fields = &ra1 },
-                .{ .timestampNs = 456, .fields = &la2 },
-                .{ .timestampNs = 456, .fields = &ra2 },
+                .{ .timestampNs = 123, .fields = .view(&la1) },
+                .{ .timestampNs = 123, .fields = .view(&ra1) },
+                .{ .timestampNs = 456, .fields = .view(&la2) },
+                .{ .timestampNs = 456, .fields = .view(&ra2) },
             },
         },
         .{
             .left = &[_]Line{
-                .{ .timestampNs = 12, .fields = &lb1 },
-                .{ .timestampNs = 123456, .fields = &lb2 },
+                .{ .timestampNs = 12, .fields = .view(&lb1) },
+                .{ .timestampNs = 123456, .fields = .view(&lb2) },
             },
             .right = &[_]Line{
-                .{ .timestampNs = 1, .fields = &rb1 },
-                .{ .timestampNs = 456, .fields = &rb2 },
+                .{ .timestampNs = 1, .fields = .view(&rb1) },
+                .{ .timestampNs = 456, .fields = .view(&rb2) },
             },
             .expected = &[_]Line{
-                .{ .timestampNs = 1, .fields = &rb1 },
-                .{ .timestampNs = 12, .fields = &lb1 },
-                .{ .timestampNs = 456, .fields = &rb2 },
-                .{ .timestampNs = 123456, .fields = &lb2 },
+                .{ .timestampNs = 1, .fields = .view(&rb1) },
+                .{ .timestampNs = 12, .fields = .view(&lb1) },
+                .{ .timestampNs = 456, .fields = .view(&rb2) },
+                .{ .timestampNs = 123456, .fields = .view(&lb2) },
             },
         },
     };
@@ -132,8 +132,8 @@ test "StreamMerger.decodeLines frees unpacker garbage buffers" {
     var fields1 = [_]Field{.{ .key = "key", .value = "value-1" }};
     var fields2 = [_]Field{.{ .key = "key", .value = "value-2" }};
     var lines = [_]Line{
-        .{ .timestampNs = 1, .fields = fields1[0..] },
-        .{ .timestampNs = 2, .fields = fields2[0..] },
+        .{ .timestampNs = 1, .fields = .view(fields1[0..]) },
+        .{ .timestampNs = 2, .fields = .view(fields2[0..]) },
     };
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines[0..]);
 
@@ -187,12 +187,12 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         var rightFields2 = [_]Field{.{ .key = fieldKey, .value = "right-2" }};
 
         var leftLines = [_]Line{
-            .{ .timestampNs = 1, .fields = leftFields1[0..] },
-            .{ .timestampNs = 3, .fields = leftFields2[0..] },
+            .{ .timestampNs = 1, .fields = .view(leftFields1[0..]) },
+            .{ .timestampNs = 3, .fields = .view(leftFields2[0..]) },
         };
         var rightLines = [_]Line{
-            .{ .timestampNs = 2, .fields = rightFields1[0..] },
-            .{ .timestampNs = 4, .fields = rightFields2[0..] },
+            .{ .timestampNs = 2, .fields = .view(rightFields1[0..]) },
+            .{ .timestampNs = 4, .fields = .view(rightFields2[0..]) },
         };
 
         try leftMemTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, leftLines[0..]);
@@ -245,7 +245,7 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         var lines = std.ArrayList(Line).empty;
         defer {
             for (lines.items) |line| {
-                alloc.free(line.fields);
+                alloc.free(line.fields.fields);
             }
             lines.deinit(alloc);
         }
@@ -254,9 +254,9 @@ test "mergeData keeps merged memtable buffers alive after source memtables deini
         for (lines.items) |line| {
             try testing.expect(expectedI < expected.len);
             try testing.expectEqual(expected[expectedI].timestampNs, line.timestampNs);
-            try testing.expectEqual(@as(usize, 1), line.fields.len);
-            try testing.expectEqualStrings(fieldKey, line.fields[0].key);
-            try testing.expectEqualStrings(expected[expectedI].value, line.fields[0].value);
+            try testing.expectEqual(@as(usize, 1), line.fields.fields.len);
+            try testing.expectEqualStrings(fieldKey, line.fields.fields[0].key);
+            try testing.expectEqualStrings(expected[expectedI].value, line.fields.fields[0].value);
             expectedI += 1;
         }
     }
@@ -284,7 +284,7 @@ test "mergeData flushes maxLines for one stream" {
     for (0..Block.maxLines) |i| {
         lines[i] = .{
             .timestampNs = @intCast(i),
-            .fields = &field,
+            .fields = .view(&field),
         };
     }
 
@@ -341,7 +341,7 @@ test "writeBlock flushes without merging when the incoming block is already full
     const table1 = try Table.fromMem(io, alloc, memTable1, decompressionPool);
     defer table1.close(io);
     var fields1 = [_]Field{.{ .key = "k", .value = "v1" }};
-    var lines1 = [_]Line{.{ .timestampNs = 1, .fields = fields1[0..] }};
+    var lines1 = [_]Line{.{ .timestampNs = 1, .fields = .view(fields1[0..]) }};
     try memTable1.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines1[0..]);
     const reader1 = try BlockReader.initFromMemTable(io, alloc, table1, decompressionPool);
     defer reader1.deinit(alloc);
@@ -350,7 +350,7 @@ test "writeBlock flushes without merging when the incoming block is already full
     const table2 = try Table.fromMem(io, alloc, memTable2, decompressionPool);
     defer table2.close(io);
     var fields2 = [_]Field{.{ .key = "k", .value = "v2" }};
-    var lines2 = [_]Line{.{ .timestampNs = 2, .fields = fields2[0..] }};
+    var lines2 = [_]Line{.{ .timestampNs = 2, .fields = .view(fields2[0..]) }};
     try memTable2.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines2[0..]);
     const reader2 = try BlockReader.initFromMemTable(io, alloc, table2, decompressionPool);
     defer reader2.deinit(alloc);
@@ -430,7 +430,7 @@ test "mergeData multi tenant" {
         };
         var lines = [_]Line{.{
             .timestampNs = @intCast(i + 1),
-            .fields = fields[0..],
+            .fields = .view(fields[0..]),
         }};
 
         try memTable.addLinesForSid(

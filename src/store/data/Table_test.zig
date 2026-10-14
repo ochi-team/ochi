@@ -57,11 +57,11 @@ test "release keeps table unless toRemove is set, then removes table dir" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .fields = fields1[0..],
+        .fields = .view(fields1[0..]),
     };
     const line2 = Line{
         .timestampNs = 2,
-        .fields = fields2[0..],
+        .fields = .view(fields2[0..]),
     };
 
     var lines = [_]Line{ line1, line2 };
@@ -145,11 +145,11 @@ test "fromMem creates proper table from mem table with populated data" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .fields = fields1[0..],
+        .fields = .view(fields1[0..]),
     };
     const line2 = Line{
         .timestampNs = 2,
-        .fields = fields2[0..],
+        .fields = .view(fields2[0..]),
     };
 
     var lines = [_]Line{ line1, line2 };
@@ -218,11 +218,11 @@ test "open reads table from disk" {
     };
     const line1 = Line{
         .timestampNs = 1,
-        .fields = fields1[0..],
+        .fields = .view(fields1[0..]),
     };
     const line2 = Line{
         .timestampNs = 2,
-        .fields = fields2[0..],
+        .fields = .view(fields2[0..]),
     };
 
     var lines = [_]Line{ line1, line2 };
@@ -321,7 +321,7 @@ test "open reads bloom buffers" {
     for (0..linesCount) |i| {
         const v = try std.fmt.bufPrint(&values[i], "unique-value-{d}", .{i});
         fields[i] = .{.{ .key = "msg", .value = v }};
-        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = fields[i][0..] };
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = .view(fields[i][0..]) };
     }
 
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
@@ -380,7 +380,7 @@ test "openAll handles all io failures" {
     };
     var lines = [_]Line{.{
         .timestampNs = 1,
-        .fields = fields[0..],
+        .fields = .view(fields[0..]),
     }};
 
     try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, .{ .id = 1, .tenantID = 1234 }, lines[0..]);
@@ -431,17 +431,17 @@ test "queryLines" {
     var tenantBFields = [_]Field{ .{ .key = "app", .value = "api-b" }, .{ .key = "level", .value = "info" } };
 
     var lines = [_]Line{
-        .{ .timestampNs = 1, .fields = seqInfo[0..] },
-        .{ .timestampNs = 2, .fields = seqWarn[0..] },
-        .{ .timestampNs = 3, .fields = seqError[0..] },
-        .{ .timestampNs = 1, .fields = seqInfo[0..] },
-        .{ .timestampNs = 2, .fields = seqError[0..] },
-        .{ .timestampNs = 3, .fields = apiErrorA[0..] },
-        .{ .timestampNs = 6, .fields = apiErrorB[0..] },
-        .{ .timestampNs = 3, .fields = apiInfo[0..] },
-        .{ .timestampNs = 10, .fields = workerInfo[0..] },
-        .{ .timestampNs = 1, .fields = tenantAFields[0..] },
-        .{ .timestampNs = 2, .fields = tenantBFields[0..] },
+        .{ .timestampNs = 1, .fields = .view(seqInfo[0..]) },
+        .{ .timestampNs = 2, .fields = .view(seqWarn[0..]) },
+        .{ .timestampNs = 3, .fields = .view(seqError[0..]) },
+        .{ .timestampNs = 1, .fields = .view(seqInfo[0..]) },
+        .{ .timestampNs = 2, .fields = .view(seqError[0..]) },
+        .{ .timestampNs = 3, .fields = .view(apiErrorA[0..]) },
+        .{ .timestampNs = 6, .fields = .view(apiErrorB[0..]) },
+        .{ .timestampNs = 3, .fields = .view(apiInfo[0..]) },
+        .{ .timestampNs = 10, .fields = .view(workerInfo[0..]) },
+        .{ .timestampNs = 1, .fields = .view(tenantAFields[0..]) },
+        .{ .timestampNs = 2, .fields = .view(tenantBFields[0..]) },
     };
 
     const memTable = try MemTable.init(alloc);
@@ -557,7 +557,7 @@ test "queryLines" {
         for (case.expected, 0..) |expected, i| {
             try testing.expectEqual(expected.timestampNs, queried.items[i].timestampNs);
             var app: ?[]const u8 = null;
-            for (queried.items[i].fields) |field| {
+            for (queried.items[i].fields.fields) |field| {
                 if (std.mem.eql(u8, field.key, "app")) {
                     app = field.value;
                     break;
@@ -585,7 +585,7 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
             .{ .key = "app", .value = "bulk" },
             .{ .key = "level", .value = "info" },
         };
-        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = fields[i][0..] };
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = .view(fields[i][0..]) };
         linesBySid[i] = lines[i .. i + 1];
     }
 
@@ -634,8 +634,8 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
         .{ .key = "level", .value = "warn" },
     };
     var lines = [_]Line{
-        .{ .timestampNs = 1, .fields = fields1[0..] },
-        .{ .timestampNs = 2, .fields = fields2[0..] },
+        .{ .timestampNs = 1, .fields = .view(fields1[0..]) },
+        .{ .timestampNs = 2, .fields = .view(fields2[0..]) },
     };
 
     const memTable = try MemTable.init(alloc);
@@ -688,8 +688,8 @@ test "queryLines reads disk table fields after open" {
         .{ .key = "path", .value = "/api/orders" },
     };
     var lines = [_]Line{
-        .{ .timestampNs = 1, .fields = fields1[0..] },
-        .{ .timestampNs = 2, .fields = fields2[0..] },
+        .{ .timestampNs = 1, .fields = .view(fields1[0..]) },
+        .{ .timestampNs = 2, .fields = .view(fields2[0..]) },
     };
 
     const memTable = try MemTable.init(alloc);
@@ -718,6 +718,6 @@ test "queryLines reads disk table fields after open" {
     try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
     try testing.expectEqual(@as(usize, 1), queried.items.len);
     try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
-    try testing.expectEqualSlices(u8, "id", queried.items[0].fields[1].key);
-    try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields[1].value);
+    try testing.expectEqualSlices(u8, "id", queried.items[0].fields.fields[1].key);
+    try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields.fields[1].value);
 }

@@ -151,7 +151,7 @@ pub const DataShard = struct {
 
         const bufferAlloc = shard.buffer.allocator();
         for (lines) |line| {
-            validate(line.fields) catch |err| {
+            validate(line.fields.fields) catch |err| {
                 switch (err) {
                     error.MaxFieldsPerLineExceeded => {
                         Logger.log(.warn, "DataShard: max fields per line exceeded", .{});
@@ -176,10 +176,10 @@ pub const DataShard = struct {
                 shard.lines.items[shard.lines.items.len - 1]
             else
                 null;
-            var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields else null;
+            var prevFields: ?[]const Field = if (prevLine) |pl| pl.fields.fields else null;
 
-            const fieldsCopy = try bufferAlloc.alloc(Field, line.fields.len);
-            for (line.fields, 0..) |field, fieldIndex| {
+            const fieldsCopy = try bufferAlloc.alloc(Field, line.fields.fields.len);
+            for (line.fields.fields, 0..) |field, fieldIndex| {
                 const prevField: ?Field = if (prevFields) |pfs|
                     if (fieldIndex < pfs.len) pfs[fieldIndex] else null
                 else
@@ -203,7 +203,7 @@ pub const DataShard = struct {
 
             try shard.lines.append(alloc, .{
                 .timestampNs = line.timestampNs,
-                .fields = fieldsCopy,
+                .fields = .view(fieldsCopy),
             });
 
             // update the checkpoint after every line so a partial append (e.g. interrupted

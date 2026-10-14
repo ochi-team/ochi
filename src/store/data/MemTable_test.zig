@@ -176,7 +176,7 @@ test "addLines error on empty lines chunk" {
     var fields = [_]Field{.{ .key = "msg", .value = "one" }};
     var lines = [_]Line{.{
         .timestampNs = 1,
-        .fields = fields[0..],
+        .fields = .view(fields[0..]),
     }};
     var emptyLines = [_]Line{};
     var sids = [_]SID{ sid, sid };
@@ -239,12 +239,12 @@ test "addLines reorders duplicate SID chunk lines by timestamp" {
             .{.{ .key = "msg", .value = "four" }},
         };
         var firstChunk = [_]Line{
-            .{ .timestampNs = case.chunks[0][0], .fields = fields[0][0..] },
-            .{ .timestampNs = case.chunks[0][1], .fields = fields[1][0..] },
+            .{ .timestampNs = case.chunks[0][0], .fields = .view(fields[0][0..]) },
+            .{ .timestampNs = case.chunks[0][1], .fields = .view(fields[1][0..]) },
         };
         var secondChunk = [_]Line{
-            .{ .timestampNs = case.chunks[1][0], .fields = fields[2][0..] },
-            .{ .timestampNs = case.chunks[1][1], .fields = fields[3][0..] },
+            .{ .timestampNs = case.chunks[1][0], .fields = .view(fields[2][0..]) },
+            .{ .timestampNs = case.chunks[1][1], .fields = .view(fields[3][0..]) },
         };
         var sids = [_]SID{ sid, sid };
         var linesBySid = [_][]Line{ firstChunk[0..], secondChunk[0..] };
@@ -657,7 +657,7 @@ test "tableHeader timestamp range matches all index blocks" {
     for (0..lineCount) |i| {
         lines[i] = .{
             .timestampNs = @intCast(i + 1),
-            .fields = fields[0..],
+            .fields = .view(fields[0..]),
         };
         sids[i] = .{ .tenantID = 1, .id = @intCast(i + 1) };
         linesBySid[i] = lines[i .. i + 1];

@@ -24,11 +24,11 @@ test "sizingBlockAndFieldsMatch" {
     const linesOneSameField = [_]Line{
         .{
             .timestampNs = undefined,
-            .fields = &sameField1,
+            .fields = .view(&sameField1),
         },
         .{
             .timestampNs = undefined,
-            .fields = &sameField2,
+            .fields = .view(&sameField2),
         },
     };
 
@@ -43,11 +43,11 @@ test "sizingBlockAndFieldsMatch" {
     const lineOneEmptyField = [_]Line{
         .{
             .timestampNs = undefined,
-            .fields = &emptyField1,
+            .fields = .view(&emptyField1),
         },
         .{
             .timestampNs = undefined,
-            .fields = &emptyField2,
+            .fields = .view(&emptyField2),
         },
     };
 
@@ -62,11 +62,11 @@ test "sizingBlockAndFieldsMatch" {
     const lineOneEmptyKey = [_]Line{
         .{
             .timestampNs = undefined,
-            .fields = &emptyKey1,
+            .fields = .view(&emptyKey1),
         },
         .{
             .timestampNs = undefined,
-            .fields = &emptyKey2,
+            .fields = .view(&emptyKey2),
         },
     };
     var diffField1 = [_]Field{
@@ -78,11 +78,11 @@ test "sizingBlockAndFieldsMatch" {
     const diffFieldsLine = [_]Line{
         .{
             .timestampNs = undefined,
-            .fields = &diffField1,
+            .fields = .view(&diffField1),
         },
         .{
             .timestampNs = undefined,
-            .fields = &diffField2,
+            .fields = .view(&diffField2),
         },
     };
 
@@ -127,7 +127,7 @@ test "sizingBlockAndFieldsMatch" {
             defer obj.deinit(alloc);
 
             try obj.put(alloc, timestampKey, .{ .string = now });
-            for (line.fields) |f| {
+            for (line.fields.fields) |f| {
                 if (f.value.len == 0) continue;
                 const key = if (f.key.len == 0) msgKey else f.key;
                 try obj.put(alloc, key, .{ .string = f.value });

@@ -140,11 +140,11 @@ fn testInitFromDiskTable(alloc: Allocator, io: Io) !void {
 
     const line1 = Line{
         .timestampNs = 1,
-        .fields = fields1[0..],
+        .fields = .view(fields1[0..]),
     };
     const line2 = Line{
         .timestampNs = 2,
-        .fields = fields2[0..],
+        .fields = .view(fields2[0..]),
     };
 
     var lines = [_]Line{ line1, line2 };

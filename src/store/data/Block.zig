@@ -115,7 +115,7 @@ pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(L
     const initialLen = lines.items.len;
     var appendedCount: usize = 0;
     errdefer {
-        for (lines.items[initialLen .. initialLen + appendedCount]) |line| alloc.free(line.fields);
+        for (lines.items[initialLen .. initialLen + appendedCount]) |line| alloc.free(line.fields.fields);
         lines.shrinkRetainingCapacity(initialLen);
     }
 
@@ -142,7 +142,7 @@ pub fn gatherLines(self: *const Block, alloc: Allocator, lines: *std.ArrayList(L
 
         lines.appendAssumeCapacity(.{
             .timestampNs = ts,
-            .fields = fields,
+            .fields = .view(fields),
         });
         appendedCount += 1;
     }
@@ -191,7 +191,7 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
     }
 
     const firstLine = lines[0];
-    var columns = try allocator.alloc(Column, firstLine.fields.len);
+    var columns = try allocator.alloc(Column, firstLine.fields.fields.len);
     errdefer allocator.free(columns);
 
     @memset(columns, .{ .key = "", .values = &[_][]const u8{} });
@@ -199,10 +199,10 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
     // TODO: Compare with bitset instead of bool array?
     // First pass: identify which columns are invariant
     var invariantMaskBuffer: [maxColumns]bool = undefined;
-    var invariantMask = invariantMaskBuffer[0..firstLine.fields.len];
+    var invariantMask = invariantMaskBuffer[0..firstLine.fields.fields.len];
 
     var invariantCount: usize = 0;
-    for (0..firstLine.fields.len) |fieldIdx| {
+    for (0..firstLine.fields.fields.len) |fieldIdx| {
         if (canBeSavedAsInvariant(lines, fieldIdx)) {
             invariantMask[fieldIdx] = true;
             invariantCount += 1;
@@ -213,7 +213,7 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
 
     // Second pass: populate columns with regular columns first, then invariant
     var regularIdx: usize = 0;
-    var invariantIdx: usize = firstLine.fields.len - invariantCount;
+    var invariantIdx: usize = firstLine.fields.fields.len - invariantCount;
 
     errdefer {
         for (columns) |col| {
@@ -222,7 +222,7 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
             }
         }
     }
-    for (firstLine.fields, 0..) |field, fieldIdx| {
+    for (firstLine.fields.fields, 0..) |field, fieldIdx| {
         const isFieldInvariant = invariantMask[fieldIdx];
         const targetIdx = if (isFieldInvariant) invariantIdx else regularIdx;
         var col = &columns[targetIdx];
@@ -235,13 +235,13 @@ fn putSameFields(self: *Block, allocator: Allocator, lines: []const Line) !void 
         } else {
             col.values = try allocator.alloc([]const u8, lines.len);
             for (lines, 0..) |line, lineIdx| {
-                col.values[lineIdx] = line.fields[fieldIdx].value;
+                col.values[lineIdx] = line.fields.fields[fieldIdx].value;
             }
             regularIdx += 1;
         }
     }
 
-    self.firstInvariant = @intCast(firstLine.fields.len - invariantCount);
+    self.firstInvariant = @intCast(firstLine.fields.fields.len - invariantCount);
 
     self.columns = columns;
 }
@@ -252,7 +252,7 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
     defer columnI.deinit();
     var linesProcessed = lines;
     for (lines, 0..) |line, i| {
-        const uniqueKeysCount = columnI.count() + line.fields.len;
+        const uniqueKeysCount = columnI.count() + line.fields.fields.len;
         if (uniqueKeysCount > maxColumns) {
             // it means the stream has too large cardinality,
             // the users must look after the schema they generate
@@ -265,7 +265,7 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
             break;
         }
 
-        for (line.fields) |field| {
+        for (line.fields.fields) |field| {
             if (!columnI.contains(field.key)) {
                 try columnI.put(field.key, columnI.count());
             }
@@ -302,7 +302,7 @@ fn putDynamicFields(self: *Block, allocator: Allocator, lines: []const Line) !vo
     }
 
     for (linesProcessed, 0..) |line, i| {
-        for (line.fields) |field| {
+        for (line.fields.fields) |field| {
             const idx = columnI.get(field.key).?;
             columns[idx].values[i] = field.value;
         }
@@ -329,7 +329,7 @@ fn sort(self: *Block) void {
 
 // TODO: investigate if we need to check for unique/duplicated fields keys as well.
 pub fn areSameFields(lines: []const Line) bool {
-    if (lines[0].fields.len > maxColumns) return false;
+    if (lines[0].fields.fields.len > maxColumns) return false;
 
     if (lines.len < 2) {
         @branchHint(.unlikely);
@@ -338,12 +338,12 @@ pub fn areSameFields(lines: []const Line) bool {
 
     const firstLine = lines[0];
     for (lines[1..]) |line| {
-        if (line.fields.len != firstLine.fields.len) {
+        if (line.fields.fields.len != firstLine.fields.fields.len) {
             return false;
         }
 
-        for (firstLine.fields, 0..) |field, i| {
-            if (!std.mem.eql(u8, field.key, line.fields[i].key)) {
+        for (firstLine.fields.fields, 0..) |field, i| {
+            if (!std.mem.eql(u8, field.key, line.fields.fields[i].key)) {
                 return false;
             }
         }
@@ -358,7 +358,7 @@ pub fn canBeSavedAsInvariant(lines: []const Line, index: usize) bool {
         return true;
     }
 
-    const value = lines[0].fields[index].value;
+    const value = lines[0].fields.fields[index].value;
 
     // If value is too large, then we consider it not invariant.
     // Not sure if this would work though?
@@ -367,7 +367,7 @@ pub fn canBeSavedAsInvariant(lines: []const Line, index: usize) bool {
     }
 
     for (lines[1..]) |line| {
-        if (std.mem.eql(u8, line.fields[index].value, value) == false) {
+        if (std.mem.eql(u8, line.fields.fields[index].value, value) == false) {
             return false;
         }
     }
