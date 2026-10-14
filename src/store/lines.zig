@@ -304,6 +304,7 @@ pub fn freeFields(alloc: std.mem.Allocator, fields: []Field) void {
         totalSize += field.key.len + field.value.len;
     }
 
+    // skip if empty: no fields[0], no bytes to free
     if (fields.len > 0) alloc.free(fields[0].key.ptr[0..totalSize]);
     alloc.free(fields);
 }
