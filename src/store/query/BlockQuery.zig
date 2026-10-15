@@ -35,7 +35,6 @@ const BlockQuery = @This();
 io: Io,
 alloc: Allocator,
 table: *const Table,
-columnIdxs: *const std.StringHashMapUnmanaged(u16),
 blockHeader: *const BlockHeader,
 
 // caches, initialized empty
@@ -51,14 +50,12 @@ pub fn init(
     io: Io,
     alloc: Allocator,
     table: *const Table,
-    columnIdxs: *const std.StringHashMapUnmanaged(u16),
     blockHeader: *const BlockHeader,
 ) !BlockQuery {
     self.* = .{
         .io = io,
         .alloc = alloc,
         .table = table,
-        .columnIdxs = columnIdxs,
         .blockHeader = blockHeader,
     };
 }
@@ -79,9 +76,8 @@ pub fn deinit(self: *BlockQuery) void {
 pub fn query(
     self: *const BlockQuery,
     q: *const Query,
-    len: usize,
 ) !void {
-    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, len);
+    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.blockHeader.len);
     defer bitset.deinit(self.alloc);
     self.bitset.setAll();
 
@@ -166,7 +162,7 @@ fn matchBloomFilterOr(
 }
 
 fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
-    const id = self.columnIdxs.get(key) orelse return "";
+    const id = self.table.columnIdxs.get(key) orelse return "";
 
     for (self.invariantColumnCache.items) |*c| {
         if (std.mem.eql(u8, c.key, key)) return c.value;
@@ -190,7 +186,7 @@ fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
 }
 
 fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
-    const id = self.columnIdxs.get(key) orelse return null;
+    const id = self.table.columnIdxs.get(key) orelse return null;
 
     for (self.columnHeaderCache.items) |ch| {
         if (std.mem.eql(u8, ch.key, key)) return ch;
@@ -226,7 +222,7 @@ fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes
     const buf = try self.alloc.alloc(u8, header.bloomFilterSize);
     defer self.alloc.free(buf);
 
-    const colid = self.columnIdxs.get(header.key) orelse {
+    const colid = self.table.columnIdxs.get(header.key) orelse {
         Logger.log(.err, "column id not found", .{ .key = header.key, .table = self.table.path });
         return false;
     };

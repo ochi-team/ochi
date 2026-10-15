@@ -269,10 +269,6 @@ pub const Fields = struct {
     }
 
     pub const empty: Fields = .view(&.{});
-
-    pub fn deinit(self: *Fields, alloc: std.mem.Allocator) void {
-        alloc.free(self.buf);
-    }
 };
 
 pub const defaultMaxFieldsPerLine: usize = 512;
