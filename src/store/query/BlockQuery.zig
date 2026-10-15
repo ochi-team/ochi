@@ -61,6 +61,18 @@ pub fn init(
     };
 }
 
+pub fn deinit(self: *BlockQuery) void {
+    for (self.invariantColumnCache.items) |c| self.alloc.free(c.values);
+    self.invariantColumnCache.deinit(self.alloc);
+
+    for (self.columnHeaderCache.items) |*ch| ch.dict.deinit(self.alloc);
+    self.columnHeaderCache.deinit(self.alloc);
+
+    if (self.cshIndexIDs) |ids| self.alloc.destroy(ids);
+    if (self.cshIndexOffsets) |offsets| self.alloc.destroy(offsets);
+    self.* = undefined;
+}
+
 pub fn query(
     self: *const BlockQuery,
     q: *const Query,
