@@ -24,7 +24,10 @@ const bloom = @import("../bloom/bloom.zig");
 const BloomFilter = @import("../bloom/BloomFilter.zig");
 const match = @import("match.zig").matchPredicateByAll;
 
-const maxBloomTokensBlockSize = @import("../../store/data/BlockData.zig").maxBloomTokensBlockSize;
+const Block = @import("../data/Block.zig");
+const BlockData = @import("../../store/data/BlockData.zig");
+const maxBloomTokensBlockSize = BlockData.maxBloomTokensBlockSize;
+const maxColumnsHeaderIndexSize = BlockData.maxColumnsHeaderIndexSize;
 
 const BlockQuery = @This();
 
@@ -32,10 +35,14 @@ io: Io,
 alloc: Allocator,
 table: *const Table,
 columnIdxs: *const std.StringHashMapUnmanaged(u16),
+blockHeader: *const BlockHeader,
 
 // caches, initialized empty
 invariantColumnCache: std.ArrayList(Column) = .empty,
 columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
+cshIndex: ?ColumnsHeaderIndex = null,
+cshIndexIDs: ?*[Block.maxColumns]u16 = null,
+cshIndexOffsets: ?*[Block.maxColumns]u32 = null,
 
 pub fn init(
     self: *BlockQuery,
@@ -43,18 +50,19 @@ pub fn init(
     alloc: Allocator,
     table: *const Table,
     columnIdxs: *const std.StringHashMapUnmanaged(u16),
+    blockHeader: *const BlockHeader,
 ) !BlockQuery {
     self.* = .{
         .io = io,
         .alloc = alloc,
         .table = table,
         .columnIdxs = columnIdxs,
+        .blockHeader = blockHeader,
     };
 }
 
 pub fn query(
     self: *const BlockQuery,
-    blockHeader: *const BlockHeader,
     q: *const Query,
     len: usize,
 ) !void {
@@ -62,7 +70,6 @@ pub fn query(
     defer bitset.deinit(self.alloc);
     self.bitset.setAll();
 
-    _ = blockHeader;
     if (q.fieldsExpr) |fieldsExpr| {
         try self.filterByExpr(fieldsExpr, &bitset);
     }
@@ -224,8 +231,27 @@ fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes
 }
 
 fn columnsHeaderIndex(self: *BlockQuery) !*const ColumnsHeaderIndex {
-    _ = self;
-    unreachable;
+    if (self.cshIndex) |*idx| return idx;
+
+    const bh = self.blockHeader.?;
+    assert(bh.columnsHeaderIndexSize <= maxColumnsHeaderIndexSize);
+
+    // the buffer is only needed for decoding, ids and offsets are copied out
+    const buf = try self.alloc.alloc(u8, bh.columnsHeaderIndexSize);
+    defer self.alloc.free(buf);
+    const n = try self.table.readColumnsHeaderIndex(self.io, buf, bh.columnsHeaderIndexOffset);
+    assert(n == buf.len);
+
+    const ids = try self.alloc.create([Block.maxColumns]u16);
+    errdefer self.alloc.destroy(ids);
+    const offsets = try self.alloc.create([Block.maxColumns]u32);
+    errdefer self.alloc.destroy(offsets);
+
+    self.cshIndex = .initBufferUnknown(ids, offsets);
+    self.cshIndex.?.decode(buf);
+    self.cshIndexIDs = ids;
+    self.cshIndexOffsets = offsets;
+    return &self.cshIndex.?;
 }
 
 fn columnsHeaderBlock(self: *BlockQuery) ![]const u8 {
