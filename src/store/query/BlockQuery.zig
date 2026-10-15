@@ -28,6 +28,7 @@ const Block = @import("../data/Block.zig");
 const BlockData = @import("../../store/data/BlockData.zig");
 const maxBloomTokensBlockSize = BlockData.maxBloomTokensBlockSize;
 const maxColumnsHeaderIndexSize = BlockData.maxColumnsHeaderIndexSize;
+const maxColumnsHeaderSize = BlockData.maxColumnsHeaderSize;
 
 const BlockQuery = @This();
 
@@ -43,6 +44,7 @@ columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
 cshIndex: ?ColumnsHeaderIndex = null,
 cshIndexIDs: ?*[Block.maxColumns]u16 = null,
 cshIndexOffsets: ?*[Block.maxColumns]u32 = null,
+cshBlock: ?[]u8 = null,
 
 pub fn init(
     self: *BlockQuery,
@@ -70,6 +72,7 @@ pub fn deinit(self: *BlockQuery) void {
 
     if (self.cshIndexIDs) |ids| self.alloc.destroy(ids);
     if (self.cshIndexOffsets) |offsets| self.alloc.destroy(offsets);
+    if (self.cshBlock) |b| self.alloc.free(b);
     self.* = undefined;
 }
 
@@ -267,8 +270,18 @@ fn columnsHeaderIndex(self: *BlockQuery) !*const ColumnsHeaderIndex {
 }
 
 fn columnsHeaderBlock(self: *BlockQuery) ![]const u8 {
-    _ = self;
-    unreachable;
+    if (self.cshBlock) |b| return b;
+
+    const bh = self.blockHeader;
+    assert(bh.columnsHeaderSize <= maxColumnsHeaderSize);
+
+    const buf = try self.alloc.alloc(u8, bh.columnsHeaderSize);
+    errdefer self.alloc.free(buf);
+    const n = try self.table.readColumnsHeader(self.io, buf, bh.columnsHeaderOffset);
+    assert(n == buf.len);
+
+    self.cshBlock = buf;
+    return buf;
 }
 
 const KeyTokens = struct {
