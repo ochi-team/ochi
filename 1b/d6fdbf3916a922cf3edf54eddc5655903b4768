@@ -1,0 +1,19 @@
+src/store/query/BlockQuery.zig
+  s_1efc265611d483::t_d286292fedee19 27-30,38,43-45,53,60,234-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "1bd6fdbf3916a922cf3edf54eddc5655903b4768",
+  "prompts": {},
+  "sessions": {
+    "s_1efc265611d483": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7075a4a5-9953-4d57-b4c8-014976905f4f",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
