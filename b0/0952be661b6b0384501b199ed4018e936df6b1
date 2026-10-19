@@ -1,0 +1,39 @@
+src/store/query/clause_test.zig
+  s_c146b57c8cfc20::t_4680584605d736 42,45,84-86,89-104,111-119,124-125,127-128,132
+  s_c146b57c8cfc20::t_9a48aaa5d4670a 39-41
+  s_c146b57c8cfc20::t_380aa6ab610f3e 44
+  s_c146b57c8cfc20::t_8b4ae71d288b3d 46-47
+  s_c146b57c8cfc20::t_159acd30268248 87-88
+  s_c146b57c8cfc20::t_0636a59fced495 105-110
+  s_c146b57c8cfc20::t_189a5410d52511 120-123
+  s_c146b57c8cfc20::t_f802f8e7cd8fa6 126
+  s_c146b57c8cfc20::t_d6bc88c150e283 129-131
+src/store/query/clause.zig
+  s_e1e2c2477e9aea::t_9563a8aba25a51 11-13
+  s_e1e2c2477e9aea::t_165b97733a95f3 9-10
+  s_e1e2c2477e9aea::t_c34c2be41f11b4 14-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "b00952be661b6b0384501b199ed4018e936df6b1",
+  "prompts": {},
+  "sessions": {
+    "s_c146b57c8cfc20": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc15219e-43c6-4fef-97a7-ca115d70c566",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_e1e2c2477e9aea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cf5dfce-e77d-4b2f-a552-4c60f15a2b6a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
