@@ -1,5 +1,3 @@
 const BlockResponse = @This();
 
-pub fn init() BlockResponse {
-    unreachable;
-}
+pub fn init() BlockResponse {}
