@@ -1,0 +1,35 @@
+src/store/query/clause_test.zig
+  s_8183ea1062bfec::t_38cf0dfa0e105c 48
+src/store/bloom/Tokenizer.zig
+  s_beb08ea0df897b::t_2b94a2a4d2fa78 22
+src/store/data/Table.zig
+  s_beb08ea0df897b::t_2b94a2a4d2fa78 33-34,475,604-608
+src/store/query/match.zig
+  s_beb08ea0df897b::t_2b94a2a4d2fa78 5
+src/store/query/BlockResponse.zig
+  s_beb08ea0df897b::t_2b94a2a4d2fa78 3-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "8f363eb5ba9453aa7814ca85b6d0d89c62698076",
+  "prompts": {},
+  "sessions": {
+    "s_8183ea1062bfec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "311937d2-bdc8-410d-b534-7dc82ce91ab8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_beb08ea0df897b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2cbbff8-4216-4434-a56b-5095547ff9f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
