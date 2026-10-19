@@ -479,6 +479,7 @@ pub fn queryLines(
     // 4. predicate eq/not eq filter
     // 5. collect the blocks
     // 6. return down the result into the response
+    // 7. fieldsOrTokens and fieldsAndTokens
     if (sids.len == 0) {
         return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
     }
@@ -604,7 +605,7 @@ fn queryLinesAllBlocks(
             // var bq = BlockQuery.init(io, alloc, self, &blockHeader);
             // defer bq.deinit();
             //
-            // const res = try bq.query(&query);
+            // const res = try bq.query(&query) orelse continue;
             // _ = res;
 
             try self.queryBlock(

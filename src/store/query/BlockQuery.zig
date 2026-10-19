@@ -22,13 +22,18 @@ const Column = @import("../../store/data/Column.zig");
 const ColumnHeader = @import("../../store/data/ColumnHeader.zig");
 const bloom = @import("../bloom/bloom.zig");
 const BloomFilter = @import("../bloom/BloomFilter.zig");
-const match = @import("match.zig").matchPredicateByAll;
+const matchPredicateByAll = @import("match.zig").matchPredicateByAll;
 
 const Block = @import("../data/Block.zig");
 const BlockData = @import("../../store/data/BlockData.zig");
 const maxBloomTokensBlockSize = BlockData.maxBloomTokensBlockSize;
 const maxColumnsHeaderIndexSize = BlockData.maxColumnsHeaderIndexSize;
 const maxColumnsHeaderSize = BlockData.maxColumnsHeaderSize;
+
+pub const Error = Allocator.Error || Io.File.ReadPositionalError || error{
+    PartialExpressionUnwrap,
+    UnexpectedExpression,
+};
 
 const BlockQuery = @This();
 
@@ -46,13 +51,12 @@ cshIndexOffsets: ?*[Block.maxColumns]u32 = null,
 cshBlock: ?[]u8 = null,
 
 pub fn init(
-    self: *BlockQuery,
     io: Io,
     alloc: Allocator,
     table: *const Table,
     blockHeader: *const BlockHeader,
-) !BlockQuery {
-    self.* = .{
+) BlockQuery {
+    return .{
         .io = io,
         .alloc = alloc,
         .table = table,
@@ -74,33 +78,38 @@ pub fn deinit(self: *BlockQuery) void {
 }
 
 pub fn query(
-    self: *const BlockQuery,
+    self: *BlockQuery,
     q: *const Query,
-) !void {
-    const bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.blockHeader.len);
+) Error!?BlockResponse {
+    var bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.blockHeader.len);
     defer bitset.deinit(self.alloc);
-    self.bitset.setAll();
 
     if (q.fieldsExpr) |fieldsExpr| {
         try self.filterByExpr(fieldsExpr, &bitset);
     }
 
     if (bitsetIsEmpty(&bitset)) {
-        return;
+        return null;
     }
-
     return BlockResponse.init();
 }
 
-fn filterByExpr(self: *const BlockQuery, fieldsExpr: *const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) !void {
-    switch (fieldsExpr) {
+fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
+    switch (fieldsExpr.*) {
         .orOp => |orExpr| try self.filterOr(orExpr, bitset),
-        .andOp => |andExpr| try self.filterAnd(andExpr),
-        .predicate => |predicate| try self.filterPredicate(predicate),
+        .andOp => |andExpr| try self.filterAnd(andExpr, bitset),
+        .predicate => |predicate| self.filterPredicate(predicate, bitset),
     }
 }
 
-fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Allocator.Error!void {
+fn filterPredicate(self: *BlockQuery, predicate: Query.FilterPredicate, bitset: *std.bit_set.DynamicBitSetUnmanaged) void {
+    _ = self;
+    _ = predicate;
+    _ = bitset;
+    unreachable;
+}
+
+fn filterOr(self: *BlockQuery, expr: [2]*const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
     var orsBuffer: [32]*const FilterExpression = undefined;
     var orsArray = std.ArrayList(*const FilterExpression).initBuffer(&orsBuffer);
 
@@ -109,38 +118,39 @@ fn filterOr(self: *const BlockQuery, expr: [2]*const FilterExpression, bitset: *
     }
 
     if (!try self.matchBloomFilterOr(orsArray)) {
-        self.bitset.unsetAll();
+        bitset.unsetAll();
         return;
     }
 
-    const res = try bitset.clone(self.alloc);
-    errdefer res.deinit(self.alloc);
+    var res = try bitset.clone(self.alloc);
+    defer res.deinit(self.alloc);
 
     for (orsArray.items) |filter| {
-        const bitsetTmp = try res.clone(self.alloc);
+        var bitsetTmp = try res.clone(self.alloc);
         defer bitsetTmp.deinit(self.alloc);
 
-        try self.filterByExpr(filter, bitsetTmp);
+        try self.filterByExpr(filter, &bitsetTmp);
         bitsetAndNot(&res, &bitsetTmp);
         if (bitsetIsEmpty(&res)) {
             return;
         }
     }
 
-    bitsetAndNot(&bitset, &res);
+    bitsetAndNot(bitset, &res);
 }
 
 fn matchBloomFilterOr(
-    self: *const BlockQuery,
-    ors: *const std.ArrayList(*const FilterExpression),
-) !bool {
+    self: *BlockQuery,
+    ors: std.ArrayList(*const FilterExpression),
+) Error!bool {
     const keysTokens = try self.fieldsOrTokens(ors);
+    defer self.freeKeysTokens(keysTokens);
     if (keysTokens.len == 0) return true;
 
     for (keysTokens) |keyTokens| {
         const v = try self.getInvariantColumnValue(keyTokens.key);
         if (v.len != 0) {
-            if (match.matchPredicateByAll(v, keyTokens.tokens)) {
+            if (matchPredicateByAll(v, keyTokens.tokens)) {
                 return true;
             }
 
@@ -150,7 +160,7 @@ fn matchBloomFilterOr(
         const columnHeader = (try self.getColumnHeader(keyTokens.key)) orelse continue;
         switch (columnHeader.type) {
             .dict => {
-                if (try self.matchDict(columnHeader.dict.items, keyTokens.tokens)) return true;
+                if (try matchDict(self.alloc, columnHeader.dict.values.items, keyTokens.tokens)) return true;
             },
             else => {
                 if (try self.matchBloomFilter(&columnHeader, keyTokens.hashes)) return true;
@@ -161,11 +171,62 @@ fn matchBloomFilterOr(
     return false;
 }
 
-fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
-    const id = self.table.columnIdxs.get(key) orelse return "";
+fn filterAnd(self: *BlockQuery, expr: [2]*const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
+    var andsBuffer: [32]*const FilterExpression = undefined;
+    var andsArray = std.ArrayList(*const FilterExpression).initBuffer(&andsBuffer);
 
-    for (self.invariantColumnCache.items) |*c| {
-        if (std.mem.eql(u8, c.key, key)) return c.value;
+    if (!clause.unwrapAnds(&andsArray, expr)) {
+        return error.PartialExpressionUnwrap;
+    }
+
+    if (!try self.matchBloomFilterAnd(andsArray)) {
+        bitset.unsetAll();
+        return;
+    }
+
+    for (andsArray.items) |filter| {
+        try self.filterByExpr(filter, bitset);
+
+        if (bitsetIsEmpty(bitset)) return;
+    }
+}
+
+fn matchBloomFilterAnd(
+    self: *BlockQuery,
+    ands: std.ArrayList(*const FilterExpression),
+) Error!bool {
+    const keysTokens = try self.fieldsAndTokens(ands);
+    defer self.freeKeysTokens(keysTokens);
+
+    if (keysTokens.len == 0) return true;
+
+    for (keysTokens) |keyTokens| {
+        const v = try self.getInvariantColumnValue(keyTokens.key);
+        if (v.len != 0) {
+            if (matchPredicateByAll(v, keyTokens.tokens)) continue;
+            return false;
+        }
+
+        const columnHeader = (try self.getColumnHeader(keyTokens.key)) orelse return false;
+        switch (columnHeader.type) {
+            .dict => {
+                if (try matchDict(self.alloc, columnHeader.dict.values.items, keyTokens.tokens)) continue;
+                return false;
+            },
+            else => {
+                if (!try self.matchBloomFilter(&columnHeader, keyTokens.hashes)) return false;
+            },
+        }
+    }
+
+    return true;
+}
+
+fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) Error![]const u8 {
+    const id = self.table.columnIDGen.keyIDs.get(key) orelse return "";
+
+    for (self.invariantColumnCache.items) |c| {
+        if (std.mem.eql(u8, c.key, key)) return c.values[0];
     }
 
     const headerIndex = try self.columnsHeaderIndex();
@@ -177,7 +238,9 @@ fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
         assert(offset <= block.len);
 
         var dec = Decoder.init(block[offset..]);
-        const col = Column.ecodeAsInvariant(self.alloc, &dec, false);
+        var col = try Column.decodeAsInvariant(self.alloc, &dec, false);
+        errdefer self.alloc.free(col.values);
+        col.key = key;
         try self.invariantColumnCache.append(self.alloc, col);
         return col.values[0];
     }
@@ -185,8 +248,8 @@ fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) ![]const u8 {
     return "";
 }
 
-fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
-    const id = self.table.columnIdxs.get(key) orelse return null;
+fn getColumnHeader(self: *BlockQuery, key: []const u8) Error!?ColumnHeader {
+    const id = self.table.columnIDGen.keyIDs.get(key) orelse return null;
 
     for (self.columnHeaderCache.items) |ch| {
         if (std.mem.eql(u8, ch.key, key)) return ch;
@@ -201,7 +264,8 @@ fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
         assert(offset <= block.len);
 
         var dec = Decoder.init(block[offset..]);
-        const ch = try ColumnHeader.decode(&dec, key, self.alloc);
+        var ch = try ColumnHeader.decode(&dec, key, self.alloc);
+        errdefer ch.dict.deinit(self.alloc);
         try self.columnHeaderCache.append(self.alloc, ch);
         return ch;
     }
@@ -212,39 +276,34 @@ fn getColumnHeader(self: *BlockQuery, key: []const u8) !?ColumnHeader {
 fn matchDict(tmpAlloc: Allocator, values: []const []const u8, tokens: []const []const u8) !bool {
     const valuesJoined = try std.mem.join(tmpAlloc, ",", values);
     defer tmpAlloc.free(valuesJoined);
-    return match.matchPredicateByAll(valuesJoined, tokens);
+    return matchPredicateByAll(valuesJoined, tokens);
 }
 
-fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes: []const u64) !bool {
+fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes: []const u64) Error!bool {
     assert(header.bloomFilterSize <= maxBloomTokensBlockSize);
     if (hashes.len == 0) return true;
 
     const buf = try self.alloc.alloc(u8, header.bloomFilterSize);
     defer self.alloc.free(buf);
 
-    const colid = self.table.columnIdxs.get(header.key) orelse {
-        Logger.log(.err, "column id not found", .{ .key = header.key, .table = self.table.path });
-        return false;
-    };
-
     const n = if (header.key.len == 0)
         try self.table.readMessageBloomTokens(self.io, buf, header.bloomFilterOffset)
-    else
-        try self.table.readBloomTokens(
-            self.io,
-            buf,
-            header.bloomFilterOffset,
-            colid,
-        );
+    else blk: {
+        const shardIdx = self.table.columnIdxs.get(header.key) orelse {
+            Logger.log(.err, "column shard not found", .{ .key = header.key, .table = self.table.path });
+            return false;
+        };
+        break :blk try self.table.readBloomTokens(self.io, buf, header.bloomFilterOffset, shardIdx);
+    };
     assert(n == buf.len);
 
     return BloomFilter.containsAll(buf, hashes);
 }
 
-fn columnsHeaderIndex(self: *BlockQuery) !*const ColumnsHeaderIndex {
+fn columnsHeaderIndex(self: *BlockQuery) Error!*const ColumnsHeaderIndex {
     if (self.cshIndex) |*idx| return idx;
 
-    const bh = self.blockHeader.?;
+    const bh = self.blockHeader;
     assert(bh.columnsHeaderIndexSize <= maxColumnsHeaderIndexSize);
 
     // the buffer is only needed for decoding, ids and offsets are copied out
@@ -258,14 +317,14 @@ fn columnsHeaderIndex(self: *BlockQuery) !*const ColumnsHeaderIndex {
     const offsets = try self.alloc.create([Block.maxColumns]u32);
     errdefer self.alloc.destroy(offsets);
 
-    self.cshIndex = .initBufferUnknown(ids, offsets);
+    self.cshIndex = ColumnsHeaderIndex.initBufferUnknown(ids, offsets);
     self.cshIndex.?.decode(buf);
     self.cshIndexIDs = ids;
     self.cshIndexOffsets = offsets;
     return &self.cshIndex.?;
 }
 
-fn columnsHeaderBlock(self: *BlockQuery) ![]const u8 {
+fn columnsHeaderBlock(self: *BlockQuery) Error![]const u8 {
     if (self.cshBlock) |b| return b;
 
     const bh = self.blockHeader;
@@ -280,41 +339,74 @@ fn columnsHeaderBlock(self: *BlockQuery) ![]const u8 {
     return buf;
 }
 
-const KeyTokens = struct {
+pub const KeyTokens = struct {
     key: []const u8,
     tokens: []const []const u8,
     hashes: []u64,
 };
 
+pub fn freeKeysTokens(self: *const BlockQuery, keysTokens: []KeyTokens) void {
+    for (keysTokens) |kt| {
+        self.alloc.free(kt.tokens);
+        self.alloc.free(kt.hashes);
+    }
+    self.alloc.free(keysTokens);
+}
+
+// merged tokens per field key, tokens point to the query predicates values
+const TokensMap = std.StringHashMap(std.ArrayList([]const u8));
+
+fn deinitTokensMap(alloc: Allocator, m: *TokensMap) void {
+    var it = m.valueIterator();
+    while (it.next()) |v| v.deinit(alloc);
+    m.deinit();
+}
+
 /// ors must be 100% const*, because we keep the same data for later usage
-fn fieldsOrTokens(self: *const BlockQuery, ors: *const std.ArrayList(*const FilterExpression)) ![]KeyTokens {
+pub fn fieldsOrTokens(self: *const BlockQuery, ors: std.ArrayList(*const FilterExpression)) Error![]KeyTokens {
     // TODO: see if it's executed more than once and cache the tokens calculation
     // or make a lazy access
-    var m = std.StringHashMap([]const []const u8).init(self.alloc);
-    defer m.deinit();
+    var m = TokensMap.init(self.alloc);
+    defer deinitTokensMap(self.alloc, &m);
     var fieldKeys = std.ArrayList([]const u8).empty;
     defer fieldKeys.deinit(self.alloc);
 
-    var tokensBuf: [32][]const u8 = undefined;
-    const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
-
-    for (ors.items) |ex| {
-        switch (ex) {
-            .andOp => |e| {
-                const kTokens = try self.fieldsandtokens(e.andOp);
-                for (kTokens) |kt| {
-                    mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt);
-                }
-            },
+    for (ors.items, 0..) |ex, i| {
+        var andsBuffer: [32]*const FilterExpression = undefined;
+        var andsArray = std.ArrayList(*const FilterExpression).initBuffer(&andsBuffer);
+        switch (ex.*) {
+            .andOp => |e| if (!clause.unwrapAnds(&andsArray, e)) return error.PartialExpressionUnwrap,
             // or is not allowed, we must have unfolded it above in order to reuse filters later
             .orOp => return error.UnexpectedExpression,
-            .predicate => |e| {
-                if (e.predicate.op != .equal) {
-                    continue;
-                }
-                try self.getTokens(&tokensArray, e.predicate.value);
-                mergeTokens(self.alloc, &m, &fieldKeys, e.predicate.key, tokensArray.items);
-            },
+            .predicate => andsArray.appendAssumeCapacity(ex),
+        }
+
+        const branch = try self.fieldsAndTokens(andsArray);
+        defer self.freeKeysTokens(branch);
+
+        if (i == 0) {
+            for (branch) |kt| {
+                try mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt.tokens);
+            }
+            continue;
+        }
+
+        // intersect in place, empty tokens are dropped in collectMergedKeyTokens
+        for (fieldKeys.items) |key| {
+            const tokens = m.getPtr(key).?;
+            const other = for (branch) |kt| {
+                if (std.mem.eql(u8, kt.key, key)) break kt.tokens;
+            } else &.{};
+
+            var n: usize = 0;
+            for (tokens.items) |t| {
+                for (other) |o| {
+                    if (std.mem.eql(u8, o, t)) break;
+                } else continue;
+                tokens.items[n] = t;
+                n += 1;
+            }
+            tokens.shrinkRetainingCapacity(n);
         }
     }
 
@@ -325,40 +417,39 @@ fn getTokens(self: *const BlockQuery, dst: *std.ArrayList([]const u8), predicate
     return Tokenizer.tokenize(self.alloc, dst, predicate);
 }
 
-fn fieldsAndTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![]KeyTokens {
-    var m = std.StringHashMap([]const []const u8).init(self.alloc);
-    defer m.deinit();
+fn fieldsAndTokens(
+    self: *const BlockQuery,
+    ands: std.ArrayList(*const FilterExpression),
+) Error![]KeyTokens {
+    var m = TokensMap.init(self.alloc);
+    defer deinitTokensMap(self.alloc, &m);
     var fieldKeys = std.ArrayList([]const u8).empty;
     defer fieldKeys.deinit(self.alloc);
 
     var tokensBuf: [32][]const u8 = undefined;
-    const tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
+    var tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
 
-    var andsBuffer: [32]*const FilterExpression = undefined;
-    var andsArray = std.ArrayList(*const FilterExpression).initBuffer(&andsBuffer);
-
-    andsArray.appendSliceAssumeCapacity(expr[0..]);
-
-    while (andsArray.pop()) |ex| {
-        switch (ex) {
-            .andOp => |e| {
-                andsArray.appendSliceBounded(e.andOp[0..]) catch {
-                    Logger.log(.err, "conjunction expression buffer is full, consider to extend it", .{});
-                    continue;
-                };
-            },
+    for (ands.items) |ex| {
+        switch (ex.*) {
+            // and is not allowed, we must have unfolded it above in order to reuse filters later
+            .andOp => return error.UnexpectedExpression,
             .orOp => |e| {
-                const kTokens = try self.fieldsOrTokens(e.andOp);
+                var orsBuffer: [32]*const FilterExpression = undefined;
+                var orsArray = std.ArrayList(*const FilterExpression).initBuffer(&orsBuffer);
+                if (!clause.unwrapOrs(&orsArray, e)) return error.PartialExpressionUnwrap;
+
+                const kTokens = try self.fieldsOrTokens(orsArray);
+                defer self.freeKeysTokens(kTokens);
                 for (kTokens) |kt| {
-                    mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt);
+                    try mergeTokens(self.alloc, &m, &fieldKeys, kt.key, kt.tokens);
                 }
             },
-            .predicate => |e| {
-                if (e.predicate.op != .equal) {
+            .predicate => |p| {
+                if (p.op != .equal) {
                     continue;
                 }
-                try self.getTokens(&tokensArray, e.predicate.value);
-                mergeTokens(self.alloc, &m, &fieldKeys, e.predicate.key, tokensArray.items);
+                try self.getTokens(&tokensArray, p.value);
+                try mergeTokens(self.alloc, &m, &fieldKeys, p.key, tokensArray.items);
             },
         }
     }
@@ -368,39 +459,48 @@ fn fieldsAndTokens(self: *const BlockQuery, expr: [2]*const FilterExpression) ![
 
 fn collectMergedKeyTokens(
     self: *const BlockQuery,
-    m: *const std.StringHashMap([]const []const u8),
+    m: *const TokensMap,
     fieldKeys: *const std.ArrayList([]const u8),
-) ![]KeyTokens {
-    var keyTokens: std.ArrayList([]KeyTokens) = try .initCapacity(self.alloc, 16);
-    errdefer keyTokens.deinit(self.alloc);
+) Error![]KeyTokens {
+    var keyTokens: std.ArrayList(KeyTokens) = try .initCapacity(self.alloc, fieldKeys.items.len);
+    errdefer {
+        for (keyTokens.items) |kt| {
+            self.alloc.free(kt.tokens);
+            self.alloc.free(kt.hashes);
+        }
+        keyTokens.deinit(self.alloc);
+    }
     var processedSet: std.StringHashMap(void) = .init(self.alloc);
     defer processedSet.deinit();
 
-    for (fieldKeys) |fieldKey| {
+    for (fieldKeys.items) |fieldKey| {
         defer processedSet.clearRetainingCapacity();
 
         const mergedTokens = m.get(fieldKey) orelse continue;
+        if (mergedTokens.items.len == 0) continue;
 
-        const tokens = try self.alloc.alloc([]const u8, mergedTokens.len);
-        errdefer self.alloc.free(tokens);
-        var i: usize = 0;
+        var tokens: std.ArrayList([]const u8) = try .initCapacity(self.alloc, mergedTokens.items.len);
+        errdefer tokens.deinit(self.alloc);
+        var hashes: std.ArrayList(u64) = try .initCapacity(self.alloc, mergedTokens.items.len * bloom.hashRounds);
+        errdefer hashes.deinit(self.alloc);
 
-        for (mergedTokens) |token| {
-            const gop = processedSet.getOrPut(token);
+        for (mergedTokens.items) |token| {
+            const gop = try processedSet.getOrPut(token);
             if (gop.found_existing) continue;
 
-            processedSet.put(token, .{});
-            tokens[i] = tokens;
-            i += 1;
+            tokens.appendAssumeCapacity(token);
+            const h = try tokenHashes(self.alloc, token);
+            defer self.alloc.free(h);
+            hashes.appendSliceAssumeCapacity(h);
         }
 
-        const hashes = try tokenHashes(self.alloc, tokens);
-        errdefer self.alloc.free(hashes);
-
-        try keyTokens.append(self.alloc, .{
+        const tokensSlice = try tokens.toOwnedSlice(self.alloc);
+        errdefer self.alloc.free(tokensSlice);
+        const hashesSlice = try hashes.toOwnedSlice(self.alloc);
+        keyTokens.appendAssumeCapacity(.{
             .key = fieldKey,
-            .tokens = tokens,
-            .hashes = hashes,
+            .tokens = tokensSlice,
+            .hashes = hashesSlice,
         });
     }
 
@@ -409,24 +509,22 @@ fn collectMergedKeyTokens(
 
 fn mergeTokens(
     alloc: Allocator,
-    m: *std.StringHashMap(std.ArrayList([]const []const u8)),
+    m: *TokensMap,
     keys: *std.ArrayList([]const u8),
     key: []const u8,
     tokens: []const []const u8,
-) !void {
+) Allocator.Error!void {
     if (tokens.len == 0) {
         return;
     }
 
-    var g = try m.getOrPut(key);
+    const g = try m.getOrPut(key);
     if (!g.found_existing) {
+        g.value_ptr.* = .empty;
         try keys.append(alloc, key);
-        g.value_ptr.* = std.ArrayList([]const u8).empty;
     }
-    // tokens belong to a stack buffer, so we copy
-    const tokensCopy = try alloc.dupe([]const u8, tokens);
-    errdefer alloc.free(tokensCopy);
-    try g.value_ptr.append(alloc, tokensCopy);
+    // tokens may belong to a stack buffer, so we copy
+    try g.value_ptr.appendSlice(alloc, tokens);
 }
 
 pub fn bitsetIsEmpty(bitset: *const std.bit_set.DynamicBitSetUnmanaged) bool {
