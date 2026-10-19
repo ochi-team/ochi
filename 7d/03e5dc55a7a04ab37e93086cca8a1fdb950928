@@ -1,0 +1,20 @@
+src/store/data/Table.zig
+  s_088eaf0cbf15da::t_286da17a3113b5 485
+  s_088eaf0cbf15da::t_e37d923a399640 483-484
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "7d03e5dc55a7a04ab37e93086cca8a1fdb950928",
+  "prompts": {},
+  "sessions": {
+    "s_088eaf0cbf15da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f70acc-86c6-43c4-a8d3-eaeddcd8fd0c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
