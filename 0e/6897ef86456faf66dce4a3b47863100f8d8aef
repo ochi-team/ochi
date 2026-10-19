@@ -1,0 +1,56 @@
+src/store/query/BlockQuery.zig
+  s_e1e2c2477e9aea::t_9563a8aba25a51 175-181,183-193,202-205,207-212,214-222
+  s_85e8a7a6f67be9::t_7b16f3d17a9c22 98,100
+  s_6cdc9e8427bdbd::t_ebe90879b83d2e 342,348,366
+  s_6cdc9e8427bdbd::t_c4ee49a328283d 196,198,374-376,378,381-409,423,435,437-441,480
+  s_beb08ea0df897b::t_2b94a2a4d2fa78 33-35
+  s_beb08ea0df897b::t_13f4123fa2d908 81,97,101,105-108,110,112,121,125-126,129,132,139,143-145,147,163,174,194-195,197,199,213,223,225-226,228-229,241-243,251-252,267-268,282,291-297,303,306,320,327,349-363,369-370,377,420-421,424-425,430,442,444,447-448,451-452,462,464-472,476,482-485,487-488,491-494,497-500,502-503,512,516,521,523,526-527
+  s_beb08ea0df897b::t_c9aed935fb31d8 36-37
+  s_beb08ea0df897b::t_b677fb5bb71de7 109
+  s_beb08ea0df897b::t_e2f3e63fcca650 111
+  s_e1e2c2477e9aea::t_35a97b495a981d 182
+  s_e1e2c2477e9aea::t_c38043f275589a 206
+  s_beb08ea0df897b::t_68d8c84b4f49ab 224
+  s_beb08ea0df897b::t_010587248ea314 364
+  s_6cdc9e8427bdbd::t_447dfe3738a8e8 432-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "0e6897ef86456faf66dce4a3b47863100f8d8aef",
+  "prompts": {},
+  "sessions": {
+    "s_6cdc9e8427bdbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc540d15-2254-48d7-a547-58743a2c477d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_85e8a7a6f67be9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "660ea13e-56f5-4e72-964a-2cdc65512b15",
+        "model": "unknown"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_beb08ea0df897b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2cbbff8-4216-4434-a56b-5095547ff9f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_e1e2c2477e9aea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cf5dfce-e77d-4b2f-a552-4c60f15a2b6a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
