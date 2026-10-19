@@ -30,6 +30,8 @@ const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
+const BlockQuery = @import("../query/BlockQuery.zig");
+
 const InnerTag = enum { mem, disk };
 const Inner = union(InnerTag) {
     mem: *MemTable,
@@ -470,7 +472,7 @@ pub fn queryLines(
     sids: []SID,
     query: Query,
 ) !void {
-    //FIXME: 
+    //FIXME:
     // 1. apply time range filter to lines
     // 2. what about queryLinesAllBlocks
     // 3. implement and filter
@@ -599,7 +601,11 @@ fn queryLinesAllBlocks(
                 continue;
             }
 
-            _ = @import("../query/BlockQuery.zig");
+            // var bq = BlockQuery.init(io, alloc, self, &blockHeader);
+            // defer bq.deinit();
+            //
+            // const res = try bq.query(&query);
+            // _ = res;
 
             try self.queryBlock(
                 io,

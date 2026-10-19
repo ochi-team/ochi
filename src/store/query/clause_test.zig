@@ -45,7 +45,7 @@ fn expectUnwrapEqual(
 test "unwrapOrs" {
     const f = struct {
         fn f(expected: []const *const FilterExpression, expr: [2]*const FilterExpression) !void {
-            return expectUnwrapEqual(clause.unwrapOrs, expected, expr, true);
+            return expectUnwrapEqual(clause.unwrapOrs, expected, expr, true, 32);
         }
     }.f;
 
@@ -92,10 +92,10 @@ test "unwrapAnds" {
 
     // to teset overflow
     const fWithCapacity = struct {
-        fn f(expected: []const *const FilterExpression, expr: [2]*const FilterExpression, expectedRes: bool, capacity: usize) !void {
+        fn fWithCapacity(expected: []const *const FilterExpression, expr: [2]*const FilterExpression, expectedRes: bool, capacity: usize) !void {
             return expectUnwrapEqual(clause.unwrapAnds, expected, expr, expectedRes, capacity);
         }
-    }.f;
+    }.fWithCapacity;
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -134,7 +134,7 @@ test "unwrapAnds" {
     try f(&.{ orOfAnds, x }, .{ orOfAnds, x }, true);
 
     // buffer overflow: stops unwrapping and reports failure
-    try f(&.{ x, yAndz }, .{ x, yAndz }, false, 2);
-    try f(&.{ x, y, z }, .{ x, yAndz }, true, 3);
-    try f(&.{ xAndy, z }, .{ xAndy, z }, false, 2);
+    try fWithCapacity(&.{ x, yAndz }, .{ x, yAndz }, false, 2);
+    try fWithCapacity(&.{ x, y, z }, .{ x, yAndz }, true, 3);
+    try fWithCapacity(&.{ xAndy, z }, .{ xAndy, z }, false, 2);
 }

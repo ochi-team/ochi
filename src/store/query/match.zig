@@ -2,7 +2,7 @@ const std = @import("std");
 const bloom = @import("../bloom/bloom.zig");
 
 /// by all means every token must match
-pub fn matchPredicateByAll(value: []const u8, tokens: []const []const u8) []const u8 {
+pub fn matchPredicateByAll(value: []const u8, tokens: []const []const u8) bool {
     for (tokens) |token| {
         if (!matchPredicate(value, token)) return false;
     }

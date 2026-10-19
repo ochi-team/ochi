@@ -1,3 +1,5 @@
 const BlockResponse = @This();
 
-pub fn init() BlockResponse {}
+pub fn init() BlockResponse {
+    return .{};
+}

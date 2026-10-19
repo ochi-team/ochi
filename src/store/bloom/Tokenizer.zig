@@ -19,7 +19,7 @@ pub fn tokenize(alloc: Allocator, dst: *std.ArrayList([]const u8), val: []const 
     while (it.next()) |token| {
         const gop = try set.getOrPut(token);
         if (!gop.found_existing) {
-            dst.appendBounded(alloc, token) catch |err| {
+            dst.appendBounded(token) catch |err| {
                 switch (err) {
                     error.OutOfMemory => {
                         Logger.log(.warn, "tokenize dst out of bound, consider increase the buffer", .{});
