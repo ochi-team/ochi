@@ -19,6 +19,8 @@ pub const UnpackError = error{
 };
 
 /// leaky supposed be to be used with arena in order not to collect garbage to free later
+/// TODO: come up with a real solution instead of a leaky flag,
+/// it complicates the data type inferring
 pub fn Unpacker(comptime leaky: bool) type {
     return struct {
         const Self = @This();

@@ -10,6 +10,8 @@ const FilterExpression = Query.FilterExpression;
 
 const Tokenizer = @import("../bloom/Tokenizer.zig");
 const tokenHashes = @import("../bloom/bloom.zig").tokenHashes;
+const Unpacker = @import("../data/Unpacker.zig").Unpacker(false);
+const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Logger = @import("logging");
 const Decoder = @import("encoding").Decoder;
@@ -49,18 +51,21 @@ cshIndex: ?ColumnsHeaderIndex = null,
 cshIndexIDs: ?*[Block.maxColumns]u16 = null,
 cshIndexOffsets: ?*[Block.maxColumns]u32 = null,
 cshBlock: ?[]u8 = null,
+unpacker: Unpacker,
 
 pub fn init(
     io: Io,
     alloc: Allocator,
     table: *const Table,
     blockHeader: *const BlockHeader,
+    decompressionPool: *DecompressionPool,
 ) BlockQuery {
     return .{
         .io = io,
         .alloc = alloc,
         .table = table,
         .blockHeader = blockHeader,
+        .unpacker = .init(decompressionPool),
     };
 }
 
@@ -71,6 +76,7 @@ pub fn deinit(self: *BlockQuery) void {
     for (self.columnHeaderCache.items) |*ch| ch.dict.deinit(self.alloc);
     self.columnHeaderCache.deinit(self.alloc);
 
+    self.unpacker.deinit(self.alloc);
     if (self.cshIndexIDs) |ids| self.alloc.destroy(ids);
     if (self.cshIndexOffsets) |offsets| self.alloc.destroy(offsets);
     if (self.cshBlock) |b| self.alloc.free(b);
