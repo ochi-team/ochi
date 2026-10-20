@@ -117,7 +117,6 @@ test "initFromLines and initFromData produce identical blocks" {
             .columnsKeysBuf = writer.columnKeysDst.buffer.items,
             .columnIdxsBuf = writer.columnIdxsDst.buffer.items,
             .columnIDGen = writer.columnIDGen,
-            .colIdx = &writer.colIdx,
         };
 
         var bd = BlockData.initEmpty();
@@ -199,7 +198,6 @@ test "initFromData decodes multiple typed columns in one block without cross-col
         .columnsKeysBuf = writer.columnKeysDst.buffer.items,
         .columnIdxsBuf = writer.columnIdxsDst.buffer.items,
         .columnIDGen = writer.columnIDGen,
-        .colIdx = &writer.colIdx,
     };
 
     var bd = BlockData.initEmpty();

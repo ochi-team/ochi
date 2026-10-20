@@ -21,6 +21,11 @@ const testing = std.testing;
 const stesting = @import("../../stds/testing.zig");
 
 const ColumnDict = @import("ColumnDict.zig");
+const TableWriter = @import("TableWriter.zig");
+const BlockWriter = @import("BlockWriter.zig");
+const TableHeader = @import("TableHeader.zig");
+const BlockHeader = @import("BlockHeader.zig");
+const BlockQuery = @import("../query/BlockQuery.zig");
 
 const Table = @import("Table.zig");
 
@@ -252,11 +257,11 @@ test "open reads table from disk" {
     try testing.expectEqual(memTable.timestampsBuf.items.len, n);
     try testing.expectEqualSlices(u8, memTable.timestampsBuf.items, buf[0..n]);
 
-    n = try table.readMessageBloomTokens(io, buf[0..memTable.messageBloomTokensBuf.items.len], 0);
+    n = try table.readBloomTokens(io, buf[0..memTable.messageBloomTokensBuf.items.len], "", 0);
     try testing.expectEqual(memTable.messageBloomTokensBuf.items.len, n);
     try testing.expectEqualSlices(u8, memTable.messageBloomTokensBuf.items, buf[0..n]);
 
-    n = try table.readMessageBloomValues(io, buf[0..memTable.messageBloomValuesBuf.items.len], 0);
+    n = try table.readBloomValues(io, buf[0..memTable.messageBloomValuesBuf.items.len], "", 0);
     try testing.expectEqual(memTable.messageBloomValuesBuf.items.len, n);
     try testing.expectEqualSlices(u8, memTable.messageBloomValuesBuf.items, buf[0..n]);
 
@@ -266,11 +271,11 @@ test "open reads table from disk" {
     );
     try testing.expectEqual(@as(usize, 1), table.tableHeader().bloomValuesBuffersAmount);
 
-    n = try table.readBloomTokens(io, buf[0..memTable.bloomTokensBuf.items.len], 0, 0);
+    n = try table.readBloomTokens(io, buf[0..memTable.bloomTokensBuf.items.len], "level", 0);
     try testing.expectEqual(memTable.bloomTokensBuf.items.len, n);
     try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, buf[0..n]);
 
-    n = try table.readBloomValues(io, buf[0..memTable.bloomValuesBuf.items.len], 0, 0);
+    n = try table.readBloomValues(io, buf[0..memTable.bloomValuesBuf.items.len], "level", 0);
     try testing.expectEqual(memTable.bloomValuesBuf.items.len, n);
     try testing.expectEqualSlices(u8, memTable.bloomValuesBuf.items, buf[0..n]);
 
@@ -334,7 +339,7 @@ test "open reads bloom buffers" {
     defer table.release(io);
 
     var buf: [512]u8 = undefined;
-    const n = try table.readBloomTokens(io, buf[0..memTable.bloomTokensBuf.items.len], 0, 0);
+    const n = try table.readBloomTokens(io, buf[0..memTable.bloomTokensBuf.items.len], "msg", 0);
     try testing.expectEqual(memTable.bloomTokensBuf.items.len, n);
     try testing.expectEqualSlices(u8, memTable.bloomTokensBuf.items, buf[0..n]);
 }
@@ -720,4 +725,116 @@ test "queryLines reads disk table fields after open" {
     try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
     try testing.expectEqualSlices(u8, "id", queried.items[0].fields.items[1].key);
     try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields.items[1].value);
+}
+
+test "disk table with multiple bloom shards resolves columns to their shards" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+    var tablePathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    var tablePathWriter = std.Io.Writer.fixed(&tablePathBuf);
+    try std.fs.path.fmtJoin(&.{ rootPath, "table" }).format(&tablePathWriter);
+    const tablePath = tablePathWriter.buffered();
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    // unique values per row, otherwise columns become dict or invariant and skip the bloom shards
+    const linesCount = 9;
+    try testing.expect(linesCount > ColumnDict.maxDictColumnValuesLen);
+    const keys = [_][]const u8{ "a", "b", "c" };
+    var values: [linesCount][keys.len][16]u8 = undefined;
+    var fields: [linesCount][keys.len]Field = undefined;
+    var lines: [linesCount]Line = undefined;
+    for (0..linesCount) |i| {
+        for (keys, 0..) |key, k| {
+            const v = try std.fmt.bufPrint(&values[i][k], "{s}-value-{d}", .{ key, i });
+            fields[i][k] = .{ .key = key, .value = v };
+        }
+        lines[i] = .{ .timestampNs = @intCast(i + 1), .fields = .view(fields[i][0..]) };
+    }
+
+    const sid = SID{ .id = 1, .tenantID = 1234 };
+    {
+        const writer = try TableWriter.initDisk(io, alloc, tablePath, true, timestampsEncoders, compressionPool);
+        defer writer.deinit(alloc);
+        const blockWriter = try BlockWriter.init(alloc);
+        defer blockWriter.deinit(alloc);
+
+        var tableHeader = TableHeader{};
+        {
+            defer writer.close(io);
+            try blockWriter.writeLines(io, alloc, sid, lines[0..], writer);
+            try blockWriter.finish(io, alloc, writer, &tableHeader);
+        }
+        try tableHeader.writeFile(io, tablePath);
+    }
+
+    const tablePathOwned = try alloc.dupe(u8, tablePath);
+    const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);
+    defer table.release(io);
+
+    // every column has its own shard, so a wrong mapping reads another column's data
+    try testing.expectEqual(keys.len, table.tableHeader().bloomValuesBuffersAmount);
+    var shardsSeen = [_]bool{false} ** keys.len;
+    for (keys) |key| shardsSeen[table.columnIdxs.get(key).?] = true;
+    try testing.expectEqual([_]bool{true} ** keys.len, shardsSeen);
+
+    // Table.queryLines path reads the blooms via TableReader
+    var queried = std.ArrayList(Line).empty;
+    defer deinitQueriedLines(alloc, &queried);
+    for (keys, 0..) |key, k| {
+        for ([_]usize{ 0, 4, 8 }) |row| {
+            for (queried.items) |line| freeFields(alloc, line.fields);
+            queried.clearRetainingCapacity();
+
+            const expr: Query.FilterExpression = .{ .predicate = .{ .key = key, .value = fields[row][k].value, .op = .equal } };
+            const query = Query{ .start = 0, .end = linesCount, .tagsExpr = null, .fieldsExpr = &expr };
+            try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+            try testing.expectEqual(1, queried.items.len);
+            try testing.expectEqual(row + 1, queried.items[0].timestampNs);
+            for (fields[row], queried.items[0].fields.items) |expected, actual| {
+                try testing.expectEqualStrings(expected.key, actual.key);
+                try testing.expectEqualStrings(expected.value, actual.value);
+            }
+        }
+    }
+
+    try testing.expectEqual(1, table.indexBlockHeaders.len);
+    const ibh = table.indexBlockHeaders[0];
+    const indexBuf = try alloc.alloc(u8, ibh.size);
+    defer alloc.free(indexBuf);
+    try testing.expectEqual(indexBuf.len, try table.readIndex(io, indexBuf, ibh.offset));
+    var blockHeaders = std.ArrayList(BlockHeader).empty;
+    defer blockHeaders.deinit(alloc);
+    try BlockHeader.decodeIndexWindow(io, alloc, decompressionPool, &blockHeaders, indexBuf, ibh);
+    try testing.expectEqual(1, blockHeaders.items.len);
+
+    const Case = struct { key: []const u8, value: []const u8, matches: bool };
+    const cases = [_]Case{
+        .{ .key = "a", .value = "a-value-0", .matches = true },
+        .{ .key = "b", .value = "b-value-4", .matches = true },
+        .{ .key = "c", .value = "c-value-8", .matches = true },
+        // values of another column must not match, they live in another shard
+        .{ .key = "a", .value = "b-value-0", .matches = false },
+        .{ .key = "b", .value = "c-value-4", .matches = false },
+        .{ .key = "c", .value = "a-value-8", .matches = false },
+    };
+    for (cases) |case| {
+        var bq = BlockQuery.init(io, alloc, table, &blockHeaders.items[0], decompressionPool);
+        defer bq.deinit();
+
+        const expr: Query.FilterExpression = .{ .predicate = .{ .key = case.key, .value = case.value, .op = .equal } };
+        const q: Query = .{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = &expr };
+        const res = try bq.query(&q);
+        try testing.expectEqual(case.matches, res != null);
+    }
 }

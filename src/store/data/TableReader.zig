@@ -8,7 +8,6 @@ const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
 const Table = @import("../data/Table.zig");
 const ColumnIDGen = @import("ColumnIDGen.zig");
-const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 // TODO: check maybe i don't need allocator.create
@@ -22,7 +21,6 @@ columnIdxsBuf: []const u8,
 // TODO: consider making it as a value, not a pointer
 // TODO: decode manually when it comes to file reader
 columnIDGen: *ColumnIDGen,
-colIdx: *std.AutoHashMap(u16, u16),
 
 // TODO: these flags don't look smart,
 // there must be a better idea to track ownership
@@ -45,19 +43,12 @@ pub fn initFromMem(io: Io, allocator: Allocator, table: *const Table, decompress
         try ColumnIDGen.init(allocator);
     errdefer columnIDGen.deinit(allocator);
 
-    const colIdx = try decodeColumnIdxs(allocator, memTable.columnIdxsBuf.items);
-    errdefer {
-        colIdx.deinit();
-        allocator.destroy(colIdx);
-    }
-
     const r = try allocator.create(TableReader);
     r.* = TableReader{
         .table = table,
         .metaIndexBuf = memTable.metaIndexBuf.items,
 
         .columnIDGen = columnIDGen,
-        .colIdx = colIdx,
         .columnsKeysBuf = memTable.columnKeysBuf.items,
         .columnIdxsBuf = memTable.columnIdxsBuf.items,
         .ownsMetadata = true,
@@ -98,19 +89,12 @@ fn initFromDisk(io: Io, alloc: Allocator, table: *const Table, decompressionPool
     }
     errdefer columnIDGen.deinit(alloc);
 
-    const colIdx = try decodeColumnIdxs(alloc, columnIdxsBuf);
-    errdefer {
-        colIdx.deinit();
-        alloc.destroy(colIdx);
-    }
-
     const tableReader = try alloc.create(TableReader);
 
     tableReader.* = .{
         .table = table,
         .metaIndexBuf = metaIndexBuf,
         .columnIDGen = columnIDGen,
-        .colIdx = colIdx,
         .columnsKeysBuf = columnsKeysBuf,
         .columnIdxsBuf = columnIdxsBuf,
         .ownsBuffers = true,
@@ -122,8 +106,6 @@ pub fn deinit(self: *TableReader, allocator: Allocator) void {
     if (!self.ownsBuffers) {
         if (self.ownsMetadata) {
             self.columnIDGen.deinit(allocator);
-            self.colIdx.deinit();
-            allocator.destroy(self.colIdx);
         }
         allocator.destroy(self);
         return;
@@ -134,9 +116,6 @@ pub fn deinit(self: *TableReader, allocator: Allocator) void {
     allocator.free(self.columnIdxsBuf);
 
     self.columnIDGen.deinit(allocator);
-
-    self.colIdx.deinit();
-    allocator.destroy(self.colIdx);
 
     allocator.destroy(self);
 }
@@ -189,13 +168,7 @@ pub fn readBloomValues(
     key: []const u8,
     offset: u64,
 ) !usize {
-    if (key.len == 0) {
-        return self.table.readMessageBloomValues(io, buf, offset);
-    }
-
-    const colID = self.columnIDGen.keyIDs.get(key).?;
-    const bloomBufI = self.colIdx.get(colID).?;
-    return self.table.readBloomValues(io, buf, offset, bloomBufI);
+    return self.table.readBloomValues(io, buf, key, offset);
 }
 
 pub fn readBloomTokens(
@@ -205,36 +178,5 @@ pub fn readBloomTokens(
     key: []const u8,
     offset: u64,
 ) !usize {
-    if (key.len == 0) {
-        return self.table.readMessageBloomTokens(io, buf, offset);
-    }
-
-    const colID = self.columnIDGen.keyIDs.get(key).?;
-    const bloomBufI = self.colIdx.get(colID).?;
-    return self.table.readBloomTokens(io, buf, offset, bloomBufI);
-}
-
-fn decodeColumnIdxs(alloc: Allocator, src: []const u8) !*std.AutoHashMap(u16, u16) {
-    const colIdx = try alloc.create(std.AutoHashMap(u16, u16));
-    errdefer alloc.destroy(colIdx);
-
-    colIdx.* = std.AutoHashMap(u16, u16).init(alloc);
-    errdefer colIdx.deinit();
-
-    if (src.len == 0) {
-        return colIdx;
-    }
-
-    var dec = encoding.Decoder.init(src);
-    const count = dec.readVarInt();
-    try colIdx.ensureTotalCapacity(@intCast(count));
-
-    for (0..count) |_| {
-        const colID: u16 = @intCast(dec.readVarInt());
-        const shardIdx: u16 = @intCast(dec.readVarInt());
-        colIdx.putAssumeCapacity(colID, shardIdx);
-    }
-
-    std.debug.assert(dec.offset == src.len);
-    return colIdx;
+    return self.table.readBloomTokens(io, buf, key, offset);
 }

@@ -402,7 +402,7 @@ fn inspectColumnsHeaderIndex(allocator: std.mem.Allocator, buf: []const u8, keys
 }
 
 /// Prints the columnID -> bloom tokens/values shard index mapping.
-/// This is the mapping TableReader.readBloomValues/readBloomTokens uses at
+/// This is the mapping Table.readBloomValues/readBloomTokens uses at
 /// query time to pick which values<N>/tokens<N> shard file a column's
 /// ch.offset/ch.bloomFilterOffset apply to, so it's the piece to check when a
 /// column's recorded offset/size looks fine but reading it still comes up short.

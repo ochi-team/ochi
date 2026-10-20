@@ -68,7 +68,6 @@ test "writeBlock and writeData produce identical buffer output" {
         .columnsKeysBuf = writer1.columnKeysDst.buffer.items,
         .columnIdxsBuf = writer1.columnIdxsDst.buffer.items,
         .columnIDGen = writer1.columnIDGen,
-        .colIdx = &writer1.colIdx,
     };
 
     var bd = BlockData.initEmpty();

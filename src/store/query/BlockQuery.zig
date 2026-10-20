@@ -13,7 +13,6 @@ const tokenHashes = @import("../bloom/bloom.zig").tokenHashes;
 const Unpacker = @import("../data/Unpacker.zig").Unpacker(false);
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
-const Logger = @import("logging");
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 
@@ -42,6 +41,7 @@ pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError 
     PredicateOperationNotSupported,
     UnsupportedValueType,
     TokensBufTooSmall,
+    ColumnShardNotFound,
 };
 
 const BlockQuery = @This();
@@ -238,15 +238,7 @@ fn getColumnValues(self: *BlockQuery, ch: *const ColumnHeader) Error![][]const u
     const buf = try self.alloc.alloc(u8, ch.size);
     defer self.alloc.free(buf);
 
-    const n = if (ch.key.len == 0)
-        try self.table.readMessageBloomValues(self.io, buf, ch.offset)
-    else blk: {
-        const shardIdx = self.table.columnIdxs.get(ch.key) orelse {
-            Logger.log(.err, "column shard not found", .{ .key = ch.key, .table = self.table.path });
-            unreachable;
-        };
-        break :blk try self.table.readBloomValues(self.io, buf, ch.offset, shardIdx);
-    };
+    const n = try self.table.readBloomValues(self.io, buf, ch.key, ch.offset);
     assert(n == buf.len);
 
     const values = try self.unpacker.unpackValues(self.io, self.alloc, buf, self.blockHeader.len);
@@ -432,15 +424,7 @@ fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes
     const buf = try self.alloc.alloc(u8, header.bloomFilterSize);
     defer self.alloc.free(buf);
 
-    const n = if (header.key.len == 0)
-        try self.table.readMessageBloomTokens(self.io, buf, header.bloomFilterOffset)
-    else blk: {
-        const shardIdx = self.table.columnIdxs.get(header.key) orelse {
-            Logger.log(.err, "column shard not found", .{ .key = header.key, .table = self.table.path });
-            return false;
-        };
-        break :blk try self.table.readBloomTokens(self.io, buf, header.bloomFilterOffset, shardIdx);
-    };
+    const n = try self.table.readBloomTokens(self.io, buf, header.key, header.bloomFilterOffset);
     assert(n == buf.len);
 
     return BloomFilter.containsAll(buf, hashes);

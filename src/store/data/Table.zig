@@ -410,21 +410,41 @@ pub fn readTimestamps(self: *const Table, io: Io, buf: []u8, offset: u64) !usize
     }
 }
 
-pub fn readMessageBloomTokens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+pub fn readBloomTokens(self: *const Table, io: Io, buf: []u8, key: []const u8, offset: u64) !usize {
+    if (key.len == 0) return self.readMessageBloomTokens(io, buf, offset);
+    return self.readBloomTokensShard(io, buf, offset, try self.bloomShardIdx(key));
+}
+
+pub fn readBloomValues(self: *const Table, io: Io, buf: []u8, key: []const u8, offset: u64) !usize {
+    if (key.len == 0) return self.readMessageBloomValues(io, buf, offset);
+    return self.readBloomValuesShard(io, buf, offset, try self.bloomShardIdx(key));
+}
+
+fn bloomShardIdx(self: *const Table, key: []const u8) !usize {
+    // mem table holds a single bloom shard
+    if (self.inner == .mem) return 0;
+
+    return self.columnIdxs.get(key) orelse {
+        Logger.log(.err, "column shard not found", .{ .key = key, .table = self.path });
+        return error.ColumnShardNotFound;
+    };
+}
+
+fn readMessageBloomTokens(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
     switch (self.inner) {
         .disk => |disk| return readFile(disk.messageBloomTokensFile, io, buf, offset),
         .mem => |mem| return readBuf(buf, mem.messageBloomTokensBuf.items, offset),
     }
 }
 
-pub fn readMessageBloomValues(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
+fn readMessageBloomValues(self: *const Table, io: Io, buf: []u8, offset: u64) !usize {
     switch (self.inner) {
         .disk => |disk| return readFile(disk.messageBloomValuesFile, io, buf, offset),
         .mem => |mem| return readBuf(buf, mem.messageBloomValuesBuf.items, offset),
     }
 }
 
-pub fn readBloomTokens(self: *const Table, io: Io, buf: []u8, offset: u64, shardIdx: usize) !usize {
+fn readBloomTokensShard(self: *const Table, io: Io, buf: []u8, offset: u64, shardIdx: usize) !usize {
     switch (self.inner) {
         .disk => |disk| return readFile(disk.bloomTokensFiles[shardIdx], io, buf, offset),
         .mem => |mem| {
@@ -434,7 +454,7 @@ pub fn readBloomTokens(self: *const Table, io: Io, buf: []u8, offset: u64, shard
     }
 }
 
-pub fn readBloomValues(self: *const Table, io: Io, buf: []u8, offset: u64, shardIdx: usize) !usize {
+fn readBloomValuesShard(self: *const Table, io: Io, buf: []u8, offset: u64, shardIdx: usize) !usize {
     switch (self.inner) {
         .disk => |disk| return readFile(disk.bloomValuesFiles[shardIdx], io, buf, offset),
         .mem => |mem| {
@@ -647,16 +667,6 @@ fn queryBlock(
             .timestampsOffset = blockHeader.timestampsHeader.offset,
             .timestampsSize = blockHeader.timestampsHeader.size,
         });
-    }
-
-    var colIdx = std.AutoHashMap(u16, u16).init(alloc);
-    defer colIdx.deinit();
-
-    try colIdx.ensureTotalCapacity(self.columnIdxs.count());
-    var idxIt = self.columnIdxs.iterator();
-    while (idxIt.next()) |entry| {
-        const colID = self.columnIDGen.keyIDs.get(entry.key_ptr.*) orelse continue;
-        colIdx.putAssumeCapacity(colID, entry.value_ptr.*);
     }
 
     const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
