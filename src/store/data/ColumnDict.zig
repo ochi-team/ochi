@@ -3,8 +3,14 @@ const std = @import("std");
 const Encoder = @import("encoding").Encoder;
 const Decoder = @import("encoding").Decoder;
 
-pub const maxDictColumnValueSize = 256;
 pub const maxDictColumnValuesLen = 8;
+pub const maxDictColumnValueSize = 256;
+pub const encodedValueSize = 1;
+comptime {
+    if (maxDictColumnValueSize > (@as(u64, 1) << (encodedValueSize * 8))) {
+        @compileError("Value does not fit in encodedValueSize bytes");
+    }
+}
 
 const ColumnDict = @This();
 

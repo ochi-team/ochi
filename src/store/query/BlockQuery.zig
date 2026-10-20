@@ -14,7 +14,8 @@ const Unpacker = @import("../data/Unpacker.zig").Unpacker(false);
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Logger = @import("logging");
-const Decoder = @import("encoding").Decoder;
+const encoding = @import("encoding");
+const Decoder = encoding.Decoder;
 
 const BlockResponse = @import("BlockResponse.zig");
 const clause = @import("clause.zig");
@@ -29,12 +30,18 @@ const matchPredicateByAll = @import("match.zig").matchPredicateByAll;
 const Block = @import("../data/Block.zig");
 const BlockData = @import("../../store/data/BlockData.zig");
 const maxBloomTokensBlockSize = BlockData.maxBloomTokensBlockSize;
+const maxValuesBlockSize = BlockData.maxValuesBlockSize;
 const maxColumnsHeaderIndexSize = BlockData.maxColumnsHeaderIndexSize;
 const maxColumnsHeaderSize = BlockData.maxColumnsHeaderSize;
+const UnpackError = @import("../data/Unpacker.zig").UnpackError;
+const ColumnDict = @import("../data/ColumnDict.zig");
 
-pub const Error = Allocator.Error || Io.File.ReadPositionalError || error{
+pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || error{
     PartialExpressionUnwrap,
     UnexpectedExpression,
+    PredicateOperationNotSupported,
+    UnsupportedValueType,
+    TokensBufTooSmall,
 };
 
 const BlockQuery = @This();
@@ -47,6 +54,7 @@ blockHeader: *const BlockHeader,
 // caches, initialized empty
 invariantColumnCache: std.ArrayList(Column) = .empty,
 columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
+columnValuesCache: std.ArrayList(Column) = .empty,
 cshIndex: ?ColumnsHeaderIndex = null,
 cshIndexIDs: ?*[Block.maxColumns]u16 = null,
 cshIndexOffsets: ?*[Block.maxColumns]u32 = null,
@@ -72,6 +80,9 @@ pub fn init(
 pub fn deinit(self: *BlockQuery) void {
     for (self.invariantColumnCache.items) |c| self.alloc.free(c.values);
     self.invariantColumnCache.deinit(self.alloc);
+
+    for (self.columnValuesCache.items) |c| self.alloc.free(c.values);
+    self.columnValuesCache.deinit(self.alloc);
 
     for (self.columnHeaderCache.items) |*ch| ch.dict.deinit(self.alloc);
     self.columnHeaderCache.deinit(self.alloc);
@@ -104,15 +115,144 @@ fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression, bitset: 
     switch (fieldsExpr.*) {
         .orOp => |orExpr| try self.filterOr(orExpr, bitset),
         .andOp => |andExpr| try self.filterAnd(andExpr, bitset),
-        .predicate => |predicate| self.filterPredicate(predicate, bitset),
+        .predicate => |predicate| try self.filterPredicate(predicate, bitset),
     }
 }
 
-fn filterPredicate(self: *BlockQuery, predicate: Query.FilterPredicate, bitset: *std.bit_set.DynamicBitSetUnmanaged) void {
-    _ = self;
-    _ = predicate;
-    _ = bitset;
-    unreachable;
+fn filterPredicate(self: *BlockQuery, predicate: Query.FilterPredicate, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
+    switch (predicate.op) {
+        .equal => try self.filterEqual(predicate.key, predicate.value, bitset),
+        else => return error.PredicateOperationNotSupported,
+    }
+}
+
+fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
+    const v = try self.getInvariantColumnValue(key);
+    if (v.len != 0) {
+        if (!std.mem.eql(u8, value, v)) bitset.unsetAll();
+        return;
+    }
+
+    const ch = (try self.getColumnHeader(key)) orelse {
+        // missing column matches only empty value
+        if (value.len != 0) bitset.unsetAll();
+        return;
+    };
+
+    const hashes = try self.equalTokensHashes(value);
+    defer self.alloc.free(hashes);
+
+    switch (ch.type) {
+        .string => try self.matchStringEqual(&ch, bitset, value, hashes),
+        .dict => try self.matchDictEqual(&ch, bitset, value),
+        else => return error.UnsupportedValueType,
+    }
+}
+
+fn matchStringEqual(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+    hashes: []u64,
+) Error!void {
+    if (!try self.matchBloomFilter(ch, hashes)) {
+        bitset.unsetAll();
+        return;
+    }
+    try self.setMatchedBits(ch, bitset, value);
+}
+
+fn matchDictEqual(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+) Error!void {
+    var matchBuf: [ColumnDict.maxDictColumnValuesLen]u8 = undefined;
+    const dictVals = ch.dict.values.items;
+    assert(dictVals.len <= matchBuf.len);
+
+    var anyMatch = false;
+    for (dictVals, 0..) |dv, i| {
+        matchBuf[i] = if (std.mem.eql(u8, dv, value)) 1 else 0;
+        if (matchBuf[i] == 1) anyMatch = true;
+    }
+    if (!anyMatch) {
+        bitset.unsetAll();
+        return;
+    }
+
+    if (bitsetIsEmpty(bitset)) return;
+
+    const values = try self.getColumnValues(ch);
+    // TODO: a few repeatable patterns in match strings and dict
+    // give a hint to add a bitset iterator ir something
+    for (0..bitset.bit_length) |idx| {
+        if (!bitset.isSet(idx)) continue;
+        const encoded = values[idx];
+        assert(encoded.len == ColumnDict.encodedValueSize);
+        const dictIdx = encoded[0];
+        if (matchBuf[dictIdx] != 1) bitset.unset(idx);
+    }
+}
+
+fn setMatchedBits(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+) Error!void {
+    if (bitsetIsEmpty(bitset)) return;
+    const values = try self.getColumnValues(ch);
+    for (0..bitset.bit_length) |idx| {
+        if (!bitset.isSet(idx)) continue;
+        if (!std.mem.eql(u8, values[idx], value)) bitset.unset(idx);
+    }
+}
+
+fn equalTokensHashes(self: *BlockQuery, value: []const u8) Error![]u64 {
+    var tokensBuf: [32][]const u8 = undefined;
+    var tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
+    try self.getTokens(&tokensArray, value);
+    return tokensToHashes(self.alloc, tokensArray.items);
+}
+
+fn tokensToHashes(alloc: Allocator, tokens: []const []const u8) Error![]u64 {
+    var hashes: std.ArrayList(u64) = try .initCapacity(alloc, tokens.len * bloom.hashRounds);
+    errdefer hashes.deinit(alloc);
+    for (tokens) |token| {
+        const h = try tokenHashes(alloc, token);
+        defer alloc.free(h);
+        hashes.appendSliceAssumeCapacity(h);
+    }
+    return hashes.toOwnedSlice(alloc);
+}
+
+fn getColumnValues(self: *BlockQuery, ch: *const ColumnHeader) Error![][]const u8 {
+    for (self.columnValuesCache.items) |c| {
+        if (std.mem.eql(u8, c.key, ch.key)) return c.values;
+    }
+
+    assert(ch.size <= maxValuesBlockSize);
+    const buf = try self.alloc.alloc(u8, ch.size);
+    defer self.alloc.free(buf);
+
+    const n = if (ch.key.len == 0)
+        try self.table.readMessageBloomValues(self.io, buf, ch.offset)
+    else blk: {
+        const shardIdx = self.table.columnIdxs.get(ch.key) orelse {
+            Logger.log(.err, "column shard not found", .{ .key = ch.key, .table = self.table.path });
+            unreachable;
+        };
+        break :blk try self.table.readBloomValues(self.io, buf, ch.offset, shardIdx);
+    };
+    assert(n == buf.len);
+
+    const values = try self.unpacker.unpackValues(self.io, self.alloc, buf, self.blockHeader.len);
+    errdefer self.alloc.free(values);
+    try self.columnValuesCache.append(self.alloc, .{ .key = ch.key, .values = values });
+    return values;
 }
 
 fn filterOr(self: *BlockQuery, expr: [2]*const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
@@ -420,7 +560,10 @@ pub fn fieldsOrTokens(self: *const BlockQuery, ors: std.ArrayList(*const FilterE
 }
 
 fn getTokens(self: *const BlockQuery, dst: *std.ArrayList([]const u8), predicate: []const u8) !void {
-    return Tokenizer.tokenize(self.alloc, dst, predicate);
+    const ok = try Tokenizer.tokenize(self.alloc, dst, predicate);
+    if (!ok) {
+        return error.TokensBufTooSmall;
+    }
 }
 
 fn fieldsAndTokens(
@@ -487,22 +630,16 @@ fn collectMergedKeyTokens(
 
         var tokens: std.ArrayList([]const u8) = try .initCapacity(self.alloc, mergedTokens.items.len);
         errdefer tokens.deinit(self.alloc);
-        var hashes: std.ArrayList(u64) = try .initCapacity(self.alloc, mergedTokens.items.len * bloom.hashRounds);
-        errdefer hashes.deinit(self.alloc);
 
         for (mergedTokens.items) |token| {
             const gop = try processedSet.getOrPut(token);
             if (gop.found_existing) continue;
-
             tokens.appendAssumeCapacity(token);
-            const h = try tokenHashes(self.alloc, token);
-            defer self.alloc.free(h);
-            hashes.appendSliceAssumeCapacity(h);
         }
 
         const tokensSlice = try tokens.toOwnedSlice(self.alloc);
         errdefer self.alloc.free(tokensSlice);
-        const hashesSlice = try hashes.toOwnedSlice(self.alloc);
+        const hashesSlice = try tokensToHashes(self.alloc, tokensSlice);
         keyTokens.appendAssumeCapacity(.{
             .key = fieldKey,
             .tokens = tokensSlice,

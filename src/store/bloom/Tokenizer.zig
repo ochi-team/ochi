@@ -6,10 +6,10 @@ const bloom = @import("bloom.zig");
 
 const Logger = @import("logging");
 
-pub fn tokenize(alloc: Allocator, dst: *std.ArrayList([]const u8), val: []const u8) !void {
+pub fn tokenize(alloc: Allocator, dst: *std.ArrayList([]const u8), val: []const u8) !bool {
     if (!bloom.isASCII(val)) {
         // TODO: support unicode here
-        return;
+        return true;
     }
 
     var set = std.StringHashMap(void).init(alloc);
@@ -23,10 +23,12 @@ pub fn tokenize(alloc: Allocator, dst: *std.ArrayList([]const u8), val: []const 
                 switch (err) {
                     error.OutOfMemory => {
                         Logger.log(.warn, "tokenize dst out of bound, consider increase the buffer", .{});
-                        return;
+                        return false;
                     },
                 }
             };
         }
     }
+
+    return true;
 }

@@ -100,6 +100,23 @@ const Fixture = struct {
     }
 };
 
+const Expr = struct {
+    a: Allocator,
+
+    fn node(self: Expr, e: FilterExpression) *const FilterExpression {
+        const n = self.a.create(FilterExpression) catch @panic("OOM");
+        n.* = e;
+        return n;
+    }
+
+    fn eqNode(self: Expr, key: []const u8, value: []const u8) *const FilterExpression {
+        return self.node(.{ .predicate = .{ .key = key, .value = value, .op = .equal } });
+    }
+};
+
+const all10 = [_]usize{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+const all11 = all10 ++ [_]usize{10};
+
 test "bitsetIsEmpty" {
     const f = struct {
         fn f(alloc: Allocator, len: usize, set: []const usize, expectedEmpty: bool) !void {
@@ -149,8 +166,32 @@ test "bitsetAndNot" {
 test "query no fields filter" {
     const alloc = testing.allocator;
     const io = testing.io;
-    var fx = try Fixture.init(io, alloc, &.{.{ .name = "sbb", .values = &.{ "n", "o" } }});
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{ "n", "o" } }});
     defer fx.deinit(io, alloc);
 
     try fx.expectRows(io, alloc, null, &.{ 0, 1 });
+}
+
+test "query exact" {
+    const alloc = testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const e: Expr = .{ .a = arena.allocator() };
+
+    const f = struct {
+        const Case = struct { expr: *const FilterExpression, expected: []const usize };
+        fn f(columns: []const TestColumn, cases: []const Case) !void {
+            var fx = try Fixture.init(testing.io, testing.allocator, columns);
+            defer fx.deinit(testing.io, testing.allocator);
+            for (cases) |c| try fx.expectRows(testing.io, testing.allocator, c.expr, c.expected);
+        }
+    }.f;
+
+    // single-row
+    try f(&.{.{ .name = "key", .values = &.{"str val"} }}, &.{
+        .{ .expr = e.eqNode("key", "str val"), .expected = &.{0} },
+        .{ .expr = e.eqNode("no-columl", ""), .expected = &.{0} },
+        .{ .expr = e.eqNode("key", "val"), .expected = &.{} },
+        .{ .expr = e.eqNode("no column", "str"), .expected = &.{} },
+    });
 }
