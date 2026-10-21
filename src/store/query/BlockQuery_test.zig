@@ -194,4 +194,21 @@ test "query exact" {
         .{ .expr = e.eqNode("key", "val"), .expected = &.{} },
         .{ .expr = e.eqNode("no column", "str"), .expected = &.{} },
     });
+
+    // const-column: stored as an invariant column
+    try f(&.{.{ .name = "key", .values = &.{ "str val", "str val", "str val" } }}, &.{
+        .{ .expr = e.eqNode("key", "str val"), .expected = &.{ 0, 1, 2 } },
+        .{ .expr = e.eqNode("another-key", ""), .expected = &.{ 0, 1, 2 } },
+        .{ .expr = e.eqNode("key", "strval"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", ""), .expected = &.{} },
+        .{ .expr = e.eqNode("another key", "k"), .expected = &.{} },
+    });
+
+    // dict: few distinct values
+    try f(&.{.{ .name = "str", .values = &.{ "", "strval", "str", "long str val", "value", "another value", "strval", "0000" } }}, &.{
+        .{ .expr = e.eqNode("str", "strval"), .expected = &.{ 1, 6 } },
+        .{ .expr = e.eqNode("str", ""), .expected = &.{0} },
+        .{ .expr = e.eqNode("key", "guu"), .expected = &.{} },
+        .{ .expr = e.eqNode("not-found", "strval"), .expected = &.{} },
+    });
 }
