@@ -211,4 +211,27 @@ test "query exact" {
         .{ .expr = e.eqNode("key", "guu"), .expected = &.{} },
         .{ .expr = e.eqNode("not-found", "strval"), .expected = &.{} },
     });
+
+    // strings: bloom filter backed column
+    try f(&.{.{ .name = "key", .values = &.{
+        "a key",
+        "a word",
+        "woop woop",
+        "short thing,splited by coma",
+        "an average word",
+        "b longword",
+        "a fail oom",
+        "a qwerty long",
+        "а ЮНИКОД Жиж",
+        "a @#,42.(-!6]",
+    } }}, &.{
+        .{ .expr = e.eqNode("key", "woop woop"), .expected = &.{2} },
+        .{ .expr = e.eqNode("key", "а ЮНИКОД Жиж"), .expected = &.{8} },
+        .{ .expr = e.eqNode("key", "a @#,42.(-!6]"), .expected = &.{9} },
+        .{ .expr = e.eqNode("non-existent", ""), .expected = &all10 },
+        .{ .expr = e.eqNode("key", "aha"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "woop"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "longword"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", ""), .expected = &.{} },
+    });
 }
