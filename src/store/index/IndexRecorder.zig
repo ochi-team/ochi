@@ -460,6 +460,7 @@ fn mergeMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTables: *st
         // TODO: I don't need it, we already have merging from []*Table, replace it
         // or document the reasoning
         const res = try MemTable.mergeMemTables(io, alloc, memToMerge.items, self.compressionPool, self.decompressionPool);
+        for (toMerge) |table| res.flushAtUs = @min(res.flushAtUs, table.inner.mem.flushAtUs);
         memToMerge.clearRetainingCapacity();
 
         for (toMerge) |t| t.close(io);
@@ -587,7 +588,7 @@ fn waitForTicksToDrain(self: *IndexRecorder, io: Io) void {
 fn deltaMs(deadlineUs: i64, nowUs: i64) u64 {
     if (deadlineUs <= nowUs) return 0;
     const deltaUs: u64 = @intCast(deadlineUs - nowUs);
-    return deltaUs / std.time.us_per_ms;
+    return (deltaUs - 1) / std.time.us_per_ms + 1;
 }
 
 // queues an arm request for the loop thread; safe to call from any thread.
@@ -659,8 +660,6 @@ fn tableTimerCallback(
     });
     defer z.end();
 
-    _ = loop;
-    _ = c;
     _ = r catch |err| {
         Logger.log(.err, "failed to run tableTimerCallback", .{ .err = err });
     };
@@ -669,17 +668,22 @@ fn tableTimerCallback(
     const table = slot.table.?;
     const io = self.taskCtx.io;
 
+    _ = self.activeTicks.fetchAdd(1, .acquire);
+    defer _ = self.activeTicks.fetchSub(1, .release);
+
+    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
+    if (!self.stopped.isStopped() and table.inner.mem.flushAtUs > nowUs) {
+        // Keep the timer's reference until the actual deadline, even after an early callback.
+        slot.xevTimer.reset(loop, c, &slot.cancelCompletion, deltaMs(table.inner.mem.flushAtUs, nowUs), TableTimerSlot, slot, tableTimerCallback);
+        return .disarm;
+    }
+
     defer {
         table.release(io);
         slot.table = null;
     }
 
-    _ = self.activeTicks.fetchAdd(1, .acquire);
-    defer _ = self.activeTicks.fetchSub(1, .release);
-
     if (self.stopped.isStopped()) return .disarm;
-
-    const nowUs = Io.Timestamp.now(io, .real).toMicroseconds();
 
     self.mxTables.lockUncancelable(io);
     const shouldFlush = !table.inMerge and table.inner.mem.flushAtUs <= nowUs;
@@ -965,6 +969,9 @@ pub fn mergeTables(
     const openTable = try openCreatedTable(io, alloc, destinationTablePath, newMemTable, self.decompressionPool);
     errdefer openTable.release(io);
 
+    if (tableKind == .mem) {
+        for (tables) |table| openTable.inner.mem.flushAtUs = @min(openTable.inner.mem.flushAtUs, table.inner.mem.flushAtUs);
+    }
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
     swapped = true;
 
@@ -1048,4 +1055,29 @@ fn openCreatedTable(
     }
 
     return Table.open(io, alloc, tablePath, decompressionPool);
+}
+
+test "index table timer retains and rearms an early callback" {
+    const testing = std.testing;
+    for ([_]i64{ -1, 0, 1, 999, 1000, 1001 }, [_]u64{ 0, 0, 1, 1, 1, 2 }) |deadline, expected| {
+        try testing.expectEqual(expected, deltaMs(deadline, 0));
+    }
+    var loop = try xev.Loop.init(.{});
+    defer loop.deinit();
+    var recorder: IndexRecorder = undefined;
+    recorder.taskCtx = .{ .recorder = &recorder, .io = testing.io, .alloc = testing.allocator };
+    recorder.stopped = .{};
+    recorder.activeTicks = .init(0);
+    recorder.mxTables = .init;
+    var mem: MemTable = undefined;
+    mem.flushAtUs = Io.Timestamp.now(testing.io, .real).toMicroseconds() + 10 * std.time.us_per_s;
+    var table: Table = undefined;
+    table.inner = .{ .mem = &mem };
+    table.inMerge = false;
+    table.refCounter = .init(2);
+    var slot: TableTimerSlot = .{ .recorder = &recorder, .xevTimer = try xev.Timer.init(), .table = &table };
+    try testing.expectEqual(.disarm, tableTimerCallback(&slot, &loop, &slot.completion, {}));
+    try testing.expectEqual(&table, slot.table.?);
+    try testing.expectEqual(2, table.refCounter.load(.acquire));
+    try testing.expectEqual(0, recorder.activeTicks.load(.acquire));
 }
