@@ -1,0 +1,35 @@
+src/store/data/ValuesEncoder_test.zig
+  s_cf7a22007d943e::t_d486f69a2a3b60 268,270
+  s_cf7a22007d943e::t_45333720a6d44f 254-267,269,271-274
+  s_cf7a22007d943e::t_933fcde93408af 561-601
+  s_cf7a22007d943e::t_a8df662d5bde6d 602
+src/store/query/BlockQuery_test.zig
+  s_cf7a22007d943e::t_07e9e4453bf165 247
+  s_cf7a22007d943e::t_12221f1c3ecb1b 244-246
+  s_cf7a22007d943e::t_a95cbd942e099d 248-249
+src/store/query/BlockQuery.zig
+  s_cf7a22007d943e::t_f90c9249658630 179
+src/store/data/ValuesEncoder.zig
+  s_cf7a22007d943e::t_411b997bc7bd8d 158
+  s_cf7a22007d943e::t_44ed6e09a2e9bd 214
+  s_cf7a22007d943e::t_41061691adac4e 351-352,354-355,357-385
+  s_cf7a22007d943e::t_0ccc65ca2d89d8 348-350,353,356
+  s_cf7a22007d943e::t_299a6086d07531 251
+  s_cf7a22007d943e::t_2e79104112b87e 386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "5f4e78e1db420b84ff9def32f2b6592ceb95b62c",
+  "prompts": {},
+  "sessions": {
+    "s_cf7a22007d943e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b891375a-61fa-4ddc-b892-fcb50df17217",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
