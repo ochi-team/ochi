@@ -257,4 +257,17 @@ test "query exact" {
         .{ .expr = e.eqNode("key", ""), .expected = &.{} },
         .{ .expr = e.eqNode("key", "44"), .expected = &.{} },
     });
+
+    // float64
+    try f(&.{.{ .name = "key", .values = &.{ "4321", "8", "5676", "-65536", "4321.6553632", "7", "6", "1", "9" } }}, &.{
+        .{ .expr = e.eqNode("key", "4321"), .expected = &.{0} },
+        .{ .expr = e.eqNode("key", "4321.6553632"), .expected = &.{4} },
+        .{ .expr = e.eqNode("key", "-65536"), .expected = &.{3} },
+        .{ .expr = e.eqNode("not-found", ""), .expected = &.{ 0, 1, 2, 3, 4, 5, 6, 7, 8 } },
+        .{ .expr = e.eqNode("key", "one"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "65536"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", ""), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "231"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "96553632109655363210"), .expected = &.{} },
+    });
 }

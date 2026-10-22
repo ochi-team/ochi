@@ -152,6 +152,7 @@ fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *s
         .dict => try self.matchDictEqual(&ch, bitset, value),
         .uint8, .uint16, .uint32, .uint64 => try self.matchUintEqual(&ch, bitset, value, hashes),
         .int64 => try self.matchIntEqual(&ch, bitset, value, hashes),
+        .float64 => try self.matchFloatEqual(&ch, bitset, value, hashes),
         else => return error.UnsupportedValueType,
     }
 }
@@ -220,6 +221,31 @@ fn matchIntEqual(
         return;
     }
     try self.setMatchedBits(ch, bitset, &encoding.Encoder.toBytes(i64, num));
+}
+
+fn matchFloatEqual(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+    hashes: []u64,
+) Error!void {
+    const num = ValuesEncoder.parseFloat64(value) orelse {
+        bitset.unsetAll();
+        return;
+    };
+    const min: f64 = @bitCast(ch.min);
+    const max: f64 = @bitCast(ch.max);
+    if (num < min or num > max) {
+        bitset.unsetAll();
+        return;
+    }
+
+    if (!try self.matchBloomFilter(ch, hashes)) {
+        bitset.unsetAll();
+        return;
+    }
+    try self.setMatchedBits(ch, bitset, &encoding.Encoder.toBytes(u64, @bitCast(num)));
 }
 
 fn matchDictEqual(

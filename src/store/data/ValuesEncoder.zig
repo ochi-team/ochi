@@ -372,7 +372,7 @@ pub fn parseInt64(s: []const u8) ?i64 {
 
 /// Accepts only [-]int[.digits], where int is canonical as in parseUint64,
 /// std.fmt.parseFloat also takes "+1", "01", "1e3", "inf", ".5" that don't format back.
-fn parseFloat64(s: []const u8) ?f64 {
+pub fn parseFloat64(s: []const u8) ?f64 {
     const unsigned = if (s.len > 0 and s[0] == '-') s[1..] else s;
     const dot = std.mem.indexOfScalar(u8, unsigned, '.') orelse unsigned.len;
     _ = parseUint64(unsigned[0..dot]) orelse return null;
