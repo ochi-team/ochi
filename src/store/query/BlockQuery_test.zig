@@ -247,4 +247,14 @@ test "query exact" {
             .{ .expr = e.eqNode("key", "+21"), .expected = &.{} },
         });
     }
+
+    // int64
+    try f(&.{.{ .name = "key", .values = &.{ "231", "21", "45", "8", "8", "-21", "96553632109", "6", "1", "9", "3" } }}, &.{
+        .{ .expr = e.eqNode("key", "21"), .expected = &.{1} },
+        .{ .expr = e.eqNode("key", "-21"), .expected = &.{5} },
+        .{ .expr = e.eqNode("not-found", ""), .expected = &all11 },
+        .{ .expr = e.eqNode("key", "one"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", ""), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "44"), .expected = &.{} },
+    });
 }
