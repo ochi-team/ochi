@@ -40,7 +40,7 @@ const parseTimestampISO8601 = @import("../../stds/time.zig").parseTimestampISO86
 pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || error{
     PartialExpressionUnwrap,
     UnexpectedExpression,
-    PredicateOperationNotSupported,
+    UnsupportedMatchOperation,
     UnsupportedValueType,
     TokensBufTooSmall,
     ColumnShardNotFound,
@@ -53,15 +53,19 @@ alloc: Allocator,
 table: *const Table,
 blockHeader: *const BlockHeader,
 
+unpacker: Unpacker,
+
 // caches, initialized empty
 invariantColumnCache: std.ArrayList(Column) = .empty,
 columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
+// encoded column values, owned by unpacker
+// TODO: it's not ok, better not to make unpacker owning this data,
+// makes it hard to manipulate for reseting and future processing
 columnValuesCache: std.ArrayList(Column) = .empty,
 cshIndex: ?ColumnsHeaderIndex = null,
-cshIndexIDs: ?*[Block.maxColumns]u16 = null,
-cshIndexOffsets: ?*[Block.maxColumns]u32 = null,
+cshIndexIDs: *[Block.maxColumns]u16,
+cshIndexOffsets: *[Block.maxColumns]u32,
 cshBlock: ?[]u8 = null,
-unpacker: Unpacker,
 
 pub fn init(
     io: Io,
@@ -69,13 +73,21 @@ pub fn init(
     table: *const Table,
     blockHeader: *const BlockHeader,
     decompressionPool: *DecompressionPool,
-) BlockQuery {
+) !BlockQuery {
+    const cshIndexIDs = try alloc.create([Block.maxColumns]u16);
+    errdefer alloc.destroy(cshIndexIDs);
+    const cshIndexOffsets = try alloc.create([Block.maxColumns]u32);
+    errdefer alloc.destroy(cshIndexOffsets);
+
     return .{
         .io = io,
         .alloc = alloc,
         .table = table,
         .blockHeader = blockHeader,
         .unpacker = .init(decompressionPool),
+
+        .cshIndexIDs = cshIndexIDs,
+        .cshIndexOffsets = cshIndexOffsets,
     };
 }
 
@@ -90,8 +102,8 @@ pub fn deinit(self: *BlockQuery) void {
     self.columnHeaderCache.deinit(self.alloc);
 
     self.unpacker.deinit(self.alloc);
-    if (self.cshIndexIDs) |ids| self.alloc.destroy(ids);
-    if (self.cshIndexOffsets) |offsets| self.alloc.destroy(offsets);
+    self.alloc.destroy(self.cshIndexIDs);
+    self.alloc.destroy(self.cshIndexOffsets);
     if (self.cshBlock) |b| self.alloc.free(b);
     self.* = undefined;
 }
@@ -124,7 +136,14 @@ fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression, bitset: 
 fn filterPredicate(self: *BlockQuery, predicate: Query.FilterPredicate, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
     switch (predicate.op) {
         .equal => try self.filterEqual(predicate.key, predicate.value, bitset),
-        else => return error.PredicateOperationNotSupported,
+        // applies the exact filter to a copy and excludes the matched rows
+        .notEqual => {
+            var matched = try bitset.clone(self.alloc);
+            defer matched.deinit(self.alloc);
+            try self.filterEqual(predicate.key, predicate.value, &matched);
+            bitsetAndNot(bitset, &matched);
+        },
+        else => return error.UnsupportedMatchOperation,
     }
 }
 
@@ -578,15 +597,8 @@ fn columnsHeaderIndex(self: *BlockQuery) Error!*const ColumnsHeaderIndex {
     const n = try self.table.readColumnsHeaderIndex(self.io, buf, bh.columnsHeaderIndexOffset);
     assert(n == buf.len);
 
-    const ids = try self.alloc.create([Block.maxColumns]u16);
-    errdefer self.alloc.destroy(ids);
-    const offsets = try self.alloc.create([Block.maxColumns]u32);
-    errdefer self.alloc.destroy(offsets);
-
-    self.cshIndex = ColumnsHeaderIndex.initBufferUnknown(ids, offsets);
+    self.cshIndex = ColumnsHeaderIndex.initBufferUnknown(self.cshIndexIDs, self.cshIndexOffsets);
     self.cshIndex.?.decode(buf);
-    self.cshIndexIDs = ids;
-    self.cshIndexOffsets = offsets;
     return &self.cshIndex.?;
 }
 

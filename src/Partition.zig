@@ -40,7 +40,7 @@ pub const partitionKeySize = 8;
 // if the store itself is not read only
 // 5. a partition has a range: u32 instead of a day service timestamp in seconds the data begins at: [range, ...)
 // 6. it requires reshape how the partitions are stored and open in the store
-// TODO: partition by time range + tenant id? 
+// TODO: partition by time range + tenant id?
 // technically tenant is a complete isolation, extracting them from tables
 // allow us to decode less unnecessary blocks
 pub const Partition = @This();
