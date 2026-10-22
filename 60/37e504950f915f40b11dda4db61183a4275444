@@ -1,0 +1,37 @@
+src/store/query/BlockQuery_test.zig
+  s_12fd5c51263fd2::t_efba642fa61fa7 142,146-150
+  s_12fd5c51263fd2::t_35ac8655cf2479 415
+  s_12fd5c51263fd2::t_344f7ccfd46323 139-141
+  s_12fd5c51263fd2::t_f09769735d34b0 143-145
+  s_12fd5c51263fd2::t_324496aed7baa3 412-414
+  s_12fd5c51263fd2::t_2ee1e9ac55d2f2 416-418
+src/store/query/BlockQuery.zig
+  s_fc592b2d6e06d0::t_f0f91c81904a33 140
+  s_fc592b2d6e06d0::t_6837c30f350232 43
+  s_fc592b2d6e06d0::t_b58adfd77c719f 139
+  s_fc592b2d6e06d0::t_582efaa49649c1 141-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "6037e504950f915f40b11dda4db61183a4275444",
+  "prompts": {},
+  "sessions": {
+    "s_12fd5c51263fd2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "834c64ac-7167-430a-b1f3-0162407e0a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    },
+    "s_fc592b2d6e06d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6713760d-7655-4db8-af05-e3984e495241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
