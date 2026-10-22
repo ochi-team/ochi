@@ -1040,9 +1040,14 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
     defer z.end();
 
     const i = self.nextShard.fetchAdd(1, .monotonic) % self.shards.len;
-    var shard = &self.shards[i];
-
-    shard.mx.lockUncancelable(io);
+    const shard = for (0..self.shards.len) |offset| {
+        const candidate = &self.shards[(i + offset) % self.shards.len];
+        if (candidate.mx.tryLock()) break candidate;
+    } else blk: {
+        const fallback = &self.shards[i];
+        fallback.mx.lockUncancelable(io);
+        break :blk fallback;
+    };
     defer shard.mx.unlock(io);
 
     const start = shard.lines.items.len;
