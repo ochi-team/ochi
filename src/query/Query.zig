@@ -3,6 +3,8 @@ const Encoder = @import("encoding").Encoder;
 
 pub const Query = @This();
 
+pub const maxLines = 2000;
+
 pub const Error = error{
     NoTagsFilter,
 };

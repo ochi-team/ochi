@@ -320,7 +320,7 @@ pub fn queryLines(
     };
     defer sidsRes.sids.deinit(requestArena);
 
-    return self.data.queryLines(io, requestArena, sidsRes.sids.items, query);
+    return self.data.queryLines(io, alloc, sidsRes.sids.items, query);
 }
 
 pub fn queryStreamIDs(

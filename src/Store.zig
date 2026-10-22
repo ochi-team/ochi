@@ -19,9 +19,9 @@ const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
-const freeFields = @import("store/lines.zig").freeFields;
+const copyFields = @import("store/lines.zig").copyFields;
 const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
-const lineLatestFirst = @import("store/lines.zig").lineLatestFirst;
+pub const keepLatestLines = @import("store/lines.zig").keepLatestLines;
 const Query = @import("query/Query.zig");
 
 const TimerLoop = @import("stds/xev/TimerLoop.zig");
@@ -493,7 +493,7 @@ pub fn queryLines(
     defer for (parts) |part| part.release(io);
 
     var results = std.ArrayList(Line).empty;
-    errdefer deinitLinesFull(requestArena, &results);
+    defer deinitLinesFull(alloc, &results);
     for (parts) |part| {
         var partResults = try part.queryLines(
             io,
@@ -504,25 +504,22 @@ pub fn queryLines(
             self.indexMemBlocksCache,
             self.indexQueryCache,
         );
-        defer partResults.deinit(requestArena);
+        defer deinitLinesFull(alloc, &partResults);
 
-        try results.appendSlice(requestArena, partResults.items);
+        try results.appendSlice(alloc, partResults.items);
+        partResults.clearRetainingCapacity();
+        keepLatestLines(alloc, &results, Query.maxLines);
     }
 
-    // TODO: we need to make a real pagination, it's a plug not to overload the ui,
-    // otherwise it fetches 10k lines and becomes unusable
-    keepLatestLines(requestArena, &results, 2000);
-    return results;
-}
-
-pub fn keepLatestLines(alloc: Allocator, lines: *std.ArrayList(Line), limit: usize) void {
-    std.sort.pdq(Line, lines.items, {}, lineLatestFirst);
-    if (lines.items.len <= limit) return;
-
-    for (lines.items[limit..]) |line| {
-        freeFields(alloc, line.fields);
+    var response = try std.ArrayList(Line).initCapacity(requestArena, results.items.len);
+    errdefer deinitLinesFull(requestArena, &response);
+    for (results.items) |line| {
+        response.appendAssumeCapacity(.{
+            .timestampNs = line.timestampNs,
+            .fields = try copyFields(requestArena, line.fields.items),
+        });
     }
-    lines.shrinkRetainingCapacity(limit);
+    return response;
 }
 
 pub fn queryStreamIDs(

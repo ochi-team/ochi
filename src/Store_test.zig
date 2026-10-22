@@ -17,6 +17,9 @@ const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
 const Conf = @import("Conf.zig");
 const Runtime = @import("Runtime.zig");
+const Query = @import("query/Query.zig");
+const MemTable = @import("store/data/MemTable.zig");
+const Table = @import("store/data/Table.zig");
 
 pub const Store = @import("Store.zig");
 
@@ -304,6 +307,86 @@ test "keepLatestLines sorts by timestamp and trims old rows" {
     try testing.expectEqualStrings("newest", lines.items[0].fields.items[0].value);
     try testing.expectEqualStrings("newer", lines.items[1].fields.items[0].value);
     try testing.expectEqualStrings("middle", lines.items[2].fields.items[0].value);
+}
+
+test "queryLines keeps the newest cap across tables and partitions" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, rootPath, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
+    var partitionsPathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const layout = try Layout.make(io, rootPath, &partitionsPathBuf);
+    var store = try Store.init(io, alloc, &conf, runtime, layout);
+    defer store.deinit(io, alloc);
+
+    const rowsPerTable = Query.maxLines / 2 + 1;
+    const days = [_]u32{ 10, 11 };
+    for (days) |day| {
+        const part = try store.getPartition(io, alloc, day);
+        defer part.release(io);
+        for ([_][]const u8{ "odd", "even" }, 0..) |side, offset| {
+            var fields = [_]Field{
+                .{ .key = "partition", .value = if (day == days[0]) "old" else "new" },
+                .{ .key = "side", .value = side },
+            };
+            var lines: [rowsPerTable]Line = undefined;
+            for (0..lines.len) |i| {
+                lines[i] = .{
+                    .timestampNs = @as(u64, day) * std.time.ns_per_day + i * 2 + offset + 1,
+                    .fields = .view(&fields),
+                };
+            }
+
+            const table = table: {
+                const mem = try MemTable.init(alloc);
+                errdefer mem.deinit(alloc);
+                try mem.addLinesForSid(io, alloc, store.timestampsEncoders, store.compressionPool, .{ .tenantID = 1, .id = 1 }, &lines);
+                break :table try Table.fromMem(io, alloc, mem, store.decompressionPool);
+            };
+            errdefer table.release(io);
+            part.data.memTablesSem.waitUncancelable(io);
+            errdefer part.data.memTablesSem.post(io);
+            try part.data.memTables.append(alloc, table);
+        }
+    }
+
+    const evenExpr: Query.FilterExpression = .{ .predicate = .{ .key = "side", .value = "even", .op = .equal } };
+    for ([_]?*const Query.FilterExpression{ null, &evenExpr }) |expr| {
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const query: Query = .{
+            .start = @as(u64, days[0]) * std.time.ns_per_day,
+            .end = @as(u64, days[1]) * std.time.ns_per_day + rowsPerTable * 2,
+            .streamIDs = &.{1},
+            .fieldsExpr = expr,
+        };
+        const queried = try store.queryLines(io, arena.allocator(), alloc, 1, query);
+        try testing.expectEqual(Query.maxLines, queried.items.len);
+        for (queried.items, 0..) |line, i| {
+            const newer = expr == null or i < rowsPerTable;
+            const day = if (newer) days[1] else days[0];
+            const row = if (newer) i else i - rowsPerTable;
+            const timestamp = @as(u64, day) * std.time.ns_per_day + rowsPerTable * 2 - row * @as(usize, if (expr == null) 1 else 2);
+            const side = if (timestamp % 2 == 0) "even" else "odd";
+            var expectedFields = [_]Field{
+                .{ .key = "partition", .value = if (newer) "new" else "old" },
+                .{ .key = "side", .value = side },
+            };
+            try testing.expectEqualDeep(Line{
+                .timestampNs = timestamp,
+                .fields = .view(&expectedFields),
+            }, Line{
+                .timestampNs = line.timestampNs,
+                .fields = .view(line.fields.items),
+            });
+        }
+    }
 }
 
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
