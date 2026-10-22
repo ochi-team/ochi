@@ -12,6 +12,8 @@ const Field = @import("store/lines.zig").Field;
 const freeFields = @import("store/lines.zig").freeFields;
 const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const copyFields = @import("store/lines.zig").copyFields;
+const encodeTags = @import("store/lines.zig").encodeTags;
+const makeStreamID = @import("store/lines.zig").makeStreamID;
 
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
@@ -466,4 +468,54 @@ test "flush doesn't crash overflow when the store has more partitions than reten
 
     // test it doesn't crash
     try store.flush(io, alloc);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(path);
+    const conf = Conf.getConf();
+    const runtime = try Runtime.init(io, alloc, path, conf.app.maxCachePortion);
+    defer runtime.deinit(alloc);
+    runtime.cpus = 1;
+    var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const layout = try Layout.make(io, path, &pathBuf);
+    defer layout.partitionsDir.close(io);
+    var store = try Store.init(io, alloc, &conf, runtime, layout);
+    defer store.deinit(io, alloc);
+    const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
+    const day = nowNs / std.time.ns_per_day - 3;
+    var fields = [_]Field{.{ .key = "message", .value = "kept" }};
+    var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
+    const encoded = try encodeTags(alloc, &tags);
+    defer alloc.free(encoded);
+    const sid = makeStreamID(1, encoded);
+    var lines = [_]Line{
+        .{ .timestampNs = 0, .fields = .view(&fields) },
+        .{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) },
+        .{ .timestampNs = (day + 1) * std.time.ns_per_day + 2, .fields = .view(&fields) },
+    };
+    for ([_]usize{ 0, 1, 2 }) |failIndex| {
+        var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = failIndex });
+        try testing.expectError(error.OutOfMemory, store.addLines(io, failing.allocator(), &lines, &tags, encoded, sid));
+        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+    for ([_]u64{ 2, 0, 2, 1 }) |offset| {
+        lines[0].timestampNs = (day + offset) * std.time.ns_per_day + 3;
+        try store.addLines(io, alloc, lines[0..1], &tags, encoded, sid);
+        for (store.partitions.items) |part| try testing.expectEqual(1, part.refCounter.load(.acquire));
+    }
+    try store.addLines(io, alloc, lines[1..], &tags, encoded, sid);
+    for (store.partitions.items, 0..) |part, i| {
+        try testing.expectEqual(day + i, part.day);
+        try testing.expectEqual(1, part.refCounter.load(.acquire));
+    }
+    try store.flush(io, alloc);
+    var result = try store.queryLines(io, alloc, alloc, 1, .{ .start = day * std.time.ns_per_day, .end = (day + 3) * std.time.ns_per_day });
+    defer deinitLinesFull(alloc, &result);
+    try testing.expectEqual(6, result.items.len);
+    for (result.items) |line| try testing.expectEqualDeep(@as([]const Field, &fields), @as([]const Field, line.fields.items));
 }
