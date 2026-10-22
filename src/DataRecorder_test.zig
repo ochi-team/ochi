@@ -143,6 +143,122 @@ test "tablesMerger handles more source tables than merge window" {
     try testing.expectEqual(tablesBuf.len, tables.items.len);
 }
 
+test "tablesMerger forces skewed memory tables only at capacity" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const merger = @import("store/table/merge.zig").Merger(*Table, maxMemTables, amountOfTablesToMerge);
+
+    for ([_]usize{ maxMemTables - 1, maxMemTables }) |tableCount| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+        defer alloc.free(rootPath);
+
+        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+        defer runtime.deinit(alloc);
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        defer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
+
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = 1 });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+        const timerLoop = try TimerLoop.init(alloc);
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
+        defer recorder.deinit(io, alloc);
+        defer {
+            timerLoop.stop();
+            timerLoop.join();
+            timerLoop.deinit();
+        }
+        defer recorder.stop(io, alloc) catch unreachable;
+
+        var sourceLines: [maxMemTables]Line = undefined;
+        var selectionSize: u64 = 1;
+        for (0..tableCount) |i| {
+            sourceLines[i] = stableLine(i + 1, i);
+            const table = try createMemTableFromLines(io, alloc, timestampsEncoders, compressionPool, stableSID(1), sourceLines[i .. i + 1]);
+            // Only selection sizes are synthetic; persisted rows and fields remain real.
+            table.size = selectionSize;
+            selectionSize *= 2;
+            recorder.memTablesSem.waitUncancelable(io);
+            try recorder.memTables.append(alloc, table);
+        }
+        try testing.expectEqual(maxMemTables - tableCount, recorder.memTablesSem.permits);
+
+        if (tableCount == maxMemTables) {
+            for (recorder.memTables.items, 0..) |table, i| table.size = if (i < 8) 1 else 10000;
+            var selected: [maxMemTables]*Table = undefined;
+            @memcpy(&selected, recorder.memTables.items);
+            try testing.expectEqual(8, merger.selectTablesToMerge(&selected));
+
+            var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+            try testing.expectError(error.OutOfMemory, recorder.flushForce(io, failing.allocator()));
+            try testing.expectEqual(maxMemTables, recorder.memTables.items.len);
+            try testing.expectEqual(0, recorder.memTablesSem.permits);
+            selectionSize = 1;
+            for (recorder.memTables.items) |table| {
+                try testing.expect(!table.inMerge);
+                table.size = selectionSize;
+                selectionSize *= 2;
+            }
+        }
+
+        var windowBuf: [amountOfTablesToMerge]*Table = undefined;
+        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
+        try recorder.tablesMerger(io, alloc, &recorder.diskTables, &recorder.diskMergeSem);
+        try testing.expectEqual(tableCount, recorder.memTables.items.len);
+        try recorder.tablesMerger(io, alloc, &recorder.memTables, &recorder.memMergeSem);
+
+        const full = tableCount == maxMemTables;
+        const State = struct { memTables: usize, diskTables: usize, memRows: u64, diskRows: u64, permits: usize };
+        {
+            recorder.mxTables.lockUncancelable(io);
+            defer recorder.mxTables.unlock(io);
+            try testing.expectEqualDeep(State{
+                .memTables = if (full) 0 else tableCount,
+                .diskTables = if (full) 1 else 0,
+                .memRows = if (full) 0 else tableCount,
+                .diskRows = if (full) tableCount else 0,
+                .permits = if (full) maxMemTables else maxMemTables - tableCount,
+            }, State{
+                .memTables = recorder.memTables.items.len,
+                .diskTables = recorder.diskTables.items.len,
+                .memRows = countMemLinesInRecorder(recorder),
+                .diskRows = countDiskLinesInRecorder(recorder),
+                .permits = recorder.memTablesSem.permits,
+            });
+            for (recorder.memTables.items) |table| try testing.expect(!table.inMerge);
+            for (recorder.diskTables.items) |table| try testing.expect(!table.inMerge);
+        }
+
+        try recorder.stop(io, alloc);
+        try testing.expectEqual(maxMemTables, recorder.memTablesSem.permits);
+        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
+        defer reopened.deinit(io, alloc);
+        defer reopened.stop(io, alloc) catch unreachable;
+        try testing.expectEqual(1, reopened.diskTables.items.len);
+
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const table = reopened.diskTables.items[0];
+        try testing.expect(!table.inMerge);
+        try testing.expectEqual(tableCount, table.tableHeader().len);
+        const queried = try reopened.queryLines(io, arena.allocator(), &.{}, .{ .start = 0, .end = std.math.maxInt(u64) });
+        std.sort.pdq(Line, queried.items, {}, @import("store/lines.zig").lineLessThan);
+        try testing.expectEqual(tableCount, queried.items.len);
+        for (queried.items, 0..) |line, i| {
+            std.sort.pdq(Field, line.fields.items, {}, @import("store/lines.zig").fieldLessThan);
+            try testing.expectEqualDeep(.{ sourceLines[i].timestampNs, sourceLines[i].fields.items }, .{ line.timestampNs, line.fields.items });
+        }
+    }
+}
+
 test "selectTablesInRange selects overlap and handles gaps" {
     const alloc = testing.allocator;
     const io = testing.io;
