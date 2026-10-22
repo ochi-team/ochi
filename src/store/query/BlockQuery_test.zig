@@ -234,4 +234,17 @@ test "query exact" {
         .{ .expr = e.eqNode("key", "longword"), .expected = &.{} },
         .{ .expr = e.eqNode("key", ""), .expected = &.{} },
     });
+
+    // uint8, uint16, uint32, uint64: the max value changes the would-be numeric width
+    inline for (.{ "7", "256", "65536", "96553632109" }) |maxValue| {
+        try f(&.{.{ .name = "key", .values = &.{ "231", "21", "45", "8", "8", "21", maxValue, "6", "1", "9", "3" } }}, &.{
+            .{ .expr = e.eqNode("key", "21"), .expected = &.{ 1, 5 } },
+            .{ .expr = e.eqNode("key", maxValue), .expected = &.{6} },
+            .{ .expr = e.eqNode("not-found", ""), .expected = &all11 },
+            .{ .expr = e.eqNode("key", "one"), .expected = &.{} },
+            .{ .expr = e.eqNode("key", ""), .expected = &.{} },
+            .{ .expr = e.eqNode("key", "42"), .expected = &.{} },
+            .{ .expr = e.eqNode("key", "+21"), .expected = &.{} },
+        });
+    }
 }

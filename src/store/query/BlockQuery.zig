@@ -176,7 +176,7 @@ fn matchUintEqual(
     value: []const u8,
     hashes: []u64,
 ) Error!void {
-    const num = std.fmt.parseInt(u64, value, 10) catch {
+    const num = ValuesEncoder.parseUint64(value) orelse {
         bitset.unsetAll();
         return;
     };

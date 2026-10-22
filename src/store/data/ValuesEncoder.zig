@@ -155,7 +155,7 @@ fn tryUintEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeVal
     defer self.parsed.clearRetainingCapacity();
     try self.parsed.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
-        const n = std.fmt.parseInt(u64, v, 10) catch return null;
+        const n = parseUint64(v) orelse return null;
         try self.parsed.append(self.allocator, n);
         minVal = @min(minVal, n);
         maxVal = @max(maxVal, n);
@@ -211,7 +211,7 @@ fn tryIntEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValu
     try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(i64) * values.len);
     try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
-        const n = std.fmt.parseInt(i64, v, 10) catch {
+        const n = parseInt64(v) orelse {
             self.buf.items.len = startBufLen;
             self.values.items.len = startValuesLen;
             return null;
@@ -248,7 +248,7 @@ fn tryFloat64Encoding(self: *ValuesEncoder, values: []const []const u8) !?Encode
     try self.buf.ensureUnusedCapacity(self.allocator, @sizeOf(u64) * values.len);
     try self.values.ensureUnusedCapacity(self.allocator, values.len);
     for (values) |v| {
-        const n = std.fmt.parseFloat(f64, v) catch {
+        const n = parseFloat64(v) orelse {
             self.buf.items.len = startBufLen;
             self.values.items.len = startValuesLen;
             return null;
@@ -343,6 +343,45 @@ fn tryTimestampISO8601Encoding(self: *ValuesEncoder, values: []const []const u8)
         .min = @bitCast(minVal),
         .max = @bitCast(maxVal),
     };
+}
+
+/// Parses decimal digits with optional '_' separators between them,
+/// rejects sign and leading zeros that std.fmt.parseInt accepts.
+/// '_' doesn't format back ("1_000" decodes as "1000")
+pub fn parseUint64(s: []const u8) ?u64 {
+    if (s.len == 0 or (s.len > 1 and s[0] == '0')) return null;
+    if (s[0] == '_' or s[s.len - 1] == '_') return null;
+    var n: u64 = 0;
+    for (s) |c| {
+        if (c == '_') continue;
+        if (c < '0' or c > '9') return null;
+        n = std.math.mul(u64, n, 10) catch return null;
+        n = std.math.add(u64, n, c - '0') catch return null;
+    }
+    return n;
+}
+
+/// Same as parseUint64 with an optional '-'.
+/// "-0" is rejected.
+pub fn parseInt64(s: []const u8) ?i64 {
+    if (s.len == 0 or s[0] != '-') return std.math.cast(i64, parseUint64(s) orelse return null);
+    const n = parseUint64(s[1..]) orelse return null;
+    if (n == 0) return null;
+    return std.math.cast(i64, -@as(i128, n));
+}
+
+/// Accepts only [-]int[.digits], where int is canonical as in parseUint64,
+/// std.fmt.parseFloat also takes "+1", "01", "1e3", "inf", ".5" that don't format back.
+fn parseFloat64(s: []const u8) ?f64 {
+    const unsigned = if (s.len > 0 and s[0] == '-') s[1..] else s;
+    const dot = std.mem.indexOfScalar(u8, unsigned, '.') orelse unsigned.len;
+    _ = parseUint64(unsigned[0..dot]) orelse return null;
+    if (dot < unsigned.len) {
+        const frac = unsigned[dot + 1 ..];
+        if (frac.len == 0) return null;
+        for (frac) |c| if (c < '0' or c > '9') return null;
+    }
+    return std.fmt.parseFloat(f64, s) catch null;
 }
 
 pub fn parseIPv4(s: []const u8) !u32 {

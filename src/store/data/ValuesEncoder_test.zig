@@ -251,6 +251,27 @@ test "ValuesEncoder.encodeAndDecodeRoundtrip" {
             .expectedMin = 1303184641000000000,
             .expectedMax = 1303184641123456789,
         },
+        // leading zero doesn't format back, must stay a string
+        .{
+            .values = &[_][]const u8{ "007", "1", "2", "3", "4", "5", "6", "7", "8" },
+            .expectedType = .string,
+            .expectedMin = 0,
+            .expectedMax = 0,
+        },
+        // plus sign
+        .{
+            .values = &[_][]const u8{ "+5", "1", "2", "3", "4", "5", "6", "7", "8" },
+            .expectedType = .string,
+            .expectedMin = 0,
+            .expectedMax = 0,
+        },
+        // leading zero in a negative number
+        .{
+            .values = &[_][]const u8{ "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-08" },
+            .expectedType = .string,
+            .expectedMin = 0,
+            .expectedMax = 0,
+        },
         // int overflow
         .{
             .values = &[_][]const u8{
@@ -535,6 +556,48 @@ fn expectEncodeRoundtrip(
         },
         .unknown => return error.UnknownValueType,
     }
+}
+
+test "ValuesEncoder.parseUint64" {
+    const f = struct {
+        fn f(s: []const u8, expected: ?u64) !void {
+            try testing.expectEqual(expected, ValuesEncoder.parseUint64(s));
+        }
+    }.f;
+
+    try f("0", 0);
+    try f("42", 42);
+    try f("1_000", 1000);
+    try f("18_446_744_073_709_551_615", std.math.maxInt(u64));
+    try f("18446744073709551616", null);
+    try f("", null);
+    try f("_", null);
+    try f("_1", null);
+    try f("1_", null);
+    try f("0_1", null);
+    try f("007", null);
+    try f("+5", null);
+    try f("-0", null);
+    try f("1a", null);
+}
+
+test "ValuesEncoder.parseInt64" {
+    const f = struct {
+        fn f(s: []const u8, expected: ?i64) !void {
+            try testing.expectEqual(expected, ValuesEncoder.parseInt64(s));
+        }
+    }.f;
+
+    try f("0", 0);
+    try f("-1_000", -1000);
+    try f("-42", -42);
+    try f("9_223_372_036_854_775_807", std.math.maxInt(i64));
+    try f("-9_223_372_036_854_775_808", std.math.minInt(i64));
+    try f("9223372036854775808", null);
+    try f("-9223372036854775809", null);
+    try f("-0", null);
+    try f("-_1", null);
+    try f("-", null);
 }
 
 test "ValuesEncoder does not treat bare number as timestamp" {
