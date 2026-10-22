@@ -123,6 +123,28 @@ fn tryDictEncoding(self: *ValuesEncoder, values: []const []const u8, columnValue
     };
 }
 
+pub fn encodeUint(vt: ColumnType, n: u64, dst: *[8]u8) usize {
+    switch (vt) {
+        .uint8 => {
+            dst[0] = @intCast(n);
+            return 1;
+        },
+        .uint16 => {
+            dst[0..2].* = Encoder.toBytes(u16, @intCast(n));
+            return 2;
+        },
+        .uint32 => {
+            dst[0..4].* = Encoder.toBytes(u32, @intCast(n));
+            return 4;
+        },
+        .uint64 => {
+            dst.* = Encoder.toBytes(u64, n);
+            return 8;
+        },
+        else => std.debug.panic("unexpected uint type, given={any}", .{vt}),
+    }
+}
+
 // TODO: make most of the encoding methods generic
 fn tryUintEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeValueType {
     if (values.len == 0) return null;
@@ -157,17 +179,13 @@ fn tryUintEncoding(self: *ValuesEncoder, values: []const []const u8) !?EncodeVal
     // Second pass: encode in one generic codepath
     try self.buf.ensureUnusedCapacity(self.allocator, width * self.parsed.items.len);
     try self.values.ensureUnusedCapacity(self.allocator, self.parsed.items.len);
-    for (self.parsed.items) |n| {
+    var dst: [8]u8 = undefined;
+    for (self.parsed.items) |i| {
         const start = self.buf.items.len;
-        switch (vt) {
-            .uint8 => self.buf.appendAssumeCapacity(@as(u8, @intCast(n))),
-            .uint16 => self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u16, @as(u16, @intCast(n)))),
-            .uint32 => self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u32, @as(u32, @intCast(n)))),
-            .uint64 => self.buf.appendSliceAssumeCapacity(&Encoder.toBytes(u64, n)),
-            else => std.debug.panic("unexpected uint type, given={any}", .{vt}),
-        }
-        const slice = self.buf.items[start..];
-        self.values.appendAssumeCapacity(slice);
+        const n = encodeUint(vt, i, &dst);
+        const val = dst[0..n];
+        self.buf.appendSliceAssumeCapacity(val);
+        self.values.appendAssumeCapacity(self.buf.items[start..]);
     }
 
     return .{
