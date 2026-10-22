@@ -34,6 +34,7 @@ const maxColumnsHeaderIndexSize = BlockData.maxColumnsHeaderIndexSize;
 const maxColumnsHeaderSize = BlockData.maxColumnsHeaderSize;
 const UnpackError = @import("../data/Unpacker.zig").UnpackError;
 const ColumnDict = @import("../data/ColumnDict.zig");
+const ValuesEncoder = @import("../data/ValuesEncoder.zig");
 
 pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || error{
     PartialExpressionUnwrap,
@@ -142,9 +143,14 @@ fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *s
     const hashes = try self.equalTokensHashes(value);
     defer self.alloc.free(hashes);
 
+    // TODO: all the equation matching is build around decoding the column values,
+    // it's very heavy compute wise,
+    // what if we could encode a query once and compare it?
+    // could work for equation/not, but wouldn't for regex/partial matching
     switch (ch.type) {
         .string => try self.matchStringEqual(&ch, bitset, value, hashes),
         .dict => try self.matchDictEqual(&ch, bitset, value),
+        .uint8, .uint16, .uint32, .uint64 => try self.matchUintEqual(&ch, bitset, value, hashes),
         else => return error.UnsupportedValueType,
     }
 }
@@ -161,6 +167,33 @@ fn matchStringEqual(
         return;
     }
     try self.setMatchedBits(ch, bitset, value);
+}
+
+fn matchUintEqual(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+    hashes: []u64,
+) Error!void {
+    const num = std.fmt.parseInt(u64, value, 10) catch {
+        bitset.unsetAll();
+        return;
+    };
+    if (num < ch.min or num > ch.max) {
+        bitset.unsetAll();
+        return;
+    }
+
+    var binBuf: [8]u8 = undefined;
+    const n = ValuesEncoder.encodeUint(ch.type, num, &binBuf);
+    const binValue = binBuf[0..n];
+
+    if (!try self.matchBloomFilter(ch, hashes)) {
+        bitset.unsetAll();
+        return;
+    }
+    try self.setMatchedBits(ch, bitset, binValue);
 }
 
 fn matchDictEqual(
