@@ -297,3 +297,36 @@ test "query exact" {
         .{ .expr = e.eqNode("", "2019-09-11T08:31:47.500Z"), .expected = &.{} },
     });
 }
+
+test "query and" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const e: Expr = .{ .a = arena.allocator() };
+
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{
+        "a key",
+        "a word",
+        "woop woop",
+        "short thing,splited by coma",
+        "an average word",
+        "b longword",
+        "a fail oom",
+        "a qwerty long",
+        "",
+        "а ЮНИКОД Жиж",
+        "a @#,42.(-!6]",
+    } }});
+    defer fx.deinit(io, alloc);
+
+    const f = struct {
+        fn f(fixture: *const Fixture, expr: *const FilterExpression, expected: []const usize) !void {
+            return fixture.expectRows(testing.io, testing.allocator, expr, expected);
+        }
+    }.f;
+
+    // non-empty intersection
+    try f(&fx, e.andNode(e.eqNode("key", "a key"), e.neNode("key", "k")), &.{0});
+    try f(&fx, e.andNode(e.neNode("key", "k"), e.eqNode("key", "a key")), &.{0});
+}
