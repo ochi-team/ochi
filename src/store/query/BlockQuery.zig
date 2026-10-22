@@ -153,6 +153,7 @@ fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *s
         .uint8, .uint16, .uint32, .uint64 => try self.matchUintEqual(&ch, bitset, value, hashes),
         .int64 => try self.matchIntEqual(&ch, bitset, value, hashes),
         .float64 => try self.matchFloatEqual(&ch, bitset, value, hashes),
+        .ipv4 => try self.matchIpv4Equal(&ch, bitset, value, hashes),
         else => return error.UnsupportedValueType,
     }
 }
@@ -246,6 +247,29 @@ fn matchFloatEqual(
         return;
     }
     try self.setMatchedBits(ch, bitset, &encoding.Encoder.toBytes(u64, @bitCast(num)));
+}
+
+fn matchIpv4Equal(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+    hashes: []u64,
+) Error!void {
+    const ip = ValuesEncoder.parseIPv4(value) catch {
+        bitset.unsetAll();
+        return;
+    };
+    if (ip < ch.min or ip > ch.max) {
+        bitset.unsetAll();
+        return;
+    }
+
+    if (!try self.matchBloomFilter(ch, hashes)) {
+        bitset.unsetAll();
+        return;
+    }
+    try self.setMatchedBits(ch, bitset, &encoding.Encoder.toBytes(u32, ip));
 }
 
 fn matchDictEqual(

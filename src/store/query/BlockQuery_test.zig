@@ -270,4 +270,17 @@ test "query exact" {
         .{ .expr = e.eqNode("key", "231"), .expected = &.{} },
         .{ .expr = e.eqNode("key", "96553632109655363210"), .expected = &.{} },
     });
+
+    // ipv4
+    try f(&.{.{ .name = "key", .values = &.{
+        "4.3.2.1",   "9.9.9.9",   "192.1.1.8",  "253.254.254.254", "192.1.1.8",   "192.1.1.8",
+        "192.1.5.3", "192.1.1.8", "21.1.192.7", "44.44.44.44",     "77.77.77.77", "6.6.6.6",
+    } }}, &.{
+        .{ .expr = e.eqNode("key", "192.1.1.8"), .expected = &.{ 2, 4, 5, 7 } },
+        .{ .expr = e.eqNode("not-found", ""), .expected = &(all11 ++ [_]usize{11}) },
+        .{ .expr = e.eqNode("key", "one"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", ""), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "192.1"), .expected = &.{} },
+        .{ .expr = e.eqNode("key", "254.254.254.254"), .expected = &.{} },
+    });
 }
