@@ -35,6 +35,7 @@ const maxColumnsHeaderSize = BlockData.maxColumnsHeaderSize;
 const UnpackError = @import("../data/Unpacker.zig").UnpackError;
 const ColumnDict = @import("../data/ColumnDict.zig");
 const ValuesEncoder = @import("../data/ValuesEncoder.zig");
+const parseTimestampISO8601 = @import("../../stds/time.zig").parseTimestampISO8601;
 
 pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || error{
     PartialExpressionUnwrap,
@@ -154,6 +155,7 @@ fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *s
         .int64 => try self.matchIntEqual(&ch, bitset, value, hashes),
         .float64 => try self.matchFloatEqual(&ch, bitset, value, hashes),
         .ipv4 => try self.matchIpv4Equal(&ch, bitset, value, hashes),
+        .timestampIso8601 => try self.matchTimestampEqual(&ch, bitset, value, hashes),
         else => return error.UnsupportedValueType,
     }
 }
@@ -270,6 +272,31 @@ fn matchIpv4Equal(
         return;
     }
     try self.setMatchedBits(ch, bitset, &encoding.Encoder.toBytes(u32, ip));
+}
+
+fn matchTimestampEqual(
+    self: *BlockQuery,
+    ch: *const ColumnHeader,
+    bitset: *std.bit_set.DynamicBitSetUnmanaged,
+    value: []const u8,
+    hashes: []u64,
+) Error!void {
+    const ts = parseTimestampISO8601(value) orelse {
+        bitset.unsetAll();
+        return;
+    };
+    const min: i64 = @bitCast(ch.min);
+    const max: i64 = @bitCast(ch.max);
+    if (ts < min or ts > max) {
+        bitset.unsetAll();
+        return;
+    }
+
+    if (!try self.matchBloomFilter(ch, hashes)) {
+        bitset.unsetAll();
+        return;
+    }
+    try self.setMatchedBits(ch, bitset, &encoding.Encoder.toBytes(i64, ts));
 }
 
 fn matchDictEqual(

@@ -283,4 +283,17 @@ test "query exact" {
         .{ .expr = e.eqNode("key", "192.1"), .expected = &.{} },
         .{ .expr = e.eqNode("key", "254.254.254.254"), .expected = &.{} },
     });
+
+    // timestamp-iso8601 in the message field, it has the empty key
+    try f(&.{.{ .name = "", .values = &.{
+        "2019-07-11T08:31:47.100Z", "2019-07-11T08:31:47.200Z", "2019-07-11T08:31:47.300Z",
+        "2019-07-11T08:31:47.400Z", "2019-07-11T08:31:47.500Z", "2019-07-11T08:31:47.600Z",
+        "2019-07-11T08:31:47.700Z", "2019-07-11T08:31:47.800Z", "2019-07-11T08:31:47.900Z",
+    } }}, &.{
+        .{ .expr = e.eqNode("", "2019-07-11T08:31:47.500Z"), .expected = &.{4} },
+        .{ .expr = e.eqNode("not found", ""), .expected = &.{ 0, 1, 2, 3, 4, 5, 6, 7, 8 } },
+        .{ .expr = e.eqNode("", "one"), .expected = &.{} },
+        .{ .expr = e.eqNode("", ""), .expected = &.{} },
+        .{ .expr = e.eqNode("", "2019-09-11T08:31:47.500Z"), .expected = &.{} },
+    });
 }
