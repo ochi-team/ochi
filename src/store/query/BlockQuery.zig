@@ -16,7 +16,7 @@ const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 
-const BlockResponse = @import("BlockResponse.zig");
+const QueryHits = @import("QueryHits.zig");
 const clause = @import("clause.zig");
 
 const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
@@ -111,18 +111,15 @@ pub fn deinit(self: *BlockQuery) void {
 pub fn query(
     self: *BlockQuery,
     q: *const Query,
-) Error!?BlockResponse {
+) Error!QueryHits {
     var bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.blockHeader.len);
-    defer bitset.deinit(self.alloc);
+    errdefer bitset.deinit(self.alloc);
 
     if (q.fieldsExpr) |fieldsExpr| {
         try self.filterByExpr(fieldsExpr, &bitset);
     }
 
-    if (bitsetIsEmpty(&bitset)) {
-        return null;
-    }
-    return BlockResponse.init();
+    return .{ .hits = bitset };
 }
 
 fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {

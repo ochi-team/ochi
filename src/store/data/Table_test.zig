@@ -834,7 +834,8 @@ test "disk table with multiple bloom shards resolves columns to their shards" {
 
         const expr: Query.FilterExpression = .{ .predicate = .{ .key = case.key, .value = case.value, .op = .equal } };
         const q: Query = .{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = &expr };
-        const res = try bq.query(&q);
-        try testing.expectEqual(case.matches, res != null);
+        var res = try bq.query(&q);
+        defer res.deinit(alloc);
+        try testing.expectEqual(case.matches, res.hits.count() > 0);
     }
 }

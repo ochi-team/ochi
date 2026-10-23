@@ -8,7 +8,6 @@ const zeit = @import("zeit");
 const Layout = @import("Layout.zig");
 
 const Line = @import("store/lines.zig").Line;
-const Field = @import("store/lines.zig").Field;
 const freeFields = @import("store/lines.zig").freeFields;
 const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const copyFields = @import("store/lines.zig").copyFields;
