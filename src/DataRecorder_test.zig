@@ -424,6 +424,93 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
     }
 }
 
+test "DataRecorder.addLines skips busy shards and preserves data after reopen" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+    runtime.cpus = 3;
+
+    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+    defer timestampsEncoders.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+
+    const cases = [_]struct { start: usize, held: []const usize, expected: usize }{
+        .{ .start = 0, .held = &.{}, .expected = 0 },
+        .{ .start = 0, .held = &.{0}, .expected = 1 },
+        .{ .start = 0, .held = &.{ 0, 1 }, .expected = 2 },
+        .{ .start = 2, .held = &.{ 2, 0 }, .expected = 1 },
+    };
+
+    for (0..2) |pass| {
+        const timerLoop = try TimerLoop.init(alloc);
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
+        defer recorder.deinit(io, alloc);
+        defer {
+            timerLoop.stop();
+            timerLoop.join();
+            timerLoop.deinit();
+        }
+
+        if (pass == 0) {
+            for (cases, 0..) |case, caseIndex| {
+                {
+                    for (case.held) |index| recorder.shards[index].mx.lockUncancelable(io);
+                    defer for (case.held) |index| recorder.shards[index].mx.unlock(io);
+
+                    recorder.nextShard.store(case.start, .monotonic);
+                    const lines = [_]Line{stableLine(caseIndex + 1, 3)};
+                    try recorder.addLines(io, alloc, &lines, stableSID(caseIndex + 1));
+
+                    try testing.expectEqual(case.start + 1, recorder.nextShard.load(.monotonic));
+                    for (recorder.shards, 0..) |*shard, index| {
+                        try testing.expectEqual(@intFromBool(index == case.expected), shard.lines.items.len);
+                    }
+                    const acquired = &recorder.shards[case.expected];
+                    try testing.expectEqualDeep(lines[0], acquired.lines.items[0]);
+                    try testing.expect(acquired.flushAtUs != null);
+                    try testing.expect(acquired.mx.tryLock());
+                    acquired.mx.unlock(io);
+                    for (case.held) |index| try testing.expect(!recorder.shards[index].mx.tryLock());
+                }
+                try recorder.flushForce(io, alloc);
+            }
+        }
+
+        try testing.expectEqual(0, recorder.memTables.items.len);
+        try testing.expectEqual(cases.len, countDiskLinesInRecorder(recorder));
+
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        for (cases, 0..) |_, caseIndex| {
+            var sids = [_]SID{stableSID(caseIndex + 1)};
+            const queried = try recorder.queryLines(io, arena.allocator(), &sids, .{ .start = 0, .end = cases.len + 1 });
+            try testing.expectEqual(1, queried.items.len);
+            const expected = stableLine(caseIndex + 1, 3);
+            const actual = queried.items[0];
+            try testing.expectEqualDeep(expected, Line{
+                .timestampNs = actual.timestampNs,
+                .fields = .view(actual.fields.items),
+            });
+        }
+    }
+}
+
 test "DataRecorder.addLines does not crash when a shard exceeds Block.maxLines" {
     const alloc = testing.allocator;
     const io = testing.io;
