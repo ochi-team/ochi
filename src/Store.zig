@@ -415,6 +415,11 @@ pub fn addLines(
     // If the Lines belong to different Partitions, continue where left off,
     // sort them by day, then bulk add
     var linesByInterval = std.AutoHashMap(u32, std.ArrayList(Line)).init(allocator);
+    defer {
+        var lists = linesByInterval.valueIterator();
+        while (lists.next()) |list| list.deinit(allocator);
+        linesByInterval.deinit();
+    }
 
     while (idx < lines.len) : (idx += 1) {
         const day: u32 = @intCast(lines[idx].timestampNs / std.time.ns_per_day);
@@ -648,9 +653,11 @@ pub fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partitio
 }
 
 fn getPartitionOrLru(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
-    if (self.getLruPartition()) |part|
+    if (self.getLruPartition()) |part| {
         if (part.day == day)
             return part;
+        part.release(io);
+    }
 
     return self.getPartition(io, alloc, day);
 }
@@ -688,7 +695,8 @@ fn openPartition(
     self.pathsBuf.appendAssumeCapacity(path);
     self.pathsBuf.appendAssumeCapacity(indexPath);
     self.pathsBuf.appendAssumeCapacity(dataPath);
-    self.partitions.appendAssumeCapacity(partition);
+    const insertAt = std.sort.lowerBound(*Partition, self.partitions.items, day, orderPartitions);
+    self.partitions.insertAssumeCapacity(insertAt, partition);
 
     return partition;
 }
