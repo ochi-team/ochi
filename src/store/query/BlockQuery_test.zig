@@ -202,7 +202,7 @@ test "bitsetAndNot" {
 test "query no fields filter" {
     const alloc = testing.allocator;
     const io = testing.io;
-    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{ "n", "o" } }});
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{ "a", "o" } }});
     defer fx.deinit(io, alloc);
 
     try fx.expectRows(io, alloc, null, &.{ 0, 1 });
@@ -377,7 +377,7 @@ test "query and" {
     try f(&fx, e.andNode(e.eqNode("key", "a key"), e.eqNode("key", "a word")), &.{});
     try f(&fx, e.andNode(e.eqNode("key", "a word"), e.eqNode("key", "a key")), &.{});
     // all the tokens are present in the block, but in different rows
-    try f(&fx, e.andNode(e.eqNode("key", "a key"), e.eqNode("key", "n xwyxws qsss")), &.{});
+    try f(&fx, e.andNode(e.eqNode("key", "a key"), e.eqNode("key", "super cookie")), &.{});
 
     // empty value
     try f(&fx, e.andNode(e.eqNode("key", ""), e.eqNode("one", "")), &.{5});
@@ -422,4 +422,81 @@ test "query and" {
     try testing.expect(try bq.query(&q) != null);
     reset(&bq, &fx.blockHeader);
     try testing.expect(try bq.query(&q) != null);
+}
+
+test "query or" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const e: Expr = .{ .a = arena.allocator() };
+
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{
+        "a key",
+        "a word",
+        "a longer word",
+        "split,by coma",
+        "an interesting one",
+        "a",
+        "a very long string",
+        "super cookie",
+        "а ЮНИКОД Жиж",
+        "n !!,78.(!6)",
+    } }});
+    defer fx.deinit(io, alloc);
+
+    const f = struct {
+        fn f(fixture: *const Fixture, expr: *const FilterExpression, expected: []const usize) !void {
+            return fixture.expectRows(testing.io, testing.allocator, expr, expected);
+        }
+    }.f;
+
+    // non-empty union
+    try f(&fx, e.orNode(e.eqNode("key", "a key"), e.eqNode("key", "a")), &.{ 0, 5 });
+
+    // first empty result, second non-empty result
+    try f(&fx, e.orNode(e.eqNode("key", "knop"), e.eqNode("key", "n !!,78.(!6)")), &.{9});
+    // first non-empty result, second empty result
+    try f(&fx, e.orNode(e.eqNode("key", "n !!,78.(!6)"), e.eqNode("key", "knop")), &.{9});
+
+    // first match all
+    try f(&fx, e.orNode(e.neNode("key", ""), e.eqNode("key", "n !!,78.(!6)")), &all10);
+    // second match all
+    try f(&fx, e.orNode(e.eqNode("key", "n !!,78.(!6)"), e.neNode("key", "")), &all10);
+    // complementary filters
+    try f(&fx, e.orNode(e.eqNode("key", "a"), e.neNode("key", "a")), &all10);
+
+    // both empty results
+    try f(&fx, e.orNode(e.eqNode("key", "k78"), e.eqNode("key", "knop")), &.{});
+    // all the tokens are present in the block, but no value matches
+    try f(&fx, e.orNode(e.eqNode("key", "a wordonm"), e.eqNode("key", "nop n")), &.{});
+
+    // non-existing column (last)
+    try f(&fx, e.orNode(e.eqNode("key", "n !!,78.(!6)"), e.eqNode("one", "knop")), &.{9});
+    // non-existing column (first)
+    try f(&fx, e.orNode(e.eqNode("one", "knop"), e.eqNode("key", "n !!,78.(!6)")), &.{9});
+    // non-existing columns only
+    try f(&fx, e.orNode(e.eqNode("one", "k"), e.eqNode("onm", "l")), &.{});
+    try f(&fx, e.orNode(e.eqNode("one", "k"), e.eqNode("onm", "")), &all10);
+
+    // or of ands
+    const n9 = "n !!,78.(!6)";
+    try f(&fx, e.orNode(e.andNode(e.eqNode("key", n9), e.eqNode("one", "")), e.andNode(e.eqNode("key", "a key"), e.neNode("one", ""))), &.{9});
+    try f(&fx, e.orNode(e.andNode(e.eqNode("key", n9), e.eqNode("one", "")), e.andNode(e.eqNode("key", "a key"), e.eqNode("one", ""))), &.{ 0, 9 });
+    try f(&fx, e.orNode(e.andNode(e.eqNode("key", n9), e.eqNode("one", "")), e.andNode(e.eqNode("key", "a key"), e.eqNode("onm", ""))), &.{ 0, 9 });
+    try f(&fx, e.orNode(e.andNode(e.eqNode("key", n9), e.eqNode("one", "nop")), e.andNode(e.eqNode("key", "a key"), e.eqNode("one", ""))), &.{0});
+    try f(&fx, e.orNode(e.andNode(e.eqNode("key", n9), e.eqNode("one", "nop")), e.andNode(e.eqNode("key", "a key"), e.neNode("one", ""))), &.{});
+
+    // nested or is flattened
+    try f(&fx, e.orNode(e.orNode(e.eqNode("key", "a"), e.eqNode("key", "a key")), e.orNode(e.eqNode("key", "a word"), e.eqNode("key", "k"))), &.{ 0, 1, 5 });
+
+    // negative filters
+    try f(&fx, e.orNode(e.neNode("key", "a"), e.eqNode("key", "k")), &.{ 0, 1, 2, 3, 4, 6, 7, 8, 9 });
+
+    // more ors than the unwrap buffer fits
+    var many = e.eqNode("key", "k5");
+    for (0..32) |_| many = e.orNode(many, e.eqNode("key", "k"));
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool);
+    defer bq.deinit();
+    try testing.expectError(error.PartialExpressionUnwrap, bq.query(&.{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = many }));
 }

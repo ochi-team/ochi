@@ -729,6 +729,7 @@ fn fieldsAndTokens(
                 if (p.op != .equal) {
                     continue;
                 }
+                tokensArray.clearRetainingCapacity();
                 try self.getTokens(&tokensArray, p.value);
                 try mergeTokens(self.alloc, &m, &fieldKeys, p.key, tokensArray.items);
             },
