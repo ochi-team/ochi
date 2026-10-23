@@ -415,6 +415,16 @@ pub fn lineLatestFirst(_: void, a: Line, b: Line) bool {
     return a.timestampNs > b.timestampNs;
 }
 
+pub fn keepLatestLines(alloc: std.mem.Allocator, lines: *std.ArrayList(Line), limit: usize) void {
+    std.sort.pdq(Line, lines.items, {}, lineLatestFirst);
+    if (lines.items.len <= limit) return;
+
+    for (lines.items[limit..]) |line| {
+        freeFields(alloc, line.fields);
+    }
+    lines.shrinkRetainingCapacity(limit);
+}
+
 pub fn fieldLessThan(_: void, one: Field, another: Field) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }

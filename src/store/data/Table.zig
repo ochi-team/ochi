@@ -26,6 +26,7 @@ const msgKey = @import("../lines.zig").msgKey;
 const SID = @import("../lines.zig").SID;
 const copyFields = @import("../lines.zig").copyFields;
 const freeFields = @import("../lines.zig").freeFields;
+const keepLatestLines = @import("../lines.zig").keepLatestLines;
 const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
@@ -485,26 +486,22 @@ pub fn queryLines(
     self: *Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
+    limit: ?usize,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
     sids: []SID,
     query: Query,
 ) !void {
-    //FIXME:
-    // 1. apply time range filter to lines
-    // 2. what about queryLinesAllBlocks, avoid this path
-    // 3. implement and filter
-    // 4. predicate eq/not eq filter
-    // 5. collect the blocks
-    // 6. return down the result into the response
-    // 7. fieldsOrTokens and fieldsAndTokens
-    // 8. test block query hits
+    if (sids.len == 0 and (query.tagsExpr != null or query.streamIDs != null)) return;
 
-    // sids could be empty if no index matches tags
+    var scratchArena = std.heap.ArenaAllocator.init(alloc);
+    defer scratchArena.deinit();
+    const tableReader = try TableReader.init(io, alloc, self, decompressionPool);
+    defer tableReader.deinit(alloc);
+
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
-        return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
+        return self.queryLinesAllBlocks(io, alloc, &scratchArena, tableReader, limit, timestampsEncoders, decompressionPool, dst, query);
     }
 
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -568,7 +565,9 @@ pub fn queryLines(
                 try self.queryBlock(
                     io,
                     alloc,
-                    leakyUnpacking,
+                    &scratchArena,
+                    tableReader,
+                    limit,
                     timestampsEncoders,
                     decompressionPool,
                     dst,
@@ -598,7 +597,9 @@ fn queryLinesAllBlocks(
     self: *Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
+    scratchArena: *std.heap.ArenaAllocator,
+    tableReader: *TableReader,
+    limit: ?usize,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
@@ -634,7 +635,9 @@ fn queryLinesAllBlocks(
             try self.queryBlock(
                 io,
                 alloc,
-                leakyUnpacking,
+                scratchArena,
+                tableReader,
+                limit,
                 timestampsEncoders,
                 decompressionPool,
                 dst,
@@ -649,7 +652,9 @@ fn queryBlock(
     self: *const Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
+    scratchArena: *std.heap.ArenaAllocator,
+    tableReader: *TableReader,
+    limit: ?usize,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
@@ -669,57 +674,36 @@ fn queryBlock(
         });
     }
 
-    const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
-    defer tableReader.deinit(alloc);
+    if (!scratchArena.reset(.retain_capacity)) return error.OutOfMemory;
+    const scratch = scratchArena.allocator();
 
+    // The arena also reclaims partially initialized block data and decoders on failure.
     var blockData = BlockData.initEmpty();
-    try blockData.readFrom(io, alloc, &blockHeader, tableReader);
-    defer blockData.deinit(alloc);
+    try blockData.readFrom(io, scratch, &blockHeader, tableReader);
 
-    // rely on request arena
-    var unpacker = Unpacker(leakyUnpacking).init(decompressionPool);
-    defer unpacker.deinit(alloc);
+    var unpacker = Unpacker(true).init(decompressionPool);
     var decoder: ValuesDecoder = .{};
-    defer decoder.deinit(alloc);
 
-    var block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, leakyUnpacking, &unpacker, &decoder);
-    defer block.deinit(alloc);
+    const block = try Block.initFromData(io, scratch, timestampsEncoders, &blockData, true, &unpacker, &decoder);
+    var gathered = std.ArrayList(Line).empty;
+    try block.gatherLines(scratch, &gathered);
 
-    var i = dst.items.len;
-    try block.gatherLines(alloc, dst);
-    var converted: usize = 0;
+    const initialLen = dst.items.len;
     errdefer {
-        for (dst.items[i .. i + converted]) |line| freeFields(alloc, line.fields);
-        for (dst.items[i + converted ..]) |line| alloc.free(line.fields.items);
-        dst.shrinkRetainingCapacity(i);
+        for (dst.items[initialLen..]) |line| freeFields(alloc, line.fields);
+        dst.shrinkRetainingCapacity(initialLen);
     }
-    for (dst.items[i..]) |*line| {
-        const gatheredFields = line.fields;
-        const copiedFields = try copyFields(alloc, gatheredFields.items);
-        alloc.free(gatheredFields.items);
-        line.fields = copiedFields;
-        converted += 1;
-    }
-
-    std.debug.assert(dst.items.len > i);
-    while (i < dst.items.len) {
-        const line = dst.items[i];
-
-        if (line.timestampNs < query.start or line.timestampNs > query.end) {
-            const removed = dst.swapRemove(i);
-            freeFields(alloc, removed.fields);
-            continue;
-        }
+    for (gathered.items) |line| {
+        if (line.timestampNs < query.start or line.timestampNs > query.end) continue;
         if (query.fieldsExpr) |expr| {
-            if (!try matchesFilterExpression(line.fields.items, expr)) {
-                const removed = dst.swapRemove(i);
-                freeFields(alloc, removed.fields);
-                continue;
-            }
+            if (!try matchesFilterExpression(line.fields.items, expr)) continue;
         }
 
-        i += 1;
+        const fields = try copyFields(alloc, line.fields.items);
+        errdefer freeFields(alloc, fields);
+        try dst.append(alloc, .{ .timestampNs = line.timestampNs, .fields = fields });
     }
+    if (limit) |maxLines| keepLatestLines(alloc, dst, maxLines);
 }
 
 fn matchesFilterExpression(fields: []const Field, expr: *const Query.FilterExpression) !bool {

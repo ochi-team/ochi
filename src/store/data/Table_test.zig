@@ -15,6 +15,8 @@ const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 const freeFields = @import("../lines.zig").freeFields;
 const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
+const copyFields = @import("../lines.zig").copyFields;
+const fieldLessThan = @import("../lines.zig").fieldLessThan;
 const Query = @import("../../query/Query.zig");
 
 const testing = std.testing;
@@ -556,7 +558,7 @@ test "queryLines" {
         const requested = try alloc.dupe(SID, case.requestedSIDs);
         defer alloc.free(requested);
 
-        try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested, case.query);
+        try table.queryLines(io, alloc, null, timestampsEncoders, decompressionPool, &queried, requested, case.query);
         try testing.expectEqual(case.expected.len, queried.items.len);
 
         for (case.expected, 0..) |expected, i| {
@@ -614,10 +616,30 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     const infoExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "info", .op = .equal } };
     const query = Query{ .start = 1, .end = streamsCount, .tagsExpr = null, .fieldsExpr = &infoExpr };
 
-    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+    try table.queryLines(io, alloc, null, timestampsEncoders, decompressionPool, &queried, &.{}, query);
     try testing.expectEqual(streamsCount, queried.items.len);
     try testing.expectEqual(1, queried.items[0].timestampNs);
     try testing.expectEqual(streamsCount, queried.items[queried.items.len - 1].timestampNs);
+
+    for (queried.items) |line| freeFields(alloc, line.fields);
+    queried.clearRetainingCapacity();
+    try table.queryLines(io, alloc, Query.maxLines, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+    try testing.expectEqual(Query.maxLines, queried.items.len);
+    for (queried.items, 0..) |line, i| {
+        try testing.expectEqual(streamsCount - i, line.timestampNs);
+    }
+
+    for (queried.items) |line| freeFields(alloc, line.fields);
+    queried.clearRetainingCapacity();
+    const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
+    const boundedQuery: Query = .{ .start = 1500, .end = 2500, .tagsExpr = &noTagsExpr, .fieldsExpr = &infoExpr };
+    try table.queryLines(io, alloc, 3, timestampsEncoders, decompressionPool, &queried, &sids, boundedQuery);
+    try testing.expectEqual(3, queried.items.len);
+    try testing.expectEqualSlices(u64, &.{ 2500, 2499, 2498 }, &.{
+        queried.items[0].timestampNs,
+        queried.items[1].timestampNs,
+        queried.items[2].timestampNs,
+    });
 }
 
 // TODO: test flushed mem table is the same as an opened one,
@@ -662,10 +684,57 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, null, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
 }
 
-test "queryLines reads disk table fields after open" {
+fn expectQueriedLine(expected: Line, actual: Line) !void {
+    std.sort.pdq(Field, actual.fields.items, {}, fieldLessThan);
+    try testing.expectEqualDeep(Line{
+        .timestampNs = expected.timestampNs,
+        .fields = .view(expected.fields.items),
+    }, Line{
+        .timestampNs = actual.timestampNs,
+        .fields = .view(actual.fields.items),
+    });
+}
+
+fn testQueryAllocationFailures(
+    alloc: Allocator,
+    table: *Table,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    decompressionPool: *DecompressionPool,
+    expected: []const Line,
+    limit: ?usize,
+) !void {
+    var queried = std.ArrayList(Line).empty;
+    defer deinitLinesFull(alloc, &queried);
+    try queried.append(alloc, .{ .timestampNs = 0, .fields = .empty });
+    queried.items[0].fields = try copyFields(alloc, &.{.{ .key = "existing", .value = "still owned" }});
+    const prefix = queried.items[0];
+
+    const query: Query = .{ .start = expected[0].timestampNs, .end = expected[expected.len - 1].timestampNs };
+    table.queryLines(testing.io, alloc, limit, timestampsEncoders, decompressionPool, &queried, &.{}, query) catch |err| {
+        try testing.expectEqual(prefix.fields.buf.ptr, queried.items[0].fields.buf.ptr);
+        try expectQueriedLine(prefix, queried.items[0]);
+        try testing.expectEqualDeep(@as([]const Field, &.{.{ .key = "existing", .value = "still owned" }}), @as([]const Field, queried.items[0].fields.items));
+        // Only complete preceding blocks may survive a failed block append.
+        try testing.expectEqual(0, (queried.items.len - 1) % 10);
+        if (expected.len == 10) try testing.expectEqual(1, queried.items.len);
+        for (queried.items[1..], 0..) |line, i| try expectQueriedLine(expected[i], line);
+        return err;
+    };
+
+    if (limit) |maxLines| {
+        try testing.expectEqual(maxLines, queried.items.len);
+        for (queried.items, 0..) |line, i| try expectQueriedLine(expected[expected.len - i - 1], line);
+    } else {
+        try testing.expectEqual(expected.len + 1, queried.items.len);
+        try expectQueriedLine(prefix, queried.items[0]);
+        for (expected, queried.items[1..]) |line, actual| try expectQueriedLine(line, actual);
+    }
+}
+
+test "queryLines filters multiple mem and disk blocks without borrowing scratch" {
     const alloc = testing.allocator;
     const io = testing.io;
 
@@ -680,51 +749,78 @@ test "queryLines reads disk table fields after open" {
     const tablePath = tablePathWriter.buffered();
 
     const sid = SID{ .id = 1, .tenantID = 11 };
-    var fields1 = [_]Field{
-        .{ .key = "", .value = "GET /api/health 200 3ms" },
-        .{ .key = "id", .value = "web-001" },
-        .{ .key = "status", .value = "200" },
-        .{ .key = "path", .value = "/api/health" },
-    };
-    var fields2 = [_]Field{
-        .{ .key = "", .value = "POST /api/orders 500 timeout" },
-        .{ .key = "id", .value = "web-002" },
-        .{ .key = "status", .value = "500" },
-        .{ .key = "path", .value = "/api/orders" },
-    };
-    var lines = [_]Line{
-        .{ .timestampNs = 1, .fields = .view(fields1[0..]) },
-        .{ .timestampNs = 2, .fields = .view(fields2[0..]) },
-    };
-
-    const memTable = try MemTable.init(alloc);
-    defer memTable.deinit(alloc);
+    const linesCount = 30;
+    var lines: [linesCount]Line = undefined;
+    var fields: [linesCount][4]Field = undefined;
+    var ids: [linesCount][16]u8 = undefined;
+    var attempts: [linesCount][8]u8 = undefined;
+    var timestamps: [linesCount]u64 = undefined;
+    for (0..linesCount) |i| {
+        fields[i] = .{
+            .{ .key = "", .value = if (i % 2 == 0) "GET /api/health 200 3ms" else "POST /api/orders 500 timeout" },
+            .{ .key = "attempt", .value = try std.fmt.bufPrint(&attempts[i], "{d}", .{i + 1}) },
+            .{ .key = "id", .value = try std.fmt.bufPrint(&ids[i], "web-{d:0>3}", .{i + 1}) },
+            .{ .key = "status", .value = if (i % 2 == 0) "200" else "500" },
+        };
+        timestamps[i] = @intCast(i + 1);
+        lines[i] = .{ .timestampNs = timestamps[i], .fields = .view(&fields[i]) };
+    }
     const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
     defer timestampsEncoders.deinit(alloc);
     const compressionPool = try CompressionPool.init(alloc, 1);
     defer compressionPool.deinit(alloc);
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
-    try memTable.addLinesForSid(io, alloc, timestampsEncoders, compressionPool, sid, lines[0..]);
-    try memTable.storeToDisk(io, tablePath);
+    const mem = table: {
+        const memTable = try MemTable.init(alloc);
+        errdefer memTable.deinit(alloc);
+        var sids = [_]SID{ sid, sid, sid };
+        var windows = [_][]Line{ lines[0..10], lines[10..20], lines[20..30] };
+        try memTable.addLines(io, alloc, timestampsEncoders, compressionPool, &sids, &windows);
+        try memTable.storeToDisk(io, tablePath);
+        break :table try Table.fromMem(io, alloc, memTable, decompressionPool);
+    };
+    defer mem.release(io);
+    try testing.expectEqual(3, mem.tableHeader().blocksCount);
 
     const tablePathOwned = try alloc.dupe(u8, tablePath);
-    const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);
-    defer table.release(io);
-
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
+    const disk = try Table.open(io, alloc, tablePathOwned, decompressionPool);
+    defer disk.release(io);
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
-    const statusExpr: Query.FilterExpression = .{ .predicate = .{ .key = "status", .value = "200", .op = .equal } };
-    const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = &statusExpr };
-    var requested = [_]SID{sid};
+    const missingExpr: Query.FilterExpression = .{ .predicate = .{ .key = "status", .value = "404", .op = .equal } };
+    const oneExpr: Query.FilterExpression = .{ .predicate = .{ .key = "id", .value = "web-003", .op = .equal } };
+    const statusExpr: Query.FilterExpression = .{ .predicate = .{ .key = "status", .value = "500", .op = .equal } };
+    const Case = struct { query: Query, limit: ?usize = null, timestamps: []const u64 };
+    const cases = [_]Case{
+        .{ .query = .{ .start = 0, .end = linesCount }, .timestamps = &timestamps },
+        .{ .query = .{ .start = 0, .end = linesCount, .fieldsExpr = &missingExpr }, .timestamps = &.{} },
+        .{ .query = .{ .start = 0, .end = linesCount, .fieldsExpr = &oneExpr }, .timestamps = &.{3} },
+        .{ .query = .{ .start = 0, .end = linesCount }, .limit = 0, .timestamps = &.{} },
+        .{ .query = .{ .start = 0, .end = linesCount }, .limit = 1, .timestamps = &.{30} },
+        .{ .query = .{ .start = 0, .end = linesCount }, .limit = 5, .timestamps = &.{ 30, 29, 28, 27, 26 } },
+        .{ .query = .{ .start = 12, .end = 18 }, .limit = 3, .timestamps = &.{ 18, 17, 16 } },
+        .{ .query = .{ .start = 2, .end = 24, .fieldsExpr = &statusExpr }, .limit = 4, .timestamps = &.{ 24, 22, 20, 18 } },
+        .{ .query = .{ .start = 50, .end = 60 }, .limit = 3, .timestamps = &.{} },
+    };
+    for ([_]*Table{ mem, disk }) |table| {
+        for ([_]bool{ false, true }) |indexed| {
+            for (cases) |case| {
+                var query = case.query;
+                var requested = [_]SID{sid};
+                if (indexed) query.tagsExpr = &noTagsExpr;
+                var queried = std.ArrayList(Line).empty;
+                defer deinitLinesFull(alloc, &queried);
+                try table.queryLines(io, alloc, case.limit, timestampsEncoders, decompressionPool, &queried, if (indexed) &requested else &.{}, query);
+                try testing.expectEqual(case.timestamps.len, queried.items.len);
+                for (case.timestamps, queried.items) |ts, actual| try expectQueriedLine(lines[@intCast(ts - 1)], actual);
+            }
+        }
 
-    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
-    try testing.expectEqual(@as(usize, 1), queried.items.len);
-    try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
-    try testing.expectEqualSlices(u8, "id", queried.items[0].fields.items[1].key);
-    try testing.expectEqualSlices(u8, "web-001", queried.items[0].fields.items[1].value);
+        try testing.checkAllAllocationFailures(alloc, testQueryAllocationFailures, .{ table, timestampsEncoders, decompressionPool, lines[0..10], null });
+        try testing.checkAllAllocationFailures(alloc, testQueryAllocationFailures, .{ table, timestampsEncoders, decompressionPool, lines[0..10], 3 });
+        try testing.checkAllAllocationFailures(alloc, testQueryAllocationFailures, .{ table, timestampsEncoders, decompressionPool, lines[0..], null });
+    }
 }
 
 test "disk table with multiple bloom shards resolves columns to their shards" {
@@ -798,7 +894,7 @@ test "disk table with multiple bloom shards resolves columns to their shards" {
 
             const expr: Query.FilterExpression = .{ .predicate = .{ .key = key, .value = fields[row][k].value, .op = .equal } };
             const query = Query{ .start = 0, .end = linesCount, .tagsExpr = null, .fieldsExpr = &expr };
-            try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+            try table.queryLines(io, alloc, null, timestampsEncoders, decompressionPool, &queried, &.{}, query);
             try testing.expectEqual(1, queried.items.len);
             try testing.expectEqual(row + 1, queried.items[0].timestampNs);
             for (fields[row], queried.items[0].fields.items) |expected, actual| {
