@@ -115,12 +115,17 @@ const Fixture = struct {
         defer bq.deinit();
 
         const q: Query = .{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = expr };
-        const res = try bq.query(&q);
-        // TODO: compare the matched row indexes once BlockResponse exposes them,
-        // until then only an empty result is distinguishable
-        try testing.expectEqual(expected.len == 0, res == null);
-        // TODO: no real expected/res assertion in the test, at least a size,
-        // or move it directly into block result hits
+        var res = (try bq.query(&q));
+        defer res.deinit(alloc);
+
+        var rows: std.ArrayList(usize) = .empty;
+        defer rows.deinit(alloc);
+        var it = res.hits.iterator(.{
+            .kind = .set,
+            .direction = .forward,
+        });
+        while (it.next()) |i| try rows.append(alloc, i);
+        try testing.expectEqualSlices(usize, expected, rows.items);
     }
 };
 
@@ -419,9 +424,12 @@ test "query and" {
 
     // reset drops the block caches and keeps the query caches
     const q: Query = .{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = e.andNode(e.eqNode("key", "a key"), e.neNode("key", "k")) };
-    try testing.expect(try bq.query(&q) != null);
+    var before = try bq.query(&q);
+    defer before.deinit(alloc);
     reset(&bq, &fx.blockHeader);
-    try testing.expect(try bq.query(&q) != null);
+    var after = try bq.query(&q);
+    defer after.deinit(alloc);
+    try testing.expect(before.hits.eql(after.hits));
 }
 
 test "query or" {
