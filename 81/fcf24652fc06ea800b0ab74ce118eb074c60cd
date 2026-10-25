@@ -1,0 +1,27 @@
+design.md
+  s_a41ffde77faa86::t_8eb4b4825a7166 64,109-110,145,169-178,180-181,185-187,189,193,196-230
+  s_a41ffde77faa86::t_1da115d3c2e196 61-63
+  s_a41ffde77faa86::t_d75750a44c3f30 65-67
+  s_a41ffde77faa86::t_c4f101b9def950 107-108
+  s_a41ffde77faa86::t_51d39b7721a9ae 111-113
+  s_a41ffde77faa86::t_9d6857a6693e28 142-144
+  s_a41ffde77faa86::t_6c0355c5709a16 146-148
+  s_a41ffde77faa86::t_14675788b3ade0 166-168
+  s_a41ffde77faa86::t_faf3d49e7bee8a 231-233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "81fcf24652fc06ea800b0ab74ce118eb074c60cd",
+  "prompts": {},
+  "sessions": {
+    "s_a41ffde77faa86": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16eac-7e55-7440-84c8-0032642bec66",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
