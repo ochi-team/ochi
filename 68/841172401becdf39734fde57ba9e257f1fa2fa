@@ -1,0 +1,21 @@
+src/store/query/BlockQuery.zig
+  s_eef4bab0f899c6::t_ce5a6f553ca84f 166
+  s_eef4bab0f899c6::t_3b73054ed6d4be 163-165
+  s_eef4bab0f899c6::t_953fd631d80585 167-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "68841172401becdf39734fde57ba9e257f1fa2fa",
+  "prompts": {},
+  "sessions": {
+    "s_eef4bab0f899c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f17d7386-90e9-4748-8bde-e16c46be043f",
+        "model": "unknown"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
