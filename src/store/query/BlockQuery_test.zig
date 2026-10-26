@@ -19,43 +19,21 @@ const BlockQuery = @import("BlockQuery.zig");
 
 const testing = std.testing;
 
-pub fn reset(bq: *BlockQuery, blockHeader: *const BlockHeader) void {
-    releaseBlockCaches(bq);
-    bq.blockHeader = blockHeader;
-}
-
-fn releaseBlockCaches(self: *BlockQuery) void {
-    for (self.invariantColumnCache.items) |c| self.alloc.free(c.values);
-    self.invariantColumnCache.clearRetainingCapacity();
-
-    for (self.columnHeaderCache.items) |*ch| ch.dict.deinit(self.alloc);
-    self.columnHeaderCache.clearRetainingCapacity();
-
-    // ids and offsets buffers are reused by the next block
-    self.cshIndex = null;
-    if (self.cshBlock) |b| self.alloc.free(b);
-    self.cshBlock = null;
-
-    for (self.columnValuesCache.items) |c| self.alloc.free(c.values);
-    self.columnValuesCache.clearRetainingCapacity();
-    const pool = self.unpacker.compressionPool;
-    self.unpacker.deinit(self.alloc);
-    self.unpacker = .init(pool);
-}
-
 const TestColumn = struct {
     name: []const u8,
     values: []const []const u8,
 };
 
-/// a table with a single block, row i has timestamp i+1
+/// A table with a single block; timestamps default to row index + 1.
 const Fixture = struct {
     decompressionPool: *DecompressionPool,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     table: *Table,
     blockHeader: BlockHeader,
 
-    fn init(io: Io, alloc: Allocator, columns: []const TestColumn) !Fixture {
+    fn init(io: Io, alloc: Allocator, columns: []const TestColumn, timestamps: ?[]const u64) !Fixture {
         const rowsCount = columns[0].values.len;
+        if (timestamps) |ts| assert(ts.len == rowsCount);
 
         var arena = std.heap.ArenaAllocator.init(alloc);
         defer arena.deinit();
@@ -70,11 +48,11 @@ const Fixture = struct {
                 if (c.values[i].len == 0) continue;
                 try fields.append(a, .{ .key = c.name, .value = c.values[i] });
             }
-            line.* = .{ .timestampNs = i + 1, .fields = .view(fields.items) };
+            line.* = .{ .timestampNs = if (timestamps) |ts| ts[i] else i + 1, .fields = .view(fields.items) };
         }
 
         const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
-        defer timestampsEncoders.deinit(alloc);
+        errdefer timestampsEncoders.deinit(alloc);
         const compressionPool = try CompressionPool.init(alloc, 1);
         defer compressionPool.deinit(alloc);
         const decompressionPool = try DecompressionPool.init(alloc, 1);
@@ -98,6 +76,7 @@ const Fixture = struct {
 
         return .{
             .decompressionPool = decompressionPool,
+            .timestampsEncoders = timestampsEncoders,
             .table = table,
             .blockHeader = blockHeaders.items[0],
         };
@@ -106,12 +85,13 @@ const Fixture = struct {
     fn deinit(self: *Fixture, io: Io, alloc: Allocator) void {
         self.table.release(io);
         self.decompressionPool.deinit(alloc);
+        self.timestampsEncoders.deinit(alloc);
     }
 
     /// null expr means no fields filter,
     /// same as in the real query
     fn expectRows(self: *const Fixture, io: Io, alloc: Allocator, expr: ?*const FilterExpression, expected: []const usize) !void {
-        var bq = try BlockQuery.init(io, alloc, self.table, &self.blockHeader, self.decompressionPool);
+        var bq = try BlockQuery.init(io, alloc, self.table, &self.blockHeader, self.decompressionPool, self.timestampsEncoders);
         defer bq.deinit();
 
         const q: Query = .{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = expr };
@@ -207,10 +187,124 @@ test "bitsetAndNot" {
 test "query no fields filter" {
     const alloc = testing.allocator;
     const io = testing.io;
-    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{ "a", "o" } }});
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{ "a", "o" } }}, null);
     defer fx.deinit(io, alloc);
 
     try fx.expectRows(io, alloc, null, &.{ 0, 1 });
+}
+
+test "query time range" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const base: u64 = 1_749_988_800_000_000_000;
+    const timestamps = [_]u64{ base + 1, base + 9, base + 123, base + 456, base + 789 };
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "", .values = &.{
+        "accepted", "queued", "started", "sent", "completed",
+    } }}, &timestamps);
+    defer fx.deinit(io, alloc);
+
+    const Case = struct {
+        start: u64,
+        end: u64,
+        expected: []const usize,
+        decoded: bool = true,
+    };
+    const cases = [_]Case{
+        // Fully contained, including exact block boundaries: no timestamps read.
+        .{ .start = 0, .end = std.math.maxInt(u64), .expected = &.{ 0, 1, 2, 3, 4 }, .decoded = false },
+        .{ .start = base + 1, .end = base + 789, .expected = &.{ 0, 1, 2, 3, 4 }, .decoded = false },
+        .{ .start = base - 10, .end = base + 1, .expected = &.{0} },
+        .{ .start = base - 10, .end = base + 10, .expected = &.{ 0, 1 } },
+        .{ .start = base + 1, .end = base + 1, .expected = &.{0} },
+        .{ .start = base + 2, .end = base + 456, .expected = &.{ 1, 2, 3 } },
+        .{ .start = base + 2, .end = base + 457, .expected = &.{ 1, 2, 3 } },
+        .{ .start = base + 120, .end = base + 788, .expected = &.{ 2, 3 } },
+        .{ .start = base + 120, .end = base + 789, .expected = &.{ 2, 3, 4 } },
+        .{ .start = base + 120, .end = base + 10000, .expected = &.{ 2, 3, 4 } },
+        .{ .start = base + 789, .end = base + 1000, .expected = &.{4} },
+        // Overlap with the block bounds but no actual timestamp in the interval.
+        .{ .start = base + 10, .end = base + 122, .expected = &.{} },
+        .{ .start = base - 1000, .end = base, .expected = &.{}, .decoded = false },
+        .{ .start = base + 790, .end = base + 1000, .expected = &.{}, .decoded = false },
+        .{ .start = base + 456, .end = base + 123, .expected = &.{}, .decoded = false },
+    };
+    for (cases) |case| {
+        var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+        defer bq.deinit();
+
+        var result = try bq.query(&.{ .start = case.start, .end = case.end });
+        defer result.deinit(alloc);
+
+        var expected: std.bit_set.DynamicBitSetUnmanaged = try .initEmpty(alloc, timestamps.len);
+        defer expected.deinit(alloc);
+
+        for (case.expected) |idx| expected.set(idx);
+        try testing.expect(expected.eql(result.hits));
+        try testing.expectEqual(case.decoded, bq.timestampsCache != null);
+        if (case.decoded) try testing.expectEqualSlices(u64, &timestamps, bq.timestampsCache.?);
+    }
+
+    var single = try Fixture.init(io, alloc, &.{.{ .name = "", .values = &.{"healthy"} }}, &.{base});
+    defer single.deinit(io, alloc);
+    for ([_]Case{
+        .{ .start = base, .end = base, .expected = &.{0} },
+        .{ .start = base - 1, .end = base + 1, .expected = &.{0} },
+        .{ .start = 0, .end = base - 1, .expected = &.{} },
+        .{ .start = base + 1, .end = std.math.maxInt(u64), .expected = &.{} },
+        .{ .start = base + 1, .end = base - 1, .expected = &.{} },
+    }) |case| {
+        var bq = try BlockQuery.init(io, alloc, single.table, &single.blockHeader, single.decompressionPool, single.timestampsEncoders);
+        defer bq.deinit();
+
+        var result = try bq.query(&.{ .start = case.start, .end = case.end });
+        defer result.deinit(alloc);
+
+        var expected: std.bit_set.DynamicBitSetUnmanaged = try .initEmpty(alloc, 1);
+        defer expected.deinit(alloc);
+
+        for (case.expected) |idx| expected.set(idx);
+        try testing.expect(expected.eql(result.hits));
+        try testing.expectEqual(null, bq.timestampsCache);
+    }
+}
+
+test "query time range with fields and cache reuse" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const base: u64 = 1_749_988_800_000_000_000;
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "status", .values = &.{ "ok", "error", "ok", "error" } }}, &.{ base, base + 1, base + 2, base + 3 });
+    defer fx.deinit(io, alloc);
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+
+    // assert the single match second "ok"
+    const predicate: FilterExpression = .{ .predicate = .{ .key = "status", .value = "ok", .op = .equal } };
+    const q: Query = .{ .start = base + 1, .end = base + 2, .fieldsExpr = &predicate };
+    var result = try bq.query(&q);
+    defer result.deinit(alloc);
+    var expected: std.bit_set.DynamicBitSetUnmanaged = try .initEmpty(alloc, 4);
+    defer expected.deinit(alloc);
+    expected.set(2);
+    try testing.expect(expected.eql(result.hits));
+
+    // asserts nothing happened to the cache
+    const cached = bq.timestampsCache.?.ptr;
+    var repeated = try bq.query(&q);
+    defer repeated.deinit(alloc);
+    try testing.expect(expected.eql(repeated.hits));
+    try testing.expectEqual(cached, bq.timestampsCache.?.ptr);
+
+    // An unsupported field expression would fail if the empty time result weren't skipped.
+    const unsupported: FilterExpression = .{ .predicate = .{ .key = "status", .value = "ok", .op = .matchRegex } };
+    for ([_]Query{
+        .{ .start = base + 4, .end = base + 5, .fieldsExpr = &unsupported },
+        .{ .start = base + 2, .end = base + 1, .fieldsExpr = &unsupported },
+    }) |query| {
+        var empty = try bq.query(&query);
+        defer empty.deinit(alloc);
+        expected.unsetAll();
+        try testing.expect(expected.eql(empty.hits));
+    }
 }
 
 test "query exact" {
@@ -222,7 +316,7 @@ test "query exact" {
     const f = struct {
         const Case = struct { expr: *const FilterExpression, expected: []const usize };
         fn f(columns: []const TestColumn, cases: []const Case) !void {
-            var fx = try Fixture.init(testing.io, testing.allocator, columns);
+            var fx = try Fixture.init(testing.io, testing.allocator, columns, null);
             defer fx.deinit(testing.io, testing.allocator);
             for (cases) |c| try fx.expectRows(testing.io, testing.allocator, c.expr, c.expected);
         }
@@ -357,7 +451,7 @@ test "query and" {
         "super cookie",
         "а ЮНИКОД Жиж",
         "n !!,78.(!6)",
-    } }});
+    } }}, null);
     defer fx.deinit(io, alloc);
 
     const f = struct {
@@ -414,22 +508,13 @@ test "query and" {
     // more ands than the unwrap buffer fits
     var many = e.neNode("key", "k5");
     for (0..32) |_| many = e.andNode(many, e.neNode("key", "k"));
-    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool);
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
     defer bq.deinit();
     try testing.expectError(error.PartialExpressionUnwrap, bq.query(&.{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = many }));
 
     // regex isn't supported
     const regex = e.node(.{ .predicate = .{ .key = "key", .value = "key", .op = .matchRegex } });
     try testing.expectError(error.UnsupportedMatchOperation, bq.query(&.{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = e.andNode(regex, e.neNode("key", "k")) }));
-
-    // reset drops the block caches and keeps the query caches
-    const q: Query = .{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = e.andNode(e.eqNode("key", "a key"), e.neNode("key", "k")) };
-    var before = try bq.query(&q);
-    defer before.deinit(alloc);
-    reset(&bq, &fx.blockHeader);
-    var after = try bq.query(&q);
-    defer after.deinit(alloc);
-    try testing.expect(before.hits.eql(after.hits));
 }
 
 test "query or" {
@@ -450,7 +535,7 @@ test "query or" {
         "super cookie",
         "а ЮНИКОД Жиж",
         "n !!,78.(!6)",
-    } }});
+    } }}, null);
     defer fx.deinit(io, alloc);
 
     const f = struct {
@@ -504,7 +589,7 @@ test "query or" {
     // more ors than the unwrap buffer fits
     var many = e.eqNode("key", "k5");
     for (0..32) |_| many = e.orNode(many, e.eqNode("key", "k"));
-    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool);
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
     defer bq.deinit();
     try testing.expectError(error.PartialExpressionUnwrap, bq.query(&.{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = many }));
 }

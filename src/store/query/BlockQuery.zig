@@ -12,6 +12,7 @@ const Tokenizer = @import("../bloom/Tokenizer.zig");
 const tokenHashes = @import("../bloom/bloom.zig").tokenHashes;
 const Unpacker = @import("../data/Unpacker.zig").Unpacker(false);
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
+const TimestampsEncoderPool = @import("../data/TimestampsEncoder.zig").TimestampsEncoderPool;
 
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
@@ -38,6 +39,7 @@ const ValuesEncoder = @import("../data/ValuesEncoder.zig");
 const parseTimestampISO8601 = @import("../../stds/time.zig").parseTimestampISO8601;
 
 pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || error{
+    InvalidInput,
     PartialExpressionUnwrap,
     UnexpectedExpression,
     UnsupportedMatchOperation,
@@ -45,6 +47,10 @@ pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError 
     TokensBufTooSmall,
     ColumnShardNotFound,
 };
+
+// TODO: support caching of the query
+// it requires implementing an arena that tracks usage of the memory in order to support LFU eviction,
+// and validate the the computed buffers are not computed twice to query the same block
 
 const BlockQuery = @This();
 
@@ -54,6 +60,8 @@ table: *const Table,
 blockHeader: *const BlockHeader,
 
 unpacker: Unpacker,
+timestampsEncoders: *TimestampsEncoderPool,
+timestampsCache: ?[]u64 = null,
 
 // caches, initialized empty
 invariantColumnCache: std.ArrayList(Column) = .empty,
@@ -73,6 +81,7 @@ pub fn init(
     table: *const Table,
     blockHeader: *const BlockHeader,
     decompressionPool: *DecompressionPool,
+    timestampsEncoders: *TimestampsEncoderPool,
 ) !BlockQuery {
     const cshIndexIDs = try alloc.create([Block.maxColumns]u16);
     errdefer alloc.destroy(cshIndexIDs);
@@ -85,6 +94,7 @@ pub fn init(
         .table = table,
         .blockHeader = blockHeader,
         .unpacker = .init(decompressionPool),
+        .timestampsEncoders = timestampsEncoders,
 
         .cshIndexIDs = cshIndexIDs,
         .cshIndexOffsets = cshIndexOffsets,
@@ -92,6 +102,7 @@ pub fn init(
 }
 
 pub fn deinit(self: *BlockQuery) void {
+    if (self.timestampsCache) |timestamps| self.alloc.free(timestamps);
     for (self.invariantColumnCache.items) |c| self.alloc.free(c.values);
     self.invariantColumnCache.deinit(self.alloc);
 
@@ -115,11 +126,52 @@ pub fn query(
     var bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.blockHeader.len);
     errdefer bitset.deinit(self.alloc);
 
+    try self.filterTimeRange(q.start, q.end, &bitset);
+    if (bitsetIsEmpty(&bitset)) {
+        return .{ .hits = bitset, .len = 0 };
+    }
+
     if (q.fieldsExpr) |fieldsExpr| {
         try self.filterByExpr(fieldsExpr, &bitset);
     }
 
-    return .{ .hits = bitset };
+    return .{ .hits = bitset, .len = bitset.count() };
+}
+
+fn getTimestamps(self: *BlockQuery) Error![]u64 {
+    if (self.timestampsCache) |timestamps| return timestamps;
+
+    const th = self.blockHeader.timestampsHeader;
+    const buf = try self.alloc.alloc(u8, th.size);
+    defer self.alloc.free(buf);
+    const n = try self.table.readTimestamps(self.io, buf, th.offset);
+    assert(n == buf.len);
+
+    const timestamps = try self.alloc.alloc(u64, self.blockHeader.len);
+    errdefer self.alloc.free(timestamps);
+    try self.timestampsEncoders.decode(self.io, timestamps, buf);
+    self.timestampsCache = timestamps;
+    return timestamps;
+}
+
+fn filterTimeRange(self: *BlockQuery, start: u64, end: u64, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
+    if (bitsetIsEmpty(bitset)) return;
+
+    const th = self.blockHeader.timestampsHeader;
+    if (start > end or start > th.max or end < th.min) {
+        bitset.unsetAll();
+        return;
+    }
+
+    // fast path, the entire block matches the query
+    if (start <= th.min and end >= th.max) return;
+
+    // validalte every line timestamp value
+    const timestamps = try self.getTimestamps();
+    var it = bitset.iterator(.{});
+    while (it.next()) |idx| {
+        if (timestamps[idx] < start or timestamps[idx] > end) bitset.unset(idx);
+    }
 }
 
 fn filterByExpr(self: *BlockQuery, fieldsExpr: *const FilterExpression, bitset: *std.bit_set.DynamicBitSetUnmanaged) Error!void {
@@ -321,6 +373,8 @@ fn matchDictEqual(
     bitset: *std.bit_set.DynamicBitSetUnmanaged,
     value: []const u8,
 ) Error!void {
+    if (bitsetIsEmpty(bitset)) return;
+
     var matchBuf: [ColumnDict.maxDictColumnValuesLen]u8 = undefined;
     const dictVals = ch.dict.values.items;
     assert(dictVals.len <= matchBuf.len);
@@ -334,8 +388,6 @@ fn matchDictEqual(
         bitset.unsetAll();
         return;
     }
-
-    if (bitsetIsEmpty(bitset)) return;
 
     const values = try self.getColumnValues(ch);
     // TODO: a few repeatable patterns in match strings and dict
@@ -356,6 +408,7 @@ fn setMatchedBits(
     value: []const u8,
 ) Error!void {
     if (bitsetIsEmpty(bitset)) return;
+
     const values = try self.getColumnValues(ch);
     for (0..bitset.bit_length) |idx| {
         if (!bitset.isSet(idx)) continue;

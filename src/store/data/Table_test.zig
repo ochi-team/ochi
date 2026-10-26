@@ -829,7 +829,7 @@ test "disk table with multiple bloom shards resolves columns to their shards" {
         .{ .key = "c", .value = "a-value-8", .matches = false },
     };
     for (cases) |case| {
-        var bq = try BlockQuery.init(io, alloc, table, &blockHeaders.items[0], decompressionPool);
+        var bq = try BlockQuery.init(io, alloc, table, &blockHeaders.items[0], decompressionPool, timestampsEncoders);
         defer bq.deinit();
 
         const expr: Query.FilterExpression = .{ .predicate = .{ .key = case.key, .value = case.value, .op = .equal } };
