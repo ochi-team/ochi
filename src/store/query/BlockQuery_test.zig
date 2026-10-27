@@ -517,6 +517,132 @@ test "query and" {
     try testing.expectError(error.UnsupportedMatchOperation, bq.query(&.{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = e.andNode(regex, e.neNode("key", "k")) }));
 }
 
+test "block query retains bloom buffers and prepared expressions across queries" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{
+        "shared zero", "shared one", "shared two",   "shared three", "shared four",
+        "shared five", "shared six", "shared seven", "shared eight", "shared nine",
+    } }}, null);
+    defer fx.deinit(io, alloc);
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+
+    const Buffers = struct { bloom: [*]u8, values: [*][]const u8, bytes: [*]u8, timestamps: [*]u64, headers: [*]u8 };
+    var warmed: ?Buffers = null;
+    for (0..3) |_| {
+        // A fresh arena each time verifies cached text doesn't borrow the AST.
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const e: Expr = .{ .a = a };
+        const key = try a.dupe(u8, "key");
+        const zero = e.eqNode(key, try a.dupe(u8, "shared zero"));
+        const one = e.eqNode(key, try a.dupe(u8, "shared one"));
+        const unionExpr = e.orNode(zero, one);
+        const expr = e.andNode(unionExpr, e.neNode(key, "shared one"));
+        var hits = try bq.query(&.{ .start = 1, .end = 9, .fieldsExpr = expr });
+        defer hits.deinit(alloc);
+        var expected = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(alloc, 10);
+        defer expected.deinit(alloc);
+        expected.set(0);
+        try testing.expect(expected.eql(hits.hits));
+
+        try testing.expectEqual(1, bq.bloomFiltersCache.count());
+        try testing.expectEqual(2, bq.expressionTokensCache.count());
+        try testing.expectEqual(2, bq.exactHashesCache.count());
+        try testing.expectEqual(1, bq.columnValuesCache.items.len);
+        try testing.expectEqual(1, bq.unpacker.garbage.items.len);
+        try testing.expectEqual(1, bq.columnHeaderCache.items.len);
+        const buffers: Buffers = .{
+            .bloom = bq.bloomFiltersCache.get("key").?.ptr,
+            .values = bq.columnValuesCache.items[0].values.ptr,
+            .bytes = bq.unpacker.garbage.items[0].ptr,
+            .timestamps = bq.timestampsCache.?.ptr,
+            .headers = bq.cshBlock.?.ptr,
+        };
+        if (warmed) |previous| try testing.expectEqualDeep(previous, buffers);
+        warmed = buffers;
+    }
+
+    // A reused AST address with changed content must not hit the previous plan.
+    var predicate: FilterExpression = .{ .predicate = .{ .key = "key", .value = "shared zero", .op = .equal } };
+    const expr: FilterExpression = .{ .orOp = .{ &predicate, &predicate } };
+    for ([_][]const u8{ "shared zero", "shared two" }, [_]usize{ 0, 2 }) |value, row| {
+        predicate.predicate.value = value;
+        var hits = try bq.query(&.{ .start = 0, .end = 100, .fieldsExpr = &expr });
+        defer hits.deinit(alloc);
+        try testing.expectEqual(1, hits.len);
+        try testing.expect(hits.hits.isSet(row));
+    }
+}
+
+test "block query cache allocation failures" {
+    const alloc = testing.allocator;
+    var fx = try Fixture.init(testing.io, alloc, &.{.{ .name = "key", .values = &.{
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    } }}, null);
+    defer fx.deinit(testing.io, alloc);
+    const f = struct {
+        fn run(a: Allocator, fixture: *const Fixture) !void {
+            var bq = try BlockQuery.init(testing.io, a, fixture.table, &fixture.blockHeader, fixture.decompressionPool, fixture.timestampsEncoders);
+            defer bq.deinit();
+            const predicate: FilterExpression = .{ .predicate = .{ .key = "key", .value = "one", .op = .equal } };
+            const unionExpr: FilterExpression = .{ .orOp = .{ &predicate, &predicate } };
+            const expr: FilterExpression = .{ .andOp = .{ &unionExpr, &predicate } };
+            var hits = try bq.query(&.{ .start = 1, .end = 1, .fieldsExpr = &expr });
+            defer hits.deinit(a);
+            try testing.expectEqual(1, hits.len);
+        }
+    }.run;
+    try testing.checkAllAllocationFailures(alloc, f, .{&fx});
+}
+
+test "block query caches metadata misses for known table columns" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var fx = try Fixture.init(io, alloc, &.{.{ .name = "key", .values = &.{ "one", "two" } }}, null);
+    defer fx.deinit(io, alloc);
+    // Simulate a column present elsewhere in the table but not in this block.
+    try fx.table.columnIDGen.keyIDs.ensureUnusedCapacity(alloc, 1);
+    const absentID = fx.table.columnIDGen.genIDAssumeCapacity("elsewhere");
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+    for ([_][]const u8{ "", "one", "" }, [_]usize{ 2, 0, 2 }) |value, count| {
+        const expr: FilterExpression = .{ .predicate = .{ .key = "elsewhere", .value = value, .op = .equal } };
+        var hits = try bq.query(&.{ .start = 0, .end = 100, .fieldsExpr = &expr });
+        defer hits.deinit(alloc);
+        try testing.expectEqual(count, hits.len);
+        try testing.expect(bq.invariantMisses.contains(absentID));
+        try testing.expect(bq.columnHeaderMisses.contains(absentID));
+        try testing.expectEqual(1, bq.invariantMisses.count());
+        try testing.expectEqual(1, bq.columnHeaderMisses.count());
+    }
+}
+
+test "cached column keys outlive query storage" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var fx = try Fixture.init(io, alloc, &.{
+        .{ .name = "key", .values = &.{ "first", "second" } },
+        .{ .name = "tag", .values = &.{ "constant", "constant" } },
+    }, null);
+    defer fx.deinit(io, alloc);
+    var bq = try BlockQuery.init(io, alloc, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+
+    for ([_][]const u8{ "key", "tag" }, [_][]const u8{ "first", "constant" }) |key, value| {
+        var keyBuf: [3]u8 = undefined;
+        @memcpy(&keyBuf, key);
+        const expr: FilterExpression = .{ .predicate = .{ .key = &keyBuf, .value = value, .op = .equal } };
+        var hits = try bq.query(&.{ .start = 0, .end = 100, .fieldsExpr = &expr });
+        defer hits.deinit(alloc);
+        @memset(&keyBuf, 'x');
+        const cachedKey = if (std.mem.eql(u8, key, "key")) bq.columnHeaderCache.items[0].key else bq.invariantColumnCache.items[0].key;
+        try testing.expectEqualStrings(key, cachedKey);
+    }
+}
+
 test "query or" {
     const alloc = testing.allocator;
     const io = testing.io;

@@ -48,10 +48,11 @@ pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError 
     ColumnShardNotFound,
 };
 
-// TODO: support caching of the query
-// it requires implementing an arena that tracks usage of the memory in order to support LFU eviction,
-// and validate the the computed buffers are not computed twice to query the same block
-
+/// Lazy, block-local cache. Reuse serially for different queries against the same
+/// immutable block. The table, block header and pools must outlive this object.
+/// Not thread-safe; callers must serialize access and call deinit on eviction.
+/// Query keys and prepared tokens are owned, so queries need not outlive the cache.
+/// This is not a global cache: admission, memory limits and eviction belong to its owner.
 const BlockQuery = @This();
 
 io: Io,
@@ -66,10 +67,17 @@ timestampsCache: ?[]u64 = null,
 // caches, initialized empty
 invariantColumnCache: std.ArrayList(Column) = .empty,
 columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
-// encoded column values, owned by unpacker
-// TODO: it's not ok, better not to make unpacker owning this data,
-// makes it hard to manipulate for reseting and future processing
+// IDs are table-owned and bounded; unknown keys already have an O(1) lookup.
+invariantMisses: std.AutoHashMapUnmanaged(u16, void) = .empty,
+columnHeaderMisses: std.AutoHashMapUnmanaged(u16, void) = .empty,
+// Unpacked binary values: slice arrays are owned here, backing bytes by unpacker.
 columnValuesCache: std.ArrayList(Column) = .empty,
+bloomFiltersCache: std.StringHashMapUnmanaged([]u8) = .empty,
+exactHashesCache: std.StringHashMapUnmanaged([]u64) = .empty,
+expressionTokensCache: std.StringHashMapUnmanaged([]KeyTokens) = .empty,
+
+// owns cached buffers
+cacheArena: std.heap.ArenaAllocator,
 cshIndex: ?ColumnsHeaderIndex = null,
 cshIndexIDs: *[Block.maxColumns]u16,
 cshIndexOffsets: *[Block.maxColumns]u32,
@@ -95,6 +103,7 @@ pub fn init(
         .blockHeader = blockHeader,
         .unpacker = .init(decompressionPool),
         .timestampsEncoders = timestampsEncoders,
+        .cacheArena = .init(alloc),
 
         .cshIndexIDs = cshIndexIDs,
         .cshIndexOffsets = cshIndexOffsets,
@@ -102,6 +111,18 @@ pub fn init(
 }
 
 pub fn deinit(self: *BlockQuery) void {
+    var filters = self.bloomFiltersCache.valueIterator();
+    while (filters.next()) |buf| self.alloc.free(buf.*);
+    self.bloomFiltersCache.deinit(self.alloc);
+    var hashes = self.exactHashesCache.valueIterator();
+    while (hashes.next()) |h| self.alloc.free(h.*);
+    self.exactHashesCache.deinit(self.alloc);
+    var expressions = self.expressionTokensCache.valueIterator();
+    while (expressions.next()) |tokens| self.freeKeysTokens(tokens.*);
+    self.expressionTokensCache.deinit(self.alloc);
+    self.cacheArena.deinit();
+    self.invariantMisses.deinit(self.alloc);
+    self.columnHeaderMisses.deinit(self.alloc);
     if (self.timestampsCache) |timestamps| self.alloc.free(timestamps);
     for (self.invariantColumnCache.items) |c| self.alloc.free(c.values);
     self.invariantColumnCache.deinit(self.alloc);
@@ -210,7 +231,6 @@ fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *s
     };
 
     const hashes = try self.equalTokensHashes(value);
-    defer self.alloc.free(hashes);
 
     // TODO: all the equation matching is build around decoding the column values,
     // it's very heavy compute wise,
@@ -417,10 +437,17 @@ fn setMatchedBits(
 }
 
 fn equalTokensHashes(self: *BlockQuery, value: []const u8) Error![]u64 {
+    if (self.exactHashesCache.get(value)) |hashes| return hashes;
+
     var tokensBuf: [32][]const u8 = undefined;
     var tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
     try self.getTokens(&tokensArray, value);
-    return tokensToHashes(self.alloc, tokensArray.items);
+    const hashes = try tokensToHashes(self.alloc, tokensArray.items);
+    errdefer self.alloc.free(hashes);
+
+    const ownedValue = try self.cacheArena.allocator().dupe(u8, value);
+    try self.exactHashesCache.put(self.alloc, ownedValue, hashes);
+    return hashes;
 }
 
 fn tokensToHashes(alloc: Allocator, tokens: []const []const u8) Error![]u64 {
@@ -486,8 +513,7 @@ fn matchBloomFilterOr(
     self: *BlockQuery,
     ors: std.ArrayList(*const FilterExpression),
 ) Error!bool {
-    const keysTokens = try self.fieldsOrTokens(ors);
-    defer self.freeKeysTokens(keysTokens);
+    const keysTokens = try self.cachedFieldsTokens(ors, true);
     if (keysTokens.len == 0) return true;
 
     for (keysTokens) |keyTokens| {
@@ -538,8 +564,7 @@ fn matchBloomFilterAnd(
     self: *BlockQuery,
     ands: std.ArrayList(*const FilterExpression),
 ) Error!bool {
-    const keysTokens = try self.fieldsAndTokens(ands);
-    defer self.freeKeysTokens(keysTokens);
+    const keysTokens = try self.cachedFieldsTokens(ands, false);
 
     if (keysTokens.len == 0) return true;
 
@@ -567,6 +592,7 @@ fn matchBloomFilterAnd(
 
 fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) Error![]const u8 {
     const id = self.table.columnIDGen.keyIDs.get(key) orelse return "";
+    if (self.invariantMisses.contains(id)) return "";
 
     for (self.invariantColumnCache.items) |c| {
         if (std.mem.eql(u8, c.key, key)) return c.values[0];
@@ -583,16 +609,18 @@ fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) Error![]const u8 
         var dec = Decoder.init(block[offset..]);
         var col = try Column.decodeAsInvariant(self.alloc, &dec, false);
         errdefer self.alloc.free(col.values);
-        col.key = key;
+        col.key = try self.cacheArena.allocator().dupe(u8, key);
         try self.invariantColumnCache.append(self.alloc, col);
         return col.values[0];
     }
 
+    try self.invariantMisses.put(self.alloc, id, {});
     return "";
 }
 
 fn getColumnHeader(self: *BlockQuery, key: []const u8) Error!?ColumnHeader {
     const id = self.table.columnIDGen.keyIDs.get(key) orelse return null;
+    if (self.columnHeaderMisses.contains(id)) return null;
 
     for (self.columnHeaderCache.items) |ch| {
         if (std.mem.eql(u8, ch.key, key)) return ch;
@@ -607,12 +635,14 @@ fn getColumnHeader(self: *BlockQuery, key: []const u8) Error!?ColumnHeader {
         assert(offset <= block.len);
 
         var dec = Decoder.init(block[offset..]);
-        var ch = try ColumnHeader.decode(&dec, key, self.alloc);
+        const ownedKey = try self.cacheArena.allocator().dupe(u8, key);
+        var ch = try ColumnHeader.decode(&dec, ownedKey, self.alloc);
         errdefer ch.dict.deinit(self.alloc);
         try self.columnHeaderCache.append(self.alloc, ch);
         return ch;
     }
 
+    try self.columnHeaderMisses.put(self.alloc, id, {});
     return null;
 }
 
@@ -622,16 +652,20 @@ fn matchDict(tmpAlloc: Allocator, values: []const []const u8, tokens: []const []
     return matchPredicateByAll(valuesJoined, tokens);
 }
 
-fn matchBloomFilter(self: *const BlockQuery, header: *const ColumnHeader, hashes: []const u64) Error!bool {
+fn matchBloomFilter(self: *BlockQuery, header: *const ColumnHeader, hashes: []const u64) Error!bool {
     assert(header.bloomFilterSize <= maxBloomTokensBlockSize);
     if (hashes.len == 0) return true;
 
+    if (self.bloomFiltersCache.get(header.key)) |buf| return BloomFilter.containsAll(buf, hashes);
+
     const buf = try self.alloc.alloc(u8, header.bloomFilterSize);
-    defer self.alloc.free(buf);
+    errdefer self.alloc.free(buf);
 
     const n = try self.table.readBloomTokens(self.io, buf, header.key, header.bloomFilterOffset);
     assert(n == buf.len);
 
+    const ownedKey = try self.cacheArena.allocator().dupe(u8, header.key);
+    try self.bloomFiltersCache.put(self.alloc, ownedKey, buf);
     return BloomFilter.containsAll(buf, hashes);
 }
 
@@ -667,6 +701,44 @@ fn columnsHeaderBlock(self: *BlockQuery) Error![]const u8 {
     return buf;
 }
 
+// Content keys, not AST addresses: callers may free, mutate or reuse their AST.
+// Length-prefixing prevents collisions between predicate keys/values and branches.
+fn appendExpressionKey(alloc: Allocator, dst: *std.ArrayList(u8), expr: *const FilterExpression) Allocator.Error!void {
+    try dst.append(alloc, @intFromEnum(std.meta.activeTag(expr.*)));
+    switch (expr.*) {
+        .predicate => |p| {
+            try dst.append(alloc, @intFromEnum(p.op));
+            for ([_][]const u8{ p.key, p.value }) |text| {
+                try dst.appendSlice(alloc, std.mem.asBytes(&text.len));
+                try dst.appendSlice(alloc, text);
+            }
+        },
+        .andOp, .orOp => |children| {
+            for (children) |child| try appendExpressionKey(alloc, dst, child);
+        },
+    }
+}
+
+fn cachedFieldsTokens(self: *BlockQuery, expressions: std.ArrayList(*const FilterExpression), comptime isOr: bool) Error![]KeyTokens {
+    var key: std.ArrayList(u8) = .empty;
+    defer key.deinit(self.alloc);
+    try key.append(self.alloc, if (isOr) 1 else 0);
+    for (expressions.items) |expr| try appendExpressionKey(self.alloc, &key, expr);
+    if (self.expressionTokensCache.get(key.items)) |tokens| return tokens;
+
+    const tokens = if (isOr) try self.fieldsOrTokens(expressions) else try self.fieldsAndTokens(expressions);
+    errdefer self.freeKeysTokens(tokens);
+    const a = self.cacheArena.allocator();
+    for (tokens) |*kt| {
+        kt.key = try a.dupe(u8, kt.key);
+        const texts = @constCast(kt.tokens);
+        for (texts) |*text| text.* = try a.dupe(u8, text.*);
+    }
+    const ownedKey = try a.dupe(u8, key.items);
+    try self.expressionTokensCache.put(self.alloc, ownedKey, tokens);
+    return tokens;
+}
+
 pub const KeyTokens = struct {
     key: []const u8,
     tokens: []const []const u8,
@@ -690,10 +762,7 @@ fn deinitTokensMap(alloc: Allocator, m: *TokensMap) void {
     m.deinit();
 }
 
-/// ors must be 100% const*, because we keep the same data for later usage
 pub fn fieldsOrTokens(self: *const BlockQuery, ors: std.ArrayList(*const FilterExpression)) Error![]KeyTokens {
-    // TODO: see if it's executed more than once and cache the tokens calculation
-    // or make a lazy access
     var m = TokensMap.init(self.alloc);
     defer deinitTokensMap(self.alloc, &m);
     var fieldKeys = std.ArrayList([]const u8).empty;
