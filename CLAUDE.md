@@ -98,6 +98,23 @@ try testing.expectEqual(1, calls);
 try testing.expectEqual(@as(usize, 1), calls);
 ```
 
+## Memory management
+
+### ArrayList
+
+Make sure first it has enough space:
+
+```zig
+// GOOD
+try self.garbage.ensureUnusedCapacity(alloc, 1);
+...
+self.garbage.appendAssumeCapacity(buf);
+// BAD
+try self.garbage.append(alloc, buf);
+```
+
+### Docs
+
 Use zigdoc to validate the API of the used Zig version, e.g.:
 - zigdoc std.ArrayList
 - zigdoc std.mem.Allocator

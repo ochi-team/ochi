@@ -63,12 +63,15 @@ pub fn Unpacker(comptime leaky: bool) type {
             const lengths = try self.unpackU64(io, alloc, encoded, count, &offset);
             defer alloc.free(lengths);
 
-            const tail = encoded[offset..];
-            const buf = try self.unpackBytes(io, alloc, tail, &offset);
-            if (!leaky) try self.garbage.append(alloc, buf);
+            if (!leaky) try self.garbage.ensureUnusedCapacity(alloc, 1);
             std.debug.assert(offset == encoded.len);
+            const tail = encoded[offset..];
+
+            const buf = try self.unpackBytes(io, alloc, tail, &offset);
+            if (!leaky) self.garbage.appendAssumeCapacity(buf);
 
             var res = try alloc.alloc([]const u8, lengths.len);
+            errdefer alloc.free(res);
             // same values first
             if (lengths.len >= 2 and buf.len == lengths[0] and areNumbersSame(lengths)) {
                 for (0..res.len) |i| {
