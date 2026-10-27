@@ -12,25 +12,19 @@ const IndexBlockHeader = @import("../data/IndexBlockHeader.zig");
 const BlockHeader = @import("../data/BlockHeader.zig");
 const TableHeader = @import("../data/TableHeader.zig");
 const ColumnIDGen = @import("../data/ColumnIDGen.zig");
-const BlockData = @import("../data/BlockData.zig").BlockData;
-const Block = @import("../data/Block.zig");
-const Unpacker = @import("../data/Unpacker.zig").Unpacker;
-const ValuesDecoder = @import("../data/ValuesDecoder.zig");
-const TableReader = @import("../data/TableReader.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Line = @import("../lines.zig").Line;
-const Field = @import("../lines.zig").Field;
-const msgKey = @import("../lines.zig").msgKey;
 const SID = @import("../lines.zig").SID;
-const copyFields = @import("../lines.zig").copyFields;
-const freeFields = @import("../lines.zig").freeFields;
 const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
 const BlockQuery = @import("../query/BlockQuery.zig");
+const BlockResult = @import("../query/BlockResult.zig");
+const WriteBlock = BlockResult.WriteBlock;
+const LinesSink = @import("../lines.zig").LinesSink;
 
 const InnerTag = enum { mem, disk };
 const Inner = union(InnerTag) {
@@ -485,26 +479,38 @@ pub fn queryLines(
     self: *Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
+    comptime _: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
     dst: *std.ArrayList(Line),
     sids: []SID,
     query: Query,
 ) !void {
-    //FIXME:
-    // 1. apply time range filter to lines
-    // 2. what about queryLinesAllBlocks, avoid this path
-    // 3. implement and filter
-    // 4. predicate eq/not eq filter
-    // 5. collect the blocks
-    // 6. return down the result into the response
-    // 7. fieldsOrTokens and fieldsAndTokens
-    // 8. test block query hits
+    var sink: LinesSink = .{ .alloc = alloc };
+    defer sink.deinit();
+    try self.queryBlocks(io, alloc, timestampsEncoders, decompressionPool, sids, query, sink.writeBlock());
+    try dst.ensureUnusedCapacity(alloc, sink.lines.items.len);
+    dst.appendSliceAssumeCapacity(sink.lines.items);
+    sink.lines.clearRetainingCapacity();
+}
+
+/// Queries blocks synchronously; the consumer must copy any retained bytes.
+pub fn queryBlocks(
+    self: *Table,
+    io: Io,
+    alloc: Allocator,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    decompressionPool: *DecompressionPool,
+    sids: []SID,
+    query: Query,
+    writeBlock: WriteBlock,
+) !void {
+    var result: BlockResult = .{};
+    defer result.deinit(alloc);
 
     // sids could be empty if no index matches tags
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
-        return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
+        return self.queryAllBlocks(io, alloc, timestampsEncoders, decompressionPool, &result, query, writeBlock);
     }
 
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -568,12 +574,12 @@ pub fn queryLines(
                 try self.queryBlock(
                     io,
                     alloc,
-                    leakyUnpacking,
                     timestampsEncoders,
                     decompressionPool,
-                    dst,
+                    &result,
                     blockHeader,
                     query,
+                    writeBlock,
                 );
             }
 
@@ -594,15 +600,15 @@ pub fn queryLines(
     }
 }
 
-fn queryLinesAllBlocks(
+fn queryAllBlocks(
     self: *Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
-    dst: *std.ArrayList(Line),
+    result: *BlockResult,
     query: Query,
+    writeBlock: WriteBlock,
 ) !void {
     for (self.indexBlockHeaders) |indexBlockHeader| {
         if (query.start > indexBlockHeader.maxTs or query.end < indexBlockHeader.minTs) {
@@ -625,21 +631,15 @@ fn queryLinesAllBlocks(
                 continue;
             }
 
-            // var bq = BlockQuery.init(io, alloc, self, &blockHeader);
-            // defer bq.deinit();
-            //
-            // const res = try bq.query(&query) orelse continue;
-            // _ = res;
-
             try self.queryBlock(
                 io,
                 alloc,
-                leakyUnpacking,
                 timestampsEncoders,
                 decompressionPool,
-                dst,
+                result,
                 blockHeader,
                 query,
+                writeBlock,
             );
         }
     }
@@ -649,12 +649,12 @@ fn queryBlock(
     self: *const Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
-    dst: *std.ArrayList(Line),
+    result: *BlockResult,
     blockHeader: BlockHeader,
     query: Query,
+    writeBlock: WriteBlock,
 ) !void {
     errdefer |err| {
         Logger.log(.err, "failed to query a block", .{
@@ -669,87 +669,14 @@ fn queryBlock(
         });
     }
 
-    const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
-    defer tableReader.deinit(alloc);
-
-    var blockData = BlockData.initEmpty();
-    try blockData.readFrom(io, alloc, &blockHeader, tableReader);
-    defer blockData.deinit(alloc);
-
-    // rely on request arena
-    var unpacker = Unpacker(leakyUnpacking).init(decompressionPool);
-    defer unpacker.deinit(alloc);
-    var decoder: ValuesDecoder = .{};
-    defer decoder.deinit(alloc);
-
-    var block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, leakyUnpacking, &unpacker, &decoder);
-    defer block.deinit(alloc);
-
-    var i = dst.items.len;
-    try block.gatherLines(alloc, dst);
-    var converted: usize = 0;
-    errdefer {
-        for (dst.items[i .. i + converted]) |line| freeFields(alloc, line.fields);
-        for (dst.items[i + converted ..]) |line| alloc.free(line.fields.items);
-        dst.shrinkRetainingCapacity(i);
-    }
-    for (dst.items[i..]) |*line| {
-        const gatheredFields = line.fields;
-        const copiedFields = try copyFields(alloc, gatheredFields.items);
-        alloc.free(gatheredFields.items);
-        line.fields = copiedFields;
-        converted += 1;
-    }
-
-    std.debug.assert(dst.items.len > i);
-    while (i < dst.items.len) {
-        const line = dst.items[i];
-
-        if (line.timestampNs < query.start or line.timestampNs > query.end) {
-            const removed = dst.swapRemove(i);
-            freeFields(alloc, removed.fields);
-            continue;
-        }
-        if (query.fieldsExpr) |expr| {
-            if (!try matchesFilterExpression(line.fields.items, expr)) {
-                const removed = dst.swapRemove(i);
-                freeFields(alloc, removed.fields);
-                continue;
-            }
-        }
-
-        i += 1;
-    }
-}
-
-fn matchesFilterExpression(fields: []const Field, expr: *const Query.FilterExpression) !bool {
-    return switch (expr.*) {
-        .predicate => |p| matchesPredicate(fields, p),
-        .andOp => |ops| (try matchesFilterExpression(fields, ops[0])) and (try matchesFilterExpression(fields, ops[1])),
-        .orOp => |ops| (try matchesFilterExpression(fields, ops[0])) or (try matchesFilterExpression(fields, ops[1])),
-    };
-}
-
-fn matchesPredicate(fields: []const Field, p: Query.FilterPredicate) !bool {
-    for (fields) |f| {
-        // TODO: this is a demo of a broken ingestion design;
-        // initially ingestion was designed around Loki API,
-        // it has a <log line> and structured fields,
-        // as a result <lig line> is threated as a special empty key: "",
-        // to serve the the data as a json we made up its key as msgKey,
-        // but then to filter and query such keys they clients query it as msgKey
-        // and now we have to mutate it in place,
-        if (std.mem.eql(u8, f.key, p.key) or (f.key.len == 0 and std.mem.eql(u8, msgKey, p.key))) {
-            const res = switch (p.op) {
-                .equal => std.mem.eql(u8, f.value, p.value),
-                .notEqual => !std.mem.eql(u8, f.value, p.value),
-                else => return error.QueryMatchOperationNotImplemented,
-            };
-            return res;
-        }
-    }
-
-    return false;
+    var bq = try BlockQuery.init(io, alloc, self, &blockHeader, decompressionPool, timestampsEncoders);
+    defer bq.deinit();
+    defer result.reset(alloc);
+    var hits = try bq.query(&query);
+    defer hits.deinit(alloc);
+    if (hits.len == 0) return;
+    try bq.writeResult(&hits, result);
+    try writeBlock.write(result);
 }
 
 fn indexBlockHeaderSidLowerBoundOrder(ctx: SID, self: IndexBlockHeader) std.math.Order {

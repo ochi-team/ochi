@@ -270,7 +270,7 @@ test "translateQuery" {
                 .start = fiveMinutesAgo,
                 .end = now,
                 .tagsExpr = &.{ .predicate = .{ .key = "job", .value = "local", .op = .equal } },
-                .fieldsExpr = &.{ .predicate = .{ .key = "_msg", .value = "@ts=1782478454763 @l=INFO msg=\"Ochi in mono mode starting\" port=9014 version=\"main-027a8736", .op = .equal } },
+                .fieldsExpr = &.{ .predicate = .{ .key = "", .value = "@ts=1782478454763 @l=INFO msg=\"Ochi in mono mode starting\" port=9014 version=\"main-027a8736", .op = .equal } },
             },
             .expectedReports = &.{},
         },

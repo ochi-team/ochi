@@ -1099,20 +1099,17 @@ fn requestTableTimer(self: *DataRecorder, table: *Table) void {
     self.timerLoop.notify();
 }
 
-pub fn queryLines(self: *DataRecorder, io: Io, requestArena: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
+/// Delivers matching blocks to a synchronous borrowed-result consumer.
+pub fn queryBlocks(self: *DataRecorder, io: Io, requestArena: Allocator, sids: []SID, query: Query, writeBlock: @import("store/query/BlockResult.zig").WriteBlock) !void {
     var tables = try self.getTables(io, requestArena, query.start, query.end);
     defer {
         for (tables.items) |table| table.release(io);
         tables.deinit(requestArena);
     }
 
-    var linesDst = std.ArrayList(Line).empty;
-    errdefer linesDst.deinit(requestArena);
     for (tables.items) |table| {
-        try table.queryLines(io, requestArena, true, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
+        try table.queryBlocks(io, requestArena, self.timestampsEncoders, self.decompressionPool, sids, query, writeBlock);
     }
-
-    return linesDst;
 }
 
 pub fn getTables(self: *DataRecorder, io: Io, alloc: Allocator, start: u64, end: u64) !std.ArrayList(*Table) {

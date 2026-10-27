@@ -256,6 +256,46 @@ pub const Field = struct {
     }
 };
 
+const BlockResult = @import("query/BlockResult.zig");
+
+/// Copies borrowed block results into independently owned lines.
+pub const LinesSink = struct {
+    alloc: std.mem.Allocator,
+    lines: std.ArrayList(Line) = .empty,
+
+    pub fn deinit(self: *LinesSink) void {
+        deinitLinesFull(self.alloc, &self.lines);
+    }
+
+    pub fn writeBlock(self: *LinesSink) BlockResult.WriteBlock {
+        return .{ .ctx = self, .writeFn = write };
+    }
+
+    fn write(ctx: *anyopaque, result: *const BlockResult) !void {
+        const self: *LinesSink = @ptrCast(@alignCast(ctx));
+        const initialLen = self.lines.items.len;
+        errdefer {
+            for (self.lines.items[initialLen..]) |line| freeFields(self.alloc, line.fields);
+            self.lines.shrinkRetainingCapacity(initialLen);
+        }
+        try self.lines.ensureUnusedCapacity(self.alloc, result.len());
+        var fields: std.ArrayList(Field) = .empty;
+        defer fields.deinit(self.alloc);
+        try fields.ensureUnusedCapacity(self.alloc, result.invariants.items.len + result.columns.items.len);
+        for (result.timestamps.items, 0..) |ts, row| {
+            fields.clearRetainingCapacity();
+            for (result.invariants.items) |col| {
+                fields.appendAssumeCapacity(.{ .key = col.key, .value = col.values[0] });
+            }
+            for (result.columns.items) |col| {
+                const value = col.values[row];
+                if (value.len != 0) fields.appendAssumeCapacity(.{ .key = col.key, .value = value });
+            }
+            self.lines.appendAssumeCapacity(.{ .timestampNs = ts, .fields = try copyFields(self.alloc, fields.items) });
+        }
+    }
+};
+
 pub const Fields = struct {
     const alignment: std.mem.Alignment = .of(Field);
 

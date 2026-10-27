@@ -6,6 +6,7 @@ test {
     _ = @import("fs_test.zig");
     _ = @import("handlers/ingest_test.zig");
     _ = @import("handlers/query_test.zig");
+    _ = @import("handlers/query.zig");
     _ = @import("Layout_test.zig");
     _ = @import("main.zig");
     _ = @import("pprof/PprofAllocator_test.zig");
@@ -61,7 +62,9 @@ test {
     _ = @import("store/index/TagRecordsParser_test.zig");
     _ = @import("store/lines_test.zig");
     _ = @import("store/query/BlockQuery_test.zig");
+    _ = @import("store/query/BlockResult.zig");
     _ = @import("store/query/clause_test.zig");
+    _ = @import("store/query/LinesSink_test.zig");
     _ = @import("store/table/catalog_test.zig");
     _ = @import("store/table/merge_test.zig");
     _ = @import("store/table/swap_test.zig");

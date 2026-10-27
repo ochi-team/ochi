@@ -53,6 +53,6 @@ pub fn translateQuery(
     try self.scanner.scan(allocator, trimmedQueryStr, reporter);
     const expr = try self.parser.querySet(allocator, self.scanner.tokens.items, reporter);
     const query = try self.translator.query(allocator, expr, nowNs);
-
+    if (query.fieldsExpr) |fields| @constCast(fields).normalizeFieldKeys();
     return query;
 }

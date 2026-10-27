@@ -286,7 +286,8 @@ pub fn addLines(
 // we could cache the query for a very short time (3s)
 // and if the query hash matches we could bypass index lookup and data blocks discovery,
 // but it has to come after table cache eviction implementation
-pub fn queryLines(
+/// Delivers matching blocks while the selected tables remain retained.
+pub fn queryBlocks(
     self: *Partition,
     io: Io,
     requestArena: Allocator,
@@ -295,7 +296,8 @@ pub fn queryLines(
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
     indexQueryCache: *Cache(*QueryIndexCacheValue),
-) !std.ArrayList(Line) {
+    writeBlock: @import("store/query/BlockResult.zig").WriteBlock,
+) !void {
     var sidsRes: QuerySIDsResult = sids: {
         // if streamIDs are passed in a query we don't need to query them,
         // just sort and join with tenant
@@ -323,7 +325,7 @@ pub fn queryLines(
     };
     defer sidsRes.sids.deinit(requestArena);
 
-    return self.data.queryLines(io, requestArena, sidsRes.sids.items, query);
+    try self.data.queryBlocks(io, requestArena, sidsRes.sids.items, query, writeBlock);
 }
 
 pub fn queryStreamIDs(

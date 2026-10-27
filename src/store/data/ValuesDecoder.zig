@@ -62,11 +62,9 @@ pub fn decode(
             // values are already decoded
         },
         .dict => {
-            if (self.dictStrings) |ds| {
-                if (ds.len > 0) alloc.free(ds);
-            }
-            // TODO: maybe move instead of dupe? document why if we can’t
-            self.dictStrings = try alloc.dupe([]const u8, dictValues);
+            const dictStrings = try alloc.dupe([]const u8, dictValues);
+            if (self.dictStrings) |ds| alloc.free(ds);
+            self.dictStrings = dictStrings;
             if (self.dictStrings) |ds| {
                 for (values, 0..) |v, i| {
                     if (v.len < 1) {

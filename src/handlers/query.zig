@@ -80,11 +80,14 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
         .query = body,
     });
 
-    const lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query) catch {
+    var sink: @import("../store/lines.zig").LinesSink = .{ .alloc = res.arena };
+    defer sink.deinit();
+    ctx.store.queryBlocks(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query, sink.writeBlock()) catch {
         return ApiError.FailedToProccess;
     };
-
-    writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;
+    // Until pagination exists, preserve the API's latest-2000 limit.
+    @import("../Store.zig").keepLatestLines(res.arena, &sink.lines, 2000);
+    writeResponse(res, sink.lines.items) catch return ApiError.FailedToWriteResponse;
 
     res.status = 200;
 }
@@ -144,7 +147,19 @@ pub fn parseQuery(alloc: Allocator, data: []const u8) !Query {
     });
     try validateStreamIDs(value);
 
-    return std.json.parseFromValueLeaky(Query, alloc, value, .{});
+    const query = try std.json.parseFromValueLeaky(Query, alloc, value, .{});
+    if (query.fieldsExpr) |fields| @constCast(fields).normalizeFieldKeys();
+    return query;
+}
+
+test "parseQuery normalizes message predicate keys only in fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const q = try parseQuery(arena.allocator(),
+        \\{"start":1,"end":2,"fieldsExpr":{"andOp":[{"predicate":{"key":"_msg","value":"hello","op":"equal"}},{"predicate":{"key":"host","value":"local","op":"equal"}}]},"tagsExpr":{"predicate":{"key":"_msg","value":"tag","op":"equal"}}}
+    );
+    try std.testing.expectEqualDeep(Query.FilterPredicate{ .key = "", .value = "hello", .op = .equal }, q.fieldsExpr.?.andOp[0].predicate);
+    try std.testing.expectEqualStrings("_msg", q.tagsExpr.?.predicate.key);
 }
 
 const testing = std.testing;

@@ -20,7 +20,6 @@ const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 const freeFields = @import("store/lines.zig").freeFields;
-const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const lineLatestFirst = @import("store/lines.zig").lineLatestFirst;
 const Query = @import("query/Query.zig");
 
@@ -484,6 +483,24 @@ pub fn queryLines(
     tenantID: u64,
     query: Query,
 ) !std.ArrayList(Line) {
+    var sink: @import("store/lines.zig").LinesSink = .{ .alloc = requestArena };
+    errdefer sink.deinit();
+    try self.queryBlocks(io, requestArena, alloc, tenantID, query, sink.writeBlock());
+    // Compatibility API; new consumers own their output and limiting policy.
+    keepLatestLines(requestArena, &sink.lines, 2000);
+    return sink.lines;
+}
+
+/// Synchronously delivers borrowed blocks; consumers must copy retained data.
+pub fn queryBlocks(
+    self: *Store,
+    io: Io,
+    requestArena: Allocator,
+    alloc: Allocator,
+    tenantID: u64,
+    query: Query,
+    writeBlock: @import("store/query/BlockResult.zig").WriteBlock,
+) !void {
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
 
@@ -492,10 +509,8 @@ pub fn queryLines(
     const parts = partsBuf[0..partsLen];
     defer for (parts) |part| part.release(io);
 
-    var results = std.ArrayList(Line).empty;
-    errdefer deinitLinesFull(requestArena, &results);
     for (parts) |part| {
-        var partResults = try part.queryLines(
+        try part.queryBlocks(
             io,
             requestArena,
             alloc,
@@ -503,16 +518,9 @@ pub fn queryLines(
             query,
             self.indexMemBlocksCache,
             self.indexQueryCache,
+            writeBlock,
         );
-        defer partResults.deinit(requestArena);
-
-        try results.appendSlice(requestArena, partResults.items);
     }
-
-    // TODO: we need to make a real pagination, it's a plug not to overload the ui,
-    // otherwise it fetches 10k lines and becomes unusable
-    keepLatestLines(requestArena, &results, 2000);
-    return results;
 }
 
 pub fn keepLatestLines(alloc: Allocator, lines: *std.ArrayList(Line), limit: usize) void {

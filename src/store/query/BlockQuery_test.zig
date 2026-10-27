@@ -135,6 +135,182 @@ const Expr = struct {
     }
 };
 
+test "writeResult selected decoded columns and reuse" {
+    const BlockResult = @import("BlockResult.zig");
+    const a = testing.allocator;
+    const io = testing.io;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const tmp = arena.allocator();
+    const names = [_][]const u8{ "string", "dict", "u8", "u16", "u32", "u64", "int", "float", "ip", "time", "host" };
+    var columns: [names.len]TestColumn = undefined;
+    for (names, 0..) |name, c| {
+        const values = try tmp.alloc([]const u8, 71);
+        for (values, 0..) |*value, row| {
+            value.* = switch (c) {
+                0 => try std.fmt.allocPrint(tmp, "message-{d}", .{row}),
+                1 => if (row % 2 == 0) "yes" else "no",
+                2 => try std.fmt.allocPrint(tmp, "{d}", .{row}),
+                3 => try std.fmt.allocPrint(tmp, "{d}", .{row + 256}),
+                4 => try std.fmt.allocPrint(tmp, "{d}", .{row + 65536}),
+                5 => if (row == 0) "18446744073709551615" else try std.fmt.allocPrint(tmp, "{d}", .{row + 4294967296}),
+                6 => if (row == 0) "-9223372036854775808" else try std.fmt.allocPrint(tmp, "-{d}", .{row + 1}),
+                7 => try std.fmt.allocPrint(tmp, "{d}.5", .{row}),
+                8 => try std.fmt.allocPrint(tmp, "10.0.0.{d}", .{row}),
+                9 => try std.fmt.allocPrint(tmp, "2025-06-01T00:00:00.{d:0>3}Z", .{row}),
+                else => "local",
+            };
+        }
+        columns[c] = .{ .name = name, .values = values };
+    }
+    var fx = try Fixture.init(io, a, &columns, null);
+    defer fx.deinit(io, a);
+    var bq = try BlockQuery.init(io, a, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+    var result: BlockResult = .{};
+    defer result.deinit(a);
+    var diskDir = testing.tmpDir(.{});
+    defer diskDir.cleanup();
+    const diskRoot = try diskDir.dir.realPathFileAlloc(io, ".", tmp);
+    const diskPath = try std.fs.path.join(tmp, &.{ diskRoot, "table" });
+    try fx.table.inner.mem.storeToDisk(io, diskPath);
+    const diskTable = try Table.open(io, a, try a.dupe(u8, diskPath), fx.decompressionPool);
+    defer diskTable.release(io);
+    var diskQuery = try BlockQuery.init(io, a, diskTable, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer diskQuery.deinit();
+    var diskResult: BlockResult = .{};
+    defer diskResult.deinit(a);
+    var hits = try bq.query(&.{ .start = 0, .end = 100 });
+    defer hits.deinit(a);
+
+    const reader = try @import("../data/TableReader.zig").init(io, a, fx.table, fx.decompressionPool);
+    defer reader.deinit(a);
+    var data = @import("../data/BlockData.zig").BlockData.initEmpty();
+    defer data.deinit(a);
+    try data.readFrom(io, a, &fx.blockHeader, reader);
+    var unpacker = @import("../data/Unpacker.zig").Unpacker(false).init(fx.decompressionPool);
+    defer unpacker.deinit(a);
+    var decoder: @import("../data/ValuesDecoder.zig") = .{};
+    defer decoder.deinit(a);
+    var legacy = try @import("../data/Block.zig").initFromData(io, a, fx.timestampsEncoders, &data, false, &unpacker, &decoder);
+    defer legacy.deinit(a);
+    var legacyLines: std.ArrayList(Line) = .empty;
+    defer {
+        for (legacyLines.items) |line| a.free(line.fields.items);
+        legacyLines.deinit(a);
+    }
+    try legacy.gatherLines(a, &legacyLines);
+    const sparse = [_]usize{ 0, 63, 64, 70 };
+    for (0..3) |pass| {
+        if (pass == 1) {
+            hits.hits.unsetAll();
+            for (sparse) |row| hits.hits.set(row);
+            hits.len = sparse.len;
+        } else if (pass == 2) {
+            hits.hits.unsetAll();
+            hits.len = 0;
+        }
+        try bq.writeResult(&hits, &result);
+        try diskQuery.writeResult(&hits, &diskResult);
+        try testing.expectEqualDeep(.{ result.timestamps.items, result.columns.items, result.invariants.items }, .{ diskResult.timestamps.items, diskResult.columns.items, diskResult.invariants.items });
+        var sink: lines.LinesSink = .{ .alloc = a };
+        defer sink.deinit();
+        try sink.writeBlock().write(&result);
+        for (sink.lines.items, 0..) |line, r| {
+            const expectedLine = legacyLines.items[if (pass == 0) r else sparse[r]];
+            try testing.expectEqualDeep(.{ expectedLine.timestampNs, expectedLine.fields.items }, .{ line.timestampNs, line.fields.items });
+        }
+        try testing.expectEqual(hits.len, result.len());
+        if (pass == 2) {
+            try testing.expectEqualDeep(.{ @as(usize, 0), @as(usize, 0) }, .{ result.columns.items.len, result.invariants.items.len });
+            continue;
+        }
+        const expectedTs = try tmp.alloc(u64, hits.len);
+        for (expectedTs, 0..) |*ts, r| ts.* = (if (pass == 0) r else sparse[r]) + 1;
+        try testing.expectEqualDeep(expectedTs, result.timestamps.items);
+        for (result.columns.items) |column| {
+            const source = for (columns) |col| {
+                if (std.mem.eql(u8, col.name, column.key)) break col;
+            } else unreachable;
+            const expected = try tmp.alloc([]const u8, hits.len);
+            for (expected, 0..) |*value, r| value.* = source.values[if (pass == 0) r else sparse[r]];
+            try testing.expectEqualDeep(expected, column.values);
+        }
+        try testing.expectEqual(10, result.columns.items.len);
+        const expectedInvariants = [_]@import("../data/Column.zig"){.{ .key = "host", .values = @constCast(&[_][]const u8{"local"}) }};
+        try testing.expectEqualDeep(&expectedInvariants, result.invariants.items);
+        var again = try bq.query(&.{ .start = 0, .end = 100, .fieldsExpr = &.{ .predicate = .{ .key = "u16", .value = "320", .op = .equal } } });
+        defer again.deinit(a);
+        try testing.expectEqual(1, again.len);
+        try testing.expect(again.hits.isSet(64));
+    }
+}
+
+test "writeResult allocation failures leave empty destination" {
+    var fx = try Fixture.init(testing.io, testing.allocator, &.{
+        .{ .name = "first", .values = &.{ "a", "b", "a" } },
+        .{ .name = "second", .values = &.{ "c", "d", "c" } },
+        .{ .name = "host", .values = &.{ "local", "local", "local" } },
+    }, null);
+    defer fx.deinit(testing.io, testing.allocator);
+    try testing.checkAllAllocationFailures(testing.allocator, struct {
+        fn run(a: Allocator, fixture: *Fixture) !void {
+            var bq = try BlockQuery.init(testing.io, a, fixture.table, &fixture.blockHeader, fixture.decompressionPool, fixture.timestampsEncoders);
+            defer bq.deinit();
+            var result: @import("BlockResult.zig") = .{};
+            defer result.deinit(a);
+            var hits = try bq.query(&.{ .start = 0, .end = 100 });
+            defer hits.deinit(a);
+            bq.writeResult(&hits, &result) catch |err| {
+                try testing.expectEqualDeep(.{ @as(usize, 0), @as(usize, 0), @as(usize, 0) }, .{ result.len(), result.columns.items.len, result.invariants.items.len });
+                return err;
+            };
+        }
+    }.run, .{&fx});
+}
+
+test "writeResult invariant-only block" {
+    var fx = try Fixture.init(testing.io, testing.allocator, &.{.{ .name = "host", .values = &.{ "local", "local" } }}, null);
+    defer fx.deinit(testing.io, testing.allocator);
+    var bq = try BlockQuery.init(testing.io, testing.allocator, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+    var result: @import("BlockResult.zig") = .{};
+    defer result.deinit(testing.allocator);
+    var hits = try bq.query(&.{ .start = 0, .end = 100 });
+    defer hits.deinit(testing.allocator);
+    try bq.writeResult(&hits, &result);
+    try testing.expectEqualDeep(&[_]u64{ 1, 2 }, result.timestamps.items);
+    try testing.expectEqual(0, result.columns.items.len);
+    const expected = [_]@import("../data/Column.zig"){.{ .key = "host", .values = @constCast(&[_][]const u8{"local"}) }};
+    try testing.expectEqualDeep(&expected, result.invariants.items);
+}
+
+test "writeResult no hits avoids storage reads and callback failures propagate" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var fx = try Fixture.init(io, a, &.{.{ .name = "key", .values = &.{ "a", "b" } }}, null);
+    defer fx.deinit(io, a);
+    var bq = try BlockQuery.init(io, a, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+    var result: @import("BlockResult.zig") = .{};
+    defer result.deinit(a);
+    var hits = try bq.query(&.{ .start = 10, .end = 20 });
+    defer hits.deinit(a);
+    try bq.writeResult(&hits, &result);
+    try testing.expectEqualDeep(.{ @as(usize, 0), @as(?[]u64, null), @as(?@import("../data/ColumnsHeaderIndex.zig"), null) }, .{ result.len(), bq.timestampsCache, bq.cshIndex });
+    var calls: usize = 0;
+    const writer: @import("BlockResult.zig").WriteBlock = .{ .ctx = &calls, .writeFn = struct {
+        fn write(ctx: *anyopaque, br: *const @import("BlockResult.zig")) !void {
+            const count: *usize = @ptrCast(@alignCast(ctx));
+            count.* += 1;
+            try testing.expectEqual(2, br.len());
+            return error.DestinationFailed;
+        }
+    }.write };
+    try testing.expectError(error.DestinationFailed, fx.table.queryBlocks(io, a, fx.timestampsEncoders, fx.decompressionPool, &.{}, .{ .start = 0, .end = 100 }, writer));
+    try testing.expectEqual(1, calls);
+}
+
 const all10 = [_]usize{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
 const all11 = all10 ++ [_]usize{10};
 

@@ -61,6 +61,19 @@ pub const FilterExpression = union(enum) {
     andOp: [2]*const FilterExpression,
     orOp: [2]*const FilterExpression,
 
+    /// Normalizes message aliases in a newly constructed, mutable fields tree.
+    /// Never call on a tags tree or expressions backed by immutable storage.
+    pub fn normalizeFieldKeys(filter: *FilterExpression) void {
+        switch (filter.*) {
+            .predicate => |*p| {
+                if (std.mem.eql(u8, p.key, @import("../store/lines.zig").msgKey)) p.key = "";
+            },
+            .andOp, .orOp => |ops| {
+                for (ops) |op| @constCast(op).normalizeFieldKeys();
+            },
+        }
+    }
+
     pub fn validateTags(filter: *const FilterExpression) InvalidQueryError!void {
         switch (filter.*) {
             .predicate => |p| if (p.op != .equal and p.op != .notEqual) {
