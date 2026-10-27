@@ -14,6 +14,7 @@ const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const lines = @import("../lines.zig");
 const Field = lines.Field;
 const Line = lines.Line;
+const Column = @import("../../store/data/Column.zig");
 
 const BlockQuery = @import("BlockQuery.zig");
 
@@ -616,4 +617,22 @@ test "query token hash cache reuse and ownership" {
         try std.testing.expectEqualSlices(u64, expected, second);
         try std.testing.expectEqual(first.ptr, second.ptr);
     }
+}
+
+test "writeResult invariant-only block" {
+    var fx = try Fixture.init(testing.io, testing.allocator, &.{.{ .name = "host", .values = &.{ "local", "local" } }}, null);
+    defer fx.deinit(testing.io, testing.allocator);
+    var bq = try BlockQuery.init(testing.io, testing.allocator, fx.table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+    defer bq.deinit();
+
+    var result = try bq.query(&.{ .start = 0, .end = 100 });
+    defer result.deinit(testing.allocator);
+
+    try bq.writeResult(&result);
+    try testing.expectEqualDeep(&[_]u64{ 1, 2 }, result.timestamps.items);
+    try testing.expectEqual(0, result.columns.items.len);
+
+    var columnValues: [1][]const u8 = .{"local"};
+    const expected = [_]Column{.{ .key = "host", .values = &columnValues }};
+    try testing.expectEqualDeep(&expected, result.invariants.items);
 }

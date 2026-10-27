@@ -17,7 +17,8 @@ const TimestampsEncoderPool = @import("../data/TimestampsEncoder.zig").Timestamp
 const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 
-const QueryHits = @import("QueryHits.zig");
+const QueryResult = @import("QueryResult.zig");
+const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const clause = @import("clause.zig");
 
 const ColumnsHeaderIndex = @import("../../store/data/ColumnsHeaderIndex.zig");
@@ -38,7 +39,9 @@ const ColumnDict = @import("../data/ColumnDict.zig");
 const ValuesEncoder = @import("../data/ValuesEncoder.zig");
 const parseTimestampISO8601 = @import("../../stds/time.zig").parseTimestampISO8601;
 
-pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || error{
+const DecodeError = ValuesDecoder.DecodeError;
+
+pub const Error = Allocator.Error || Io.File.ReadPositionalError || UnpackError || encoding.Error || DecodeError || error{
     InvalidInput,
     PartialExpressionUnwrap,
     UnexpectedExpression,
@@ -60,6 +63,7 @@ table: *const Table,
 blockHeader: *const BlockHeader,
 
 unpacker: Unpacker,
+decoder: ValuesDecoder = .{},
 timestampsEncoders: *TimestampsEncoderPool,
 timestampsCache: ?[]u64 = null,
 
@@ -121,6 +125,7 @@ pub fn deinit(self: *BlockQuery) void {
     self.columnHeaderCache.deinit(self.alloc);
 
     self.unpacker.deinit(self.alloc);
+    self.decoder.deinit(self.alloc);
     self.alloc.destroy(self.cshIndexIDs);
     self.alloc.destroy(self.cshIndexOffsets);
     if (self.cshBlock) |b| self.alloc.free(b);
@@ -130,7 +135,7 @@ pub fn deinit(self: *BlockQuery) void {
 pub fn query(
     self: *BlockQuery,
     q: *const Query,
-) Error!QueryHits {
+) Error!QueryResult {
     var bitset: std.bit_set.DynamicBitSetUnmanaged = try .initFull(self.alloc, self.blockHeader.len);
     errdefer bitset.deinit(self.alloc);
 
@@ -144,6 +149,56 @@ pub fn query(
     }
 
     return .{ .hits = bitset, .len = bitset.count() };
+}
+
+/// Populates hits buffers with decoded matching rows
+pub fn writeResult(self: *BlockQuery, dst: *QueryResult) Error!void {
+    assert(dst.hits.bit_length == self.blockHeader.len);
+    assert(dst.len == dst.hits.count());
+    if (bitsetIsEmpty(&dst.hits)) return;
+
+    try dst.timestamps.ensureUnusedCapacity(self.alloc, dst.len);
+    const index = try self.columnsHeaderIndex();
+    try dst.columns.ensureUnusedCapacity(self.alloc, index.columnsIDs.items.len);
+    try dst.invariants.ensureUnusedCapacity(self.alloc, index.invariantColumnsIDs.items.len);
+
+    const timestamps = try self.getTimestamps();
+    var it = dst.hits.iterator(.{
+        .direction = .forward,
+        .kind = .set,
+    });
+    while (it.next()) |idx| dst.timestamps.appendAssumeCapacity(timestamps[idx]);
+
+    const keys = self.table.columnIDGen.keyIDs.keys();
+    _ = keys[keys.len - 1];
+    for (index.columnsIDs.items) |id| {
+        assert(id < keys.len);
+        const key = keys[id];
+        const ch = (try self.getColumnHeader(key)) orelse return error.InvalidInput;
+        const encoded = try self.getColumnValues(&ch);
+        const selected = try self.alloc.alloc([]const u8, dst.len);
+        errdefer self.alloc.free(selected);
+        it = dst.hits.iterator(.{
+            .direction = .forward,
+            .kind = .set,
+        });
+        var row: usize = 0;
+        while (it.next()) |idx| {
+            selected[row] = encoded[idx];
+            row += 1;
+        }
+        // Decode only the gathered descriptors: filtering must keep its encoded cache.
+        try self.decoder.decode(self.io, self.alloc, selected, ch.type, ch.dict.values.items);
+        dst.columns.appendAssumeCapacity(.{ .key = key, .values = selected });
+    }
+    for (index.invariantColumnsIDs.items) |id| {
+        assert(id < keys.len);
+        const key = keys[id];
+        const value = try self.getInvariantColumnValue(key);
+        const values = try self.alloc.alloc([]const u8, 1);
+        values[0] = value;
+        dst.invariants.appendAssumeCapacity(.{ .key = key, .values = values });
+    }
 }
 
 fn getTimestamps(self: *BlockQuery) Error![]u64 {
@@ -582,7 +637,6 @@ fn matchBloomFilterAnd(
 
 fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) Error![]const u8 {
     const id = self.table.columnIDGen.keyIDs.get(key) orelse return "";
-
     for (self.invariantColumnCache.items) |c| {
         if (std.mem.eql(u8, c.key, key)) return c.values[0];
     }

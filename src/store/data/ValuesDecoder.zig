@@ -6,6 +6,15 @@ const zeit = @import("zeit");
 
 const ColumnType = @import("ColumnHeader.zig").ColumnType;
 
+const ZeitError = @typeInfo(@typeInfo(@TypeOf(zeit.instant)).@"fn".return_type.?).error_union.error_set;
+
+pub const DecodeError = error{
+    InvalidDictValue,
+    DictIdOutOfRange,
+    InvalidValueLength,
+    UnknownValueType,
+} || std.fmt.BufPrintError || Allocator.Error || ZeitError;
+
 /// ValuesDecoder decodes values encoded by ValuesEncoder back to string representations.
 const ValuesDecoder = @This();
 
@@ -56,7 +65,7 @@ pub fn decode(
     values: [][]const u8,
     vt: ColumnType,
     dictValues: []const []const u8,
-) !void {
+) DecodeError!void {
     switch (vt) {
         .string => {
             // values are already decoded

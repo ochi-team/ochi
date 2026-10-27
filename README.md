@@ -80,7 +80,7 @@ For all questions, major changes, suggestions, notes, feel free to reach out to 
 1. We don't shame the lack of knowledge, it's better to accept not knowing, than spreading disinformation.
 2. Using LLMs you put your trust profile on a line, we don't encourage it, but you may.
 3. Complete slop will be rejected with a very short comment and a permanent ban.
-4. We can invest our time helping you learn. Don't fully rely on LLMs to implement a solution.
+4. We can invest our time helping you learn. Don't rely fully on LLMs to implement a solution.
 
 We encourage to use AI in order to:
 1. generate a test that is able to crash the system
@@ -93,3 +93,4 @@ We encourage to use AI in order to:
 - tests must either cover data or effects, not both
 - to produce effect it must take a data to produce a pre determined effect
 - pure functions are welcome
+- allocations first, mutating after
