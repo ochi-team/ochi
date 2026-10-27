@@ -64,6 +64,7 @@ timestampsEncoders: *TimestampsEncoderPool,
 timestampsCache: ?[]u64 = null,
 
 // caches, initialized empty
+exactHashesCache: std.StringHashMapUnmanaged([]u64) = .empty,
 invariantColumnCache: std.ArrayList(Column) = .empty,
 columnHeaderCache: std.ArrayList(ColumnHeader) = .empty,
 // encoded column values, owned by unpacker
@@ -102,6 +103,13 @@ pub fn init(
 }
 
 pub fn deinit(self: *BlockQuery) void {
+    var hashesIt = self.exactHashesCache.iterator();
+    while (hashesIt.next()) |entry| {
+        self.alloc.free(entry.key_ptr.*);
+        self.alloc.free(entry.value_ptr.*);
+    }
+    self.exactHashesCache.deinit(self.alloc);
+
     if (self.timestampsCache) |timestamps| self.alloc.free(timestamps);
     for (self.invariantColumnCache.items) |c| self.alloc.free(c.values);
     self.invariantColumnCache.deinit(self.alloc);
@@ -210,7 +218,6 @@ fn filterEqual(self: *BlockQuery, key: []const u8, value: []const u8, bitset: *s
     };
 
     const hashes = try self.equalTokensHashes(value);
-    defer self.alloc.free(hashes);
 
     // TODO: all the equation matching is build around decoding the column values,
     // it's very heavy compute wise,
@@ -416,7 +423,7 @@ fn setMatchedBits(
     }
 }
 
-fn equalTokensHashes(self: *BlockQuery, value: []const u8) Error![]u64 {
+pub fn equalTokensHashes(self: *BlockQuery, value: []const u8) Error![]u64 {
     if (self.exactHashesCache.get(value)) |hashes| return hashes;
 
     var tokensBuf: [32][]const u8 = undefined;
@@ -426,11 +433,12 @@ fn equalTokensHashes(self: *BlockQuery, value: []const u8) Error![]u64 {
     errdefer self.alloc.free(hashes);
 
     const ownedValue = try self.alloc.dupe(u8, value);
+    errdefer self.alloc.free(ownedValue);
     try self.exactHashesCache.put(self.alloc, ownedValue, hashes);
     return hashes;
 }
 
-fn tokensToHashes(alloc: Allocator, tokens: []const []const u8) Error![]u64 {
+pub fn tokensToHashes(alloc: Allocator, tokens: []const []const u8) Error![]u64 {
     var hashes: std.ArrayList(u64) = try .initCapacity(alloc, tokens.len * bloom.hashRounds);
     errdefer hashes.deinit(alloc);
     for (tokens) |token| {

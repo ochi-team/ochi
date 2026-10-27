@@ -592,3 +592,28 @@ test "query or" {
     defer bq.deinit();
     try testing.expectError(error.PartialExpressionUnwrap, bq.query(&.{ .start = 0, .end = std.math.maxInt(u64), .fieldsExpr = many }));
 }
+
+test "query token hash cache reuse and ownership" {
+    const alloc = std.testing.allocator;
+    var bq = try BlockQuery.init(std.testing.io, alloc, undefined, undefined, undefined, undefined);
+    defer bq.deinit();
+
+    const cases = [_]struct { value: []const u8, tokens: []const []const u8 }{
+        .{ .value = "alpha beta", .tokens = &.{ "alpha", "beta" } },
+        .{ .value = "", .tokens = &.{} },
+    };
+    for (cases) |case| {
+        const expected = try BlockQuery.tokensToHashes(alloc, case.tokens);
+        defer alloc.free(expected);
+        const value = try alloc.dupe(u8, case.value);
+        const first = try bq.equalTokensHashes(value);
+
+        // The cache must own its key, not retain the caller's buffer.
+        @memset(value, 'x');
+        alloc.free(value);
+        const second = try bq.equalTokensHashes(case.value);
+        try std.testing.expectEqualSlices(u64, expected, first);
+        try std.testing.expectEqualSlices(u64, expected, second);
+        try std.testing.expectEqual(first.ptr, second.ptr);
+    }
+}

@@ -64,10 +64,10 @@ pub fn Unpacker(comptime leaky: bool) type {
             defer alloc.free(lengths);
 
             if (!leaky) try self.garbage.ensureUnusedCapacity(alloc, 1);
-            std.debug.assert(offset == encoded.len);
             const tail = encoded[offset..];
 
             const buf = try self.unpackBytes(io, alloc, tail, &offset);
+            std.debug.assert(offset == encoded.len);
             if (!leaky) self.garbage.appendAssumeCapacity(buf);
 
             var res = try alloc.alloc([]const u8, lengths.len);
