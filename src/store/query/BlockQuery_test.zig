@@ -492,7 +492,6 @@ test "query and" {
     try f(&fx, e.andNode(e.eqNode("key", "a key"), e.eqNode("one", "k")), &.{});
     try f(&fx, e.andNode(e.eqNode("one", "k"), e.eqNode("key", "a key")), &.{});
 
-    // nested or, https://github.com/VictoriaMetrics/VictoriaMetrics/issues/6554
     try f(&fx, e.andNode(fooOr, e.orNode(e.eqNode("key", "a word"), e.eqNode("obb", "ooooooo"))), &.{1});
     try f(&fx, e.andNode(e.orNode(e.eqNode("key", "a key"), e.eqNode("one", "onm")), e.orNode(e.eqNode("one", "k"), e.neNode("key", ""))), &.{0});
     try f(&fx, e.andNode(e.orNode(e.eqNode("key", "a key"), e.eqNode("one", "onm")), e.orNode(e.eqNode("one", "k"), e.eqNode("key", "klm"))), &.{});
