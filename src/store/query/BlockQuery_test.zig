@@ -16,7 +16,10 @@ const Field = lines.Field;
 const Line = lines.Line;
 const Column = @import("../../store/data/Column.zig");
 
+const ColumnType = @import("../../store/data/ColumnHeader.zig").ColumnType;
+
 const BlockQuery = @import("BlockQuery.zig");
+const QueryResult = @import("QueryResult.zig");
 
 const testing = std.testing;
 
@@ -616,6 +619,133 @@ test "query token hash cache reuse and ownership" {
         try std.testing.expectEqualSlices(u64, expected, first);
         try std.testing.expectEqualSlices(u64, expected, second);
         try std.testing.expectEqual(first.ptr, second.ptr);
+    }
+}
+
+test "writeResult selected decoded columns and query cache reuse" {
+    const Data = struct {
+        fn value(alloc: Allocator, cType: ColumnType, row: usize) ![]const u8 {
+            // Values above each smaller integer width force the corresponding encoding.
+            return switch (cType) {
+                .string => try std.fmt.allocPrint(alloc, "message-{d}", .{row}),
+                .dict => if (row % 2 == 0) "yes" else "no",
+                .uint8 => try std.fmt.allocPrint(alloc, "{d}", .{row}),
+                .uint16 => try std.fmt.allocPrint(alloc, "{d}", .{row + 256}),
+                .uint32 => try std.fmt.allocPrint(alloc, "{d}", .{row + 65536}),
+                .uint64 => if (row == 0) "18446744073709551615" else try std.fmt.allocPrint(alloc, "{d}", .{row + 4294967296}),
+                .int64 => if (row == 0) "-9223372036854775808" else try std.fmt.allocPrint(alloc, "-{d}", .{row + 1}),
+                .float64 => try std.fmt.allocPrint(alloc, "{d}.5", .{row}),
+                .ipv4 => try std.fmt.allocPrint(alloc, "10.0.0.{d}", .{row}),
+                .timestampIso8601 => try std.fmt.allocPrint(alloc, "2025-06-01T00:00:00.{d:0>3}Z", .{row}),
+                .unknown => error.UnknownColumnType,
+            };
+        }
+
+        fn lessThan(_: void, lhs: Column, rhs: Column) bool {
+            return std.mem.lessThan(u8, lhs.key, rhs.key);
+        }
+
+        fn expectResult(alloc: Allocator, source: []const TestColumn, rows: []const usize, result: *const QueryResult) !void {
+            var arena = std.heap.ArenaAllocator.init(alloc);
+            defer arena.deinit();
+            const tmp = arena.allocator();
+
+            const timestamps = try tmp.alloc(u64, rows.len);
+            for (rows, 0..) |row, i| timestamps[i] = row + 1;
+
+            // final input column is the invariant host; the others vary by row, that's why source.len - 1
+            const columns = try tmp.alloc(Column, if (rows.len == 0) 0 else source.len - 1);
+            for (columns, source[0..columns.len]) |*column, input| {
+                const values = try tmp.alloc([]const u8, rows.len);
+                for (rows, 0..) |row, i| values[i] = input.values[row];
+                column.* = .{ .key = input.name, .values = values };
+            }
+
+            const invariants = try tmp.alloc(Column, if (rows.len == 0) 0 else 1);
+            if (invariants.len != 0) {
+                const host = source[source.len - 1];
+                invariants[0] = .{ .key = host.name, .values = try tmp.dupe([]const u8, host.values[0..1]) };
+            }
+
+            // order is not part of the query result contract.
+            std.mem.sort(Column, columns, {}, lessThan);
+            std.mem.sort(Column, result.columns.items, {}, lessThan);
+            try testing.expectEqualDeep(
+                .{ rows.len, timestamps, columns, invariants },
+                .{ result.len, result.timestamps.items, result.columns.items, result.invariants.items },
+            );
+        }
+    };
+
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const tmp = arena.allocator();
+
+    // Cross a bitset word boundary and leave a partial final word.
+    const rowCount = 71;
+
+    // 0th is .unknown, excluded from the testing types
+    const kinds = std.enums.values(ColumnType)[1..];
+    var columns: [kinds.len + 1]TestColumn = undefined;
+    for (kinds, 0..) |kind, i| {
+        const values = try tmp.alloc([]const u8, rowCount);
+        for (0..rowCount) |row| values[row] = try Data.value(tmp, kind, row);
+        columns[i] = .{ .name = @tagName(kind), .values = values };
+    }
+    const staticValues = [_][]const u8{"local"} ** rowCount;
+    columns[kinds.len] = .{ .name = "static", .values = &staticValues };
+
+    var fx = try Fixture.init(io, alloc, &columns, null);
+    defer fx.deinit(io, alloc);
+
+    var diskDir = testing.tmpDir(.{});
+    defer diskDir.cleanup();
+    const diskRoot = try diskDir.dir.realPathFileAlloc(io, ".", tmp);
+    const diskPath = try std.fs.path.join(tmp, &.{ diskRoot, "table" });
+    try fx.table.inner.mem.storeToDisk(io, diskPath);
+    const diskTable = try Table.open(io, alloc, try alloc.dupe(u8, diskPath), fx.decompressionPool);
+    defer diskTable.release(io);
+
+    var allRows: [rowCount]usize = undefined;
+    for (0..rowCount) |i| allRows[i] = i;
+
+    // selections are expected rows numbers
+    const selections = [_][]const usize{
+        &allRows,
+        &.{ 0, 63, 64, rowCount - 1 },
+        &.{},
+        &.{64},
+        &allRows,
+    };
+    for ([_]*Table{ fx.table, diskTable }) |table| {
+        var bq = try BlockQuery.init(io, alloc, table, &fx.blockHeader, fx.decompressionPool, fx.timestampsEncoders);
+        defer bq.deinit();
+
+        for (selections) |rows| {
+            var result: QueryResult = .{
+                .hits = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(alloc, rowCount),
+                .len = rows.len,
+            };
+            defer result.deinit(alloc);
+
+            for (rows) |row| result.hits.set(row);
+            result.len = rows.len;
+
+            try bq.writeResult(&result);
+            try Data.expectResult(alloc, &columns, rows, &result);
+
+            // decoding selected values must not overwrite the encoded filter cache
+            var filtered = try bq.query(&.{
+                .start = 0,
+                .end = rowCount,
+                .fieldsExpr = &.{ .predicate = .{ .key = "uint16", .value = try Data.value(tmp, .uint16, 64), .op = .equal } },
+            });
+            defer filtered.deinit(alloc);
+            try bq.writeResult(&filtered);
+            try Data.expectResult(alloc, &columns, &.{64}, &filtered);
+        }
     }
 }
 
