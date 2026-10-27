@@ -417,10 +417,17 @@ fn setMatchedBits(
 }
 
 fn equalTokensHashes(self: *BlockQuery, value: []const u8) Error![]u64 {
+    if (self.exactHashesCache.get(value)) |hashes| return hashes;
+
     var tokensBuf: [32][]const u8 = undefined;
     var tokensArray = std.ArrayList([]const u8).initBuffer(&tokensBuf);
     try self.getTokens(&tokensArray, value);
-    return tokensToHashes(self.alloc, tokensArray.items);
+    const hashes = try tokensToHashes(self.alloc, tokensArray.items);
+    errdefer self.alloc.free(hashes);
+
+    const ownedValue = try self.alloc.dupe(u8, value);
+    try self.exactHashesCache.put(self.alloc, ownedValue, hashes);
+    return hashes;
 }
 
 fn tokensToHashes(alloc: Allocator, tokens: []const []const u8) Error![]u64 {
@@ -690,10 +697,7 @@ fn deinitTokensMap(alloc: Allocator, m: *TokensMap) void {
     m.deinit();
 }
 
-/// ors must be 100% const*, because we keep the same data for later usage
 pub fn fieldsOrTokens(self: *const BlockQuery, ors: std.ArrayList(*const FilterExpression)) Error![]KeyTokens {
-    // TODO: see if it's executed more than once and cache the tokens calculation
-    // or make a lazy access
     var m = TokensMap.init(self.alloc);
     defer deinitTokensMap(self.alloc, &m);
     var fieldKeys = std.ArrayList([]const u8).empty;
