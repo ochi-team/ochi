@@ -31,6 +31,8 @@ const Query = @import("../../query/Query.zig");
 const catalog = @import("../table/catalog.zig");
 
 const BlockQuery = @import("../query/BlockQuery.zig");
+const Sink = @import("../query/Sink.zig");
+const QueryResult = @import("../query/QueryResult.zig");
 
 const InnerTag = enum { mem, disk };
 const Inner = union(InnerTag) {
@@ -491,10 +493,8 @@ pub fn queryLines(
     dst: *std.ArrayList(Line),
     sids: []SID,
     query: Query,
+    sink: *Sink,
 ) !void {
-    //FIXME:
-    // 2. what about queryLinesAllBlocks, avoid this path
-
     // sids could be empty if no index matches tags
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
         return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);

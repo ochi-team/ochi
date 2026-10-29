@@ -38,4 +38,3 @@ pub fn write(self: *Sink, alloc: Allocator, result: *const QueryResult) !void {
         self.lines.appendAssumeCapacity(.{ .timestampNs = ts, .fields = try copyFields(alloc, fields.items) });
     }
 }
-
