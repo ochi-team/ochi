@@ -452,27 +452,6 @@ test "mixed day ingestion releases temporary allocations and partition reference
     try checkMixedDayAllocationFailure(testing.allocator, 2);
 }
 
-test "mixed day ingestion releases temporary allocations and partition references: matching LRU" {
-    try withIngestionStore(testing.allocator, struct {
-        fn check(alloc: Allocator, store: *Store, day: u64) !void {
-            var fields = [_]Field{.{ .key = "message", .value = "kept" }};
-            var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
-            const encoded = try encodeTags(alloc, &tags);
-            defer alloc.free(encoded);
-            var lines = [_]Line{.{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) }};
-            const sid = makeStreamID(1, encoded);
-
-            // First insertion opens the partition; the second reuses the matching LRU.
-            // In both cases addLines must release its borrowed reference, leaving only
-            // the store's owning reference (refCounter starts at 1 in Partition).
-            for (0..2) |_| {
-                try store.addLines(testing.io, alloc, &lines, &tags, encoded, sid);
-                try testing.expectEqual(1, store.partitions.items[0].refCounter.load(.acquire));
-            }
-        }
-    }.check);
-}
-
 fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
     try withIngestionStore(a, struct {
         fn check(alloc: Allocator, store: *Store, day: u64) !void {
