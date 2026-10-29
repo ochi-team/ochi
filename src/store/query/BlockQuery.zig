@@ -148,7 +148,9 @@ pub fn query(
         try self.filterByExpr(fieldsExpr, &bitset);
     }
 
-    return .{ .hits = bitset, .len = bitset.count() };
+    var res: QueryResult = .{ .hits = bitset, .len = bitset.count() };
+    try self.writeResult(&res);
+    return res;
 }
 
 /// Populates hits buffers with decoded matching rows

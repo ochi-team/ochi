@@ -743,7 +743,6 @@ test "writeResult selected decoded columns and query cache reuse" {
                 .fieldsExpr = &.{ .predicate = .{ .key = "uint16", .value = try Data.value(tmp, .uint16, 64), .op = .equal } },
             });
             defer filtered.deinit(alloc);
-            try bq.writeResult(&filtered);
             try Data.expectResult(alloc, &columns, &.{64}, &filtered);
         }
     }
@@ -758,7 +757,6 @@ test "writeResult invariant-only block" {
     var result = try bq.query(&.{ .start = 0, .end = 100 });
     defer result.deinit(testing.allocator);
 
-    try bq.writeResult(&result);
     try testing.expectEqualDeep(&[_]u64{ 1, 2 }, result.timestamps.items);
     try testing.expectEqual(0, result.columns.items.len);
 
