@@ -17,6 +17,7 @@ pub fn init(allocator: Allocator, count: usize) !*LookupPool {
     std.debug.assert(count > 0);
 
     const lookups = try allocator.alloc(LockedLookup, count);
+    errdefer allocator.free(lookups);
     for (lookups) |*l| l.* = .{ .val = .empty };
 
     const pool = try allocator.create(LookupPool);

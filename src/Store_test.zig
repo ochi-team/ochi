@@ -391,7 +391,7 @@ test "flush doesn't crash overflow when the store has more partitions than reten
 // Each invocation owns a fresh store. Keep borrowed configuration and path
 // buffers alive through the callback and teardown; input/query fixtures stay
 // inside the case that needs them.
-fn withIngestionStore(alloc: Allocator, comptime check: fn (alloc: Allocator, *Store, u64) anyerror!void) !void {
+fn withIngestionStore(alloc: Allocator, comptime check: fn (Allocator, *Store, u64) anyerror!void, comptime allocationFailures: bool) !void {
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -405,7 +405,21 @@ fn withIngestionStore(alloc: Allocator, comptime check: fn (alloc: Allocator, *S
     const layout = try Layout.make(io, path, &pathBuf);
     defer layout.partitionsDir.close(io);
     var store = try Store.init(io, alloc, &conf, runtime, layout);
-    defer store.deinit(io, alloc);
+    defer {
+        if (allocationFailures) {
+            // checkAllAllocationFailures supplies this allocator. Shutdown flushes
+            // allocate too, but only setup and ingestion are under fault injection.
+            // TODO: it requires to split deinit and flush in order to test it fully
+            const failing: *testing.FailingAllocator = @ptrCast(@alignCast(alloc.ptr));
+            const allocIndex = failing.alloc_index;
+            failing.fail_index = std.math.maxInt(usize);
+            store.deinit(io, alloc);
+            // Exclude shutdown allocations from the baseline failure-point count.
+            failing.alloc_index = allocIndex;
+        } else {
+            store.deinit(io, alloc);
+        }
+    }
 
     const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     // three days stay inside retention
@@ -413,7 +427,7 @@ fn withIngestionStore(alloc: Allocator, comptime check: fn (alloc: Allocator, *S
     try check(alloc, &store, day);
 }
 
-fn checkMixedDayAllocationFailure(a: Allocator, comptime failIndex: usize) !void {
+fn checkMixedDayAllocationFailures(a: Allocator, comptime hotPath: bool) !void {
     try withIngestionStore(a, struct {
         fn check(alloc: Allocator, store: *Store, day: u64) !void {
             var fields = [_]Field{.{ .key = "message", .value = "kept" }};
@@ -422,34 +436,35 @@ fn checkMixedDayAllocationFailure(a: Allocator, comptime failIndex: usize) !void
             defer alloc.free(encoded);
             const sid = makeStreamID(1, encoded);
             var lines = [_]Line{
-                // An expired first row bypasses the single-partition hot path. Both valid
-                // days are grouped before any partition is opened, isolating temporary OOMs
-                .{ .timestampNs = 0, .fields = .view(&fields) },
+                // An expired first row groups both days; a valid first row exercises
+                // the hot path before falling back to grouping the remaining day.
+                .{ .timestampNs = if (hotPath) day * std.time.ns_per_day else 0, .fields = .view(&fields) },
                 .{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) },
                 .{ .timestampNs = (day + 1) * std.time.ns_per_day + 2, .fields = .view(&fields) },
             };
-            var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = failIndex });
-            try testing.expectError(error.OutOfMemory, store.addLines(testing.io, failing.allocator(), &lines, &tags, encoded, sid));
+            const result = store.addLines(testing.io, alloc, &lines, &tags, encoded, sid);
+            for (store.partitions.items) |partition| {
+                try testing.expectEqual(1, partition.refCounter.load(.acquire));
+            }
+            try result;
+            try testing.expectEqual(2, store.partitions.items.len);
         }
-    }.check);
+    }.check, true);
+
+    // Report the injected failure so the checker still verifies allocation balance,
+    // timers handlers can silent OOM
+    const failing: *testing.FailingAllocator = @ptrCast(@alignCast(a.ptr));
+    if (failing.has_induced_failure) return error.OutOfMemory;
 }
 
-test "mixed day ingestion releases temporary allocations and partition references: OOM creating grouping map" {
-    // Allocation 0 is the map backing storage. Failure here owns no memory,
-    // so this is the control case for the later partial-initialization failures.
-    try checkMixedDayAllocationFailure(testing.allocator, 0);
-}
-
-test "mixed day ingestion releases temporary allocations and partition references: OOM creating first day list" {
-    // Allocation 1 is the first day's ArrayList. The map already exists.
-    // addLines has no map deinit on error, so its backing storage leaks.
-    try checkMixedDayAllocationFailure(testing.allocator, 1);
-}
-
-test "mixed day ingestion releases temporary allocations and partition references: OOM creating second day list" {
-    // Allocation 2 is the second day's ArrayList. Both the map and the first
-    // day's list now need cleanup; addLines deinitializes neither on error.
-    try checkMixedDayAllocationFailure(testing.allocator, 2);
+test "mixed day ingestion releases temporary allocations and partition references: all allocation failures" {
+    inline for (.{ false, true }) |hotPath| {
+        try testing.checkAllAllocationFailures(testing.allocator, struct {
+            fn check(alloc: Allocator) !void {
+                try checkMixedDayAllocationFailures(alloc, hotPath);
+            }
+        }.check, .{});
+    }
 }
 
 fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
@@ -478,7 +493,7 @@ fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
             // A leaked reference also prevents teardown from closing the old LRU.
             try testing.expectEqual(1, previousLru.refCounter.load(.acquire));
         }
-    }.check);
+    }.check, false);
 }
 
 test "mixed day ingestion releases temporary allocations and partition references: switching LRU to new partition" {
@@ -517,7 +532,7 @@ test "mixed day ingestion releases temporary allocations and partition reference
             // Independently of reference counts, testing.allocator also reports that
             // addLines never deinitializes the successful grouping map or its day list.
         }
-    }.check);
+    }.check, false);
 }
 
 test "mixed day ingestion releases temporary allocations and partition references: flush and query roundtrip" {
@@ -561,5 +576,5 @@ test "mixed day ingestion releases temporary allocations and partition reference
                 try testing.expectEqualDeep(@as([]const Field, &fields), @as([]const Field, line.fields.items));
             }
         }
-    }.check);
+    }.check, false);
 }
