@@ -13,6 +13,7 @@ const timedWait = @import("stds/sem.zig").timedWait;
 
 const Line = @import("store/lines.zig").Line;
 const Field = @import("store/lines.zig").Field;
+const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const validate = @import("store/lines.zig").validate;
 const maxLines = @import("store/data/Block.zig").maxLines;
 const Query = @import("query/Query.zig");
@@ -1099,17 +1100,17 @@ fn requestTableTimer(self: *DataRecorder, table: *Table) void {
     self.timerLoop.notify();
 }
 
-pub fn queryLines(self: *DataRecorder, io: Io, requestArena: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
-    var tables = try self.getTables(io, requestArena, query.start, query.end);
+pub fn queryLines(self: *DataRecorder, io: Io, alloc: Allocator, sids: []SID, query: Query) !std.ArrayList(Line) {
+    var tables = try self.getTables(io, alloc, query.start, query.end);
     defer {
         for (tables.items) |table| table.release(io);
-        tables.deinit(requestArena);
+        tables.deinit(alloc);
     }
 
     var linesDst = std.ArrayList(Line).empty;
-    errdefer linesDst.deinit(requestArena);
+    errdefer deinitLinesFull(alloc, &linesDst);
     for (tables.items) |table| {
-        try table.queryLines(io, requestArena, true, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
+        try table.queryLines(io, alloc, Query.maxLines, self.timestampsEncoders, self.decompressionPool, &linesDst, sids, query);
     }
 
     return linesDst;
