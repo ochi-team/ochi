@@ -62,6 +62,7 @@ test {
     _ = @import("store/lines_test.zig");
     _ = @import("store/query/BlockQuery_test.zig");
     _ = @import("store/query/clause_test.zig");
+    _ = @import("store/query/Sink_test.zig");
     _ = @import("store/table/catalog_test.zig");
     _ = @import("store/table/merge_test.zig");
     _ = @import("store/table/swap_test.zig");
