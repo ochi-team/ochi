@@ -216,6 +216,11 @@ pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
     self.timerLoop.join();
     self.timerLoop.deinit();
 
+    // TODO: this deinit produces "use after free",
+    // partitions are ref counters and they run background jobs,
+    // deiniting timer loop must happen after, but it requires making sure
+    // all the partitions are gone,
+    // perhaps requires tracking them via wait group in the store
     for (self.partitions.items) |partition| {
         partition.release(io);
     }
