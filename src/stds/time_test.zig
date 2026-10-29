@@ -3,6 +3,7 @@ const std = @import("std");
 pub const parseDurationNs = @import("time.zig").parseDurationNs;
 pub const ParserDurationError = @import("time.zig").ParserDurationError;
 pub const parseTimestampISO8601 = @import("time.zig").parseTimestampISO8601;
+pub const deltaMs = @import("time.zig").deltaMs;
 
 const testing = std.testing;
 
@@ -70,6 +71,14 @@ test "parseTimestampISO8601 requires complete in-range timestamps" {
             try testing.expectEqual(expected, actual.?);
         } else {
             try testing.expectEqual(null, actual);
+        }
+    }
+}
+
+test "data timer deltaMs rounds future deadlines up" {
+    for ([_]i64{ -1000, 0, 1000 }) |nowUs| {
+        for ([_]i64{ -1, 0, 1, 999, 1000, 1001 }, [_]u64{ 0, 0, 1, 1, 1, 2 }) |remainingUs, expected| {
+            try testing.expectEqual(expected, deltaMs(nowUs + remainingUs, nowUs));
         }
     }
 }

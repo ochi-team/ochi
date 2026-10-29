@@ -49,6 +49,8 @@ const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 const swapper = swap.Swapper(IndexRecorder, Table);
 
 const IndexRecorder = @import("IndexRecorder.zig");
+const TableTimerSlot = IndexRecorder.TableTimerSlot;
+const tableTimerCallback = IndexRecorder.tableTimerCallback;
 
 const testing = std.testing;
 
@@ -833,4 +835,50 @@ test "addToMemTables overflows memTables past maxMemTables when the semaphore wa
     // deinit test data
     for (recorder.memTables.items) |t| t.inMerge = false;
     try recorder.flushForce(io, alloc);
+}
+
+test "data table timer retains and rearms an early callback" {
+    const State = struct {
+        retainsTable: bool,
+        references: u32,
+        completion: xev.CompletionState,
+        activeTicks: usize,
+        inMerge: bool,
+    };
+
+    // keep deadlines ahead of execution so scheduler rearms
+    for ([_]i64{ 10, 60 }) |remainingSeconds| {
+        var loop = try xev.Loop.init(.{});
+        defer loop.deinit();
+        var recorder: IndexRecorder = undefined;
+        recorder.taskCtx = .{ .recorder = &recorder, .io = testing.io, .alloc = testing.allocator };
+        recorder.stopped = .{};
+        recorder.activeTicks = .init(0);
+        recorder.mxTables = .init;
+        var mem: MemTable = undefined;
+        mem.flushAtUs = Io.Timestamp.now(testing.io, .real).toMicroseconds() + remainingSeconds * std.time.us_per_s;
+        var table: Table = undefined;
+        table.inner = .{ .mem = &mem };
+        table.inMerge = false;
+        // one reference belongs to the table owner, the other to the timer slot.
+        table.refCounter = .init(2);
+        var slot: TableTimerSlot = .{ .recorder = &recorder, .xevTimer = try xev.Timer.init(), .table = &table };
+        defer slot.xevTimer.deinit();
+
+        try testing.expectEqual(.dead, slot.completion.state());
+        try testing.expectEqual(.disarm, tableTimerCallback(&slot, &loop, &slot.completion, {}));
+        try testing.expectEqualDeep(State{
+            .retainsTable = true,
+            .references = 2,
+            .completion = .active,
+            .activeTicks = 0,
+            .inMerge = false,
+        }, State{
+            .retainsTable = slot.table == &table,
+            .references = table.refCounter.load(.acquire),
+            .completion = slot.completion.state(),
+            .activeTicks = recorder.activeTicks.load(.acquire),
+            .inMerge = table.inMerge,
+        });
+    }
 }

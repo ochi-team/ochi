@@ -19,6 +19,8 @@ const BlockReader = @import("BlockReader.zig");
 const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
+const deltaMs = @import("../../stds/time.zig").deltaMs;
+
 const merge = @import("../table/merge.zig");
 const TableKind = merge.TableKind;
 const swap = @import("../table/swap.zig");
@@ -71,7 +73,7 @@ const MergeTask = struct {
 // fixed pool of one-shot deadline timers for mem tables: memTablesSem bounds the
 // number of live mem tables to maxMemTables, so a slot is always available.
 // The slot's address is stable for the process lifetime.
-const TableTimerSlot = struct {
+pub const TableTimerSlot = struct {
     recorder: *IndexRecorder = undefined,
     xevTimer: xev.Timer,
     completion: xev.Completion = .{},
@@ -585,12 +587,6 @@ fn waitForTicksToDrain(self: *IndexRecorder, io: Io) void {
     }
 }
 
-fn deltaMs(deadlineUs: i64, nowUs: i64) u64 {
-    if (deadlineUs <= nowUs) return 0;
-    const deltaUs: u64 = @intCast(deadlineUs - nowUs);
-    return (deltaUs - 1) / std.time.us_per_ms + 1;
-}
-
 // queues an arm request for the loop thread; safe to call from any thread.
 // retains the table for the timer's lifetime so a merge that frees it before
 // the deadline fires can't leave the timer pointing at freed memory.
@@ -648,7 +644,7 @@ fn armTableTimer(self: *IndexRecorder, loop: *xev.Loop, table: *Table) void {
     slot.xevTimer.reset(loop, &slot.completion, &slot.cancelCompletion, delayMs, TableTimerSlot, slot, tableTimerCallback);
 }
 
-fn tableTimerCallback(
+pub fn tableTimerCallback(
     ud: ?*TableTimerSlot,
     loop: *xev.Loop,
     c: *xev.Completion,
@@ -1055,29 +1051,4 @@ fn openCreatedTable(
     }
 
     return Table.open(io, alloc, tablePath, decompressionPool);
-}
-
-test "index table timer retains and rearms an early callback" {
-    const testing = std.testing;
-    for ([_]i64{ -1, 0, 1, 999, 1000, 1001 }, [_]u64{ 0, 0, 1, 1, 1, 2 }) |deadline, expected| {
-        try testing.expectEqual(expected, deltaMs(deadline, 0));
-    }
-    var loop = try xev.Loop.init(.{});
-    defer loop.deinit();
-    var recorder: IndexRecorder = undefined;
-    recorder.taskCtx = .{ .recorder = &recorder, .io = testing.io, .alloc = testing.allocator };
-    recorder.stopped = .{};
-    recorder.activeTicks = .init(0);
-    recorder.mxTables = .init;
-    var mem: MemTable = undefined;
-    mem.flushAtUs = Io.Timestamp.now(testing.io, .real).toMicroseconds() + 10 * std.time.us_per_s;
-    var table: Table = undefined;
-    table.inner = .{ .mem = &mem };
-    table.inMerge = false;
-    table.refCounter = .init(2);
-    var slot: TableTimerSlot = .{ .recorder = &recorder, .xevTimer = try xev.Timer.init(), .table = &table };
-    try testing.expectEqual(.disarm, tableTimerCallback(&slot, &loop, &slot.completion, {}));
-    try testing.expectEqual(&table, slot.table.?);
-    try testing.expectEqual(2, table.refCounter.load(.acquire));
-    try testing.expectEqual(0, recorder.activeTicks.load(.acquire));
 }

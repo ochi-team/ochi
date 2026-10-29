@@ -123,4 +123,8 @@ fn isDigits(v: []const u8) bool {
     return true;
 }
 
-const testing = std.testing;
+pub fn deltaMs(deadlineUs: i64, nowUs: i64) u64 {
+    if (deadlineUs <= nowUs) return 0;
+    const deltaUs: u64 = @intCast(deadlineUs - nowUs);
+    return (deltaUs - 1) / std.time.us_per_ms + 1;
+}
