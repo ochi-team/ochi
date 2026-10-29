@@ -8,11 +8,13 @@ const zeit = @import("zeit");
 const Layout = @import("Layout.zig");
 
 const Line = @import("store/lines.zig").Line;
+const Field = @import("store/lines.zig").Field;
 const freeFields = @import("store/lines.zig").freeFields;
 const deinitLinesFull = @import("store/lines.zig").deinitLinesFull;
 const copyFields = @import("store/lines.zig").copyFields;
 const encodeTags = @import("store/lines.zig").encodeTags;
 const makeStreamID = @import("store/lines.zig").makeStreamID;
+const Sink = @import("store/query/Sink.zig");
 
 const Partition = @import("Partition.zig");
 const filenames = @import("filenames.zig");
@@ -386,8 +388,10 @@ test "flush doesn't crash overflow when the store has more partitions than reten
     try store.flush(io, alloc);
 }
 
-test "mixed day ingestion releases temporary allocations and partition references" {
-    const alloc = testing.allocator;
+// Each invocation owns a fresh store. Keep borrowed configuration and path
+// buffers alive through the callback and teardown; input/query fixtures stay
+// inside the case that needs them.
+fn withIngestionStore(alloc: Allocator, comptime check: fn (alloc: Allocator, *Store, u64) anyerror!void) !void {
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -402,37 +406,181 @@ test "mixed day ingestion releases temporary allocations and partition reference
     defer layout.partitionsDir.close(io);
     var store = try Store.init(io, alloc, &conf, runtime, layout);
     defer store.deinit(io, alloc);
+
     const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
+    // three days stay inside retention
     const day = nowNs / std.time.ns_per_day - 3;
-    var fields = [_]Field{.{ .key = "message", .value = "kept" }};
-    var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
-    const encoded = try encodeTags(alloc, &tags);
-    defer alloc.free(encoded);
-    const sid = makeStreamID(1, encoded);
-    var lines = [_]Line{
-        .{ .timestampNs = 0, .fields = .view(&fields) },
-        .{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) },
-        .{ .timestampNs = (day + 1) * std.time.ns_per_day + 2, .fields = .view(&fields) },
-    };
-    for ([_]usize{ 0, 1, 2 }) |failIndex| {
-        var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = failIndex });
-        try testing.expectError(error.OutOfMemory, store.addLines(io, failing.allocator(), &lines, &tags, encoded, sid));
-        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-    }
-    for ([_]u64{ 2, 0, 2, 1 }) |offset| {
-        lines[0].timestampNs = (day + offset) * std.time.ns_per_day + 3;
-        try store.addLines(io, alloc, lines[0..1], &tags, encoded, sid);
-        for (store.partitions.items) |part| try testing.expectEqual(1, part.refCounter.load(.acquire));
-    }
-    try store.addLines(io, alloc, lines[1..], &tags, encoded, sid);
-    for (store.partitions.items, 0..) |part, i| {
-        try testing.expectEqual(day + i, part.day);
-        try testing.expectEqual(1, part.refCounter.load(.acquire));
-    }
-    try store.flush(io, alloc);
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const result = try store.queryLines(io, arena.allocator(), alloc, 1, .{ .start = day * std.time.ns_per_day, .end = (day + 3) * std.time.ns_per_day });
-    try testing.expectEqual(6, result.items.len);
-    for (result.items) |line| try testing.expectEqualDeep(@as([]const Field, &fields), @as([]const Field, line.fields.items));
+    try check(alloc, &store, day);
+}
+
+fn checkMixedDayAllocationFailure(a: Allocator, comptime failIndex: usize) !void {
+    try withIngestionStore(a, struct {
+        fn check(alloc: Allocator, store: *Store, day: u64) !void {
+            var fields = [_]Field{.{ .key = "message", .value = "kept" }};
+            var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
+            const encoded = try encodeTags(alloc, &tags);
+            defer alloc.free(encoded);
+            const sid = makeStreamID(1, encoded);
+            var lines = [_]Line{
+                // An expired first row bypasses the single-partition hot path. Both valid
+                // days are grouped before any partition is opened, isolating temporary OOMs
+                .{ .timestampNs = 0, .fields = .view(&fields) },
+                .{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) },
+                .{ .timestampNs = (day + 1) * std.time.ns_per_day + 2, .fields = .view(&fields) },
+            };
+            var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = failIndex });
+            try testing.expectError(error.OutOfMemory, store.addLines(testing.io, failing.allocator(), &lines, &tags, encoded, sid));
+        }
+    }.check);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: OOM creating grouping map" {
+    // Allocation 0 is the map backing storage. Failure here owns no memory,
+    // so this is the control case for the later partial-initialization failures.
+    try checkMixedDayAllocationFailure(testing.allocator, 0);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: OOM creating first day list" {
+    // Allocation 1 is the first day's ArrayList. The map already exists.
+    // addLines has no map deinit on error, so its backing storage leaks.
+    try checkMixedDayAllocationFailure(testing.allocator, 1);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: OOM creating second day list" {
+    // Allocation 2 is the second day's ArrayList. Both the map and the first
+    // day's list now need cleanup; addLines deinitializes neither on error.
+    try checkMixedDayAllocationFailure(testing.allocator, 2);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: matching LRU" {
+    try withIngestionStore(testing.allocator, struct {
+        fn check(alloc: Allocator, store: *Store, day: u64) !void {
+            var fields = [_]Field{.{ .key = "message", .value = "kept" }};
+            var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
+            const encoded = try encodeTags(alloc, &tags);
+            defer alloc.free(encoded);
+            var lines = [_]Line{.{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) }};
+            const sid = makeStreamID(1, encoded);
+
+            // First insertion opens the partition; the second reuses the matching LRU.
+            // In both cases addLines must release its borrowed reference, leaving only
+            // the store's owning reference (refCounter starts at 1 in Partition).
+            for (0..2) |_| {
+                try store.addLines(testing.io, alloc, &lines, &tags, encoded, sid);
+                try testing.expectEqual(1, store.partitions.items[0].refCounter.load(.acquire));
+            }
+        }
+    }.check);
+}
+
+fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
+    try withIngestionStore(a, struct {
+        fn check(alloc: Allocator, store: *Store, day: u64) !void {
+            const io = testing.io;
+            // Pre-open only the destination for the reuse case. Direct getPartition
+            // avoids getPartitionOrLru, so this setup introduces no leaked LRU borrow.
+            if (existingTarget) {
+                const target = try store.getPartition(io, alloc, @intCast(day));
+                target.release(io);
+            }
+            const previousLru = try store.getPartition(io, alloc, @intCast(day + 2));
+            previousLru.release(io);
+
+            var fields = [_]Field{.{ .key = "message", .value = "kept" }};
+            var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
+            const encoded = try encodeTags(alloc, &tags);
+            defer alloc.free(encoded);
+            var lines = [_]Line{.{ .timestampNs = day * std.time.ns_per_day + 3, .fields = .view(&fields) }};
+            try store.addLines(io, alloc, &lines, &tags, encoded, makeStreamID(1, encoded));
+
+            // getPartitionOrLru retains the old LRU before comparing days, but on
+            // a miss never releases it. Check that partition directly, isolating
+            // this borrow from the destination's ownership and any later switches.
+            // A leaked reference also prevents teardown from closing the old LRU.
+            try testing.expectEqual(1, previousLru.refCounter.load(.acquire));
+        }
+    }.check);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: switching LRU to new partition" {
+    try checkLruSwitch(testing.allocator, false);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: switching LRU to existing partition" {
+    try checkLruSwitch(testing.allocator, true);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: mixed batch partition ownership" {
+    try withIngestionStore(testing.allocator, struct {
+        fn check(alloc: Allocator, store: *Store, day: u64) !void {
+            var fields = [_]Field{.{ .key = "message", .value = "kept" }};
+            var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
+            const encoded = try encodeTags(alloc, &tags);
+            defer alloc.free(encoded);
+            var lines = [_]Line{
+                .{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) },
+                .{ .timestampNs = (day + 1) * std.time.ns_per_day + 2, .fields = .view(&fields) },
+            };
+
+            // The first row takes the hot path, the second uses the grouping map.
+            // A fresh store separates ownership inside this call from earlier LRU switches.
+            try store.addLines(testing.io, alloc, &lines, &tags, encoded, makeStreamID(1, encoded));
+            const actual = store.partitions.items;
+            try testing.expectEqual(2, actual.len);
+            const Snapshot = struct { days: [2]u64, refs: [2]u32 };
+            try testing.expectEqualDeep(Snapshot{
+                .days = .{ day, day + 1 },
+                .refs = .{ 1, 1 },
+            }, Snapshot{
+                .days = .{ actual[0].day, actual[1].day },
+                .refs = .{ actual[0].refCounter.load(.acquire), actual[1].refCounter.load(.acquire) },
+            });
+            // Independently of reference counts, testing.allocator also reports that
+            // addLines never deinitializes the successful grouping map or its day list.
+        }
+    }.check);
+}
+
+test "mixed day ingestion releases temporary allocations and partition references: flush and query roundtrip" {
+    try withIngestionStore(testing.allocator, struct {
+        fn check(alloc: Allocator, store: *Store, day: u64) !void {
+            const io = testing.io;
+
+            var fields = [_]Field{.{ .key = "message", .value = "kept" }};
+            var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
+            const encoded = try encodeTags(alloc, &tags);
+            defer alloc.free(encoded);
+            const sid = makeStreamID(1, encoded);
+            for ([_]u64{ 2, 0, 2, 1 }) |offset| {
+                var lines = [_]Line{.{ .timestampNs = (day + offset) * std.time.ns_per_day + 3, .fields = .view(&fields) }};
+                try store.addLines(io, alloc, &lines, &tags, encoded, sid);
+            }
+            var mixedLines = [_]Line{
+                .{ .timestampNs = day * std.time.ns_per_day + 1, .fields = .view(&fields) },
+                .{ .timestampNs = (day + 1) * std.time.ns_per_day + 2, .fields = .view(&fields) },
+            };
+            try store.addLines(io, alloc, &mixedLines, &tags, encoded, sid);
+
+            // Do not gate the data check on refCounter assertions: ownership failures
+            // above must not hide whether all four single rows and two mixed rows survive.
+            try store.flush(io, alloc);
+            var arena = std.heap.ArenaAllocator.init(alloc);
+            defer arena.deinit();
+            var sink: Sink = .{};
+            // Query output belongs to the request arena, not its backing allocator.
+            defer sink.deinit(arena.allocator());
+            try store.queryLines(
+                io,
+                arena.allocator(),
+                alloc,
+                1,
+                .{ .start = day * std.time.ns_per_day, .end = (day + 3) * std.time.ns_per_day },
+                &sink,
+            );
+            try testing.expectEqual(6, sink.lines.items.len);
+            for (sink.lines.items) |line| {
+                try testing.expectEqualDeep(@as([]const Field, &fields), @as([]const Field, line.fields.items));
+            }
+        }
+    }.check);
 }

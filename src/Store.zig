@@ -650,8 +650,10 @@ pub fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partitio
 
 fn getPartitionOrLru(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     if (self.getLruPartition()) |part| {
-        if (part.day == day)
+        if (part.day == day) {
             return part;
+        }
+
         part.release(io);
     }
 
@@ -691,8 +693,8 @@ fn openPartition(
     self.pathsBuf.appendAssumeCapacity(path);
     self.pathsBuf.appendAssumeCapacity(indexPath);
     self.pathsBuf.appendAssumeCapacity(dataPath);
-    const insertAt = std.sort.lowerBound(*Partition, self.partitions.items, day, orderPartitions);
-    self.partitions.insertAssumeCapacity(insertAt, partition);
+    self.partitions.appendAssumeCapacity(partition);
+    std.sort.pdq(*Partition, self.partitions.items, {}, Partition.lessThan);
 
     return partition;
 }
