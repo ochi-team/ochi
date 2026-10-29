@@ -18,6 +18,9 @@ const encoding = @import("encoding");
 const Decoder = encoding.Decoder;
 
 const QueryResult = @import("QueryResult.zig");
+const Sink = @import("Sink.zig");
+const Logger = @import("logging");
+const msgKey = @import("../lines.zig").msgKey;
 const ValuesDecoder = @import("../data/ValuesDecoder.zig");
 const clause = @import("clause.zig");
 
@@ -130,6 +133,36 @@ pub fn deinit(self: *BlockQuery) void {
     self.alloc.destroy(self.cshIndexOffsets);
     if (self.cshBlock) |b| self.alloc.free(b);
     self.* = undefined;
+}
+
+pub fn queryBlock(
+    table: *const Table,
+    io: Io,
+    alloc: Allocator,
+    timestampsEncoders: *TimestampsEncoderPool,
+    decompressionPool: *DecompressionPool,
+    sink: *Sink,
+    blockHeader: BlockHeader,
+    q: Query,
+) !void {
+    errdefer |err| {
+        Logger.log(.err, "failed to query a block", .{
+            .err = err,
+            .table = table.path,
+            .columnsHeaderOffset = blockHeader.columnsHeaderOffset,
+            .columnsHeaderSize = blockHeader.columnsHeaderSize,
+            .columnsHeaderIndexOffset = blockHeader.columnsHeaderIndexOffset,
+            .columnsHeaderIndexSize = blockHeader.columnsHeaderIndexSize,
+            .timestampsOffset = blockHeader.timestampsHeader.offset,
+            .timestampsSize = blockHeader.timestampsHeader.size,
+        });
+    }
+
+    var bq = try init(io, alloc, table, &blockHeader, decompressionPool, timestampsEncoders);
+    defer bq.deinit();
+    var result = try bq.query(&q);
+    defer result.deinit(alloc);
+    try sink.write(alloc, &result);
 }
 
 pub fn query(
@@ -637,7 +670,8 @@ fn matchBloomFilterAnd(
     return true;
 }
 
-fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) Error![]const u8 {
+fn getInvariantColumnValue(self: *BlockQuery, requestedKey: []const u8) Error![]const u8 {
+    const key = self.columnKey(requestedKey);
     const id = self.table.columnIDGen.keyIDs.get(key) orelse return "";
     for (self.invariantColumnCache.items) |c| {
         if (std.mem.eql(u8, c.key, key)) return c.values[0];
@@ -662,7 +696,14 @@ fn getInvariantColumnValue(self: *BlockQuery, key: []const u8) Error![]const u8 
     return "";
 }
 
-fn getColumnHeader(self: *BlockQuery, key: []const u8) Error!?ColumnHeader {
+/// message fields are stored under an empty key but exposed as _msg by the API
+fn columnKey(self: *const BlockQuery, key: []const u8) []const u8 {
+    if (std.mem.eql(u8, key, msgKey) and !self.table.columnIDGen.keyIDs.contains(key)) return "";
+    return key;
+}
+
+fn getColumnHeader(self: *BlockQuery, requestedKey: []const u8) Error!?ColumnHeader {
+    const key = self.columnKey(requestedKey);
     const id = self.table.columnIDGen.keyIDs.get(key) orelse return null;
 
     for (self.columnHeaderCache.items) |ch| {

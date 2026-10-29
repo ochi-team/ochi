@@ -15,6 +15,7 @@ const lines = @import("../lines.zig");
 const Field = lines.Field;
 const Line = lines.Line;
 const Column = @import("../../store/data/Column.zig");
+const Sink = @import("Sink.zig");
 
 const ColumnType = @import("../../store/data/ColumnHeader.zig").ColumnType;
 
@@ -214,9 +215,9 @@ test "query time range" {
         decoded: bool = true,
     };
     const cases = [_]Case{
-        // Fully contained, including exact block boundaries: no timestamps read.
-        .{ .start = 0, .end = std.math.maxInt(u64), .expected = &.{ 0, 1, 2, 3, 4 }, .decoded = false },
-        .{ .start = base + 1, .end = base + 789, .expected = &.{ 0, 1, 2, 3, 4 }, .decoded = false },
+        // Fully contained ranges still decode timestamps to materialize the result.
+        .{ .start = 0, .end = std.math.maxInt(u64), .expected = &.{ 0, 1, 2, 3, 4 } },
+        .{ .start = base + 1, .end = base + 789, .expected = &.{ 0, 1, 2, 3, 4 } },
         .{ .start = base - 10, .end = base + 1, .expected = &.{0} },
         .{ .start = base - 10, .end = base + 10, .expected = &.{ 0, 1 } },
         .{ .start = base + 1, .end = base + 1, .expected = &.{0} },
@@ -268,8 +269,70 @@ test "query time range" {
 
         for (case.expected) |idx| expected.set(idx);
         try testing.expect(expected.eql(result.hits));
-        try testing.expectEqual(null, bq.timestampsCache);
+        try testing.expectEqual(case.expected.len != 0, bq.timestampsCache != null);
+        if (case.expected.len != 0) try testing.expectEqualSlices(u64, &.{base}, bq.timestampsCache.?);
     }
+}
+
+test "queryBlock appends owned filtered rows to sink" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
+
+    const ExpectedLine = struct { timestampNs: u64, fields: []const Field };
+    const f = struct {
+        fn f(a: Allocator, testIo: Io, dst: *Sink, start: u64, end: u64, key: []const u8, value: []const u8, expected: []const ExpectedLine) !void {
+            {
+                var fx = try Fixture.init(testIo, a, &.{
+                    .{ .name = "", .values = &.{ "accepted", "queued", "completed" } },
+                    .{ .name = "app", .values = &.{ "worker", "worker", "worker" } },
+                    .{ .name = "level", .values = &.{ "info", "", "warn" } },
+                }, null);
+                defer fx.deinit(testIo, a);
+
+                const expr: FilterExpression = .{ .predicate = .{ .key = key, .value = value, .op = .equal } };
+                try BlockQuery.queryBlock(fx.table, testIo, a, fx.timestampsEncoders, fx.decompressionPool, dst, fx.blockHeader, .{
+                    .start = start,
+                    .end = end,
+                    .fieldsExpr = &expr,
+                });
+            }
+
+            // Results must survive both the block query and the source table.
+            try testing.expectEqual(expected.len, dst.lines.items.len);
+            for (expected, dst.lines.items) |want, actual| {
+                try testing.expectEqualDeep(want, ExpectedLine{ .timestampNs = actual.timestampNs, .fields = actual.fields.items });
+            }
+        }
+    }.f;
+    const expected = [_]ExpectedLine{
+        .{ .timestampNs = 1, .fields = &.{
+            .{ .key = "app", .value = "worker" },
+            .{ .key = "", .value = "accepted" },
+            .{ .key = "level", .value = "info" },
+        } },
+        .{ .timestampNs = 2, .fields = &.{
+            .{ .key = "app", .value = "worker" },
+            .{ .key = "", .value = "queued" },
+        } },
+        .{ .timestampNs = 3, .fields = &.{
+            .{ .key = "app", .value = "worker" },
+            .{ .key = "", .value = "completed" },
+            .{ .key = "level", .value = "warn" },
+        } },
+    };
+    // Each call checks the entire accumulated sink, not just the new matches.
+    // adds first to the sink to match "accepted"
+    try f(alloc, io, &sink, 0, 3, "_msg", "accepted", expected[0..1]);
+    // adds second to match only one "worker"
+    try f(alloc, io, &sink, 2, 2, "app", "worker", expected[0..2]);
+    // adds the hird "warn"
+    try f(alloc, io, &sink, 0, 3, "level", "warn", &expected);
+    // full time range, but fatal doesn't exist
+    try f(alloc, io, &sink, 0, 3, "level", "fatal", &expected);
+    // time range is out of set
+    try f(alloc, io, &sink, 4, 5, "app", "worker", &expected);
 }
 
 test "query time range with fields and cache reuse" {

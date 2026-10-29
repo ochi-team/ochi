@@ -14,6 +14,7 @@ const MemBlock = @import("store/index/MemBlock.zig");
 
 const Cache = @import("stds/Cache.zig").Cache;
 const Line = @import("store/lines.zig").Line;
+const Sink = @import("store/query/Sink.zig");
 const SID = @import("store/lines.zig").SID;
 const Field = @import("store/lines.zig").Field;
 const Query = @import("query/Query.zig");
@@ -295,7 +296,8 @@ pub fn queryLines(
     query: Query,
     memBlocksCache: *Cache(*MemBlock),
     indexQueryCache: *Cache(*QueryIndexCacheValue),
-) !std.ArrayList(Line) {
+    sink: *Sink,
+) !void {
     var sidsRes: QuerySIDsResult = sids: {
         // if streamIDs are passed in a query we don't need to query them,
         // just sort and join with tenant
@@ -323,7 +325,7 @@ pub fn queryLines(
     };
     defer sidsRes.sids.deinit(requestArena);
 
-    return self.data.queryLines(io, requestArena, sidsRes.sids.items, query);
+    return self.data.queryLines(io, requestArena, sidsRes.sids.items, query, sink);
 }
 
 pub fn queryStreamIDs(

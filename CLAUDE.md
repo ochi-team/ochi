@@ -13,38 +13,20 @@ Default port is 9014
 - **Naming**: PascalCase for types/structs, camelCase for variables/fields and functions, but if a function returns a type - PascalCase
 - **Comments**: TODO comments for future work, doc comments (///) for public API
 
-### Current zig version
+## Imports
 
-@intCast, @bitCast take a single argument:
-
-```zig
-var a: u16 = 0xabcd; // runtime-known
-_ = &a;
-const b: u8 = @intCast(a);
-_ = b;
-```
-
-std.ArrayList:
+Never use in-place imports:
 
 ```zig
-var list = try ArrayList(i8).initCapacity(a, 200); // OR ArrayList(i8).empty
-defer list.deinit(a);
-```
-
-Use slices indexing and length properties instead of pointer arithmetic:
-
-```zig
-const arr: [5]u8 = [_]u8{1, 2, 3, 4, 5};
-// GOOD
-for (arr) |value, i| {
-    try testing.expect(value == arr[index]);
-    arr[i] += 1;
-}
 // BAD
-for (arr) |*ptr, index| {
-    try testing.expect(*ptr == arr[index]);
-    ptr.* += 1;
-}
+var sink: @import("../store/query/Sink.zig") = .{};
+defer sink.deinit(a);
+
+// GOOD
+const Sink = @import("../store/query/Sink.zig");
+...
+var sink: Sink = .{};
+defer sink.deinit(a);
 ```
 
 ### Test

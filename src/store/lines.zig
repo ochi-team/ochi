@@ -418,5 +418,3 @@ pub fn lineLatestFirst(_: void, a: Line, b: Line) bool {
 pub fn fieldLessThan(_: void, one: Field, another: Field) bool {
     return std.mem.lessThan(u8, one.key, another.key);
 }
-
-const testing = std.testing;

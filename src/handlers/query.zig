@@ -9,6 +9,7 @@ const timedWait = @import("../stds/sem.zig").timedWait;
 const Line = @import("../store/lines.zig").Line;
 const putJsonArrayLines = @import("../store/lines.zig").putJsonArrayLines;
 const Query = @import("../query/Query.zig");
+const Sink = @import("../store/query/Sink.zig");
 
 const Loql = @import("../query/Loql.zig");
 const maxQueryBodyLength = Loql.maxQueryBodyLength;
@@ -80,11 +81,13 @@ pub fn queryHandler(ctx: *AppContext, r: *httpz.Request, res: *httpz.Response) !
         .query = body,
     });
 
-    const lines = ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query) catch {
+    var sink: Sink = .{};
+    defer sink.deinit(res.arena);
+    ctx.store.queryLines(ctx.io, res.arena, ctx.allocator, ctx.request.tenantID, query, &sink) catch {
         return ApiError.FailedToProccess;
     };
 
-    writeResponse(res, lines.items) catch return ApiError.FailedToWriteResponse;
+    writeResponse(res, sink.lines.items) catch return ApiError.FailedToWriteResponse;
 
     res.status = 200;
 }

@@ -14,7 +14,6 @@ const DecompressionPool = @import("../compression/DecompressionPool.zig");
 const Line = @import("../lines.zig").Line;
 const SID = @import("../lines.zig").SID;
 const freeFields = @import("../lines.zig").freeFields;
-const deinitLinesFull = @import("../lines.zig").deinitLinesFull;
 const Query = @import("../../query/Query.zig");
 
 const testing = std.testing;
@@ -26,6 +25,8 @@ const BlockWriter = @import("BlockWriter.zig");
 const TableHeader = @import("TableHeader.zig");
 const BlockHeader = @import("BlockHeader.zig");
 const BlockQuery = @import("../query/BlockQuery.zig");
+
+const Sink = @import("../query/Sink.zig");
 
 const Table = @import("Table.zig");
 
@@ -121,13 +122,6 @@ test "release fromMem does not affect filesystem path" {
 }
 
 const Field = @import("../lines.zig").Field;
-
-fn deinitQueriedLines(alloc: Allocator, lines: *std.ArrayList(Line)) void {
-    for (lines.items) |line| {
-        freeFields(alloc, line.fields);
-    }
-    lines.deinit(alloc);
-}
 
 test "fromMem creates proper table from mem table with populated data" {
     const alloc = testing.allocator;
@@ -544,8 +538,9 @@ test "queryLines" {
         },
     };
 
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
+    const queried = &sink.lines;
 
     for (cases) |case| {
         for (queried.items) |line| {
@@ -556,7 +551,7 @@ test "queryLines" {
         const requested = try alloc.dupe(SID, case.requestedSIDs);
         defer alloc.free(requested);
 
-        try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested, case.query);
+        try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &sink, requested, case.query);
         try testing.expectEqual(case.expected.len, queried.items.len);
 
         for (case.expected, 0..) |expected, i| {
@@ -609,12 +604,13 @@ test "queryLinesAllBlocks reads later index blocks using size as length" {
     try testing.expect(table.indexBlockHeaders.len > 1);
     try testing.expect(table.indexBlockHeaders[1].offset > table.indexBlockHeaders[1].size);
 
-    var queried = try std.ArrayList(Line).initCapacity(alloc, streamsCount);
-    defer deinitQueriedLines(alloc, &queried);
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
+    const queried = &sink.lines;
     const infoExpr: Query.FilterExpression = .{ .predicate = .{ .key = "level", .value = "info", .op = .equal } };
     const query = Query{ .start = 1, .end = streamsCount, .tagsExpr = null, .fieldsExpr = &infoExpr };
 
-    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+    try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &sink, &.{}, query);
     try testing.expectEqual(streamsCount, queried.items.len);
     try testing.expectEqual(1, queried.items[0].timestampNs);
     try testing.expectEqual(streamsCount, queried.items[queried.items.len - 1].timestampNs);
@@ -655,14 +651,14 @@ test "queryLinesReproducerWhenMixedEmptyKeyAndNonEmptyKey" {
     const table = try Table.fromMem(io, alloc, memTable, decompressionPool);
     defer table.release(io);
 
-    var queried = std.ArrayList(Line).empty;
-    defer deinitLinesFull(alloc, &queried);
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = null };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &sink, requested[0..], query);
 }
 
 test "queryLines reads disk table fields after open" {
@@ -712,15 +708,16 @@ test "queryLines reads disk table fields after open" {
     const table = try Table.open(io, alloc, tablePathOwned, decompressionPool);
     defer table.release(io);
 
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
+    const queried = &sink.lines;
 
     const noTagsExpr: Query.FilterExpression = .{ .predicate = .{ .key = "", .value = "", .op = .equal } };
     const statusExpr: Query.FilterExpression = .{ .predicate = .{ .key = "status", .value = "200", .op = .equal } };
     const query = Query{ .start = 0, .end = 10, .tagsExpr = &noTagsExpr, .fieldsExpr = &statusExpr };
     var requested = [_]SID{sid};
 
-    try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, requested[0..], query);
+    try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &sink, requested[0..], query);
     try testing.expectEqual(@as(usize, 1), queried.items.len);
     try testing.expectEqual(@as(u64, 1), queried.items[0].timestampNs);
     try testing.expectEqualSlices(u8, "id", queried.items[0].fields.items[1].key);
@@ -789,8 +786,9 @@ test "disk table with multiple bloom shards resolves columns to their shards" {
     try testing.expectEqual([_]bool{true} ** keys.len, shardsSeen);
 
     // Table.queryLines path reads the blooms via TableReader
-    var queried = std.ArrayList(Line).empty;
-    defer deinitQueriedLines(alloc, &queried);
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
+    const queried = &sink.lines;
     for (keys, 0..) |key, k| {
         for ([_]usize{ 0, 4, 8 }) |row| {
             for (queried.items) |line| freeFields(alloc, line.fields);
@@ -798,7 +796,7 @@ test "disk table with multiple bloom shards resolves columns to their shards" {
 
             const expr: Query.FilterExpression = .{ .predicate = .{ .key = key, .value = fields[row][k].value, .op = .equal } };
             const query = Query{ .start = 0, .end = linesCount, .tagsExpr = null, .fieldsExpr = &expr };
-            try table.queryLines(io, alloc, false, timestampsEncoders, decompressionPool, &queried, &.{}, query);
+            try table.queryLines(io, alloc, timestampsEncoders, decompressionPool, &sink, &.{}, query);
             try testing.expectEqual(1, queried.items.len);
             try testing.expectEqual(row + 1, queried.items[0].timestampNs);
             for (fields[row], queried.items[0].fields.items) |expected, actual| {

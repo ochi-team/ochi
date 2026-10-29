@@ -12,27 +12,16 @@ const IndexBlockHeader = @import("../data/IndexBlockHeader.zig");
 const BlockHeader = @import("../data/BlockHeader.zig");
 const TableHeader = @import("../data/TableHeader.zig");
 const ColumnIDGen = @import("../data/ColumnIDGen.zig");
-const BlockData = @import("../data/BlockData.zig").BlockData;
-const Block = @import("../data/Block.zig");
-const Unpacker = @import("../data/Unpacker.zig").Unpacker;
-const ValuesDecoder = @import("../data/ValuesDecoder.zig");
-const TableReader = @import("../data/TableReader.zig");
 const TimestampsEncoder = @import("../data/TimestampsEncoder.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
-const Line = @import("../lines.zig").Line;
-const Field = @import("../lines.zig").Field;
-const msgKey = @import("../lines.zig").msgKey;
 const SID = @import("../lines.zig").SID;
-const copyFields = @import("../lines.zig").copyFields;
-const freeFields = @import("../lines.zig").freeFields;
 const Query = @import("../../query/Query.zig");
 
 const catalog = @import("../table/catalog.zig");
 
 const BlockQuery = @import("../query/BlockQuery.zig");
 const Sink = @import("../query/Sink.zig");
-const QueryResult = @import("../query/QueryResult.zig");
 
 const InnerTag = enum { mem, disk };
 const Inner = union(InnerTag) {
@@ -487,17 +476,15 @@ pub fn queryLines(
     self: *Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
-    dst: *std.ArrayList(Line),
+    sink: *Sink,
     sids: []SID,
     query: Query,
-    sink: *Sink,
 ) !void {
     // sids could be empty if no index matches tags
     if (sids.len == 0 and query.tagsExpr == null and query.streamIDs == null) {
-        return self.queryLinesAllBlocks(io, alloc, leakyUnpacking, timestampsEncoders, decompressionPool, dst, query);
+        return self.queryLinesAllBlocks(io, alloc, timestampsEncoders, decompressionPool, sink, query);
     }
 
     var indexBlockHeaders = self.indexBlockHeaders;
@@ -558,13 +545,13 @@ pub fn queryLines(
                     continue;
                 }
 
-                try self.queryBlock(
+                try BlockQuery.queryBlock(
+                    self,
                     io,
                     alloc,
-                    leakyUnpacking,
                     timestampsEncoders,
                     decompressionPool,
-                    dst,
+                    sink,
                     blockHeader,
                     query,
                 );
@@ -591,10 +578,9 @@ fn queryLinesAllBlocks(
     self: *Table,
     io: Io,
     alloc: Allocator,
-    comptime leakyUnpacking: bool,
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     decompressionPool: *DecompressionPool,
-    dst: *std.ArrayList(Line),
+    sink: *Sink,
     query: Query,
 ) !void {
     for (self.indexBlockHeaders) |indexBlockHeader| {
@@ -618,131 +604,18 @@ fn queryLinesAllBlocks(
                 continue;
             }
 
-            // var bq = BlockQuery.init(io, alloc, self, &blockHeader);
-            // defer bq.deinit();
-            //
-            // const res = try bq.query(&query) orelse continue;
-            // _ = res;
-
-            try self.queryBlock(
+            try BlockQuery.queryBlock(
+                self,
                 io,
                 alloc,
-                leakyUnpacking,
                 timestampsEncoders,
                 decompressionPool,
-                dst,
+                sink,
                 blockHeader,
                 query,
             );
         }
     }
-}
-
-fn queryBlock(
-    self: *const Table,
-    io: Io,
-    alloc: Allocator,
-    comptime leakyUnpacking: bool,
-    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
-    decompressionPool: *DecompressionPool,
-    dst: *std.ArrayList(Line),
-    blockHeader: BlockHeader,
-    query: Query,
-) !void {
-    errdefer |err| {
-        Logger.log(.err, "failed to query a block", .{
-            .err = err,
-            .table = self.path,
-            .columnsHeaderOffset = blockHeader.columnsHeaderOffset,
-            .columnsHeaderSize = blockHeader.columnsHeaderSize,
-            .columnsHeaderIndexOffset = blockHeader.columnsHeaderIndexOffset,
-            .columnsHeaderIndexSize = blockHeader.columnsHeaderIndexSize,
-            .timestampsOffset = blockHeader.timestampsHeader.offset,
-            .timestampsSize = blockHeader.timestampsHeader.size,
-        });
-    }
-
-    const tableReader: *TableReader = try .init(io, alloc, self, decompressionPool);
-    defer tableReader.deinit(alloc);
-
-    var blockData = BlockData.initEmpty();
-    try blockData.readFrom(io, alloc, &blockHeader, tableReader);
-    defer blockData.deinit(alloc);
-
-    // rely on request arena
-    var unpacker = Unpacker(leakyUnpacking).init(decompressionPool);
-    defer unpacker.deinit(alloc);
-    var decoder: ValuesDecoder = .{};
-    defer decoder.deinit(alloc);
-
-    var block = try Block.initFromData(io, alloc, timestampsEncoders, &blockData, leakyUnpacking, &unpacker, &decoder);
-    defer block.deinit(alloc);
-
-    var i = dst.items.len;
-    try block.gatherLines(alloc, dst);
-    var converted: usize = 0;
-    errdefer {
-        for (dst.items[i .. i + converted]) |line| freeFields(alloc, line.fields);
-        for (dst.items[i + converted ..]) |line| alloc.free(line.fields.items);
-        dst.shrinkRetainingCapacity(i);
-    }
-    for (dst.items[i..]) |*line| {
-        const gatheredFields = line.fields;
-        const copiedFields = try copyFields(alloc, gatheredFields.items);
-        alloc.free(gatheredFields.items);
-        line.fields = copiedFields;
-        converted += 1;
-    }
-
-    std.debug.assert(dst.items.len > i);
-    while (i < dst.items.len) {
-        const line = dst.items[i];
-
-        if (line.timestampNs < query.start or line.timestampNs > query.end) {
-            const removed = dst.swapRemove(i);
-            freeFields(alloc, removed.fields);
-            continue;
-        }
-        if (query.fieldsExpr) |expr| {
-            if (!try matchesFilterExpression(line.fields.items, expr)) {
-                const removed = dst.swapRemove(i);
-                freeFields(alloc, removed.fields);
-                continue;
-            }
-        }
-
-        i += 1;
-    }
-}
-
-fn matchesFilterExpression(fields: []const Field, expr: *const Query.FilterExpression) !bool {
-    return switch (expr.*) {
-        .predicate => |p| matchesPredicate(fields, p),
-        .andOp => |ops| (try matchesFilterExpression(fields, ops[0])) and (try matchesFilterExpression(fields, ops[1])),
-        .orOp => |ops| (try matchesFilterExpression(fields, ops[0])) or (try matchesFilterExpression(fields, ops[1])),
-    };
-}
-
-fn matchesPredicate(fields: []const Field, p: Query.FilterPredicate) !bool {
-    for (fields) |f| {
-        // TODO: this is a demo of a broken ingestion design;
-        // initially ingestion was designed around Loki API,
-        // it has a <log line> and structured fields,
-        // as a result <lig line> is threated as a special empty key: "",
-        // to serve the the data as a json we made up its key as msgKey,
-        // but then to filter and query such keys they clients query it as msgKey
-        // and now we have to mutate it in place,
-        if (std.mem.eql(u8, f.key, p.key) or (f.key.len == 0 and std.mem.eql(u8, msgKey, p.key))) {
-            const res = switch (p.op) {
-                .equal => std.mem.eql(u8, f.value, p.value),
-                .notEqual => !std.mem.eql(u8, f.value, p.value),
-                else => return error.QueryMatchOperationNotImplemented,
-            };
-            return res;
-        }
-    }
-
-    return false;
 }
 
 fn indexBlockHeaderSidLowerBoundOrder(ctx: SID, self: IndexBlockHeader) std.math.Order {

@@ -11,6 +11,7 @@ const Logger = @import("logging");
 
 const testing = std.testing;
 
+const Sink = @import("../store/query/Sink.zig");
 const encodeTags = @import("../store/lines.zig").encodeTags;
 const makeStreamID = @import("../store/lines.zig").makeStreamID;
 const Query = @import("../query/Query.zig");
@@ -108,8 +109,10 @@ test "large body is processed and appears in the query response" {
     try accumulatorPool.flushAll(io);
     try store.flush(io, alloc);
 
-    var lines = try ctx.store.queryLines(io, a, alloc, ctx.request.tenantID, query);
-    defer lines.deinit(a);
+    var sink: Sink = .{};
+    defer sink.deinit(a);
+    try ctx.store.queryLines(io, a, alloc, ctx.request.tenantID, query, &sink);
+    const lines = sink.lines;
 
     try testing.expectEqual(lineCount, lines.items.len);
     for (lines.items) |line| {
