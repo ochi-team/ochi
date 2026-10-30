@@ -29,6 +29,12 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
 
     const cases = [_]Case{
         .{
+            .sizes = &.{ 1, 1, 1, 1, 1, 1, 1, 1, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 },
+            .bound = .{ .lower = 8, .upper = 16 },
+            .expected = &.{ 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 },
+            .expectedLeft = &.{ 1, 1, 1, 1, 1, 1, 1, 1 },
+        },
+        .{
             .sizes = &.{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 },
             .bound = .{ .lower = 0, .upper = 13 },
             .expected = &.{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164 },
@@ -271,3 +277,4 @@ test "getDestinationTableKind rules" {
 
 // TODO: do fuzz with bound.upper - bound.lower == (j + i) - j == i validation
 // to test the output limits
+
