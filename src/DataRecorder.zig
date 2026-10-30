@@ -648,6 +648,12 @@ pub fn tableTimerCallback(
     if (shouldFlush) table.inMerge = true;
     self.mxTables.unlock(io);
 
+    defer {
+        self.mxTables.lockUncancelable(io);
+        table.inMerge = false;
+        self.mxTables.unlock(io);
+    }
+
     if (shouldFlush) {
         var tables = [_]*Table{table};
         self.mergeTables(io, self.taskCtx.alloc, tables[0..], true, null) catch |err| {
@@ -683,23 +689,26 @@ fn flushMemTables(self: *DataRecorder, io: Io, allocator: Allocator, force: bool
     try self.flushMemTablesInChunks(io, allocator, tables);
 }
 
+// TODO: do we really need it?
+// why not to flush them all at once via mergeTables
 fn flushMemTablesInChunks(self: *DataRecorder, io: Io, alloc: Allocator, toFlush: std.ArrayList(*Table)) !void {
     if (toFlush.items.len == 0) return;
 
     var tail = toFlush.items[0..];
-    errdefer {
+    defer {
         self.mxTables.lockUncancelable(io);
-        // The current chunk handles its own flags; completed sources may already be freed.
-        for (tail) |table| table.inMerge = false;
+        for (toFlush.items) |table| table.inMerge = false;
         self.mxTables.unlock(io);
     }
+
     while (tail.len > 0) {
         const n = merger.selectTablesToMerge(tail);
         std.debug.assert(n > 0);
 
-        const chunk = tail[0..n];
+        // TODO: attempt to run it in parallel, add a semaphore then
+        try self.mergeTables(io, alloc, tail[0..n], true, null);
+
         tail = tail[n..];
-        try self.mergeTables(io, alloc, chunk, true, null);
     }
 }
 
@@ -768,7 +777,7 @@ pub fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataSha
                                 try self.flushMemTable(io, alloc, memTable.inner.mem, &[_]*Table{}, destinationTablePath, .disk);
                                 memTable.release(io);
                             },
-                            error.Canceled => return e,
+                            error.Canceled => return err,
                         }
 
                         // second timeout, we flushed the table to the disk, early return
@@ -874,13 +883,27 @@ pub fn tablesMerger(
             &tablesToMergeBuf,
             maxDiskTableSize,
         );
-        const shouldFlush = window == null and tables == &self.memTables and self.memTables.items.len >= maxMemTables;
+        // skewed sizes can prevent leveled selection indefinitely,
+        // only memory tables need a forced flush to release ingestion slots at capacity
+        if (window == null and tables == &self.memTables and tables.items.len >= maxMemTables) {
+            var toFlush = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
+            for (tables.items) |table| {
+                if (!table.inMerge) {
+                    table.inMerge = true;
+                    toFlush.appendAssumeCapacity(table);
+                }
+            }
+            self.mxTables.unlock(io);
+            if (toFlush.items.len == 0) return;
+
+            sem.waitUncancelable(io);
+            defer sem.post(io);
+            try self.flushMemTablesInChunks(io, alloc, toFlush);
+            continue;
+        }
         self.mxTables.unlock(io);
 
-        const filteredTablesToMerge = window orelse {
-            if (shouldFlush) try self.flushMemTables(io, alloc, true);
-            return;
-        };
+        const filteredTablesToMerge = window orelse return;
         if (filteredTablesToMerge.len == 0) return;
 
         sem.waitUncancelable(io);
@@ -910,15 +933,6 @@ pub fn mergeTables(
     std.debug.assert(tables.len > 0);
     for (tables) |table| std.debug.assert(table.inMerge);
 
-    var swapped = false;
-    defer {
-        if (!swapped) {
-            self.mxTables.lockUncancelable(io);
-            for (tables) |table| table.inMerge = false;
-            self.mxTables.unlock(io);
-        }
-    }
-
     const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(self.runtime.cacheSize);
     const tableKind = merger.getDestinationTableKind(tables, force, maxInmemoryTableSize);
 
@@ -932,7 +946,6 @@ pub fn mergeTables(
     if (force and tables.len == 1 and tables[0].inner == .mem) {
         const table = tables[0].inner.mem;
         try self.flushMemTable(io, alloc, table, tables, destinationTablePath, tableKind);
-        swapped = true;
         return;
     }
 
@@ -998,7 +1011,6 @@ pub fn mergeTables(
         for (tables) |table| openTable.inner.mem.flushAtUs = @min(openTable.inner.mem.flushAtUs, table.inner.mem.flushAtUs);
     }
     try swapper.swapTables(self, io, alloc, tables, openTable, tableKind);
-    swapped = true;
 
     if (tableKind == .mem) self.requestTableTimer(openTable);
 }
