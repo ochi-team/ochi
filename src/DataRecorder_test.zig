@@ -18,6 +18,10 @@ const CompressionPool = @import("store/compression/CompressionPool.zig");
 const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 const TableHeader = @import("store/data/TableHeader.zig");
 const Table = @import("store/data/Table.zig");
+const merge = @import("store/table/merge.zig");
+const Sink = @import("store/query/Sink.zig");
+const lineLessThan = @import("store/lines.zig").lineLessThan;
+const fieldLessThan = @import("store/lines.zig").fieldLessThan;
 const BlockReader = @import("store/data/BlockReader.zig");
 const Runtime = @import("Runtime.zig");
 const xev = @import("xev");
@@ -143,122 +147,6 @@ test "tablesMerger handles more source tables than merge window" {
     try recorder.tablesMerger(io, alloc, &tables, &sem);
 
     try testing.expectEqual(tablesBuf.len, tables.items.len);
-}
-
-test "tablesMerger forces skewed memory tables only at capacity" {
-    const alloc = testing.allocator;
-    const io = testing.io;
-    const merger = @import("store/table/merge.zig").Merger(*Table, maxMemTables, amountOfTablesToMerge);
-
-    for ([_]usize{ maxMemTables - 1, maxMemTables }) |tableCount| {
-        var tmp = testing.tmpDir(.{});
-        defer tmp.cleanup();
-        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-        defer alloc.free(rootPath);
-
-        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
-        defer runtime.deinit(alloc);
-        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
-        defer timestampsEncoders.deinit(alloc);
-        const compressionPool = try CompressionPool.init(alloc, 1);
-        defer compressionPool.deinit(alloc);
-        const decompressionPool = try DecompressionPool.init(alloc, 1);
-        defer decompressionPool.deinit(alloc);
-
-        var mergePool = xev.ThreadPool.init(.{ .max_threads = 1 });
-        defer {
-            mergePool.shutdown();
-            mergePool.deinit();
-        }
-        const timerLoop = try TimerLoop.init(alloc);
-        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer recorder.deinit(io, alloc);
-        defer {
-            timerLoop.stop();
-            timerLoop.join();
-            timerLoop.deinit();
-        }
-        defer recorder.stop(io, alloc) catch unreachable;
-
-        var sourceLines: [maxMemTables]Line = undefined;
-        var selectionSize: u64 = 1;
-        for (0..tableCount) |i| {
-            sourceLines[i] = stableLine(i + 1, i);
-            const table = try createMemTableFromLines(io, alloc, timestampsEncoders, compressionPool, stableSID(1), sourceLines[i .. i + 1]);
-            // Only selection sizes are synthetic; persisted rows and fields remain real.
-            table.size = selectionSize;
-            selectionSize *= 2;
-            recorder.memTablesSem.waitUncancelable(io);
-            try recorder.memTables.append(alloc, table);
-        }
-        try testing.expectEqual(maxMemTables - tableCount, recorder.memTablesSem.permits);
-
-        if (tableCount == maxMemTables) {
-            for (recorder.memTables.items, 0..) |table, i| table.size = if (i < 8) 1 else 10000;
-            var selected: [maxMemTables]*Table = undefined;
-            @memcpy(&selected, recorder.memTables.items);
-            try testing.expectEqual(8, merger.selectTablesToMerge(&selected));
-
-            var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
-            try testing.expectError(error.OutOfMemory, recorder.flushForce(io, failing.allocator()));
-            try testing.expectEqual(maxMemTables, recorder.memTables.items.len);
-            try testing.expectEqual(0, recorder.memTablesSem.permits);
-            selectionSize = 1;
-            for (recorder.memTables.items) |table| {
-                try testing.expect(!table.inMerge);
-                table.size = selectionSize;
-                selectionSize *= 2;
-            }
-        }
-
-        var windowBuf: [amountOfTablesToMerge]*Table = undefined;
-        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
-        try recorder.tablesMerger(io, alloc, &recorder.diskTables, &recorder.diskMergeSem);
-        try testing.expectEqual(tableCount, recorder.memTables.items.len);
-        try recorder.tablesMerger(io, alloc, &recorder.memTables, &recorder.memMergeSem);
-
-        const full = tableCount == maxMemTables;
-        const State = struct { memTables: usize, diskTables: usize, memRows: u64, diskRows: u64, permits: usize };
-        {
-            recorder.mxTables.lockUncancelable(io);
-            defer recorder.mxTables.unlock(io);
-            try testing.expectEqualDeep(State{
-                .memTables = if (full) 0 else tableCount,
-                .diskTables = if (full) 1 else 0,
-                .memRows = if (full) 0 else tableCount,
-                .diskRows = if (full) tableCount else 0,
-                .permits = if (full) maxMemTables else maxMemTables - tableCount,
-            }, State{
-                .memTables = recorder.memTables.items.len,
-                .diskTables = recorder.diskTables.items.len,
-                .memRows = countMemLinesInRecorder(recorder),
-                .diskRows = countDiskLinesInRecorder(recorder),
-                .permits = recorder.memTablesSem.permits,
-            });
-            for (recorder.memTables.items) |table| try testing.expect(!table.inMerge);
-            for (recorder.diskTables.items) |table| try testing.expect(!table.inMerge);
-        }
-
-        try recorder.stop(io, alloc);
-        try testing.expectEqual(maxMemTables, recorder.memTablesSem.permits);
-        const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer reopened.deinit(io, alloc);
-        defer reopened.stop(io, alloc) catch unreachable;
-        try testing.expectEqual(1, reopened.diskTables.items.len);
-
-        var arena = std.heap.ArenaAllocator.init(alloc);
-        defer arena.deinit();
-        const table = reopened.diskTables.items[0];
-        try testing.expect(!table.inMerge);
-        try testing.expectEqual(tableCount, table.tableHeader().len);
-        const queried = try reopened.queryLines(io, arena.allocator(), &.{}, .{ .start = 0, .end = std.math.maxInt(u64) });
-        std.sort.pdq(Line, queried.items, {}, @import("store/lines.zig").lineLessThan);
-        try testing.expectEqual(tableCount, queried.items.len);
-        for (queried.items, 0..) |line, i| {
-            std.sort.pdq(Field, line.fields.items, {}, @import("store/lines.zig").fieldLessThan);
-            try testing.expectEqualDeep(.{ sourceLines[i].timestampNs, sourceLines[i].fields.items }, .{ line.timestampNs, line.fields.items });
-        }
-    }
 }
 
 test "selectTablesInRange selects overlap and handles gaps" {
@@ -972,9 +860,259 @@ test "data table timer retains and rearms an early callback" {
     }
 }
 
+/// Real one-row tables with synthetic, exponentially increasing selection sizes.
+/// Tasks are not started: each test drives merging synchronously.
+const SkewedMergeFixture = struct {
+    tmp: testing.TmpDir,
+    rootPath: [:0]const u8,
+    runtime: *Runtime,
+    timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
+    compressionPool: *CompressionPool,
+    decompressionPool: *DecompressionPool,
+    mergePool: xev.ThreadPool,
+    timerLoop: *TimerLoop,
+    recorder: *DataRecorder,
+    sourceLines: [maxMemTables]Line,
+
+    const State = struct {
+        memTables: usize = 0,
+        diskTables: usize = 0,
+        memRows: u64 = 0,
+        diskRows: u64 = 0,
+        permits: usize,
+        mergingTables: usize = 0,
+    };
+
+    fn init(tableCount: usize) !*SkewedMergeFixture {
+        std.debug.assert(tableCount <= maxMemTables);
+        const alloc = testing.allocator;
+        const io = testing.io;
+        // The recorder retains a pointer to mergePool, so the fixture must not move.
+        const self = try alloc.create(SkewedMergeFixture);
+        errdefer alloc.destroy(self);
+
+        self.tmp = testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        self.rootPath = try self.tmp.dir.realPathFileAlloc(io, ".", alloc);
+        errdefer alloc.free(self.rootPath);
+        self.runtime = try Runtime.init(io, alloc, self.rootPath, 0.5);
+        errdefer self.runtime.deinit(alloc);
+        self.timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        errdefer self.timestampsEncoders.deinit(alloc);
+        self.compressionPool = try CompressionPool.init(alloc, 1);
+        errdefer self.compressionPool.deinit(alloc);
+        self.decompressionPool = try DecompressionPool.init(alloc, 1);
+        errdefer self.decompressionPool.deinit(alloc);
+        self.mergePool = xev.ThreadPool.init(.{ .max_threads = 1 });
+        errdefer {
+            self.mergePool.shutdown();
+            self.mergePool.deinit();
+        }
+        self.timerLoop = try TimerLoop.init(alloc);
+        errdefer self.timerLoop.deinit();
+        self.recorder = try self.openRecorder();
+        errdefer {
+            self.recorder.stop(io, alloc) catch unreachable;
+            self.recorder.deinit(io, alloc);
+        }
+
+        var selectionSize: u64 = 1;
+        for (0..tableCount) |i| {
+            self.sourceLines[i] = stableLine(i + 1, i);
+            const table = try createMemTableFromLines(io, alloc, self.timestampsEncoders, self.compressionPool, stableSID(1), self.sourceLines[i .. i + 1]);
+            // Persisted rows are real; only compaction selection sees these sizes.
+            table.size = selectionSize;
+            selectionSize *= 2;
+            self.recorder.memTablesSem.waitUncancelable(io);
+            self.recorder.memTables.appendAssumeCapacity(table);
+        }
+        return self;
+    }
+
+    fn deinit(self: *SkewedMergeFixture) void {
+        const alloc = testing.allocator;
+        const io = testing.io;
+        // Recover stranded flags only after assertions. With no background jobs,
+        // this lets a rollback regression report its assertion instead of an ABRT.
+        for (self.recorder.memTables.items) |table| table.inMerge = false;
+        self.recorder.stop(io, alloc) catch unreachable;
+        self.timerLoop.stop();
+        self.timerLoop.join();
+        self.timerLoop.deinit();
+        self.recorder.deinit(io, alloc);
+        self.mergePool.shutdown();
+        self.mergePool.deinit();
+        self.decompressionPool.deinit(alloc);
+        self.compressionPool.deinit(alloc);
+        self.timestampsEncoders.deinit(alloc);
+        self.runtime.deinit(alloc);
+        alloc.free(self.rootPath);
+        self.tmp.cleanup();
+        alloc.destroy(self);
+    }
+
+    /// Opens the same directory without starting background tasks.
+    fn openRecorder(self: *SkewedMergeFixture) !*DataRecorder {
+        return DataRecorder.init(testing.io, testing.allocator, self.rootPath, self.runtime, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.mergePool, self.timerLoop);
+    }
+
+    /// Captures row ownership, ingestion capacity, and merge claims together.
+    fn state(self: *SkewedMergeFixture) State {
+        const recorder = self.recorder;
+        recorder.mxTables.lockUncancelable(testing.io);
+        defer recorder.mxTables.unlock(testing.io);
+        var mergingTables: usize = 0;
+        for (recorder.memTables.items) |table| {
+            if (table.inMerge) mergingTables += 1;
+        }
+        for (recorder.diskTables.items) |table| {
+            if (table.inMerge) mergingTables += 1;
+        }
+        return .{
+            .memTables = recorder.memTables.items.len,
+            .diskTables = recorder.diskTables.items.len,
+            .memRows = countMemLinesInRecorder(recorder),
+            .diskRows = countDiskLinesInRecorder(recorder),
+            .permits = recorder.memTablesSem.permits,
+            .mergingTables = mergingTables,
+        };
+    }
+};
+
+test "flushForce clears merge flags after a chunk fails" {
+    for ([_]usize{ maxMemTables / 2, maxMemTables }) |count| {
+        const fixture = try SkewedMergeFixture.init(count);
+        defer fixture.deinit();
+        const recorder = fixture.recorder;
+        // At capacity, the two balanced groups require separate flush chunks.
+        // Below capacity, the same failure exercises a single chunk's rollback.
+        const largeGroupSize = 10000;
+        for (recorder.memTables.items, 0..) |table, i| table.size = if (i < maxMemTables / 2) 1 else largeGroupSize;
+        const before = fixture.state();
+
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+        try testing.expectError(error.OutOfMemory, recorder.flushForce(testing.io, failing.allocator()));
+
+        // Both the failing chunk and any unstarted chunks must relinquish their
+        // claims without losing rows, publishing disk output, or releasing slots.
+        try testing.expectEqualDeep(before, fixture.state());
+    }
+}
+
+test "tablesMerger clears forced merge flags after allocation failure at capacity" {
+    const fixture = try SkewedMergeFixture.init(maxMemTables);
+    defer fixture.deinit();
+    const recorder = fixture.recorder;
+    const before = fixture.state();
+
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    try testing.expectError(error.OutOfMemory, recorder.tablesMerger(testing.io, failing.allocator(), &recorder.memTables, &recorder.memMergeSem));
+
+    // The capacity fallback must provide the same rollback guarantees as an
+    // explicit forced flush, including clearing every table's merge claim.
+    try testing.expectEqualDeep(before, fixture.state());
+}
+
+test "tablesMerger leaves skewed memory tables below capacity" {
+    const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
+    for ([_]usize{ maxMemTables - 2, maxMemTables - 1 }) |count| {
+        const fixture = try SkewedMergeFixture.init(count);
+        defer fixture.deinit();
+        const recorder = fixture.recorder;
+
+        // Establish that ordinary leveled compaction cannot select these tables;
+        // otherwise a merge here would say nothing about the capacity threshold.
+        var windowBuf: [amountOfTablesToMerge]*Table = undefined;
+        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
+        try recorder.tablesMerger(testing.io, testing.allocator, &recorder.memTables, &recorder.memMergeSem);
+
+        // Available slots mean there is no reason to force skewed tables to disk.
+        try testing.expectEqualDeep(SkewedMergeFixture.State{
+            .memTables = count,
+            .memRows = count,
+            .permits = maxMemTables - count,
+        }, fixture.state());
+    }
+}
+
+test "tablesMerger forces skewed memory tables at capacity" {
+    const fixture = try SkewedMergeFixture.init(maxMemTables);
+    defer fixture.deinit();
+    const recorder = fixture.recorder;
+    const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
+
+    // No leveled window exists, so only the capacity fallback can make progress.
+    var windowBuf: [amountOfTablesToMerge]*Table = undefined;
+    try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
+    try recorder.tablesMerger(testing.io, testing.allocator, &recorder.memTables, &recorder.memMergeSem);
+
+    // Forced output must preserve every row while freeing all ingestion slots;
+    // neither the source nor the destination may retain a merge claim.
+    try testing.expectEqualDeep(SkewedMergeFixture.State{
+        .diskTables = 1,
+        .diskRows = maxMemTables,
+        .permits = maxMemTables,
+    }, fixture.state());
+}
+
+test "tablesMerger on disk tables does not flush memory tables" {
+    for ([_]usize{ maxMemTables - 1, maxMemTables }) |count| {
+        const fixture = try SkewedMergeFixture.init(count);
+        defer fixture.deinit();
+        const recorder = fixture.recorder;
+        const before = fixture.state();
+
+        try recorder.tablesMerger(testing.io, testing.allocator, &recorder.diskTables, &recorder.diskMergeSem);
+
+        // Target isolation holds even when memory tables fill every slot: an
+        // invocation for disk tables must not trigger the memory-only fallback.
+        try testing.expectEqualDeep(before, fixture.state());
+    }
+}
+
+test "capacity forced merge survives reopening" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const fixture = try SkewedMergeFixture.init(maxMemTables);
+    defer fixture.deinit();
+    const recorder = fixture.recorder;
+
+    try recorder.tablesMerger(io, alloc, &recorder.memTables, &recorder.memMergeSem);
+    // Check before shutdown: stop() also flushes memory tables and could otherwise
+    // conceal a missing capacity-triggered merge.
+    try testing.expectEqualDeep(SkewedMergeFixture.State{
+        .diskTables = 1,
+        .diskRows = maxMemTables,
+        .permits = maxMemTables,
+    }, fixture.state());
+    try recorder.stop(io, alloc);
+
+    const reopened = try fixture.openRecorder();
+    defer reopened.deinit(io, alloc);
+    defer reopened.stop(io, alloc) catch unreachable;
+
+    // Reopening must discover the complete output as an idle, persisted table.
+    try testing.expectEqual(1, reopened.diskTables.items.len);
+    const table = reopened.diskTables.items[0];
+    try testing.expectEqualDeep(.{ false, @as(u64, maxMemTables) }, .{ table.inMerge, table.tableHeader().len });
+
+    // Header counts alone cannot detect damaged payloads. Query the persisted
+    // data and compare every timestamp and field after normalizing sort order.
+    var sink: Sink = .{};
+    defer sink.deinit(alloc);
+    try reopened.queryLines(io, alloc, &.{}, .{ .start = 0, .end = std.math.maxInt(u64) }, &sink);
+    std.sort.pdq(Line, sink.lines.items, {}, lineLessThan);
+    try testing.expectEqual(maxMemTables, sink.lines.items.len);
+    for (sink.lines.items, 0..) |line, i| {
+        std.sort.pdq(Field, line.fields.items, {}, fieldLessThan);
+        try testing.expectEqualDeep(.{ fixture.sourceLines[i].timestampNs, fixture.sourceLines[i].fields.items }, .{ line.timestampNs, line.fields.items });
+    }
+}
+
 // TODO: benchmark different filesystems (btrfs)
 // TODO: benchmark different IO schedulers
 // TODO: try tagging fadvise with different access patterns
 // TODO: experiment with mmap files in merges
 // since it's a single threaded operation we don't expect os lock,
 // or write a blog post why it doesn't fit
+
