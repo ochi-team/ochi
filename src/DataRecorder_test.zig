@@ -962,6 +962,7 @@ const SkewedMergeFixture = struct {
         const recorder = self.recorder;
         recorder.mxTables.lockUncancelable(testing.io);
         defer recorder.mxTables.unlock(testing.io);
+
         var mergingTables: usize = 0;
         for (recorder.memTables.items) |table| {
             if (table.inMerge) mergingTables += 1;
@@ -981,22 +982,31 @@ const SkewedMergeFixture = struct {
 };
 
 test "flushForce clears merge flags after a chunk fails" {
-    for ([_]usize{ maxMemTables / 2, maxMemTables }) |count| {
-        const fixture = try SkewedMergeFixture.init(count);
-        defer fixture.deinit();
-        const recorder = fixture.recorder;
-        // At capacity, the two balanced groups require separate flush chunks.
-        // Below capacity, the same failure exercises a single chunk's rollback.
-        const largeGroupSize = 10000;
-        for (recorder.memTables.items, 0..) |table, i| table.size = if (i < maxMemTables / 2) 1 else largeGroupSize;
-        const before = fixture.state();
+    const a = testing.allocator;
+    const f = struct {
+        fn f(alloc: Allocator, count: usize) !void {
+            const fixture = try SkewedMergeFixture.init(count);
+            defer fixture.deinit();
+            const recorder = fixture.recorder;
+            // two balanced groups require separate flush chunks.
+            // below capacity, the same failure exercises a single chunk's rollback.
+            const largeGroupSize = 10000;
+            for (recorder.memTables.items, 0..) |table, i| table.size = if (i < maxMemTables / 2) 1 else largeGroupSize;
+            const before = fixture.state();
 
-        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-        try testing.expectError(error.OutOfMemory, recorder.flushForce(testing.io, failing.allocator()));
+            // var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+            // try testing.expectError(error.OutOfMemory, recorder.flushForce(testing.io, failing.allocator()));
+            recorder.flushForce(testing.io, alloc) catch |err| {
+                try testing.expectEqual(error.OutOfMemory, err);
+                try testing.expectEqualDeep(before, fixture.state());
+            };
 
-        // Both the failing chunk and any unstarted chunks must relinquish their
-        // claims without losing rows, publishing disk output, or releasing slots.
-        try testing.expectEqualDeep(before, fixture.state());
+            // TODO: ideally add an assrtion of the state here as well on a successful case
+        }
+    }.f;
+
+    inline for ([_]usize{ maxMemTables / 2, maxMemTables }) |count| {
+        try testing.checkAllAllocationFailures(a, f, .{count});
     }
 }
 
