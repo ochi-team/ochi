@@ -160,7 +160,7 @@ test "tablesMerger forces skewed memory tables only at capacity" {
         try testing.expectEqual(maxMemTables - tableCount, recorder.memTablesSem.permits);
 
         var windowBuf: [amountOfTablesToMerge]*Table = undefined;
-        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
+        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64), .leveled) == null);
         try recorder.tablesMerger(io, alloc, &recorder.diskTables, &recorder.diskMergeSem);
         try testing.expectEqual(tableCount, recorder.memTables.items.len);
         try recorder.tablesMerger(io, alloc, &recorder.memTables, &recorder.memMergeSem);

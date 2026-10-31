@@ -648,17 +648,15 @@ pub fn tableTimerCallback(
     if (shouldFlush) table.inMerge = true;
     self.mxTables.unlock(io);
 
-    defer {
-        self.mxTables.lockUncancelable(io);
-        table.inMerge = false;
-        self.mxTables.unlock(io);
-    }
-
     if (shouldFlush) {
         var tables = [_]*Table{table};
         self.mergeTables(io, self.taskCtx.alloc, tables[0..], true, null) catch |err| {
             self.stopped.stop(io);
             Logger.log(.err, "failed to run scheduled mem table flush", .{ .err = err });
+
+            self.mxTables.lockUncancelable(io);
+            table.inMerge = false;
+            self.mxTables.unlock(io);
         };
     }
 
@@ -695,20 +693,26 @@ fn flushMemTablesInChunks(self: *DataRecorder, io: Io, alloc: Allocator, toFlush
     if (toFlush.items.len == 0) return;
 
     var tail = toFlush.items[0..];
-    defer {
+    errdefer {
         self.mxTables.lockUncancelable(io);
-        for (toFlush.items) |table| table.inMerge = false;
+        for (tail) |table| table.inMerge = false;
         self.mxTables.unlock(io);
     }
 
     while (tail.len > 0) {
         const n = merger.selectTablesToMerge(tail);
+        const chunk = tail[0..n];
+        tail = tail[n..];
         std.debug.assert(n > 0);
 
-        // TODO: attempt to run it in parallel, add a semaphore then
-        try self.mergeTables(io, alloc, tail[0..n], true, null);
+        errdefer {
+            self.mxTables.lockUncancelable(io);
+            for (chunk) |table| table.inMerge = false;
+            self.mxTables.unlock(io);
+        }
 
-        tail = tail[n..];
+        // TODO: attempt to run it in parallel, add a semaphore then
+        try self.mergeTables(io, alloc, chunk, true, null);
     }
 }
 
@@ -842,7 +846,7 @@ fn runDiskTablesMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
     });
     defer z.end();
 
-    self.tablesMerger(io, alloc, &self.diskTables, &self.diskMergeSem) catch |err| {
+    self.tablesMerger(io, alloc, .disk) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.stop(io);
@@ -857,7 +861,7 @@ fn runMemTableMerger(self: *DataRecorder, io: Io, alloc: Allocator) void {
     });
     defer z.end();
 
-    self.tablesMerger(io, alloc, &self.memTables, &self.memMergeSem) catch |err| {
+    self.tablesMerger(io, alloc, .mem) catch |err| {
         if (err == error.Stopped) return;
 
         self.stopped.stop(io);
@@ -869,42 +873,39 @@ pub fn tablesMerger(
     self: *DataRecorder,
     io: Io,
     alloc: Allocator,
-    tables: *std.ArrayList(*Table),
-    sem: *Io.Semaphore,
+    kind: TableKind,
 ) !void {
+    const tables = switch (kind) {
+        .mem => &self.memTables,
+        .disk => &self.diskTables,
+    };
+    const sem = switch (kind) {
+        .mem => &self.memMergeSem,
+        .disk => &self.diskMergeSem,
+    };
     var tablesToMergeBuf: [amountOfTablesToMerge]*Table = undefined;
 
     while (!self.stopped.isStopped()) {
         const maxDiskTableSize = cap.getMaxTableSize(self.runtime.getFreeDiskSpace(io));
+        const selectPolicy: merge.SelectionPolicy =
+            if (kind == .mem and tables.items.len >= maxMemTables) .relieveMemoryPressure else .leveled;
 
         self.mxTables.lockUncancelable(io);
         const window = merger.filterTablesToMerge(
             tables.items,
             &tablesToMergeBuf,
             maxDiskTableSize,
+            selectPolicy,
         );
-        // skewed sizes can prevent leveled selection indefinitely,
-        // only memory tables need a forced flush to release ingestion slots at capacity
-        if (window == null and tables == &self.memTables and tables.items.len >= maxMemTables) {
-            var toFlush = std.ArrayList(*Table).initBuffer(&tablesToMergeBuf);
-            for (tables.items) |table| {
-                if (!table.inMerge) {
-                    table.inMerge = true;
-                    toFlush.appendAssumeCapacity(table);
-                }
-            }
-            self.mxTables.unlock(io);
-            if (toFlush.items.len == 0) return;
-
-            sem.waitUncancelable(io);
-            defer sem.post(io);
-            try self.flushMemTablesInChunks(io, alloc, toFlush);
-            continue;
-        }
         self.mxTables.unlock(io);
 
         const filteredTablesToMerge = window orelse return;
         if (filteredTablesToMerge.len == 0) return;
+        errdefer {
+            self.mxTables.lockUncancelable(io);
+            for (filteredTablesToMerge) |table| table.inMerge = false;
+            self.mxTables.unlock(io);
+        }
 
         sem.waitUncancelable(io);
         defer sem.post(io);

@@ -143,10 +143,11 @@ test "tablesMerger handles more source tables than merge window" {
     var tables = std.ArrayList(*Table).initBuffer(&tablesBuf);
     tables.items.len = tablesBuf.len;
 
-    var sem: Io.Semaphore = .{ .permits = 1 };
-    try recorder.tablesMerger(io, alloc, &tables, &sem);
+    recorder.diskTables = tables;
+    recorder.diskMergeSem = .{ .permits = 1 };
+    try recorder.tablesMerger(io, alloc, .disk);
 
-    try testing.expectEqual(tablesBuf.len, tables.items.len);
+    try testing.expectEqual(tablesBuf.len, recorder.diskTables.items.len);
 }
 
 test "selectTablesInRange selects overlap and handles gaps" {
@@ -999,17 +1000,17 @@ test "flushForce clears merge flags after a chunk fails" {
     }
 }
 
-test "tablesMerger clears forced merge flags after allocation failure at capacity" {
+test "tablesMerger clears pressure merge flags after allocation failure at capacity" {
     const fixture = try SkewedMergeFixture.init(maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
     const before = fixture.state();
 
     var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-    try testing.expectError(error.OutOfMemory, recorder.tablesMerger(testing.io, failing.allocator(), &recorder.memTables, &recorder.memMergeSem));
+    try testing.expectError(error.OutOfMemory, recorder.tablesMerger(testing.io, failing.allocator(), .mem));
 
-    // The capacity fallback must provide the same rollback guarantees as an
-    // explicit forced flush, including clearing every table's merge claim.
+    // Pressure selection uses the ordinary merge path, whose rollback must
+    // clear every selected table's claim without changing row ownership.
     try testing.expectEqualDeep(before, fixture.state());
 }
 
@@ -1023,8 +1024,8 @@ test "tablesMerger leaves skewed memory tables below capacity" {
         // Establish that ordinary leveled compaction cannot select these tables;
         // otherwise a merge here would say nothing about the capacity threshold.
         var windowBuf: [amountOfTablesToMerge]*Table = undefined;
-        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
-        try recorder.tablesMerger(testing.io, testing.allocator, &recorder.memTables, &recorder.memMergeSem);
+        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64), .leveled) == null);
+        try recorder.tablesMerger(testing.io, testing.allocator, .mem);
 
         // Available slots mean there is no reason to force skewed tables to disk.
         try testing.expectEqualDeep(SkewedMergeFixture.State{
@@ -1035,23 +1036,23 @@ test "tablesMerger leaves skewed memory tables below capacity" {
     }
 }
 
-test "tablesMerger forces skewed memory tables at capacity" {
+test "tablesMerger merges skewed memory tables at capacity without forcing disk output" {
     const fixture = try SkewedMergeFixture.init(maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 
-    // No leveled window exists, so only the capacity fallback can make progress.
+    // No leveled window exists, so only pressure selection can make progress.
     var windowBuf: [amountOfTablesToMerge]*Table = undefined;
-    try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
-    try recorder.tablesMerger(testing.io, testing.allocator, &recorder.memTables, &recorder.memMergeSem);
+    try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64), .leveled) == null);
+    try recorder.tablesMerger(testing.io, testing.allocator, .mem);
 
-    // Forced output must preserve every row while freeing all ingestion slots;
-    // neither the source nor the destination may retain a merge claim.
+    // These small tables fit in memory. Recover ingestion slots without forcing
+    // disk output, preserving every row and clearing all merge claims.
     try testing.expectEqualDeep(SkewedMergeFixture.State{
-        .diskTables = 1,
-        .diskRows = maxMemTables,
-        .permits = maxMemTables,
+        .memTables = 1,
+        .memRows = maxMemTables,
+        .permits = maxMemTables - 1,
     }, fixture.state());
 }
 
@@ -1062,7 +1063,7 @@ test "tablesMerger on disk tables does not flush memory tables" {
         const recorder = fixture.recorder;
         const before = fixture.state();
 
-        try recorder.tablesMerger(testing.io, testing.allocator, &recorder.diskTables, &recorder.diskMergeSem);
+        try recorder.tablesMerger(testing.io, testing.allocator, .disk);
 
         // Target isolation holds even when memory tables fill every slot: an
         // invocation for disk tables must not trigger the memory-only fallback.
@@ -1070,20 +1071,20 @@ test "tablesMerger on disk tables does not flush memory tables" {
     }
 }
 
-test "capacity forced merge survives reopening" {
+test "capacity pressure merge survives shutdown and reopening" {
     const alloc = testing.allocator;
     const io = testing.io;
     const fixture = try SkewedMergeFixture.init(maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
 
-    try recorder.tablesMerger(io, alloc, &recorder.memTables, &recorder.memMergeSem);
+    try recorder.tablesMerger(io, alloc, .mem);
     // Check before shutdown: stop() also flushes memory tables and could otherwise
     // conceal a missing capacity-triggered merge.
     try testing.expectEqualDeep(SkewedMergeFixture.State{
-        .diskTables = 1,
-        .diskRows = maxMemTables,
-        .permits = maxMemTables,
+        .memTables = 1,
+        .memRows = maxMemTables,
+        .permits = maxMemTables - 1,
     }, fixture.state());
     try recorder.stop(io, alloc);
 
@@ -1115,4 +1116,3 @@ test "capacity forced merge survives reopening" {
 // TODO: experiment with mmap files in merges
 // since it's a single threaded operation we don't expect os lock,
 // or write a blog post why it doesn't fit
-

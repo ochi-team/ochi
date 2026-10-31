@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const slices = @import("../../stds/slices.zig");
+const Logger = @import("logging");
 
 // avoid merges where one big part is rewritten with tiny additions (leads to high write amplification)
 // guess based number, might be changed on the practical data
@@ -13,6 +14,11 @@ pub const minMemTableSize: u64 = 4 * 1024 * 1024;
 pub const TableKind = enum {
     mem,
     disk,
+};
+
+pub const SelectionPolicy = enum {
+    leveled,
+    relieveMemoryPressure,
 };
 
 pub const MergeWindowBound = struct {
@@ -33,11 +39,16 @@ pub fn Merger(
         /// assumes toMerge destination has preallocated capacity
         pub fn filterTablesToMerge(
             tables: []T,
-            buf: []T,
+            // dstBuf is an output buffer parameter to set the tables we merge
+            dstBuf: []T,
             maxDiskTableSize: u64,
+            policy: SelectionPolicy,
         ) ?[]T {
-            var dst = std.ArrayList(T).initBuffer(buf);
+            var dst = std.ArrayList(T).initBuffer(dstBuf);
 
+            // TODO: this can create large tables merging starvatin,
+            // selecting only the fitting buffer is not ok,
+            // it must be postponed to understand what we merge
             sortToMerge(tables);
             for (tables) |table| {
                 if (!table.inMerge) {
@@ -50,15 +61,43 @@ pub fn Merger(
 
             // tablesToMerge is a slice of toMerge ArrayList, no need to free it
             const window = filterLeveledTables(dst.items, maxDiskTableSize);
-            const w = window orelse return null;
+            const tablesToMerge = if (window) |w|
+                dst.items[w.lower..w.upper]
+            else blk: {
+                if (policy == .leveled) return null;
 
-            const tablesToMerge = dst.items[w.lower..w.upper];
+                // rebuild destination
+                dst.clearRetainingCapacity();
+                const w = filterTablesToReleiveMemory(&dst, tables, maxDiskTableSize);
+                if (w == null) return null;
+                break :blk w.?;
+            };
             for (tablesToMerge) |table| {
                 std.debug.assert(!table.inMerge);
                 table.inMerge = true;
             }
 
             return tablesToMerge;
+        }
+
+        fn filterTablesToReleiveMemory(dst: *std.ArrayList(T), tables: []T, maxDiskTableSize: u64) ?[]T {
+            // collect only mem tables as long as they fit into the disk space limit
+            var size: u64 = 0;
+            for (tables) |table| {
+                if (table.inMerge or table.size > maxDiskTableSize / mergeMultiple) continue;
+                if (table.size > maxDiskTableSize - size) break;
+                if (dst.items.len == @min(dst.capacity, maxTablesToMerge)) break;
+                dst.appendAssumeCapacity(table);
+                size += table.size;
+            }
+            if (dst.items.len < 2) {
+                Logger.log(.warn, "couldn't filter mem tables to relieve memory preassure", .{
+                    .maxDiskTableSize = maxDiskTableSize,
+                });
+                return null;
+            }
+
+            return dst.items;
         }
 
         pub fn selectTablesToMerge(

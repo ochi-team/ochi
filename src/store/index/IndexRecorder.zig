@@ -849,6 +849,7 @@ pub fn tablesMerger(
             tables.items,
             &tablesToMergeBuf,
             maxDiskTableSize,
+            .leveled,
         );
         const shouldFlush = window == null and tables == &self.memTables and self.memTables.items.len >= maxMemTables;
         self.mxTables.unlock(io);
