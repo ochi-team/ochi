@@ -991,9 +991,10 @@ test "flushForce clears merge flags after a chunk fails" {
         fn f(alloc: Allocator, count: usize) !void {
             const fixture = try SkewedMergeFixture.init(alloc, count);
             defer fixture.deinit();
-            // Keep accounting on the same allocator while allowing retry and cleanup.
+            // it's necessary to let it shutdown with no failure injected and not abort the program
             const failing: *testing.FailingAllocator = @ptrCast(@alignCast(alloc.ptr));
             defer failing.fail_index = std.math.maxInt(usize);
+
             const recorder = fixture.recorder;
 
             // isolate synchronous flushing from background compaction
@@ -1037,14 +1038,30 @@ test "flushForce clears merge flags after a chunk fails" {
 }
 
 test "tablesMerger clears pressure merge flags after allocation failure at capacity" {
-    const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
-    defer fixture.deinit();
-    const recorder = fixture.recorder;
-    const before = fixture.state();
+    const f = struct {
+        fn f(alloc: Allocator) !void {
+            // Timer scheduling uses the fixture allocator and tolerates OOM after
+            // committing the merge; inject only into the merge operation itself.
+            const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
+            defer fixture.deinit();
 
-    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-    try testing.expectError(error.OutOfMemory, recorder.tablesMerger(testing.io, failing.allocator(), .mem));
-    try testing.expectEqualDeep(before, fixture.state());
+            const recorder = fixture.recorder;
+            const before = fixture.state();
+            recorder.tablesMerger(testing.io, alloc, .mem) catch |err| {
+                try testing.expectEqual(error.OutOfMemory, err);
+                try testing.expectEqualDeep(before, fixture.state());
+                return err;
+            };
+
+            try testing.expectEqualDeep(SkewedMergeFixture.State{
+                .memTables = 1,
+                .memRows = maxMemTables,
+                .permits = maxMemTables - 1,
+            }, fixture.state());
+        }
+    }.f;
+
+    try testing.checkAllAllocationFailures(testing.allocator, f, .{});
 }
 
 test "tablesMerger leaves memory tables below capacity" {
