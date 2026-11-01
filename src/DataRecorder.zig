@@ -702,17 +702,11 @@ fn flushMemTablesInChunks(self: *DataRecorder, io: Io, alloc: Allocator, toFlush
     while (tail.len > 0) {
         const n = merger.selectTablesToMerge(tail);
         const chunk = tail[0..n];
-        tail = tail[n..];
         std.debug.assert(n > 0);
-
-        errdefer {
-            self.mxTables.lockUncancelable(io);
-            for (chunk) |table| table.inMerge = false;
-            self.mxTables.unlock(io);
-        }
 
         // TODO: attempt to run it in parallel, add a semaphore then
         try self.mergeTables(io, alloc, chunk, true, null);
+        tail = tail[n..];
     }
 }
 
