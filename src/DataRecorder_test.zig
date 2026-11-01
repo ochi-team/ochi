@@ -871,7 +871,7 @@ const SkewedMergeFixture = struct {
     timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
     compressionPool: *CompressionPool,
     decompressionPool: *DecompressionPool,
-    mergePool: xev.ThreadPool,
+    mergePool: *xev.ThreadPool,
     timerLoop: *TimerLoop,
     recorder: *DataRecorder,
     sourceLines: [maxMemTables]Line,
@@ -885,53 +885,64 @@ const SkewedMergeFixture = struct {
         mergingTables: usize = 0,
     };
 
-    fn init(alloc: Allocator, tableCount: usize) !*SkewedMergeFixture {
+    fn init(alloc: Allocator, tableCount: usize) !SkewedMergeFixture {
         std.debug.assert(tableCount <= maxMemTables);
         const io = testing.io;
-        // The recorder retains a pointer to mergePool, so the fixture must not move.
-        const self = try alloc.create(SkewedMergeFixture);
-        errdefer alloc.destroy(self);
-        self.alloc = alloc;
-
-        self.tmp = testing.tmpDir(.{});
-        errdefer self.tmp.cleanup();
-        self.rootPath = try self.tmp.dir.realPathFileAlloc(io, ".", alloc);
-        errdefer alloc.free(self.rootPath);
-        self.runtime = try Runtime.init(io, alloc, self.rootPath, 0.5);
-        errdefer self.runtime.deinit(alloc);
-        self.timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
-        errdefer self.timestampsEncoders.deinit(alloc);
-        self.compressionPool = try CompressionPool.init(alloc, 1);
-        errdefer self.compressionPool.deinit(alloc);
-        self.decompressionPool = try DecompressionPool.init(alloc, 1);
-        errdefer self.decompressionPool.deinit(alloc);
-        self.mergePool = xev.ThreadPool.init(.{ .max_threads = 1 });
+        var tmp = testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+        errdefer alloc.free(rootPath);
+        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+        errdefer runtime.deinit(alloc);
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, 1);
+        errdefer timestampsEncoders.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        errdefer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        errdefer decompressionPool.deinit(alloc);
+        // The recorder retains this pointer even when the fixture moves.
+        const mergePool = try alloc.create(xev.ThreadPool);
+        errdefer alloc.destroy(mergePool);
+        mergePool.* = xev.ThreadPool.init(.{ .max_threads = 1 });
         errdefer {
-            self.mergePool.shutdown();
-            self.mergePool.deinit();
+            mergePool.shutdown();
+            mergePool.deinit();
         }
-        self.timerLoop = try TimerLoop.init(alloc);
-        errdefer self.timerLoop.deinit();
-        self.recorder = try self.openRecorder();
+        const timerLoop = try TimerLoop.init(alloc);
+        errdefer timerLoop.deinit();
+        const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, mergePool, timerLoop);
         errdefer {
             // Initialization rollback must not allocate to flush partial input.
-            for (self.recorder.memTables.items) |table| table.release(io);
-            self.recorder.memTables.clearRetainingCapacity();
-            self.recorder.stop(io, alloc) catch unreachable;
-            self.recorder.deinit(io, alloc);
+            for (recorder.memTables.items) |table| table.release(io);
+            recorder.memTables.clearRetainingCapacity();
+            recorder.stop(io, alloc) catch unreachable;
+            recorder.deinit(io, alloc);
         }
 
+        var sourceLines: [maxMemTables]Line = undefined;
         var selectionSize: u64 = 1;
         for (0..tableCount) |i| {
-            self.sourceLines[i] = stableLine(i + 1, i);
-            const table = try createMemTableFromLines(io, alloc, self.timestampsEncoders, self.compressionPool, stableSID(1), self.sourceLines[i .. i + 1]);
+            sourceLines[i] = stableLine(i + 1, i);
+            const table = try createMemTableFromLines(io, alloc, timestampsEncoders, compressionPool, stableSID(1), sourceLines[i .. i + 1]);
             // Persisted rows are real; only compaction selection sees these sizes.
             table.size = selectionSize;
             selectionSize *= 2;
-            self.recorder.memTablesSem.waitUncancelable(io);
-            self.recorder.memTables.appendAssumeCapacity(table);
+            recorder.memTablesSem.waitUncancelable(io);
+            recorder.memTables.appendAssumeCapacity(table);
         }
-        return self;
+        return .{
+            .alloc = alloc,
+            .tmp = tmp,
+            .rootPath = rootPath,
+            .runtime = runtime,
+            .timestampsEncoders = timestampsEncoders,
+            .compressionPool = compressionPool,
+            .decompressionPool = decompressionPool,
+            .mergePool = mergePool,
+            .timerLoop = timerLoop,
+            .recorder = recorder,
+            .sourceLines = sourceLines,
+        };
     }
 
     fn deinit(self: *SkewedMergeFixture) void {
@@ -947,18 +958,18 @@ const SkewedMergeFixture = struct {
         self.recorder.deinit(io, alloc);
         self.mergePool.shutdown();
         self.mergePool.deinit();
+        alloc.destroy(self.mergePool);
         self.decompressionPool.deinit(alloc);
         self.compressionPool.deinit(alloc);
         self.timestampsEncoders.deinit(alloc);
         self.runtime.deinit(alloc);
         alloc.free(self.rootPath);
         self.tmp.cleanup();
-        alloc.destroy(self);
     }
 
     /// Opens the same directory without starting background tasks.
     fn openRecorder(self: *SkewedMergeFixture) !*DataRecorder {
-        return DataRecorder.init(testing.io, self.alloc, self.rootPath, self.runtime, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.mergePool, self.timerLoop);
+        return DataRecorder.init(testing.io, self.alloc, self.rootPath, self.runtime, self.timestampsEncoders, self.compressionPool, self.decompressionPool, self.mergePool, self.timerLoop);
     }
 
     /// Captures row ownership, ingestion capacity, and merge claims together.
@@ -989,7 +1000,7 @@ test "flushForce clears merge flags after a chunk fails" {
     const a = testing.allocator;
     const f = struct {
         fn f(alloc: Allocator, count: usize) !void {
-            const fixture = try SkewedMergeFixture.init(testing.allocator, count);
+            var fixture = try SkewedMergeFixture.init(testing.allocator, count);
             defer fixture.deinit();
 
             const recorder = fixture.recorder;
@@ -1041,7 +1052,7 @@ test "flushForce clears merge flags after a chunk fails" {
 test "tablesMerger clears pressure merge flags after allocation failure at capacity" {
     const f = struct {
         fn f(alloc: Allocator) !void {
-            const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
+            var fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
             defer fixture.deinit();
 
             const recorder = fixture.recorder;
@@ -1066,7 +1077,7 @@ test "tablesMerger clears pressure merge flags after allocation failure at capac
 test "tablesMerger leaves memory tables below capacity" {
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
     for ([_]usize{ maxMemTables - 2, maxMemTables - 1 }) |count| {
-        const fixture = try SkewedMergeFixture.init(testing.allocator, count);
+        var fixture = try SkewedMergeFixture.init(testing.allocator, count);
         defer fixture.deinit();
         const recorder = fixture.recorder;
 
@@ -1084,7 +1095,7 @@ test "tablesMerger leaves memory tables below capacity" {
 }
 
 test "tablesMerger merges skewed memory tables at capacity without forcing disk output" {
-    const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
+    var fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
@@ -1105,7 +1116,7 @@ test "tablesMerger merges skewed memory tables at capacity without forcing disk 
 
 test "tablesMerger on disk tables does not flush memory tables" {
     for ([_]usize{ maxMemTables - 1, maxMemTables }) |count| {
-        const fixture = try SkewedMergeFixture.init(testing.allocator, count);
+        var fixture = try SkewedMergeFixture.init(testing.allocator, count);
         defer fixture.deinit();
         const recorder = fixture.recorder;
         const before = fixture.state();
@@ -1118,7 +1129,7 @@ test "tablesMerger on disk tables does not flush memory tables" {
 test "capacity pressure merge survives shutdown and reopening" {
     const alloc = testing.allocator;
     const io = testing.io;
-    const fixture = try SkewedMergeFixture.init(alloc, maxMemTables);
+    var fixture = try SkewedMergeFixture.init(alloc, maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
 
