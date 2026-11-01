@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Swapper = @import("swap.zig").Swapper;
+const TableKind = @import("merge.zig").TableKind;
 
 const testing = std.testing;
 
@@ -18,6 +19,80 @@ fn createSizedMemTable(alloc: Allocator, decompressionPool: *DecompressionPool, 
     try memTable.entriesBuf.resize(alloc, size);
 
     return Table.fromMem(testing.io, alloc, memTable, decompressionPool);
+}
+
+test "swapTables preserves sources when publication fails" {
+    const Recorder = struct {
+        const Self = @This();
+
+        const TestTable = struct {
+            toRemove: std.atomic.Value(bool) = .init(false),
+
+            pub fn release(_: *@This(), _: std.Io) void {
+                std.debug.panic("unreachable", .{});
+            }
+
+            pub fn writeNames(_: std.Io, _: Allocator, _: []const u8, _: []*@This()) !void {
+                return error.CatalogFailure;
+            }
+        };
+
+        mxTables: std.Io.Mutex = .init,
+        memTables: std.ArrayList(*TestTable) = .empty,
+        diskTables: std.ArrayList(*TestTable) = .empty,
+        memTablesSem: std.Io.Semaphore = .{ .permits = 0 },
+        path: []const u8 = "",
+
+        failScheduling: bool,
+
+        pub fn startMemTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
+            if (self.failScheduling) return error.SchedulingFailure;
+        }
+
+        pub fn startDiskTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
+            if (self.failScheduling) return error.SchedulingFailure;
+        }
+    };
+
+    const f = struct {
+        fn f(kind: TableKind, failScheduling: bool, failAllocation: bool) !void {
+            const alloc = testing.allocator;
+
+            var source: Recorder.TestTable = .{};
+            var destination: Recorder.TestTable = .{};
+
+            var recorder: Recorder = .{ .failScheduling = failScheduling };
+            defer recorder.memTables.deinit(alloc);
+            defer recorder.diskTables.deinit(alloc);
+
+            try recorder.memTables.append(alloc, &source);
+
+            var sources = [_]*Recorder.TestTable{&source};
+            var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+
+            const expectedErr = if (failAllocation) error.OutOfMemory else if (failScheduling) error.SchedulingFailure else error.CatalogFailure;
+
+            try testing.expectError(expectedErr, Swapper(Recorder, Recorder.TestTable).swapTables(
+                &recorder,
+                testing.io,
+                if (failAllocation) failing.allocator() else alloc,
+                &sources,
+                &destination,
+                kind,
+            ));
+            try testing.expectEqualSlices(*Recorder.TestTable, &.{&source}, recorder.memTables.items);
+            try testing.expectEqualSlices(*Recorder.TestTable, &.{}, recorder.diskTables.items);
+            try testing.expectEqual(0, recorder.memTablesSem.permits);
+            try testing.expect(!source.toRemove.load(.acquire));
+            try testing.expect(recorder.mxTables.tryLock());
+            recorder.mxTables.unlock(testing.io);
+        }
+    }.f;
+
+    try f(.disk, false, true);
+    try f(.disk, true, false);
+    try f(.mem, true, false);
+    try f(.disk, false, false);
 }
 
 test "removeTables removes exact pointers" {

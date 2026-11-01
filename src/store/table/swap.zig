@@ -28,24 +28,39 @@ pub fn Swapper(
             self.mxTables.lockUncancelable(io);
             errdefer self.mxTables.unlock(io);
 
-            const removedMemTables = removeTables(&self.memTables, tables);
-            const removedDiskTables = removeTables(&self.diskTables, tables);
+            var memTables = try std.ArrayList(*T).initCapacity(alloc, self.memTables.capacity);
+            defer memTables.deinit(alloc);
+            var diskTables = try std.ArrayList(*T).initCapacity(alloc, self.diskTables.capacity);
+            defer diskTables.deinit(alloc);
+
+            memTables.appendSliceAssumeCapacity(self.memTables.items);
+            diskTables.appendSliceAssumeCapacity(self.diskTables.items);
+
+            const removedMemTables = removeTables(&memTables, tables);
+            const removedDiskTables = removeTables(&diskTables, tables);
 
             switch (tableKind) {
                 .disk => {
-                    try self.diskTables.append(alloc, newTable);
+                    try diskTables.append(alloc, newTable);
+                    try self.diskTables.ensureTotalCapacity(alloc, diskTables.items.len);
                     try self.startDiskTablesMerge(io, alloc);
                 },
                 .mem => {
                     std.debug.assert(removedMemTables > 0);
-                    try self.memTables.append(alloc, newTable);
+
+                    try memTables.append(alloc, newTable);
+                    try self.memTables.ensureTotalCapacity(alloc, memTables.items.len);
                     try self.startMemTablesMerge(io, alloc);
                 },
             }
 
             if (removedDiskTables > 0 or tableKind == .disk) {
-                try T.writeNames(io, alloc, self.path, self.diskTables.items);
+                try T.writeNames(io, alloc, self.path, diskTables.items);
             }
+            self.memTables.clearRetainingCapacity();
+            self.memTables.appendSliceAssumeCapacity(memTables.items);
+            self.diskTables.clearRetainingCapacity();
+            self.diskTables.appendSliceAssumeCapacity(diskTables.items);
             self.mxTables.unlock(io);
 
             // A memory destination inherits one source's permit without reacquiring it.

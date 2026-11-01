@@ -864,6 +864,7 @@ test "data table timer retains and rearms an early callback" {
 /// Real one-row tables with synthetic, exponentially increasing selection sizes.
 /// Tasks are not started: each test drives merging synchronously.
 const SkewedMergeFixture = struct {
+    alloc: Allocator,
     tmp: testing.TmpDir,
     rootPath: [:0]const u8,
     runtime: *Runtime,
@@ -884,13 +885,13 @@ const SkewedMergeFixture = struct {
         mergingTables: usize = 0,
     };
 
-    fn init(tableCount: usize) !*SkewedMergeFixture {
+    fn init(alloc: Allocator, tableCount: usize) !*SkewedMergeFixture {
         std.debug.assert(tableCount <= maxMemTables);
-        const alloc = testing.allocator;
         const io = testing.io;
         // The recorder retains a pointer to mergePool, so the fixture must not move.
         const self = try alloc.create(SkewedMergeFixture);
         errdefer alloc.destroy(self);
+        self.alloc = alloc;
 
         self.tmp = testing.tmpDir(.{});
         errdefer self.tmp.cleanup();
@@ -913,6 +914,9 @@ const SkewedMergeFixture = struct {
         errdefer self.timerLoop.deinit();
         self.recorder = try self.openRecorder();
         errdefer {
+            // Initialization rollback must not allocate to flush partial input.
+            for (self.recorder.memTables.items) |table| table.release(io);
+            self.recorder.memTables.clearRetainingCapacity();
             self.recorder.stop(io, alloc) catch unreachable;
             self.recorder.deinit(io, alloc);
         }
@@ -931,7 +935,7 @@ const SkewedMergeFixture = struct {
     }
 
     fn deinit(self: *SkewedMergeFixture) void {
-        const alloc = testing.allocator;
+        const alloc = self.alloc;
         const io = testing.io;
         // Recover stranded flags only after assertions. With no background jobs,
         // this lets a rollback regression report its assertion instead of an ABRT.
@@ -954,7 +958,7 @@ const SkewedMergeFixture = struct {
 
     /// Opens the same directory without starting background tasks.
     fn openRecorder(self: *SkewedMergeFixture) !*DataRecorder {
-        return DataRecorder.init(testing.io, testing.allocator, self.rootPath, self.runtime, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.mergePool, self.timerLoop);
+        return DataRecorder.init(testing.io, self.alloc, self.rootPath, self.runtime, self.timestampsEncoders, self.compressionPool, self.decompressionPool, &self.mergePool, self.timerLoop);
     }
 
     /// Captures row ownership, ingestion capacity, and merge claims together.
@@ -985,23 +989,45 @@ test "flushForce clears merge flags after a chunk fails" {
     const a = testing.allocator;
     const f = struct {
         fn f(alloc: Allocator, count: usize) !void {
-            const fixture = try SkewedMergeFixture.init(count);
+            const fixture = try SkewedMergeFixture.init(alloc, count);
             defer fixture.deinit();
+            // Keep accounting on the same allocator while allowing retry and cleanup.
+            const failing: *testing.FailingAllocator = @ptrCast(@alignCast(alloc.ptr));
+            defer failing.fail_index = std.math.maxInt(usize);
             const recorder = fixture.recorder;
-            // two balanced groups require separate flush chunks.
-            // below capacity, the same failure exercises a single chunk's rollback.
+
+            // isolate synchronous flushing from background compaction
+            recorder.stopped.stop(testing.io);
+
+            // two balanced groups require separate flush chunks,
             const largeGroupSize = 10000;
             for (recorder.memTables.items, 0..) |table, i| table.size = if (i < maxMemTables / 2) 1 else largeGroupSize;
-            const before = fixture.state();
 
-            // var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
-            // try testing.expectError(error.OutOfMemory, recorder.flushForce(testing.io, failing.allocator()));
+            const before = fixture.state();
             recorder.flushForce(testing.io, alloc) catch |err| {
                 try testing.expectEqual(error.OutOfMemory, err);
-                try testing.expectEqualDeep(before, fixture.state());
+
+                const after = fixture.state();
+                if (after.memTables == before.memTables) {
+                    try testing.expectEqualDeep(after, before);
+                } else {
+                    try testing.expectEqualDeep(SkewedMergeFixture.State{
+                        .memTables = after.memTables,
+                        .diskTables = after.diskTables,
+                        .memRows = after.memTables,
+                        // before == count, then count - (before - after.memTables) == after.memTables
+                        .diskRows = count - after.memTables,
+                        .permits = maxMemTables - after.memTables,
+                    }, after);
+                }
+                return err;
             };
 
-            // TODO: ideally add an assrtion of the state here as well on a successful case
+            try testing.expectEqualDeep(SkewedMergeFixture.State{
+                .diskTables = recorder.diskTables.items.len,
+                .diskRows = count,
+                .permits = maxMemTables,
+            }, fixture.state());
         }
     }.f;
 
@@ -1011,7 +1037,7 @@ test "flushForce clears merge flags after a chunk fails" {
 }
 
 test "tablesMerger clears pressure merge flags after allocation failure at capacity" {
-    const fixture = try SkewedMergeFixture.init(maxMemTables);
+    const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
     const before = fixture.state();
@@ -1027,7 +1053,7 @@ test "tablesMerger clears pressure merge flags after allocation failure at capac
 test "tablesMerger leaves skewed memory tables below capacity" {
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
     for ([_]usize{ maxMemTables - 2, maxMemTables - 1 }) |count| {
-        const fixture = try SkewedMergeFixture.init(count);
+        const fixture = try SkewedMergeFixture.init(testing.allocator, count);
         defer fixture.deinit();
         const recorder = fixture.recorder;
 
@@ -1047,7 +1073,7 @@ test "tablesMerger leaves skewed memory tables below capacity" {
 }
 
 test "tablesMerger merges skewed memory tables at capacity without forcing disk output" {
-    const fixture = try SkewedMergeFixture.init(maxMemTables);
+    const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
@@ -1068,7 +1094,7 @@ test "tablesMerger merges skewed memory tables at capacity without forcing disk 
 
 test "tablesMerger on disk tables does not flush memory tables" {
     for ([_]usize{ maxMemTables - 1, maxMemTables }) |count| {
-        const fixture = try SkewedMergeFixture.init(count);
+        const fixture = try SkewedMergeFixture.init(testing.allocator, count);
         defer fixture.deinit();
         const recorder = fixture.recorder;
         const before = fixture.state();
@@ -1084,7 +1110,7 @@ test "tablesMerger on disk tables does not flush memory tables" {
 test "capacity pressure merge survives shutdown and reopening" {
     const alloc = testing.allocator;
     const io = testing.io;
-    const fixture = try SkewedMergeFixture.init(maxMemTables);
+    const fixture = try SkewedMergeFixture.init(alloc, maxMemTables);
     defer fixture.deinit();
     const recorder = fixture.recorder;
 

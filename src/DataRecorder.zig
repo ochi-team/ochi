@@ -773,7 +773,6 @@ pub fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataSha
                                 Logger.log(.warn, "data: mem tables buffer is full, flush mem table", .{});
 
                                 const destinationTablePath = try self.diskTablePath(alloc, .disk);
-                                errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
 
                                 // pass empty list tables because we have nothing to merge/replace,
                                 // it must only flush to disk a passed mem table and not remove existing tables,
@@ -937,75 +936,78 @@ pub fn mergeTables(
     const maxInmemoryTableSize = merger.getMaxInmemoryTableSize(self.runtime.cacheSize);
     const tableKind = merger.getDestinationTableKind(tables, force, maxInmemoryTableSize);
 
-    // TODO: this errdefer is broken, it can break on merge after the table owns it
-    // and it creates double free;
-    // all tables already own, make it using a static buffer and make tables copy the incoming buffer
-    // to eliminate this "move"
     const destinationTablePath = try self.diskTablePath(alloc, tableKind);
-    errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
-
     if (force and tables.len == 1 and tables[0].inner == .mem) {
         const table = tables[0].inner.mem;
+        // should happen only in shutdown
+        Logger.log(.err, "flushing mem table", .{
+            .path = destinationTablePath,
+        });
         try self.flushMemTable(io, alloc, table, tables, destinationTablePath, tableKind);
         return;
     }
 
-    var readersBuf: [amountOfTablesToMerge]*BlockReader = undefined;
-    var readers = std.ArrayList(*BlockReader).initBuffer(&readersBuf);
-    defer for (readers.items) |reader| reader.deinit(alloc);
+    const openTable = tb: {
+        errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
 
-    try openTableReaders(io, alloc, &readers, tables, self.decompressionPool);
+        var readersBuf: [amountOfTablesToMerge]*BlockReader = undefined;
+        var readers = std.ArrayList(*BlockReader).initBuffer(&readersBuf);
+        defer for (readers.items) |reader| reader.deinit(alloc);
 
-    var newMemTable: ?*MemTable = null;
-    const blockWriter = try BlockWriter.init(alloc);
-    defer blockWriter.deinit(alloc);
+        try openTableReaders(io, alloc, &readers, tables, self.decompressionPool);
 
-    const streamWriter: *TableWriter = blk: {
-        if (tableKind == .mem) {
-            const memTable = try MemTable.init(alloc);
-            newMemTable = memTable;
-            break :blk try TableWriter.initMem(alloc, memTable, self.timestampsEncoders, self.compressionPool);
-        } else {
-            var sourceCompressedSizeTotal: u64 = 0;
-            for (tables) |table| {
-                sourceCompressedSizeTotal += table.tableHeader().compressedSize;
-            }
-            const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize(
-                self.runtime.maxMem,
-                self.runtime.cacheSize,
-            );
-            break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders, self.compressionPool);
-        }
-    };
-    defer streamWriter.deinit(alloc);
+        var newMemTable: ?*MemTable = null;
+        errdefer if (newMemTable) |memTable| memTable.deinit(alloc);
+        const blockWriter = try BlockWriter.init(alloc);
+        defer blockWriter.deinit(alloc);
 
-    const tableHeader = mergeBlocks(io, alloc, self.timestampsEncoders, self.decompressionPool, streamWriter, &readers, stopped) catch |err| {
-        switch (err) {
-            error.Stopped => {
-                if (destinationTablePath.len > 0) {
-                    fs.deleteTreeAbsolute(io, destinationTablePath) catch |deleteErr| {
-                        Logger.log(.err, "failed to delete half way merged data table after stopped", .{ .err = deleteErr });
-                    };
+        const streamWriter: *TableWriter = blk: {
+            if (tableKind == .mem) {
+                const memTable = try MemTable.init(alloc);
+                newMemTable = memTable;
+                break :blk try TableWriter.initMem(alloc, memTable, self.timestampsEncoders, self.compressionPool);
+            } else {
+                var sourceCompressedSizeTotal: u64 = 0;
+                for (tables) |table| {
+                    sourceCompressedSizeTotal += table.tableHeader().compressedSize;
                 }
-                return err;
-            },
-            else => {
-                Logger.log(.err, "failed to merge tables", .{ .err = err });
-                return err;
-            },
+                const fitsInCache = sourceCompressedSizeTotal <= merger.maxCachableTableSize(
+                    self.runtime.maxMem,
+                    self.runtime.cacheSize,
+                );
+                break :blk try TableWriter.initDisk(io, alloc, destinationTablePath, fitsInCache, self.timestampsEncoders, self.compressionPool);
+            }
+        };
+        defer streamWriter.deinit(alloc);
+
+        const tableHeader = mergeBlocks(io, alloc, self.timestampsEncoders, self.decompressionPool, streamWriter, &readers, stopped) catch |err| {
+            switch (err) {
+                error.Stopped => {
+                    if (destinationTablePath.len > 0) {
+                        fs.deleteTreeAbsolute(io, destinationTablePath) catch |deleteErr| {
+                            Logger.log(.err, "failed to delete half way merged data table after stopped", .{ .err = deleteErr });
+                        };
+                    }
+                    return err;
+                },
+                else => {
+                    Logger.log(.err, "failed to merge tables", .{ .err = err });
+                    return err;
+                },
+            }
+        };
+        if (newMemTable) |memTable| {
+            memTable.tableHeader = tableHeader;
+        } else {
+            std.debug.assert(destinationTablePath.len > 0);
+
+            try tableHeader.writeFile(io, destinationTablePath);
+
+            try fs.syncPathAndParentDir(io, destinationTablePath);
         }
+
+        break :tb try openCreatedTable(io, alloc, destinationTablePath, newMemTable, self.decompressionPool);
     };
-    if (newMemTable) |memTable| {
-        memTable.tableHeader = tableHeader;
-    } else {
-        std.debug.assert(destinationTablePath.len > 0);
-
-        try tableHeader.writeFile(io, destinationTablePath);
-
-        try fs.syncPathAndParentDir(io, destinationTablePath);
-    }
-
-    const openTable = try openCreatedTable(io, alloc, destinationTablePath, newMemTable, self.decompressionPool);
     errdefer openTable.release(io);
 
     if (tableKind == .mem) {
@@ -1049,9 +1051,12 @@ pub fn flushMemTable(
     });
     defer z.end();
 
-    try memTable.storeToDisk(io, destinationTablePath);
+    const newTable = blk: {
+        errdefer alloc.free(destinationTablePath);
+        try memTable.storeToDisk(io, destinationTablePath);
 
-    const newTable = try openCreatedTable(io, alloc, destinationTablePath, null, self.decompressionPool);
+        break :blk try openCreatedTable(io, alloc, destinationTablePath, null, self.decompressionPool);
+    };
     errdefer newTable.release(io);
 
     try swapper.swapTables(self, io, alloc, tables, newTable, tableKind);
