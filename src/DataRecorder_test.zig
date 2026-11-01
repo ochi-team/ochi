@@ -989,13 +989,14 @@ test "flushForce clears merge flags after a chunk fails" {
     const a = testing.allocator;
     const f = struct {
         fn f(alloc: Allocator, count: usize) !void {
-            const fixture = try SkewedMergeFixture.init(alloc, count);
+            const fixture = try SkewedMergeFixture.init(testing.allocator, count);
             defer fixture.deinit();
-            // it's necessary to let it shutdown with no failure injected and not abort the program
-            const failing: *testing.FailingAllocator = @ptrCast(@alignCast(alloc.ptr));
-            defer failing.fail_index = std.math.maxInt(usize);
 
             const recorder = fixture.recorder;
+            // TODO: in  runtime it cangrow disk tables, therefore it allocates it via failing allocator,
+            // but frees with a regular testing.allocator,
+            // separate stop and deinit helps to use only failing allocator and get rid of it
+            try recorder.diskTables.ensureTotalCapacity(testing.allocator, count);
 
             // isolate synchronous flushing from background compaction
             recorder.stopped.stop(testing.io);
@@ -1040,8 +1041,6 @@ test "flushForce clears merge flags after a chunk fails" {
 test "tablesMerger clears pressure merge flags after allocation failure at capacity" {
     const f = struct {
         fn f(alloc: Allocator) !void {
-            // Timer scheduling uses the fixture allocator and tolerates OOM after
-            // committing the merge; inject only into the merge operation itself.
             const fixture = try SkewedMergeFixture.init(testing.allocator, maxMemTables);
             defer fixture.deinit();
 
