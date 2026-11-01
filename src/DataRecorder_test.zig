@@ -1044,26 +1044,21 @@ test "tablesMerger clears pressure merge flags after allocation failure at capac
 
     var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
     try testing.expectError(error.OutOfMemory, recorder.tablesMerger(testing.io, failing.allocator(), .mem));
-
-    // Pressure selection uses the ordinary merge path, whose rollback must
-    // clear every selected table's claim without changing row ownership.
     try testing.expectEqualDeep(before, fixture.state());
 }
 
-test "tablesMerger leaves skewed memory tables below capacity" {
+test "tablesMerger leaves memory tables below capacity" {
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
     for ([_]usize{ maxMemTables - 2, maxMemTables - 1 }) |count| {
         const fixture = try SkewedMergeFixture.init(testing.allocator, count);
         defer fixture.deinit();
         const recorder = fixture.recorder;
 
-        // Establish that ordinary leveled compaction cannot select these tables;
-        // otherwise a merge here would say nothing about the capacity threshold.
         var windowBuf: [amountOfTablesToMerge]*Table = undefined;
+        // null because the tables are unballanced, large diff betwen them
         try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64), .leveled) == null);
-        try recorder.tablesMerger(testing.io, testing.allocator, .mem);
 
-        // Available slots mean there is no reason to force skewed tables to disk.
+        try recorder.tablesMerger(testing.io, testing.allocator, .mem);
         try testing.expectEqualDeep(SkewedMergeFixture.State{
             .memTables = count,
             .memRows = count,
@@ -1078,13 +1073,13 @@ test "tablesMerger merges skewed memory tables at capacity without forcing disk 
     const recorder = fixture.recorder;
     const merger = merge.Merger(*Table, maxMemTables, amountOfTablesToMerge);
 
-    // No leveled window exists, so only pressure selection can make progress.
     var windowBuf: [amountOfTablesToMerge]*Table = undefined;
+    // null because the tables are unballanced, large diff betwen them
     try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64), .leveled) == null);
-    try recorder.tablesMerger(testing.io, testing.allocator, .mem);
 
-    // These small tables fit in memory. Recover ingestion slots without forcing
-    // disk output, preserving every row and clearing all merge claims.
+    try recorder.tablesMerger(testing.io, testing.allocator, .mem);
+    // successful merge created new mem table,
+    // didn't force to disk because the result table size is too small
     try testing.expectEqualDeep(SkewedMergeFixture.State{
         .memTables = 1,
         .memRows = maxMemTables,
@@ -1100,9 +1095,6 @@ test "tablesMerger on disk tables does not flush memory tables" {
         const before = fixture.state();
 
         try recorder.tablesMerger(testing.io, testing.allocator, .disk);
-
-        // Target isolation holds even when memory tables fill every slot: an
-        // invocation for disk tables must not trigger the memory-only fallback.
         try testing.expectEqualDeep(before, fixture.state());
     }
 }
@@ -1115,26 +1107,24 @@ test "capacity pressure merge survives shutdown and reopening" {
     const recorder = fixture.recorder;
 
     try recorder.tablesMerger(io, alloc, .mem);
-    // Check before shutdown: stop() also flushes memory tables and could otherwise
-    // conceal a missing capacity-triggered merge.
+    // tables are not flushed, merged to a new mem table
     try testing.expectEqualDeep(SkewedMergeFixture.State{
         .memTables = 1,
         .memRows = maxMemTables,
         .permits = maxMemTables - 1,
     }, fixture.state());
+    // now they must have been flushed
     try recorder.stop(io, alloc);
 
     const reopened = try fixture.openRecorder();
     defer reopened.deinit(io, alloc);
     defer reopened.stop(io, alloc) catch unreachable;
 
-    // Reopening must discover the complete output as an idle, persisted table.
     try testing.expectEqual(1, reopened.diskTables.items.len);
     const table = reopened.diskTables.items[0];
-    try testing.expectEqualDeep(.{ false, @as(u64, maxMemTables) }, .{ table.inMerge, table.tableHeader().len });
+    // all the logs are perissted in the table
+    try testing.expectEqualDeep(.{ false, maxMemTables }, .{ table.inMerge, table.tableHeader().len });
 
-    // Header counts alone cannot detect damaged payloads. Query the persisted
-    // data and compare every timestamp and field after normalizing sort order.
     var sink: Sink = .{};
     defer sink.deinit(alloc);
     try reopened.queryLines(io, alloc, &.{}, .{ .start = 0, .end = std.math.maxInt(u64) }, &sink);
