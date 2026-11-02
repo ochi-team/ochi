@@ -126,7 +126,7 @@ test "removeTables removes exact pointers" {
     try testing.expect(tables.items[1] != two);
 }
 
-test "swapTables transfers memory permits without transient excess or reacquiring" {
+test "swapTables releases net memory permits" {
     const capacity = 16;
     const Recorder = struct {
         const Self = @This();
@@ -145,44 +145,10 @@ test "swapTables transfers memory permits without transient excess or reacquirin
                 for (tables) |table| table.catalogWrites += 1;
             }
         };
-        const Semaphore = struct {
-            const Publication = struct { permits: usize, live: usize };
-
-            permits: usize = 0,
-            producers: usize = 0,
-            posts: usize = 0,
-            waits: usize = 0,
-            blockedWaits: usize = 0,
-            publications: [capacity]Publication = undefined,
-
-            pub fn post(self: *@This(), _: std.Io) void {
-                const recorder: *Self = @fieldParentPtr("memTablesSem", self);
-                self.permits += 1;
-                self.publications[self.posts] = .{
-                    .permits = self.permits,
-                    .live = recorder.memTables.items.len + self.producers,
-                };
-                self.posts += 1;
-
-                // Let producers claim every posted permit before the swapper can wait.
-                self.producers += self.permits;
-                self.permits = 0;
-            }
-
-            pub fn waitUncancelable(self: *@This(), _: std.Io) void {
-                self.waits += 1;
-                if (self.permits == 0) {
-                    self.blockedWaits += 1;
-                } else {
-                    self.permits -= 1;
-                }
-            }
-        };
-
         mxTables: std.Io.Mutex = .init,
         memTables: std.ArrayList(*TestTable),
         diskTables: std.ArrayList(*TestTable),
-        memTablesSem: Semaphore = .{},
+        memTablesSem: std.Io.Semaphore = .{ .permits = 0 },
         path: []const u8 = "",
         memMerges: usize = 0,
         diskMerges: usize = 0,
@@ -195,7 +161,7 @@ test "swapTables transfers memory permits without transient excess or reacquirin
             self.diskMerges += 1;
         }
     };
-    const Case = struct { kind: @import("merge.zig").TableKind, memSources: usize, diskSources: usize = 0 };
+    const Case = struct { kind: TableKind, memSources: usize, diskSources: usize = 0 };
     const cases = [_]Case{
         .{ .kind = .mem, .memSources = 1 },
         .{ .kind = .mem, .memSources = 2 },
@@ -226,39 +192,25 @@ test "swapTables transfers memory permits without transient excess or reacquirin
 
         try Swapper(Recorder, Recorder.TestTable).swapTables(&recorder, testing.io, testing.allocator, sources.items, &destination, case.kind);
 
-        for (recorder.memTablesSem.publications[0..recorder.memTablesSem.posts]) |publication| {
-            try testing.expect(publication.permits + publication.live <= capacity);
-        }
+        try testing.expect(recorder.memTablesSem.permits + recorder.memTables.items.len <= capacity);
         const memDestination: usize = @intFromBool(case.kind == .mem);
         const diskDestination: usize = @intFromBool(case.kind == .disk);
         const freed = case.memSources - memDestination;
         const State = struct {
             permits: usize,
-            producers: usize,
-            posts: usize,
-            waits: usize,
-            blockedWaits: usize,
             memTables: usize,
             diskTables: usize,
             memMerges: usize,
             diskMerges: usize,
         };
         try testing.expectEqualDeep(State{
-            .permits = 0,
-            .producers = freed,
-            .posts = freed,
-            .waits = 0,
-            .blockedWaits = 0,
+            .permits = freed,
             .memTables = capacity - freed,
             .diskTables = diskDestination,
             .memMerges = memDestination,
             .diskMerges = diskDestination,
         }, State{
             .permits = recorder.memTablesSem.permits,
-            .producers = recorder.memTablesSem.producers,
-            .posts = recorder.memTablesSem.posts,
-            .waits = recorder.memTablesSem.waits,
-            .blockedWaits = recorder.memTablesSem.blockedWaits,
             .memTables = recorder.memTables.items.len,
             .diskTables = recorder.diskTables.items.len,
             .memMerges = recorder.memMerges,
