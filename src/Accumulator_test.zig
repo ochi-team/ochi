@@ -4,11 +4,15 @@ const Store = @import("Store.zig").Store;
 const Field = @import("store/lines.zig").Field;
 
 const Accumulator = @import("Accumulator.zig");
+const SharedBufferPool = @import("SharedBufferPool.zig");
 const testing = std.testing;
 
 test "Accumulator.reinit owns stream tags after caller reuses tag storage" {
     const alloc = testing.allocator;
+    const buffers = try SharedBufferPool.init(testing.io, alloc, 2);
+    defer buffers.deinit();
     var store: Store = undefined;
+    store.ingestBuffers = buffers;
     var accumulator = try Accumulator.init(alloc, &store);
     defer accumulator.deinit(alloc);
 
@@ -31,7 +35,10 @@ test "Accumulator.reinit owns stream tags after caller reuses tag storage" {
 
 test "Accumulator buffers multiple streams and flushes them as separate checkpoints" {
     const alloc = testing.allocator;
+    const buffers = try SharedBufferPool.init(testing.io, alloc, 2);
+    defer buffers.deinit();
     var store: Store = undefined;
+    store.ingestBuffers = buffers;
     var accumulator = try Accumulator.init(alloc, &store);
     defer accumulator.deinit(alloc);
 

@@ -4,6 +4,7 @@ const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
 
 const Store = @import("Store.zig").Store;
+const SharedBufferPool = @import("SharedBufferPool.zig");
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
@@ -16,7 +17,6 @@ const makeStreamID = @import("store/lines.zig").makeStreamID;
 
 const Consts = @import("Consts.zig");
 
-const maxBlockSize = Consts.maxBlockSize;
 const flushSizeThreshold = Consts.flushSizeThreshold;
 
 const Logger = @import("logging");
@@ -48,6 +48,7 @@ store: *Store,
 
 lines: std.ArrayList(Line) = .empty,
 buffer: FixedBufferAllocator,
+owner: *SharedBufferPool.Buffer,
 
 checkpoints: [maxCheckpoints]Checkpoint = undefined,
 checkpointsLen: u16 = 0,
@@ -65,12 +66,13 @@ currentSid: SID = .{ .tenantID = 0, .id = 0 },
 flushAtUs: ?u64 = null,
 
 pub fn init(alloc: Allocator, store: *Store) !Accumulator {
-    const buf = try alloc.alloc(u8, maxBlockSize);
-    errdefer alloc.free(buf);
+    _ = alloc;
+    const owner = try store.ingestBuffers.tryAcquire() orelse return error.IngestBuffersExhausted;
 
     return Accumulator{
         .store = store,
-        .buffer = FixedBufferAllocator.init(buf),
+        .buffer = FixedBufferAllocator.init(owner.bytes),
+        .owner = owner,
     };
 }
 
@@ -112,7 +114,7 @@ pub fn deinit(self: *Accumulator, alloc: Allocator) void {
     if (self.currentTags.items.len > 0) freeFields(alloc, self.currentTags);
     self.resetBuffered();
     self.lines.deinit(alloc);
-    alloc.free(self.buffer.buffer);
+    self.owner.release();
     self.* = undefined;
 }
 
@@ -215,13 +217,23 @@ pub fn flush(self: *Accumulator, io: Io, alloc: Allocator) !void {
     Logger.log(.debug, "flushing accumator buffer", .{
         .size = self.buffer.end_index,
     });
+    if (self.lines.items.len == 0) {
+        self.resetBuffered();
+        return;
+    }
+    const replacement = try self.store.acquireIngestBuffer(io, alloc);
+    errdefer replacement.release();
+
     var start: usize = 0;
     for (self.checkpoints[0..self.checkpointsLen]) |checkpoint| {
         const chunk = self.lines.items[start..checkpoint.i];
         start = checkpoint.i;
         if (chunk.len == 0) continue;
 
-        try self.store.addLines(io, alloc, chunk, checkpoint.tags.items, checkpoint.encodedTags, checkpoint.sid);
+        try self.store.addOwnedLines(io, alloc, chunk, checkpoint.tags.items, checkpoint.encodedTags, checkpoint.sid, self.owner);
     }
+    self.owner.release();
+    self.owner = replacement;
+    self.buffer = FixedBufferAllocator.init(replacement.bytes);
     self.resetBuffered();
 }

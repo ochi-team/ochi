@@ -1,6 +1,7 @@
 // TODO: data and index recorders are both hold a lot in common,
 // we must desine a single component to manage both
 const std = @import("std");
+const SharedBufferPool = @import("SharedBufferPool.zig");
 const Allocator = std.mem.Allocator;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
@@ -120,6 +121,8 @@ pub const DataShard = struct {
     checkpoints: [maxCheckpoints]SidCheckpoint = undefined,
     checkpointsLen: u16 = 0,
     buffer: FixedBufferAllocator,
+    owners: [maxCheckpoints]*SharedBufferPool.Buffer = undefined,
+    ownersLen: usize = 0,
 
     flushAtUs: ?i64 = null,
 
@@ -135,11 +138,14 @@ pub const DataShard = struct {
 
     fn reset(self: *DataShard) void {
         self.lines.clearRetainingCapacity();
+        for (self.owners[0..self.ownersLen]) |owner| owner.release();
+        self.ownersLen = 0;
         self.buffer.reset();
         self.checkpointsLen = 0;
         self.flushAtUs = null;
     }
     fn deinit(self: *DataShard, alloc: Allocator) void {
+        self.reset();
         self.lines.deinit(alloc);
         alloc.free(self.buffer.buffer);
         self.* = undefined;
@@ -223,8 +229,57 @@ pub const DataShard = struct {
         }
     }
 
+    /// Copies mutable descriptors while retaining the original key/value bytes.
+    pub fn appendOwnedLines(
+        shard: *DataShard,
+        alloc: Allocator,
+        lines: []const Line,
+        sid: SID,
+        owner: *SharedBufferPool.Buffer,
+    ) !void {
+        std.debug.assert(lines.len > 0);
+        std.debug.assert(shard.ownersLen < shard.owners.len);
+        std.debug.assert(shard.checkpointsLen < maxCheckpoints);
+        std.debug.assert(shard.lines.items.len + lines.len <= maxLines);
+
+        var fieldsLen: usize = 0;
+        for (lines) |line| {
+            fieldsLen += line.fields.items.len;
+        }
+
+        try shard.lines.ensureUnusedCapacity(alloc, lines.len);
+        const fields = try shard.buffer.allocator().alloc(Field, fieldsLen);
+
+        owner.retain();
+        shard.owners[shard.ownersLen] = owner;
+        shard.ownersLen += 1;
+
+        var offset: usize = 0;
+        for (lines) |line| {
+            const copiedFields = fields[offset..][0..line.fields.items.len];
+            @memcpy(copiedFields, line.fields.items);
+            offset += copiedFields.len;
+
+            shard.lines.appendAssumeCapacity(.{
+                .timestampNs = line.timestampNs,
+                .fields = .view(copiedFields),
+            });
+        }
+
+        if (shard.checkpointsLen == 0 or !shard.checkpoints[shard.checkpointsLen - 1].sid.eql(sid)) {
+            shard.checkpoints[shard.checkpointsLen] = .{
+                .sid = sid,
+                .i = @intCast(shard.lines.items.len),
+            };
+            shard.checkpointsLen += 1;
+        } else {
+            shard.checkpoints[shard.checkpointsLen - 1].i = @intCast(shard.lines.items.len);
+        }
+    }
+
     fn mustFlush(self: *const DataShard) bool {
         return self.buffer.end_index >= flushSizeThreshold or
+            self.ownersLen == self.owners.len or
             self.checkpointsLen == maxCheckpoints or
             self.lines.items.len >= maxLines;
     }
@@ -1036,6 +1091,15 @@ pub fn flushMemTable(
 }
 
 pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID) !void {
+    return self.addLinesWithBuffer(io, alloc, lines, sid, null);
+}
+
+/// Keeps the batch alive through shard encoding without copying its payload.
+pub fn addOwnedLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID, owner: *SharedBufferPool.Buffer) !void {
+    return self.addLinesWithBuffer(io, alloc, lines, sid, owner);
+}
+
+fn addLinesWithBuffer(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Line, sid: SID, owner: ?*SharedBufferPool.Buffer) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "DataRecorder.addLine",
@@ -1054,6 +1118,27 @@ pub fn addLines(self: *DataRecorder, io: Io, alloc: Allocator, lines: []const Li
         break :blk fallback;
     };
     defer shard.mx.unlock(io);
+
+    if (owner) |buffer| {
+        var offset: usize = 0;
+        while (offset < lines.len) {
+            if (shard.mustFlush()) try self.flushShard(io, alloc, shard, false);
+            const end = offset + @min(lines.len - offset, maxLines - shard.lines.items.len);
+            shard.appendOwnedLines(alloc, lines[offset..end], sid, buffer) catch |err| switch (err) {
+                error.OutOfMemory => {
+                    try self.flushShard(io, alloc, shard, false);
+                    try shard.appendOwnedLines(alloc, lines[offset..end], sid, buffer);
+                },
+            };
+            offset = end;
+            if (shard.mustFlush()) try self.flushShard(io, alloc, shard, false);
+        }
+        if (shard.lines.items.len > 0 and shard.flushAtUs == null) {
+            shard.flushAtUs = getFlushTime(io);
+            self.requestShardTimer(shard);
+        }
+        return;
+    }
 
     const start = shard.lines.items.len;
     shard.appendLines(alloc, lines, sid) catch |err| {
