@@ -1,4 +1,5 @@
 const std = @import("std");
+const testOptions = @import("test_options");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
@@ -297,13 +298,35 @@ fn CheckAllAllocationFailuresExtraArgs(comptime TestFn: type) type {
     return @Tuple(&extra_args);
 }
 
-/// Like std.testing.checkAllAllocationFailures, but tolerates a swallowed
-/// OutOfMemory as long as it didn't leak
+pub fn checkAllAllocationFailures(
+    backingAllocator: Allocator,
+    comptime testFn: anytype,
+    extraArgs: CheckAllAllocationFailuresExtraArgs(@TypeOf(testFn)),
+) !void {
+    if (testOptions.allocationFailures) {
+        return std.testing.checkAllAllocationFailures(backingAllocator, testFn, extraArgs);
+    }
+    var failingAllocator = std.testing.FailingAllocator.init(backingAllocator, .{
+        .fail_index = std.math.maxInt(usize),
+        .resize_fail_index = std.math.maxInt(usize),
+    });
+    try @call(.auto, testFn, .{failingAllocator.allocator()} ++ extraArgs);
+}
+
+/// Like checkAllAllocationFailures,
+/// but tolerates a swallowed OutOfMemory as long as it didn't leak
 pub fn checkAllocationFailuresAllowingSwallow(
     backing_allocator: Allocator,
     comptime test_fn: anytype,
     extra_args: CheckAllAllocationFailuresExtraArgs(@TypeOf(test_fn)),
 ) !void {
+    if (!testOptions.allocationFailures) {
+        var failingAllocator = std.testing.FailingAllocator.init(backing_allocator, .{
+            .fail_index = std.math.maxInt(usize),
+            .resize_fail_index = std.math.maxInt(usize),
+        });
+        return @call(.auto, test_fn, .{failingAllocator.allocator()} ++ extra_args);
+    }
     const needed_alloc_count = x: {
         var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{});
 

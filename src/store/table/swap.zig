@@ -28,13 +28,10 @@ pub fn Swapper(
             self.mxTables.lockUncancelable(io);
             errdefer self.mxTables.unlock(io);
 
-            var memTables = try std.ArrayList(*T).initCapacity(alloc, self.memTables.capacity);
+            var memTables = try self.memTables.clone(alloc);
             defer memTables.deinit(alloc);
-            var diskTables = try std.ArrayList(*T).initCapacity(alloc, self.diskTables.capacity);
+            var diskTables = try self.diskTables.clone(alloc);
             defer diskTables.deinit(alloc);
-
-            memTables.appendSliceAssumeCapacity(self.memTables.items);
-            diskTables.appendSliceAssumeCapacity(self.diskTables.items);
 
             const removedMemTables = removeTables(&memTables, tables);
             const removedDiskTables = removeTables(&diskTables, tables);

@@ -1,11 +1,12 @@
 const std = @import("std");
+const checkAllAllocationFailures = @import("../../stds/testing.zig").checkAllAllocationFailures;
 
 const ColumnsHeaderIndex = @import("ColumnsHeaderIndex.zig");
 
 const testing = std.testing;
 
 test "encode columns and invariantColumns" {
-    try testing.checkAllAllocationFailures(testing.allocator, testEncode, .{});
+    try checkAllAllocationFailures(testing.allocator, testEncode, .{});
 }
 
 fn testEncode(allocator: std.mem.Allocator) !void {

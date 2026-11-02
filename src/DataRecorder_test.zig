@@ -1,6 +1,7 @@
 // TODO: data and index recorders are both hold a lot in common,
 // we must desine a single component to manage both
 const std = @import("std");
+const checkAllAllocationFailures = @import("stds/testing.zig").checkAllAllocationFailures;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -1045,7 +1046,7 @@ test "flushForce clears merge flags after a chunk fails" {
     }.f;
 
     inline for ([_]usize{ maxMemTables / 2, maxMemTables }) |count| {
-        try testing.checkAllAllocationFailures(a, f, .{count});
+        try checkAllAllocationFailures(a, f, .{count});
     }
 }
 
@@ -1071,7 +1072,7 @@ test "tablesMerger clears pressure merge flags after allocation failure at capac
         }
     }.f;
 
-    try testing.checkAllAllocationFailures(testing.allocator, f, .{});
+    try checkAllAllocationFailures(testing.allocator, f, .{});
 }
 
 test "tablesMerger leaves memory tables below capacity" {

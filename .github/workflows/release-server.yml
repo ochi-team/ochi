@@ -30,8 +30,8 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Test ochi
-        run: zig build test
+      - name: Test ochi with exhaustive allocation-failure coverage
+        run: zig build test -Dallocation-failures=true
 
       - name: Build release binary
         run: zig build -Doptimize=ReleaseSafe -Drelease=true -Dtarget=x86_64-linux-gnu -Dcpu=baseline

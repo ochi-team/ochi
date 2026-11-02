@@ -1,4 +1,5 @@
 const std = @import("std");
+const checkAllAllocationFailures = @import("../../stds/testing.zig").checkAllAllocationFailures;
 const Io = std.Io;
 
 const Field = @import("../lines.zig").Field;
@@ -44,7 +45,7 @@ const testing = std.testing;
 // TODO: make sure we test fallback allocators either as failabable with capacity 1
 // and capacity 16k+, audit all of them and perhaps get rid of some
 test "addLines" {
-    try testing.checkAllAllocationFailures(testing.allocator, testAddLines, .{testing.io});
+    try checkAllAllocationFailures(testing.allocator, testAddLines, .{testing.io});
 }
 
 fn testAddLines(allocator: std.mem.Allocator, io: Io) !void {
@@ -629,7 +630,7 @@ test "LineBySidSortContext.sort handles sid and timestamp extremes" {
 }
 
 test "flushToDisk writes buffers" {
-    try testing.checkAllAllocationFailures(testing.allocator, testFlushToDisk, .{testing.io});
+    try checkAllAllocationFailures(testing.allocator, testFlushToDisk, .{testing.io});
 }
 
 test "tableHeader timestamp range matches all index blocks" {

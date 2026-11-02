@@ -1,7 +1,7 @@
 const std = @import("std");
 
 /// adds option to runtime buildin
-fn addOptionBuiltin(
+fn addRootOptions(
     b: *std.Build,
     compile: *std.Build.Step.Compile,
     release: bool,
@@ -11,12 +11,26 @@ fn addOptionBuiltin(
     const options = b.addOptions();
     compile.root_module.addOptions("build", options);
 
-    // build: version
+    // version, for obsevability
     const args = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
     const version = b.run(args);
     options.addOption([]const u8, "version", version);
+    // release flag, defines stricter check of the running envoronments,
+    // necessary since ReleaseSafe is used in order to run tests on different non prod setups
     options.addOption(bool, "release", release);
+    // enables pprof metrics
     options.addOption(bool, "pprof", pprof);
+}
+
+fn addTestOptions(
+    b: *std.Build,
+    compile: *std.Build.Step.Compile,
+    injectAllocationFailures: bool,
+) void {
+    const testOptions = b.addOptions();
+    compile.root_module.addOptions("test_options", testOptions);
+
+    testOptions.addOption(bool, "allocationFailures", injectAllocationFailures);
 }
 
 /// generates src/all_tests.zig importing every src file that has a test block,
@@ -67,6 +81,9 @@ pub fn build(b: *std.Build) void {
     ) orelse false;
     // test filter to run a specific set of tests
     const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
+    // enables checkAllAllocationFailures do real work,
+    // otherwise it's noop since it makes the tests a way longer
+    const allocationFailures = b.option(bool, "allocation-failures", "Enable exhaustive, slow allocation-failure sweeps") orelse false;
 
     // 3d party dependencies
     const zeit = b.dependency("zeit", .{
@@ -165,7 +182,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    addOptionBuiltin(b, exe, release, pprofEnabled);
+    addRootOptions(b, exe, release, pprofEnabled);
     b.installArtifact(exe);
 
     const scooby_exe = b.addExecutable(.{
@@ -178,7 +195,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    addOptionBuiltin(b, scooby_exe, release, pprofEnabled);
+    addRootOptions(b, scooby_exe, release, pprofEnabled);
     b.installArtifact(scooby_exe);
 
     // run command
@@ -206,7 +223,8 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
-    addOptionBuiltin(b, unit_tests, release, pprofEnabled);
+    addTestOptions(b, unit_tests, allocationFailures);
+    addRootOptions(b, unit_tests, release, pprofEnabled);
     unit_tests.step.dependOn(genTestEntryPointStep);
 
     // encoding module tests
@@ -223,6 +241,8 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .server },
     });
+
+    addTestOptions(b, encoding_tests, allocationFailures);
 
     // build test
     const install_tests = b.addInstallArtifact(unit_tests, .{});
