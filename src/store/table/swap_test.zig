@@ -5,6 +5,7 @@ const Swapper = @import("swap.zig").Swapper;
 const TableKind = @import("merge.zig").TableKind;
 
 const testing = std.testing;
+const checkAllAllocationFailures = @import("../../stds/testing.zig").checkAllAllocationFailures;
 
 const Recorder = struct {
     const Self = @This();
@@ -50,9 +51,7 @@ const Recorder = struct {
 
 test "swapTables preserves sources when publication fails" {
     const f = struct {
-        fn f(kind: TableKind, failScheduling: bool, failAllocation: bool) !void {
-            const alloc = testing.allocator;
-
+        fn f(alloc: Allocator, kind: TableKind, failScheduling: bool, expectedErr: anyerror) !void {
             var source: Recorder.TestTable = .{};
             var destination: Recorder.TestTable = .{ .failCatalog = true };
 
@@ -63,35 +62,39 @@ test "swapTables preserves sources when publication fails" {
             try recorder.memTables.append(alloc, &source);
 
             var sources = [_]*Recorder.TestTable{&source};
-            var failing = testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
-
-            const expectedErr = if (failAllocation) error.OutOfMemory else if (failScheduling) error.SchedulingFailure else error.CatalogFailure;
-
-            try testing.expectError(expectedErr, Swapper(Recorder, Recorder.TestTable).swapTables(
+            Swapper(Recorder, Recorder.TestTable).swapTables(
                 &recorder,
                 testing.io,
-                if (failAllocation) failing.allocator() else alloc,
+                alloc,
                 &sources,
                 &destination,
                 kind,
-            ));
-            try testing.expectEqualSlices(*Recorder.TestTable, &.{&source}, recorder.memTables.items);
-            try testing.expectEqualSlices(*Recorder.TestTable, &.{}, recorder.diskTables.items);
-            try testing.expectEqual(0, recorder.memTablesSem.permits);
-            try testing.expectEqualDeep(Recorder.TestTable{}, source);
-            try testing.expectEqualDeep(Recorder.TestTable{
-                .failCatalog = true,
-                .catalogWrites = @intFromBool(!failAllocation and !failScheduling),
-            }, destination);
-            try testing.expect(recorder.mxTables.tryLock());
-            recorder.mxTables.unlock(testing.io);
+            ) catch |err| {
+                try testing.expectEqualSlices(*Recorder.TestTable, &.{&source}, recorder.memTables.items);
+                try testing.expectEqualSlices(*Recorder.TestTable, &.{}, recorder.diskTables.items);
+                try testing.expectEqual(0, recorder.memTablesSem.permits);
+                try testing.expectEqualDeep(Recorder.TestTable{}, source);
+                try testing.expectEqualDeep(Recorder.TestTable{
+                    .failCatalog = true,
+                    .catalogWrites = @intFromBool(!failScheduling and err != error.OutOfMemory),
+                }, destination);
+                try testing.expect(recorder.mxTables.tryLock());
+                recorder.mxTables.unlock(testing.io);
+
+                if (err == error.OutOfMemory) return err;
+                try testing.expectEqual(expectedErr, err);
+                return;
+            };
+            return error.TestUnexpectedSuccess;
         }
     }.f;
 
-    try f(.disk, false, true);
-    try f(.disk, true, false);
-    try f(.mem, true, false);
-    try f(.disk, false, false);
+    // Disk-merge scheduling fails before catalog publication.
+    try checkAllAllocationFailures(testing.allocator, f, .{ .disk, true, error.SchedulingFailure });
+    // Memory-merge scheduling fails before the source tables are replaced.
+    try checkAllAllocationFailures(testing.allocator, f, .{ .mem, true, error.SchedulingFailure });
+    // Disk-merge scheduling succeeds, then the destination rejects catalog publication.
+    try checkAllAllocationFailures(testing.allocator, f, .{ .disk, false, error.CatalogFailure });
 }
 
 test "removeTables removes exact pointers" {
