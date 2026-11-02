@@ -21,45 +21,55 @@ fn createSizedMemTable(alloc: Allocator, decompressionPool: *DecompressionPool, 
     return Table.fromMem(testing.io, alloc, memTable, decompressionPool);
 }
 
-test "swapTables preserves sources when publication fails" {
-    const Recorder = struct {
-        const Self = @This();
+const Recorder = struct {
+    const Self = @This();
 
-        const TestTable = struct {
-            toRemove: std.atomic.Value(bool) = .init(false),
+    const TestTable = struct {
+        toRemove: std.atomic.Value(bool) = .init(false),
+        releases: usize = 0,
+        catalogWrites: usize = 0,
 
-            pub fn release(_: *@This(), _: std.Io) void {
-                std.debug.panic("unreachable", .{});
-            }
+        failCatalog: bool = false,
 
-            pub fn writeNames(_: std.Io, _: Allocator, _: []const u8, _: []*@This()) !void {
-                return error.CatalogFailure;
-            }
-        };
-
-        mxTables: std.Io.Mutex = .init,
-        memTables: std.ArrayList(*TestTable) = .empty,
-        diskTables: std.ArrayList(*TestTable) = .empty,
-        memTablesSem: std.Io.Semaphore = .{ .permits = 0 },
-        path: []const u8 = "",
-
-        failScheduling: bool,
-
-        pub fn startMemTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
-            if (self.failScheduling) return error.SchedulingFailure;
+        pub fn release(self: *@This(), _: std.Io) void {
+            self.releases += 1;
         }
 
-        pub fn startDiskTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
-            if (self.failScheduling) return error.SchedulingFailure;
+        pub fn writeNames(_: std.Io, _: Allocator, _: []const u8, tables: []*@This()) !void {
+            for (tables) |table| {
+                table.catalogWrites += 1;
+                if (table.failCatalog) return error.CatalogFailure;
+            }
         }
     };
+    mxTables: std.Io.Mutex = .init,
+    memTables: std.ArrayList(*TestTable) = .empty,
+    diskTables: std.ArrayList(*TestTable) = .empty,
+    memTablesSem: std.Io.Semaphore = .{ .permits = 0 },
+    path: []const u8 = "",
+    memMerges: usize = 0,
+    diskMerges: usize = 0,
 
+    failScheduling: bool = false,
+
+    pub fn startMemTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
+        if (self.failScheduling) return error.SchedulingFailure;
+        self.memMerges += 1;
+    }
+
+    pub fn startDiskTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
+        if (self.failScheduling) return error.SchedulingFailure;
+        self.diskMerges += 1;
+    }
+};
+
+test "swapTables preserves sources when publication fails" {
     const f = struct {
         fn f(kind: TableKind, failScheduling: bool, failAllocation: bool) !void {
             const alloc = testing.allocator;
 
             var source: Recorder.TestTable = .{};
-            var destination: Recorder.TestTable = .{};
+            var destination: Recorder.TestTable = .{ .failCatalog = true };
 
             var recorder: Recorder = .{ .failScheduling = failScheduling };
             defer recorder.memTables.deinit(alloc);
@@ -83,7 +93,11 @@ test "swapTables preserves sources when publication fails" {
             try testing.expectEqualSlices(*Recorder.TestTable, &.{&source}, recorder.memTables.items);
             try testing.expectEqualSlices(*Recorder.TestTable, &.{}, recorder.diskTables.items);
             try testing.expectEqual(0, recorder.memTablesSem.permits);
-            try testing.expect(!source.toRemove.load(.acquire));
+            try testing.expectEqualDeep(Recorder.TestTable{}, source);
+            try testing.expectEqualDeep(Recorder.TestTable{
+                .failCatalog = true,
+                .catalogWrites = @intFromBool(!failAllocation and !failScheduling),
+            }, destination);
             try testing.expect(recorder.mxTables.tryLock());
             recorder.mxTables.unlock(testing.io);
         }
@@ -128,39 +142,7 @@ test "removeTables removes exact pointers" {
 
 test "swapTables releases net memory permits" {
     const capacity = 16;
-    const Recorder = struct {
-        const Self = @This();
-        const TestTable = struct {
-            toRemove: std.atomic.Value(bool) = .init(false),
-            refs: usize = 2,
-            releases: usize = 0,
-            catalogWrites: usize = 0,
 
-            pub fn release(self: *@This(), _: std.Io) void {
-                self.refs -= 1;
-                self.releases += 1;
-            }
-
-            pub fn writeNames(_: std.Io, _: Allocator, _: []const u8, tables: []*@This()) !void {
-                for (tables) |table| table.catalogWrites += 1;
-            }
-        };
-        mxTables: std.Io.Mutex = .init,
-        memTables: std.ArrayList(*TestTable),
-        diskTables: std.ArrayList(*TestTable),
-        memTablesSem: std.Io.Semaphore = .{ .permits = 0 },
-        path: []const u8 = "",
-        memMerges: usize = 0,
-        diskMerges: usize = 0,
-
-        pub fn startMemTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
-            self.memMerges += 1;
-        }
-
-        pub fn startDiskTablesMerge(self: *Self, _: std.Io, _: Allocator) !void {
-            self.diskMerges += 1;
-        }
-    };
     const Case = struct { kind: TableKind, memSources: usize, diskSources: usize = 0 };
     const cases = [_]Case{
         .{ .kind = .mem, .memSources = 1 },
@@ -174,7 +156,7 @@ test "swapTables releases net memory permits" {
     for (cases) |case| {
         var memTables = [_]Recorder.TestTable{.{}} ** capacity;
         var diskTable: Recorder.TestTable = .{};
-        var destination: Recorder.TestTable = .{ .refs = 1 };
+        var destination: Recorder.TestTable = .{};
         var memBuf: [capacity]*Recorder.TestTable = undefined;
         var diskBuf: [2]*Recorder.TestTable = undefined;
         var sourcesBuf: [capacity + 1]*Recorder.TestTable = undefined;
@@ -220,17 +202,15 @@ test "swapTables releases net memory permits" {
             const removed = i < case.memSources;
             try testing.expectEqualDeep(Recorder.TestTable{
                 .toRemove = .init(removed),
-                .refs = if (removed) 1 else 2,
                 .releases = @intFromBool(removed),
             }, table);
             try testing.expectEqual(!removed, std.mem.indexOfScalar(*Recorder.TestTable, recorder.memTables.items, &memTables[i]) != null);
         }
         try testing.expectEqualDeep(Recorder.TestTable{
             .toRemove = .init(case.diskSources != 0),
-            .refs = if (case.diskSources != 0) 1 else 2,
             .releases = case.diskSources,
         }, diskTable);
-        try testing.expectEqualDeep(Recorder.TestTable{ .refs = 1, .catalogWrites = diskDestination }, destination);
+        try testing.expectEqualDeep(Recorder.TestTable{ .catalogWrites = diskDestination }, destination);
         const destinationTables = if (case.kind == .mem) recorder.memTables.items else recorder.diskTables.items;
         try testing.expect(std.mem.indexOfScalar(*Recorder.TestTable, destinationTables, &destination) != null);
     }
