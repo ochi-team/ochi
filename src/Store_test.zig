@@ -600,10 +600,10 @@ fn expectSharedBatchInShards(
                 const value = line.fields.items[0].value;
                 try testing.expect(@intFromPtr(value.ptr) >= @intFromPtr(source.ptr));
                 try testing.expect(@intFromPtr(value.ptr) + value.len <= @intFromPtr(source.ptr) + source.len);
+                try testing.expect(value.ptr == firstLine.fields.items[0].value.ptr);
 
                 // Payloads stay shared, but encoding needs its own sortable field descriptors.
                 if (line.timestampNs == firstLine.timestampNs) {
-                    try testing.expect(value.ptr == firstLine.fields.items[0].value.ptr);
                     try testing.expect(line.fields.items.ptr != firstLine.fields.items.ptr);
                 }
 
@@ -634,9 +634,17 @@ fn ingestSharedBatch(alloc: Allocator, store: *Store, timestamps: []const u64) !
     try testing.expect(accumulator.owner != owner);
     try expectSharedBatchInShards(store, owner, firstLine, timestamps);
 
+    // An equal value after flush must be owned by the new buffer, not the shards' buffer.
+    try accumulator.tryAppendLine(io, alloc, timestamps[0] + 4 * std.time.ns_per_day, &fields);
+    const nextValue = accumulator.lines.items[0].fields.items[0].value;
+    const nextBuffer = accumulator.owner.bytes;
+    try testing.expect(nextValue.ptr != firstLine.fields.items[0].value.ptr);
+    try testing.expect(@intFromPtr(nextValue.ptr) >= @intFromPtr(nextBuffer.ptr));
+    try testing.expect(@intFromPtr(nextValue.ptr) + nextValue.len <= @intFromPtr(nextBuffer.ptr) + nextBuffer.len);
+
     // Reusing and destroying the accumulator must leave the shards' payloads intact.
     fields[0].value = "replacement payload";
-    try accumulator.tryAppendLine(io, alloc, timestamps[0] + 4 * std.time.ns_per_day, &fields);
+    try accumulator.tryAppendLine(io, alloc, timestamps[0] + 4 * std.time.ns_per_day + 1, &fields);
 
     return accumulator.currentSid;
 }
@@ -703,6 +711,46 @@ test "shared ingestion releases references on allocation failures" {
             try checkSharedBatch(alloc, &.{ 0, 1, 0 }, true);
         }
     }.check, .{});
+}
+
+test "shared ingestion resets deduplication when a line exhausts the buffer" {
+    // Fail either descriptor allocation or the changed payload allocation after it.
+    inline for (.{ 0, 4 * @sizeOf(Field) }) |remaining| {
+        try withIngestionStore(testing.allocator, struct {
+            fn check(alloc: Allocator, store: *Store, day: u64) !void {
+                const io = testing.io;
+                var accumulator = try Accumulator.init(alloc, store);
+                defer accumulator.deinit(alloc);
+
+                var tags = [_]Field{.{ .key = "app", .value = "rollover" }};
+                try accumulator.reinit(alloc, &tags, 1);
+
+                var fields = [_]Field{.{ .key = "message", .value = "before" }};
+                const timestamp = day * std.time.ns_per_day;
+                try accumulator.tryAppendLine(io, alloc, timestamp, &fields);
+                const previousOwner = accumulator.owner;
+                const previousValue = accumulator.lines.items[0].fields.items[0].value;
+                accumulator.buffer.buffer = accumulator.owner.bytes[0 .. accumulator.buffer.end_index + remaining];
+
+                const payload = [_]u8{'x'} ** 256;
+                fields[0].value = &payload;
+                try accumulator.tryAppendLine(io, alloc, timestamp + 1, &fields);
+                try testing.expect(accumulator.owner != previousOwner);
+                try testing.expectEqualStrings("before", previousValue);
+                try testing.expectEqualDeep(fields[0..], accumulator.lines.items[0].fields.items);
+
+                // The retry establishes a fresh reuse source in the replacement buffer.
+                const nextFields = accumulator.lines.items[0].fields.items;
+                try accumulator.tryAppendLine(io, alloc, timestamp + 2, &fields);
+                try testing.expectEqualDeep(fields[0..], accumulator.lines.items[1].fields.items);
+                try testing.expect(nextFields[0].key.ptr == accumulator.lines.items[1].fields.items[0].key.ptr);
+                try testing.expect(nextFields[0].value.ptr == accumulator.lines.items[1].fields.items[0].value.ptr);
+
+                try accumulator.flush(io, alloc);
+                try store.flush(io, alloc);
+            }
+        }.check, false);
+    }
 }
 
 test "shared ingestion pool exhaustion makes progress without running timers" {

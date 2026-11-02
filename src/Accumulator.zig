@@ -171,12 +171,6 @@ fn appendLine(
 ) !void {
     try self.ensureActiveCheckpoint(io, alloc);
 
-    const bufferAlloc = self.buffer.allocator();
-    const line = Line{
-        .timestampNs = timestampNs,
-        .fields = try copyFields(bufferAlloc, fields),
-    };
-
     validate(fields) catch |err| {
         switch (err) {
             error.MaxFieldsPerLineExceeded => {
@@ -198,12 +192,44 @@ fn appendLine(
         }
     };
 
-    try self.lines.append(alloc, line);
+    try self.lines.ensureUnusedCapacity(alloc, 1);
+    const copiedFields = try self.copyLineFields(fields);
+    self.lines.appendAssumeCapacity(.{
+        .timestampNs = timestampNs,
+        .fields = copiedFields,
+    });
     self.checkpoints[self.currentCheckpoint].i = self.lines.items.len;
 
     if (self.mustFlush(io)) {
         try self.flush(io, alloc);
     }
+}
+
+fn copyLineFields(self: *Accumulator, fields: []const Field) !Fields {
+    const bufferAlloc = self.buffer.allocator();
+    if (self.lines.items.len == 0) return copyFields(bufferAlloc, fields);
+
+    // Flush clears the previous rows, so reused bytes always belong to this buffer.
+    const previous = self.lines.items[self.lines.items.len - 1].fields.items;
+    const start = self.buffer.end_index;
+    errdefer self.buffer.end_index = start;
+
+    const copied = try bufferAlloc.alloc(Field, fields.len);
+    for (fields, 0..) |field, i| {
+        const prev: ?Field = if (i < previous.len) previous[i] else null;
+        copied[i] = .{
+            .key = if (prev != null and std.mem.eql(u8, prev.?.key, field.key))
+                prev.?.key
+            else
+                try bufferAlloc.dupe(u8, field.key),
+            .value = if (prev != null and std.mem.eql(u8, prev.?.value, field.value))
+                prev.?.value
+            else
+                try bufferAlloc.dupe(u8, field.value),
+        };
+    }
+
+    return .view(copied);
 }
 
 pub fn mustFlush(self: *Accumulator, io: Io) bool {

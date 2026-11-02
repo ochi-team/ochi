@@ -81,6 +81,8 @@ test "large body is processed and appears in the query response" {
     body.appendSliceAssumeCapacity("{\"streams\":[{\"stream\":{\"app\":\"large\"},\"values\":[");
     for (0..lineCount) |i| {
         if (i != 0) body.appendAssumeCapacity(',');
+        // Distinct payloads must fill the buffer even when adjacent fields are deduplicated.
+        _ = try std.fmt.bufPrint(message[0..8], "{d:0>8}", .{i});
         const entry = try std.fmt.allocPrint(a, "[\"{d}\",\"{s}\"]", .{ nowNs + i, message });
         defer a.free(entry);
         body.appendSliceAssumeCapacity(entry);
@@ -116,6 +118,9 @@ test "large body is processed and appears in the query response" {
 
     try testing.expectEqual(lineCount, lines.items.len);
     for (lines.items) |line| {
+        try testing.expect(line.timestampNs >= nowNs and line.timestampNs < nowNs + lineCount);
+        _ = try std.fmt.bufPrint(message[0..8], "{d:0>8}", .{line.timestampNs - nowNs});
+
         var found = false;
         for (line.fields.items) |field| {
             // _msg found
