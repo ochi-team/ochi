@@ -687,14 +687,19 @@ fn flushMemTablesInChunks(self: *DataRecorder, io: Io, alloc: Allocator, toFlush
     if (toFlush.items.len == 0) return;
 
     var tail = toFlush.items[0..];
+    errdefer {
+        self.mxTables.lockUncancelable(io);
+        // The current chunk handles its own flags; completed sources may already be freed.
+        for (tail) |table| table.inMerge = false;
+        self.mxTables.unlock(io);
+    }
     while (tail.len > 0) {
         const n = merger.selectTablesToMerge(tail);
         std.debug.assert(n > 0);
 
-        // TODO: attempt to run it in parallel, add a semaphore then
-        try self.mergeTables(io, alloc, tail[0..n], true, null);
-
+        const chunk = tail[0..n];
         tail = tail[n..];
+        try self.mergeTables(io, alloc, chunk, true, null);
     }
 }
 
@@ -763,7 +768,7 @@ pub fn flushShard(self: *DataRecorder, io: Io, alloc: Allocator, shard: *DataSha
                                 try self.flushMemTable(io, alloc, memTable.inner.mem, &[_]*Table{}, destinationTablePath, .disk);
                                 memTable.release(io);
                             },
-                            error.Canceled => return err,
+                            error.Canceled => return e,
                         }
 
                         // second timeout, we flushed the table to the disk, early return
@@ -869,9 +874,13 @@ pub fn tablesMerger(
             &tablesToMergeBuf,
             maxDiskTableSize,
         );
+        const shouldFlush = window == null and tables == &self.memTables and self.memTables.items.len >= maxMemTables;
         self.mxTables.unlock(io);
 
-        const filteredTablesToMerge = window orelse return;
+        const filteredTablesToMerge = window orelse {
+            if (shouldFlush) try self.flushMemTables(io, alloc, true);
+            return;
+        };
         if (filteredTablesToMerge.len == 0) return;
 
         sem.waitUncancelable(io);

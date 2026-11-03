@@ -112,6 +112,106 @@ const stableItems = [_][]const u8{
     "item-a", "item-b", "item-c", "item-d", "item-e", "item-f", "item-g", "item-h",
 };
 
+test "tablesMerger forces skewed memory tables only at capacity" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+    const rows = [_][]const u8{
+        "pressure-00", "pressure-01", "pressure-02", "pressure-03", "pressure-04", "pressure-05", "pressure-06", "pressure-07",
+        "pressure-08", "pressure-09", "pressure-10", "pressure-11", "pressure-12", "pressure-13", "pressure-14", "pressure-15",
+    };
+
+    for ([_]usize{ maxMemTables - 1, maxMemTables }) |tableCount| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+        defer alloc.free(rootPath);
+
+        const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+        defer runtime.deinit(alloc);
+        const compressionPool = try CompressionPool.init(alloc, 1);
+        defer compressionPool.deinit(alloc);
+        const decompressionPool = try DecompressionPool.init(alloc, 1);
+        defer decompressionPool.deinit(alloc);
+
+        var mergePool = xev.ThreadPool.init(.{ .max_threads = 1 });
+        defer {
+            mergePool.shutdown();
+            mergePool.deinit();
+        }
+        const timerLoop = try TimerLoop.init(alloc);
+        const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
+        defer recorder.deinit(io, alloc);
+        defer {
+            timerLoop.stop();
+            timerLoop.join();
+            timerLoop.deinit();
+        }
+        defer recorder.stop(io, alloc) catch unreachable;
+
+        var selectionSize: u64 = 1;
+        for (rows[0..tableCount]) |row| {
+            const table = try createMemTableFromItems(io, alloc, &.{row});
+            // Only selection sizes are synthetic; persisted entries remain real.
+            table.size = selectionSize;
+            selectionSize *= 2;
+            recorder.memTablesSem.waitUncancelable(io);
+            try recorder.memTables.append(alloc, table);
+        }
+        try testing.expectEqual(maxMemTables - tableCount, recorder.memTablesSem.permits);
+
+        var windowBuf: [amountOfTablesToMerge]*Table = undefined;
+        try testing.expect(merger.filterTablesToMerge(recorder.memTables.items, &windowBuf, std.math.maxInt(u64)) == null);
+        try recorder.tablesMerger(io, alloc, &recorder.diskTables, &recorder.diskMergeSem);
+        try testing.expectEqual(tableCount, recorder.memTables.items.len);
+        try recorder.tablesMerger(io, alloc, &recorder.memTables, &recorder.memMergeSem);
+
+        const full = tableCount == maxMemTables;
+        const State = struct { memTables: usize, diskTables: usize, memRows: u64, diskRows: u64, permits: usize };
+        {
+            recorder.mxTables.lockUncancelable(io);
+            defer recorder.mxTables.unlock(io);
+            try testing.expectEqualDeep(State{
+                .memTables = if (full) 0 else tableCount,
+                .diskTables = if (full) 1 else 0,
+                .memRows = if (full) 0 else tableCount,
+                .diskRows = if (full) tableCount else 0,
+                .permits = if (full) maxMemTables else maxMemTables - tableCount,
+            }, State{
+                .memTables = recorder.memTables.items.len,
+                .diskTables = recorder.diskTables.items.len,
+                .memRows = countMemItemsInRecorder(recorder),
+                .diskRows = countDiskItemsInRecorder(recorder),
+                .permits = recorder.memTablesSem.permits,
+            });
+            for (recorder.memTables.items) |table| try testing.expect(!table.inMerge);
+            for (recorder.diskTables.items) |table| try testing.expect(!table.inMerge);
+        }
+
+        try recorder.stop(io, alloc);
+        try testing.expectEqual(maxMemTables, recorder.memTablesSem.permits);
+        var reopened = try Table.openAll(io, alloc, rootPath, decompressionPool);
+        defer {
+            for (reopened.items) |table| table.release(io);
+            reopened.deinit(alloc);
+        }
+        try testing.expectEqual(1, reopened.items.len);
+
+        const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
+        defer cache.deinit();
+        const table = reopened.items[0];
+        try testing.expect(!table.inMerge);
+        try testing.expectEqual(tableCount, table.tableHeader().entriesCount);
+        var lookup = LookupTable.init(alloc, table, Conf.getConf().app.maxIndexMemBlockSize, cache, decompressionPool);
+        defer lookup.deinit(alloc);
+        try lookup.seek(io, alloc, rows[0]);
+        for (rows[0..tableCount]) |row| {
+            try testing.expect(try lookup.next(io, alloc));
+            try testing.expectEqualStrings(row, lookup.current);
+        }
+        try testing.expect(!try lookup.next(io, alloc));
+    }
+}
+
 test "flushMemEntries non-force respects flush deadline" {
     const alloc = testing.allocator;
     const io = testing.io;
@@ -778,6 +878,118 @@ test "IndexRecorder large entries write to 3 shards" {
     try testing.expect(recorder.diskTables.items.len > 0);
     try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
     try testing.expectEqual(@as(u64, totalEntries), countDiskItemsInRecorder(recorder));
+}
+
+test "addToMemTables publishes incoming rows when forced flush makes the second wait succeed" {
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rootPath = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(rootPath);
+
+    const runtime = try Runtime.init(io, alloc, rootPath, 0.5);
+    defer runtime.deinit(alloc);
+    const compressionPool = try CompressionPool.init(alloc, 1);
+    defer compressionPool.deinit(alloc);
+    const decompressionPool = try DecompressionPool.init(alloc, 1);
+    defer decompressionPool.deinit(alloc);
+
+    var mergePool = xev.ThreadPool.init(.{ .max_threads = runtime.cpus });
+    defer {
+        mergePool.shutdown();
+        mergePool.deinit();
+    }
+    const timerLoop = try TimerLoop.init(alloc);
+    const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
+    defer recorder.deinit(io, alloc);
+    defer {
+        timerLoop.stop();
+        timerLoop.join();
+        timerLoop.deinit();
+    }
+    defer recorder.stop(io, alloc) catch unreachable;
+
+    // Stopped skips background merge submission; force still permits synchronous flushing.
+    recorder.stopped.stop(io);
+    for (0..maxMemTables) |i| {
+        const table = try createMemTableFromItems(io, alloc, &.{stableItems[i % stableItems.len]});
+        recorder.memTablesSem.waitUncancelable(io);
+        try recorder.memTables.append(alloc, table);
+    }
+    try testing.expectEqual(0, recorder.memTablesSem.permits);
+
+    const incomingRows = [_][]const u8{ "incoming-a", "incoming-b" };
+    const incoming = try createMemTableFromItems(io, alloc, &incomingRows);
+    try recorder.addToMemTables(io, alloc, incoming, true);
+
+    const State = struct {
+        memTables: usize,
+        memRows: u64,
+        diskRows: u64,
+        permits: usize,
+        timerArms: usize,
+        pendingMerges: usize,
+        cacheVersion: u32,
+        needInvalidate: bool,
+    };
+    try testing.expectEqualDeep(State{
+        .memTables = 1,
+        .memRows = incomingRows.len,
+        .diskRows = maxMemTables,
+        .permits = maxMemTables - 1,
+        .timerArms = 1,
+        .pendingMerges = 0,
+        .cacheVersion = 1,
+        .needInvalidate = false,
+    }, State{
+        .memTables = recorder.memTables.items.len,
+        .memRows = countMemItemsInRecorder(recorder),
+        .diskRows = countDiskItemsInRecorder(recorder),
+        .permits = recorder.memTablesSem.permits,
+        .timerArms = recorder.pendingTableArms.items.len,
+        .pendingMerges = recorder.pendingMerges.load(.acquire),
+        .cacheVersion = recorder.indexCacheKeyVersion.load(.acquire),
+        .needInvalidate = recorder.needInvalidate.load(.acquire),
+    });
+    try testing.expectEqual(incoming, recorder.memTables.items[0]);
+    try testing.expectEqual(incoming, recorder.pendingTableArms.items[0]);
+    try testing.expectEqual(2, incoming.refCounter.load(.acquire));
+
+    try recorder.flushForce(io, alloc);
+    try testing.expectEqual(0, recorder.memTables.items.len);
+    try testing.expectEqual(maxMemTables, recorder.memTablesSem.permits);
+    try testing.expectEqual(maxMemTables + incomingRows.len, countDiskItemsInRecorder(recorder));
+    try testing.expect(incoming.toRemove.load(.acquire));
+    try testing.expectEqual(1, incoming.refCounter.load(.acquire));
+
+    var reopened = try Table.openAll(io, alloc, rootPath, decompressionPool);
+    defer {
+        for (reopened.items) |table| table.release(io);
+        reopened.deinit(alloc);
+    }
+    const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
+    defer cache.deinit();
+
+    var reopenedRows: u64 = 0;
+    var foundIncoming = false;
+    for (reopened.items) |table| {
+        reopenedRows += table.tableHeader().entriesCount;
+        if (!std.mem.eql(u8, table.tableHeader().firstEntry, incomingRows[0])) continue;
+        foundIncoming = true;
+
+        var lookup = LookupTable.init(alloc, table, Conf.getConf().app.maxIndexMemBlockSize, cache, decompressionPool);
+        defer lookup.deinit(alloc);
+        try lookup.seek(io, alloc, incomingRows[0]);
+        for (incomingRows) |row| {
+            try testing.expect(try lookup.next(io, alloc));
+            try testing.expectEqualStrings(row, lookup.current);
+        }
+        try testing.expect(!try lookup.next(io, alloc));
+    }
+    try testing.expectEqual(maxMemTables + incomingRows.len, reopenedRows);
+    try testing.expect(foundIncoming);
 }
 
 test "addToMemTables overflows memTables past maxMemTables when the semaphore wait times out" {

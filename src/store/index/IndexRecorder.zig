@@ -503,17 +503,15 @@ pub fn addToMemTables(self: *IndexRecorder, io: Io, alloc: Allocator, memTable: 
                             const destinationTablePath = try self.diskTablePath(alloc, .disk);
                             errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
 
-                            // pass empty list tables because we have nothing to merge/replace,
-                            // it must only flush to disk a passed mem table and not remove existing tables,
-                            // but perform semaphore
+                            // The incoming table owns no memory slot, so direct disk publication has no sources.
                             try self.flushMemTable(io, alloc, memTable.inner.mem, &[_]*Table{}, destinationTablePath, .disk);
                             memTable.release(io);
                         },
-                        error.Canceled => return err,
+                        error.Canceled => return e,
                     }
-                };
 
-                return;
+                    return;
+                };
             },
             error.Canceled => return err,
         }
@@ -818,17 +816,23 @@ fn flushMemTablesInChunks(self: *IndexRecorder, io: Io, alloc: Allocator, toFlus
 
     // TODO: consider running chunks merging in parallel
     var left = toFlush.items[0..];
+    errdefer {
+        self.mxTables.lockUncancelable(io);
+        // The current chunk handles its own flags; completed sources may already be freed.
+        for (left) |table| table.inMerge = false;
+        self.mxTables.unlock(io);
+    }
     while (left.len > 0) {
         const n = merger.selectTablesToMerge(left);
         std.debug.assert(n > 0);
 
-        // pass stopped as null since we must be able to flush data to disk
-        try self.mergeTables(io, alloc, left[0..n], true, null);
+        const chunk = left[0..n];
         left = left[n..];
+        try self.mergeTables(io, alloc, chunk, true, null);
     }
 }
 
-fn tablesMerger(
+pub fn tablesMerger(
     self: *IndexRecorder,
     io: Io,
     alloc: Allocator,
@@ -846,9 +850,13 @@ fn tablesMerger(
             &tablesToMergeBuf,
             maxDiskTableSize,
         );
+        const shouldFlush = window == null and tables == &self.memTables and self.memTables.items.len >= maxMemTables;
         self.mxTables.unlock(io);
 
-        const filteredTablesToMerge = window orelse return;
+        const filteredTablesToMerge = window orelse {
+            if (shouldFlush) try self.flushMemTables(io, alloc, true);
+            return;
+        };
         if (filteredTablesToMerge.len == 0) return;
 
         // TODO: make sure error.Stopped is handled on the upper level

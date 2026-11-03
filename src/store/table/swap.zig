@@ -37,6 +37,7 @@ pub fn Swapper(
                     try self.startDiskTablesMerge(io, alloc);
                 },
                 .mem => {
+                    std.debug.assert(removedMemTables > 0);
                     try self.memTables.append(alloc, newTable);
                     try self.startMemTablesMerge(io, alloc);
                 },
@@ -47,8 +48,9 @@ pub fn Swapper(
             }
             self.mxTables.unlock(io);
 
-            for (0..removedMemTables) |_| self.memTablesSem.post(io);
-            if (tableKind == .mem) self.memTablesSem.waitUncancelable(io);
+            // A memory destination inherits one source's permit without reacquiring it.
+            const freedMemTables = removedMemTables - @intFromBool(tableKind == .mem);
+            for (0..freedMemTables) |_| self.memTablesSem.post(io);
 
             std.debug.assert(tables.len == removedDiskTables + removedMemTables);
 
