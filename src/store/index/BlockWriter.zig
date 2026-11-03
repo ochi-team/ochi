@@ -173,14 +173,14 @@ pub fn writeBlock(self: *BlockWriter, io: Io, alloc: Allocator, block: *MemBlock
 }
 
 pub fn close(self: *BlockWriter, io: Io, alloc: Allocator) !void {
-    try self.flushIndexData(io, alloc);
-    try self.writeMetaindex(io, alloc);
-    switch (self.destination) {
+    defer switch (self.destination) {
         .mem => {},
         // we don't sync disk table here, because we must sync the parent dir as well
         // after savhing the header
         .disk => |*disk| disk.close(io),
-    }
+    };
+    try self.flushIndexData(io, alloc);
+    try self.writeMetaindex(io, alloc);
 }
 
 fn flushIndexData(self: *BlockWriter, io: Io, alloc: Allocator) !void {

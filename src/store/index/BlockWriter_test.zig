@@ -5,6 +5,8 @@ const Io = std.Io;
 const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
+const checkAllAllocationFailures = @import("../../stds/testing.zig").checkAllAllocationFailures;
+const DebugIo = @import("../../stds/Io/DebugIo.zig");
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
 
@@ -15,6 +17,36 @@ const MemBlock = @import("MemBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
 
 const testing = std.testing;
+
+test "disk block writer closes files when finalization fails" {
+    const f = struct {
+        fn f(alloc: Allocator, backingAlloc: Allocator) !void {
+            var debugIo = DebugIo.init(testing.io, backingAlloc, null);
+            defer debugIo.deinit();
+            const io = debugIo.io();
+            var tmp = testing.tmpDir(.{});
+            defer tmp.cleanup();
+            const rootPath = try tmp.dir.realPathFileAlloc(testing.io, ".", alloc);
+            defer alloc.free(rootPath);
+            const path = try std.fmt.allocPrint(alloc, "{s}/table", .{rootPath});
+            defer alloc.free(path);
+            const pool = try CompressionPool.init(alloc, 1);
+            defer pool.deinit(alloc);
+            const block = try createTestMemBlock(alloc, &.{ "entry-a", "entry-b" });
+            defer block.deinit(alloc);
+            var writer = try BlockWriter.initFromDiskTable(io, path, false, pool);
+            defer writer.deinit(alloc);
+
+            const writeRes = writer.writeBlock(io, alloc, block);
+            const res = writer.close(io, alloc);
+            try debugIo.checkNoLeaks();
+            try writeRes;
+            try res;
+        }
+    }.f;
+
+    try checkAllAllocationFailures(testing.allocator, f, .{testing.allocator});
+}
 
 fn createTestMemBlock(alloc: Allocator, items: []const []const u8) !*MemBlock {
     var total: u32 = 0;

@@ -1076,9 +1076,9 @@ test "addToMemTables publishes incoming rows when forced flush makes the second 
         timerLoop.deinit();
     }
     defer recorder.stop(io, alloc) catch unreachable;
-
     // Stopped skips background merge submission; force still permits synchronous flushing.
     recorder.stopped.stop(io);
+
     for (0..maxMemTables) |i| {
         const table = try createMemTableFromItems(io, alloc, &.{stableItems[i % stableItems.len]});
         recorder.memTablesSem.waitUncancelable(io);
@@ -1104,6 +1104,7 @@ test "addToMemTables publishes incoming rows when forced flush makes the second 
         .memTables = 1,
         .memRows = incomingRows.len,
         .diskRows = maxMemTables,
+        // all the tables are flushed, but 1 the last is occupied via addToMemTables
         .permits = maxMemTables - 1,
         .timerArms = 1,
         .pendingMerges = 0,
