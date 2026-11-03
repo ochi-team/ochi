@@ -67,7 +67,7 @@ flushAtUs: ?u64 = null,
 
 pub fn init(alloc: Allocator, store: *Store) !Accumulator {
     _ = alloc;
-    const owner = try store.ingestBuffers.tryAcquire() orelse return error.IngestBuffersExhausted;
+    const owner = try store.ingestBuffers.tryAcquire() orelse return error.SharedBuffersExhausted;
 
     return Accumulator{
         .store = store,
