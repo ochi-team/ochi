@@ -1017,23 +1017,19 @@ test "flushForce clears merge flags after a chunk fails" {
             const largeGroupSize = 10000;
             for (recorder.memTables.items, 0..) |table, i| table.size = if (i < maxMemTables / 2) 1 else largeGroupSize;
 
-            const before = fixture.state();
             recorder.flushForce(testing.io, alloc) catch |err| {
                 try testing.expectEqual(error.OutOfMemory, err);
 
                 const after = fixture.state();
-                if (after.memTables == before.memTables) {
-                    try testing.expectEqualDeep(after, before);
-                } else {
-                    try testing.expectEqualDeep(SkewedMergeFixture.State{
-                        .memTables = after.memTables,
-                        .diskTables = after.diskTables,
-                        .memRows = after.memTables,
-                        // before == count, then count - (before - after.memTables) == after.memTables
-                        .diskRows = count - after.memTables,
-                        .permits = maxMemTables - after.memTables,
-                    }, after);
-                }
+                try testing.expectEqualDeep(SkewedMergeFixture.State{
+                    .memTables = after.memTables,
+                    .diskTables = after.diskTables,
+                    .memRows = after.memTables,
+                    // before == count, then count - (before - after.memTables) == after.memTables
+                    .diskRows = count - after.memTables,
+                    .permits = maxMemTables - after.memTables,
+                }, after);
+                // }
                 return err;
             };
 

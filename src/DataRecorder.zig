@@ -942,7 +942,7 @@ pub fn mergeTables(
     }
 
     const openTable = tb: {
-        errdefer if (destinationTablePath.len > 0) alloc.free(destinationTablePath);
+        errdefer alloc.free(destinationTablePath);
 
         var readersBuf: [amountOfTablesToMerge]*BlockReader = undefined;
         var readers = std.ArrayList(*BlockReader).initBuffer(&readersBuf);

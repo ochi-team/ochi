@@ -86,7 +86,10 @@ pub fn initFromMemTable(io: Io, alloc: Allocator, table: *const Table, decompres
         memTable.metaindexBuf.items,
         memTable.tableHeader.blocksCount,
     );
-    errdefer alloc.free(metaIndexRecords.records);
+    errdefer {
+        for (metaIndexRecords.records) |*record| record.deinit(alloc);
+        alloc.free(metaIndexRecords.records);
+    }
 
     Logger.log(.debug, "index.BlockReader: open mem table", .{
         .metaIndexRecordsLen = metaIndexRecords.records.len,
