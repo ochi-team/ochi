@@ -117,7 +117,78 @@ test "removeTables removes exact pointers" {
     try testing.expectEqualSlices(*Recorder.TestTable, &.{ &one, &three }, tables.items);
 }
 
+test "swapTables one-to-one memory swap does not access the semaphore" {
+    const alloc = testing.allocator;
+
+    const Worker = struct {
+        recorder: *Recorder,
+        source: *Recorder.TestTable,
+        destination: *Recorder.TestTable,
+        done: std.Io.Event = .unset,
+        err: ?anyerror = null,
+
+        fn run(self: *@This()) void {
+            defer self.done.set(testing.io);
+            var sources = [_]*Recorder.TestTable{self.source};
+            Swapper(Recorder, Recorder.TestTable).swapTables(
+                self.recorder,
+                testing.io,
+                alloc,
+                &sources,
+                self.destination,
+                .mem,
+            ) catch |err| {
+                self.err = err;
+            };
+        }
+    };
+
+    var source: Recorder.TestTable = .{};
+    var destination: Recorder.TestTable = .{};
+    var recorder: Recorder = .{};
+    defer recorder.memTables.deinit(alloc);
+    defer recorder.diskTables.deinit(alloc);
+    try recorder.memTables.ensureUnusedCapacity(alloc, 1);
+    recorder.memTables.appendAssumeCapacity(&source);
+    var worker: Worker = .{ .recorder = &recorder, .source = &source, .destination = &destination };
+
+    // A one-to-one replacement inherits its slot even when another operation holds the semaphore mutex.
+    recorder.memTablesSem.mutex.lockUncancelable(testing.io);
+    const thread = std.Thread.spawn(.{}, Worker.run, .{&worker}) catch |err| {
+        recorder.memTablesSem.mutex.unlock(testing.io);
+        return err;
+    };
+    const completed: bool = blk: {
+        // deadline fails if the calculation of semaphore posts is not precise
+        const deadline = (std.Io.Timeout{ .duration = .{ .raw = .fromSeconds(1), .clock = .awake } }).toDeadline(testing.io);
+        while (true) {
+            worker.done.waitTimeout(testing.io, deadline) catch |err| switch (err) {
+                error.Timeout => {
+                    // Event waits may wake spuriously; keep the original deadline.
+                    if (deadline.deadline.untilNow(testing.io).raw.nanoseconds < 0) continue;
+                    break :blk false;
+                },
+                error.Canceled => break :blk false,
+            };
+            break :blk true;
+        }
+    };
+    // Unblock the old implementation before joining, including on assertion failure.
+    recorder.memTablesSem.mutex.unlock(testing.io);
+    thread.join();
+
+    try testing.expect(completed);
+    if (worker.err) |err| return err;
+    try testing.expectEqual(0, recorder.memTablesSem.permits);
+    try testing.expectEqualSlices(*Recorder.TestTable, &.{&destination}, recorder.memTables.items);
+    try testing.expectEqualDeep(Recorder.TestTable{
+        .toRemove = .init(true),
+        .releases = 1,
+    }, source);
+}
+
 test "swapTables releases net memory permits" {
+    const alloc = testing.allocator;
     const capacity = 16;
 
     const Case = struct { kind: TableKind, memSources: usize, diskSources: usize = 0 };
@@ -142,14 +213,14 @@ test "swapTables releases net memory permits" {
             .memTables = .initBuffer(&memBuf),
             .diskTables = .initBuffer(&diskBuf),
         };
-        for (0..capacity) |i| recorder.memTables.appendAssumeCapacity(&memTables[i]);
+        for (0..memTables[0..].len) |i| recorder.memTables.appendAssumeCapacity(&memTables[i]);
         for (0..case.memSources) |i| sources.appendAssumeCapacity(&memTables[i]);
         if (case.diskSources != 0) {
             recorder.diskTables.appendAssumeCapacity(&diskTable);
             sources.appendAssumeCapacity(&diskTable);
         }
 
-        try Swapper(Recorder, Recorder.TestTable).swapTables(&recorder, testing.io, testing.allocator, sources.items, &destination, case.kind);
+        try Swapper(Recorder, Recorder.TestTable).swapTables(&recorder, testing.io, alloc, sources.items, &destination, case.kind);
 
         try testing.expect(recorder.memTablesSem.permits + recorder.memTables.items.len <= capacity);
         const memDestination: usize = @intFromBool(case.kind == .mem);

@@ -82,6 +82,16 @@ try testing.expectEqual(1, calls);
 try testing.expectEqual(@as(usize, 1), calls);
 ```
 
+Don't use testing global instances directly:
+```zig
+// GOOD
+const alloc = testing.allocator;
+...
+try memTables.append(alloc, &source);
+// BAD
+try memTables.append(testing.allocator, &source);
+```
+
 ## Memory management
 
 ### ArrayList

@@ -60,7 +60,8 @@ pub fn Swapper(
             self.diskTables.appendSliceAssumeCapacity(diskTables.items);
             self.mxTables.unlock(io);
 
-            // A memory destination inherits one source's permit without reacquiring it.
+            // releasing and reacquiring that slot lets a concurrent producer steal it,
+            // so the calculation of free slots must be without additional waits
             const freedMemTables = removedMemTables - @intFromBool(tableKind == .mem);
             for (0..freedMemTables) |_| self.memTablesSem.post(io);
 
