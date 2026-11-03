@@ -19,6 +19,7 @@ test {
     _ = @import("stds/heap_test.zig");
     _ = @import("stds/Io/DebugIo_test.zig");
     _ = @import("stds/Ring_test.zig");
+    _ = @import("stds/testing_test.zig");
     _ = @import("stds/time_test.zig");
     _ = @import("stds/xev/TimerLoop_test.zig");
     _ = @import("Store_test.zig");

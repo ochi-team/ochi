@@ -70,7 +70,12 @@ Optimization improvements are welcome, but must be accompanied by a benchmark.
 
 Before submitting a PR, make sure the tests pass:
 ```bash
+# for short iterations
 zig build test
+# or specific target
+zig build test -Dtest-filter="flushForce clears merge flags"
+# or full run
+zig build test -Dallocation-failures=true
 ```
 
 For all questions, major changes, suggestions, notes, feel free to reach out to the team on [Discord](https://discord.gg/AsCKpCNp5c).
@@ -79,11 +84,9 @@ For all questions, major changes, suggestions, notes, feel free to reach out to 
 
 1. We don't shame the lack of knowledge, it's better to accept not knowing, than spreading disinformation.
 2. Using LLMs you put your trust profile on a line, we don't encourage it, but you may.
-3. Complete slop will be rejected with a very short comment and a permanent ban.
-4. We can invest our time helping you learn. Don't rely fully on LLMs to implement a solution.
-
-We encourage to use AI in order to:
-1. generate a test that is able to crash the system
+3. Complete slop will be rejected with no comment and a permanent ban.
+4. We can invest our time helping you to learn. Don't rely fully on LLMs to implement a solution.
+5. You can generate a test that is able to crash the system, however if the test crashes itself, not the system, it's defined as a slop, read point 3.
 
 ## Code style
 - a good inner function comment describes why, not what

@@ -54,8 +54,8 @@ test "StreamDestination file destination" {
     defer dst.deinit(io);
 
     const res = "hello-world";
-    try dst.appendSlice(io, alloc, "hello");
-    try dst.appendSlice(io, alloc, "-world");
+    try dst.appendSlice(io, alloc, res[0..5]);
+    try dst.appendSlice(io, alloc, res[5..]);
     try testing.expectEqual(res.len, dst.len());
 
     const all = try dst.readAll(io, alloc);

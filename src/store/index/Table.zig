@@ -104,7 +104,10 @@ pub fn open(io: Io, alloc: Allocator, path: []const u8, decompressionPool: *Deco
     errdefer parsedTableHeader.deinit(alloc);
 
     const decodedMetaindex = try MetaIndex.readFile(io, alloc, decompressionPool, path, parsedTableHeader.blocksCount);
-    errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
+    errdefer {
+        for (decodedMetaindex.records) |*record| record.deinit(alloc);
+        alloc.free(decodedMetaindex.records);
+    }
 
     // TODO: open files in parallel to speed up work on high-latency storages, e.g. Ceph
     var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -200,7 +203,10 @@ pub fn fromMem(io: Io, alloc: Allocator, memTable: *MemTable, decompressionPool:
             memTable.tableHeader.blocksCount,
         );
     }
-    errdefer if (decodedMetaindex.records.len > 0) alloc.free(decodedMetaindex.records);
+    errdefer {
+        for (decodedMetaindex.records) |*record| record.deinit(alloc);
+        alloc.free(decodedMetaindex.records);
+    }
 
     const table = try alloc.create(Table);
 

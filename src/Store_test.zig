@@ -1,4 +1,5 @@
 const std = @import("std");
+const checkAllAllocationFailures = @import("stds/testing.zig").checkAllAllocationFailures;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
@@ -459,7 +460,7 @@ fn checkMixedDayAllocationFailures(a: Allocator, comptime hotPath: bool) !void {
 
 test "mixed day ingestion releases temporary allocations and partition references: all allocation failures" {
     inline for (.{ false, true }) |hotPath| {
-        try testing.checkAllAllocationFailures(testing.allocator, struct {
+        try checkAllAllocationFailures(testing.allocator, struct {
             fn check(alloc: Allocator) !void {
                 try checkMixedDayAllocationFailures(alloc, hotPath);
             }

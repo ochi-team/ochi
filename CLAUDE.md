@@ -33,15 +33,12 @@ defer sink.deinit(a);
 
 Good test has multiple cases
 ```zig
+// GOOD
 test "bitsetIsEmpty" {
     const f = struct {
         fn f(alloc: Allocator, len: usize, set: []const usize, expectedEmpty: bool) !void {
             var bitset: std.bit_set.DynamicBitSetUnmanaged = try .initEmpty(alloc, len);
             defer bitset.deinit(alloc);
-
-            for (set) |i| {
-                bitset.set(i);
-            }
 
             try testing.expectEqual(expectedEmpty, BlockQuery.bitsetIsEmpty(&bitset));
         }
@@ -50,12 +47,17 @@ test "bitsetIsEmpty" {
     const alloc = testing.allocator;
     try f(alloc, 0, &.{}, true);
     try f(alloc, 1, &.{}, true);
-    try f(alloc, 1, &.{0}, false);
-    try f(alloc, 64, &.{42}, false);
-    try f(alloc, 64, &.{}, true);
-    try f(alloc, 129, &.{128}, false);
-    try f(alloc, 128, &.{127}, false);
-    try f(alloc, 127, &.{126}, false);
+}
+// BAD
+const Case = struct { key: []const u8, value: []const u8, matches: bool };
+const cases = [_]Case{
+    .{ .key = "a", .value = "a-value-0", .matches = true },
+    .{ .key = "b", .value = "b-value-4", .matches = true },
+};
+for (cases) |case| {
+    ...
+    defer res.deinit(alloc);
+    try testing.expectEqual(case.matches, res.hits.count() > 0);
 }
 ```
 
@@ -80,12 +82,21 @@ try testing.expectEqual(1, calls);
 try testing.expectEqual(@as(usize, 1), calls);
 ```
 
+Don't use testing global instances directly:
+```zig
+// GOOD
+const alloc = testing.allocator;
+...
+try memTables.append(alloc, &source);
+// BAD
+try memTables.append(testing.allocator, &source);
+```
+
 ## Memory management
 
 ### ArrayList
 
 Make sure first it has enough space:
-
 ```zig
 // GOOD
 try self.garbage.ensureUnusedCapacity(alloc, 1);
@@ -93,6 +104,30 @@ try self.garbage.ensureUnusedCapacity(alloc, 1);
 self.garbage.appendAssumeCapacity(buf);
 // BAD
 try self.garbage.append(alloc, buf);
+```
+
+### Allocator.create
+
+If an object is destroyed in the same scope there is no benefit to create it via allocator:
+```zig
+// GOOD
+fn init() Object {
+    return .{
+        ...
+    };
+}
+
+const obj = Object.init();
+// BAD
+fn init(alloc: Allocator) !Object {
+    const self = try alloc.create(SkewedMergeFixture);
+    errdefer alloc.destroy(self);
+    ...
+    return self;
+}
+
+var obj = try Object.init(alloc);
+defer obj.deinit(alloc); // this is the reason
 ```
 
 ### Docs

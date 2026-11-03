@@ -8,6 +8,7 @@ const CompressionPool = @import("../compression/CompressionPool.zig");
 const DecompressionPool = @import("../compression/DecompressionPool.zig");
 
 const Merger = @import("merge.zig").Merger;
+const SelectionPolicy = @import("merge.zig").SelectionPolicy;
 const TableKind = @import("merge.zig").TableKind;
 const MergeWindowBound = @import("merge.zig").MergeWindowBound;
 
@@ -28,6 +29,12 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
     };
 
     const cases = [_]Case{
+        .{
+            .sizes = &.{ 1, 1, 1, 1, 1, 1, 1, 1, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 },
+            .bound = .{ .lower = 8, .upper = 16 },
+            .expected = &.{ 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 },
+            .expectedLeft = &.{ 1, 1, 1, 1, 1, 1, 1, 1 },
+        },
         .{
             .sizes = &.{ 47, 55, 65, 76, 107, 108, 111, 117, 124, 131, 133, 162, 164, 187 },
             .bound = .{ .lower = 0, .upper = 13 },
@@ -94,6 +101,88 @@ test "selectTablesToMerge moves selected window to the beginning and returns edg
     }
 }
 
+// TODO: refactor all the tests in the file to use a test table instead of a real mem table
+const TestTable = struct {
+    size: u64,
+    inMerge: bool = false,
+
+    pub fn lessThan(_: void, a: *@This(), b: *@This()) bool {
+        return a.size < b.size;
+    }
+};
+
+test "filterTablesToMerge pressure fallback respects eligibility and bounds" {
+    const Case = struct {
+        sizes: []const u64,
+        pressure: bool = true,
+        busy: []const usize = &.{},
+        maxSize: u64 = std.math.maxInt(u64),
+        bufferLen: usize = 16,
+        selected: []const u64,
+    };
+    const cases = [_]Case{
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .pressure = false, .selected = &.{} },
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .selected = &.{ 1, 4, 16, 64 } },
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .busy = &.{1}, .selected = &.{ 1, 16, 64 } },
+        .{ .sizes = &.{ 1, 4 }, .busy = &.{0}, .selected = &.{} },
+        .{ .sizes = &.{ 1, 4 }, .busy = &.{ 0, 1 }, .selected = &.{} },
+        .{ .sizes = &.{1}, .selected = &.{} },
+        .{ .sizes = &.{}, .selected = &.{} },
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .bufferLen = 2, .selected = &.{ 1, 4 } },
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .bufferLen = 1, .selected = &.{} },
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .bufferLen = 0, .selected = &.{} },
+        // Rebuild from eligible input after leveled selection removes oversized candidates.
+        .{ .sizes = &.{ 1, 4, 16, 64 }, .maxSize = 20, .selected = &.{ 1, 4 } },
+        .{ .sizes = &.{ 1, 16, 64 }, .maxSize = 20, .selected = &.{} },
+        // Each candidate fits individually, but their combined size must also fit.
+        .{ .sizes = &.{ 1, 9, 20, 21 }, .maxSize = 50, .selected = &.{ 1, 9, 20 } },
+        // A valid leveled window takes priority over the pressure fallback.
+        .{ .sizes = &.{ 1, 1, 1, 1, 1, 1, 1, 1, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 }, .selected = &.{ 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 } },
+    };
+
+    const merger = Merger(*TestTable, 16, 16);
+    for (cases) |case| {
+        var storage: [16]TestTable = undefined;
+        var tables: [16]*TestTable = undefined;
+        for (case.sizes, 0..) |size, i| {
+            storage[i] = .{ .size = size };
+            tables[i] = &storage[i];
+        }
+
+        for (case.busy) |i| storage[i].inMerge = true;
+        var buf: [16]*TestTable = undefined;
+        const policy: SelectionPolicy = if (case.pressure) .relieveMemoryPressure else .leveled;
+        const selected = merger.filterTablesToMerge(tables[0..case.sizes.len], buf[0..case.bufferLen], case.maxSize, policy);
+
+        try testing.expectEqual(case.selected.len == 0, selected == null);
+        var sizes: [16]u64 = undefined;
+        const count = if (selected) |window| window.len else 0;
+        if (selected) |window| {
+            for (window, 0..) |table, i| sizes[i] = table.size;
+        }
+        try testing.expectEqualSlices(u64, case.selected, sizes[0..count]);
+
+        // Selection must preserve pre-existing claims and mark only returned tables.
+        for (storage[0..case.sizes.len], 0..) |table, i| {
+            const wasBusy = std.mem.indexOfScalar(usize, case.busy, i) != null;
+            const wasSelected = if (selected) |window| std.mem.indexOfScalar(*TestTable, window, &storage[i]) != null else false;
+            try testing.expectEqual(wasBusy or wasSelected, table.inMerge);
+        }
+    }
+}
+
+test "filterTablesToMerge comptime merge limit applies when  extra buffer is provided" {
+    // The compile-time merge limit also applies when the caller provides extra buffer space.
+    var storage = [_]TestTable{ .{ .size = 1 }, .{ .size = 4 }, .{ .size = 16 } };
+    var tables = [_]*TestTable{ &storage[0], &storage[1], &storage[2] };
+    var buf: [3]*TestTable = undefined;
+    const smallMerger = Merger(*TestTable, 16, 2);
+    const selected = smallMerger.filterTablesToMerge(&tables, &buf, std.math.maxInt(u64), .relieveMemoryPressure);
+    try testing.expect(selected != null);
+    try testing.expectEqualSlices(*TestTable, tables[0..2], selected.?);
+    try testing.expect(!storage[2].inMerge);
+}
+
 fn createSizedMemTable(alloc: Allocator, decompressionPool: *DecompressionPool, size: usize) !*Table {
     const memTable = try MemTable.empty(alloc);
     try memTable.entriesBuf.resize(alloc, size);
@@ -119,7 +208,7 @@ test "filterTablesToMerge marks only selected tables inMerge" {
 
     const merger = Merger(*Table, 16, 16);
     var buf: [16]*Table = undefined;
-    const window = merger.filterTablesToMerge(tables.items, &buf, std.math.maxInt(u64));
+    const window = merger.filterTablesToMerge(tables.items, &buf, std.math.maxInt(u64), .leveled);
     try testing.expect(window != null);
     const w = window.?;
 
@@ -150,7 +239,7 @@ test "filterTablesToMerge scans beyond full bounded destination" {
     }
 
     var toMergeBuf: [maxTablesToMerge]*Table = undefined;
-    const selected = merger.filterTablesToMerge(tables.items, &toMergeBuf, 10_000);
+    const selected = merger.filterTablesToMerge(tables.items, &toMergeBuf, 10_000, .leveled);
     try testing.expect(selected != null);
     try testing.expectEqual(maxTablesToMerge, selected.?.len);
     for (selected.?) |table| {
@@ -191,7 +280,7 @@ test "filterLeveledTables returns null when size filter removes candidates" {
 
         const merger = Merger(*Table, 16, 16);
         var buf: [16]*Table = undefined;
-        const window = merger.filterTablesToMerge(tables.items, &buf, 10_000);
+        const window = merger.filterTablesToMerge(tables.items, &buf, 10_000, .leveled);
         try testing.expectEqual(null, window);
     }
 }

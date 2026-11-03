@@ -1,4 +1,5 @@
 const std = @import("std");
+const checkAllAllocationFailures = @import("../../stds/testing.zig").checkAllAllocationFailures;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Dir = Io.Dir;
@@ -236,7 +237,7 @@ test "open reads table from disk" {
 }
 
 test "openAll frees catalog table names on error" {
-    try testing.checkAllAllocationFailures(testing.allocator, testOpenAllFreesCatalogTableNamesOnError, .{testing.io});
+    try checkAllAllocationFailures(testing.allocator, testOpenAllFreesCatalogTableNamesOnError, .{testing.io});
 }
 
 fn testOpenAllFreesCatalogTableNamesOnError(alloc: Allocator, io: Io) !void {

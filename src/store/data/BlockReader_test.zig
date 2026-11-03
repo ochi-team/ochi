@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const checkAllAllocationFailures = @import("../../stds/testing.zig").checkAllAllocationFailures;
 const checkAllocationFailuresAllowingSwallow =
     @import("../../stds/testing.zig").checkAllocationFailuresAllowingSwallow;
 
@@ -26,7 +27,7 @@ test "readBlock reads buffers" {
 }
 
 test "initFromDiskTable reads buffers" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, testInitFromDiskTable, .{std.testing.io});
+    try checkAllAllocationFailures(std.testing.allocator, testInitFromDiskTable, .{std.testing.io});
 }
 
 fn testReadBlock(allocator: Allocator, io: Io) !void {
