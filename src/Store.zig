@@ -10,6 +10,7 @@ const tracy = @import("tracy");
 const xev = @import("xev");
 
 const Layout = @import("Layout.zig");
+const SharedBufferPool = @import("SharedBufferPool.zig");
 const Stop = @import("stds/Stop.zig");
 const StringsTable = @import("stds/strings.zig").StringsTable;
 
@@ -58,6 +59,7 @@ timestampsEncoders: *TimestampsEncoder.TimestampsEncoderPool,
 compressionPool: *CompressionPool,
 decompressionPool: *DecompressionPool,
 lookupPool: *LookupPool,
+ingestBuffers: *SharedBufferPool,
 
 threadPool: *xev.ThreadPool,
 
@@ -148,6 +150,9 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
     const timerLoop = try TimerLoop.init(alloc);
     errdefer timerLoop.deinit();
 
+    const ingestBuffers = try SharedBufferPool.init(io, alloc, 2 * @as(usize, conf.app.maxConnections) + 2 * @as(usize, runtime.cpus));
+    errdefer ingestBuffers.deinit();
+
     var store: Store = .{
         .lockFile = file,
         .partitions = partitions,
@@ -158,6 +163,7 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         .compressionPool = compressionPool,
         .decompressionPool = decompressionPool,
         .lookupPool = lookupPool,
+        .ingestBuffers = ingestBuffers,
         .threadPool = threadPool,
         .meter = meter,
         .runtime = runtime,
@@ -225,6 +231,7 @@ pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
         partition.release(io);
     }
     self.partitions.deinit(alloc);
+    self.ingestBuffers.deinit();
 
     for (self.pathsBuf.items) |path| {
         alloc.free(path);
@@ -374,6 +381,33 @@ pub fn addLines(
     encodedTags: []const u8,
     sid: SID,
 ) !void {
+    return self.addLinesWithBuffer(io, allocator, lines, tags, encodedTags, sid, null);
+}
+
+/// Retains batch bytes in each destination shard until encoding completes.
+pub fn addOwnedLines(
+    self: *Store,
+    io: Io,
+    allocator: Allocator,
+    lines: []Line,
+    tags: []Field,
+    encodedTags: []const u8,
+    sid: SID,
+    buffer: *SharedBufferPool.Buffer,
+) !void {
+    return self.addLinesWithBuffer(io, allocator, lines, tags, encodedTags, sid, buffer);
+}
+
+fn addLinesWithBuffer(
+    self: *Store,
+    io: Io,
+    allocator: Allocator,
+    lines: []Line,
+    tags: []Field,
+    encodedTags: []const u8,
+    sid: SID,
+    buffer: ?*SharedBufferPool.Buffer,
+) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "Store.addLines",
@@ -411,7 +445,7 @@ pub fn addLines(
 
         var list = std.ArrayList(Line).initBuffer(lines[0..idx]);
         list.items.len = idx;
-        try partition.addLines(io, allocator, list, tags, encodedTags, sid, self.indexMemBlocksCache, self.lookupPool);
+        try partition.addLines(io, allocator, list, tags, encodedTags, sid, self.indexMemBlocksCache, self.lookupPool, buffer);
 
         // Return early since all lines are added to the same Partition
         if (list.items.len == lines.len) return;
@@ -466,7 +500,7 @@ pub fn addLines(
         };
         defer partition.release(io);
 
-        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, sid, self.indexMemBlocksCache, self.lookupPool);
+        try partition.addLines(io, allocator, it.value_ptr.*, tags, encodedTags, sid, self.indexMemBlocksCache, self.lookupPool, buffer);
     }
 }
 
@@ -560,6 +594,18 @@ pub fn queryStreamIDs(
     }
 
     return streamIDs;
+}
+
+/// Flushes shard owners under pressure; timer callbacks must not wait for other timers.
+pub fn acquireIngestBuffer(self: *Store, io: Io, alloc: Allocator) !*SharedBufferPool.Buffer {
+    while (true) {
+        if (try self.ingestBuffers.tryAcquire()) |buffer| return buffer;
+        var partsBuf: [partitionsBufferSize]*Partition = undefined;
+        const partsLen = self.getPartitions(io, 0, std.math.maxInt(u32), &partsBuf);
+        const parts = partsBuf[0..partsLen];
+        defer for (parts) |part| part.release(io);
+        for (parts) |part| try part.data.flushDataShards(io, alloc, true);
+    }
 }
 
 pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
