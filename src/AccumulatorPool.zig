@@ -8,6 +8,7 @@ const Logger = @import("logging");
 const Store = @import("Store.zig").Store;
 const Accumulator = @import("Accumulator.zig");
 const TimerLoop = @import("stds/xev/TimerLoop.zig");
+const Countdown = @import("stds/Countdown.zig");
 const Ring = @import("stds/Ring.zig").Ring;
 const Consts = @import("Consts.zig");
 
@@ -31,6 +32,7 @@ ring: Ring(Slot),
 io: Io,
 alloc: Allocator,
 timerLoop: *TimerLoop,
+operations: Countdown = .{},
 
 pendingMx: std.atomic.Mutex = .unlocked,
 pendingArms: std.ArrayList(*Slot) = .empty,
@@ -54,6 +56,7 @@ pub fn init(io: Io, alloc: Allocator, store: *Store, timerLoop: *TimerLoop, coun
     }
 
     const pool = try alloc.create(AccumulatorPool);
+    errdefer alloc.destroy(pool);
     pool.* = .{
         .slots = slots,
         .ring = Ring(Slot).init(slots),
@@ -68,18 +71,39 @@ pub fn init(io: Io, alloc: Allocator, store: *Store, timerLoop: *TimerLoop, coun
     return pool;
 }
 
+pub fn halt(self: *AccumulatorPool, io: Io) void {
+    self.operations.close(io);
+    self.operations.wait(io);
+    self.timerLoop.detach(io, self, self, drainTimers);
+}
+
+fn drainTimers(ctx: *anyopaque, loop: *xev.Loop) bool {
+    const self: *AccumulatorPool = @ptrCast(@alignCast(ctx));
+    var drained = true;
+    for (self.slots) |*slot| {
+        if (!TimerLoop.cancelTimer(loop, slot.xevTimer, &slot.timerC, &slot.timerCancelC)) drained = false;
+    }
+    return drained;
+}
+
 pub fn deinit(self: *AccumulatorPool, alloc: Allocator) void {
+    self.halt(self.io);
+
     for (self.slots) |*slot| slot.accumulator.deinit(alloc);
     alloc.free(self.slots);
+
     self.pendingArms.deinit(alloc);
     alloc.destroy(self);
 }
 
-pub fn next(self: *AccumulatorPool) *Slot {
+fn next(self: *AccumulatorPool) *Slot {
     return self.ring.next();
 }
 
 pub fn acquire(self: *AccumulatorPool, io: Io, bodySize: usize) !*Slot {
+    if (!self.operations.add(io)) return error.Stopped;
+    errdefer self.operations.done(io);
+
     const slot = self.next();
     slot.mx.lockUncancelable(io);
     errdefer slot.mx.unlock(io);
@@ -95,8 +119,9 @@ pub fn acquire(self: *AccumulatorPool, io: Io, bodySize: usize) !*Slot {
     return slot;
 }
 
-pub fn release(_: *const AccumulatorPool, io: Io, slot: *Slot) void {
+pub fn release(self: *AccumulatorPool, io: Io, slot: *Slot) void {
     slot.mx.unlock(io);
+    self.operations.done(io);
 }
 
 /// afterAppend flushes the slot once its buffer crosses flushThresholdPercent,
@@ -115,18 +140,37 @@ pub fn afterAppend(self: *AccumulatorPool, io: Io, slot: *Slot) !void {
     }
 }
 
-/// flushAll force-flushes every slot; used by the test-only /flush endpoint
-/// to make ingested data visible without waiting on threshold/idle triggers.
+/// flushes all the data if the app is alive,
+/// it's testing only API at the moment, so it assume the app is running
 pub fn flushAll(self: *AccumulatorPool, io: Io) !void {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
+    try self.flushSlots(io);
+}
+
+pub fn shutdown(self: *AccumulatorPool, io: Io) !void {
+    self.halt(io);
+
+    try self.flushSlots(io);
+}
+
+fn flushSlots(self: *AccumulatorPool, io: Io) !void {
+    var failure: ?anyerror = null;
     for (self.slots) |*slot| {
         slot.mx.lockUncancelable(io);
         defer slot.mx.unlock(io);
 
-        try slot.accumulator.flush(io, self.alloc);
+        slot.accumulator.flush(io, self.alloc) catch |err| {
+            failure = err;
+        };
     }
+    if (failure) |err| return err;
 }
 
 fn requestArm(self: *AccumulatorPool, slot: *Slot) void {
+    if (self.operations.isClosed(self.io) or self.timerLoop.stopping.load(.acquire)) return;
+
     {
         TimerLoop.spinLock(&self.pendingMx);
         defer self.pendingMx.unlock();
@@ -172,11 +216,15 @@ fn timerCallback(
     r: xev.Timer.RunError!void,
 ) xev.CallbackAction {
     _ = r catch |err| {
-        Logger.log(.err, "failed to run accumulator timerCallback", .{ .err = err });
+        switch (err) {
+            error.Canceled => Logger.log(.info, "accumulator callback canceled", .{}),
+            else => Logger.log(.err, "failed to run accumulator timerCallback", .{ .err = err }),
+        }
     };
     const slot = ud.?;
     const self = slot.parent;
     const io = self.io;
+    if (self.operations.isClosed(io)) return .disarm;
 
     if (!slot.mx.tryLock()) {
         // an append is in flight; retry shortly instead of dropping the deadline

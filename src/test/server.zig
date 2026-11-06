@@ -459,15 +459,15 @@ fn expectLoqlSyntaxErrors(alloc: Allocator, client: *OchiClient) !void {
     }
 }
 
-fn expectedLinesCorpus(alloc: Allocator, corpus: QueryTestCorpus, nowNs: u64) ![]Line {
+fn expectedLinesFromIngest(alloc: Allocator, ingest: IngestCorpus, nowNs: u64) ![]Line {
     var lineCount: usize = 0;
-    for (corpus.ingest.streams) |stream| {
+    for (ingest.streams) |stream| {
         lineCount += stream.logs.len;
     }
 
     const expected = try alloc.alloc(Line, lineCount);
     var logI: usize = 0;
-    for (corpus.ingest.streams) |stream| {
+    for (ingest.streams) |stream| {
         if (stream.stream != .object) return error.ExpectedStreamObject;
 
         const streamFieldsCount = stream.stream.object.count();
@@ -705,8 +705,6 @@ test "serverEndToEndViaHTTP" {
 
     const ServerThread = struct {
         fn run(threadAllocator: std.mem.Allocator) void {
-            // TODO: shitdown the server, start again
-            // and validate all the latest corpora queries pass
             server.startApp(
                 io,
                 threadAllocator,
@@ -717,9 +715,11 @@ test "serverEndToEndViaHTTP" {
             };
         }
     };
-    var serverFuture = try Io.concurrent(io, ServerThread.run, .{testing.allocator});
-    defer serverFuture.await(io);
-    defer std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
+    var serverFuture = try Io.concurrent(io, ServerThread.run, .{alloc});
+    defer {
+        std.posix.kill(std.c.getpid(), std.posix.SIG.TERM) catch {};
+        serverFuture.await(io);
+    }
 
     var ochiClient: OchiClient = .{
         .host = "http://localhost:9014",
@@ -757,7 +757,7 @@ test "serverEndToEndViaHTTP" {
         }
 
         try runCorpus(arenAlloc, &ochiClient, corpus, nowNs);
-        try expectQueryBySIDs(arenAlloc, &ochiClient, corpus, expectedSIDs, nowNs);
+        try expectQueryBySIDs(arenAlloc, &ochiClient, corpus.ingest, expectedSIDs, nowNs);
 
         const gop = try expectedSIDsByTenant.getOrPut(corpus.ingest.tenant);
         if (!gop.found_existing) {
@@ -778,6 +778,29 @@ test "serverEndToEndViaHTTP" {
             _ = corpusArena.reset(.retain_capacity);
         }
     }
+
+    // create the dedicated shutdown fixture, ingest it without /flush
+    // so we could test it persists after shutdown
+    const parsedShutdownIngest = try std.json.parseFromSlice(IngestCorpus, alloc, @embedFile("ingest_shutdown.json"), .{});
+    defer parsedShutdownIngest.deinit();
+    const shutdownIngest = parsedShutdownIngest.value;
+    const shutdownTs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
+    const body = try buildIngestBody(arenAlloc, shutdownIngest, shutdownTs);
+    try ochiClient.ingestLokiJson(arenAlloc, shutdownIngest.tenant, body);
+    try std.posix.kill(std.c.getpid(), std.posix.SIG.TERM);
+    serverFuture.await(io);
+
+    // restart the server
+    serverFuture = try Io.concurrent(io, ServerThread.run, .{alloc});
+    try ochiClient.waitUntilReady(io, alloc, .fromSeconds(1));
+
+    // assert after restart
+    const sids = try arenAlloc.alloc(u128, shutdownIngest.streams.len);
+    for (shutdownIngest.streams, 0..) |stream, i| {
+        sids[i] = try makeSID(arenAlloc, shutdownIngest.tenant, stream.stream);
+    }
+    try expectQueryBySIDs(arenAlloc, &ochiClient, shutdownIngest, sids, shutdownTs);
+    try expectStreamIDs(arenAlloc, &ochiClient, shutdownIngest.tenant, sids);
 }
 
 fn expectStreamIDs(
@@ -874,8 +897,8 @@ fn appendUniqueSID(alloc: Allocator, sids: *std.ArrayList(u128), sid: u128) !voi
     try sids.append(alloc, sid);
 }
 
-fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, sids: []const u128, nowNs: u64) !void {
-    const tsRange = try corpus.ingest.getMinMaxTimestamps(nowNs);
+fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, ingest: IngestCorpus, sids: []const u128, nowNs: u64) !void {
+    const tsRange = try ingest.getMinMaxTimestamps(nowNs);
     const minTs = tsRange.min;
     const maxTs = tsRange.max;
 
@@ -901,7 +924,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
         .POST,
         "/query",
         body.items,
-        corpus.ingest.tenant,
+        ingest.tenant,
         "application/json",
         null,
     );
@@ -917,7 +940,7 @@ fn expectQueryBySIDs(alloc: Allocator, client: *OchiClient, corpus: QueryTestCor
     });
     defer parsed.deinit();
 
-    const expected = try expectedLinesCorpus(alloc, corpus, nowNs);
+    const expected = try expectedLinesFromIngest(alloc, ingest, nowNs);
     // TODO: on a first failure it's worth implementing better,
     // iterating over every line, compare fields one by one and log an error,
     // it must take into account the keys might be missing in either
@@ -963,7 +986,7 @@ fn runCorpus(alloc: Allocator, client: *OchiClient, corpus: QueryTestCorpus, now
     }
 
     // query all the test cases
-    const expectedLines = try expectedLinesCorpus(alloc, corpus, nowNs);
+    const expectedLines = try expectedLinesFromIngest(alloc, corpus.ingest, nowNs);
     for (corpus.queries) |query| {
         client.expectQueryIDs(alloc, query.tenant, query.query, query.match, expectedLines) catch |err| {
             client.logger.log(.err, "failed to match query ids", .{
