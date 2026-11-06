@@ -89,12 +89,6 @@ pub fn init(
 }
 
 pub fn deinit(self: *MemBlock, alloc: Allocator) void {
-    Logger.log(.debug, "deinit index mem block", .{
-        .bufcap = self.buf.capacity,
-        .buflen = self.buf.items.len,
-        .entriescap = self.memEntries.capacity,
-        .entrieslen = self.memEntries.items.len,
-    });
     self.memEntries.deinit(alloc);
     self.buf.deinit(alloc);
     alloc.destroy(self);
