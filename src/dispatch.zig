@@ -12,6 +12,7 @@ const Runtime = @import("Runtime.zig");
 
 const Store = @import("Store.zig").Store;
 const AccumulatorPool = @import("AccumulatorPool.zig");
+const Countdown = @import("stds/Countdown.zig");
 
 const ApiError = @import("server/error.zig").ApiError;
 
@@ -53,6 +54,7 @@ pub const Dispatcher = struct {
     pprofAlloc: *PprofAllocator,
     accumulatorPool: *AccumulatorPool,
     querySem: std.Io.Semaphore,
+    requests: Countdown = .{},
 
     pub fn init(
         io: Io,
@@ -80,9 +82,27 @@ pub const Dispatcher = struct {
         };
     }
 
+    pub fn drain(self: *Dispatcher) void {
+        self.requests.close(self.io);
+        self.requests.wait(self.io);
+    }
+
     pub fn deinit(self: *Dispatcher) void {
+        self.drain();
+
         self.meter.deinit();
         self.accumulatorPool.deinit(self.allocator);
+    }
+
+    pub fn stopAndFlush(self: *Dispatcher, io: Io) void {
+        // close http
+        self.drain();
+        // close background tasks
+        self.store.suspendTimers();
+        // flush inmemory data
+        self.accumulatorPool.flushFinal(io) catch |err| {
+            Logger.log(.err, "failed to flush accumulator pool during shutdown", .{ .err = err });
+        };
     }
 
     pub fn dispatch(
@@ -91,6 +111,18 @@ pub const Dispatcher = struct {
         req: *httpz.Request,
         res: *httpz.Response,
     ) void {
+        if (!self.requests.add(self.io)) {
+            res.status = 503;
+            res.body = "server is shutting down";
+            return;
+        }
+        defer self.requests.done(self.io);
+
+        // write before admission is closed
+        defer res.write() catch |err| {
+            Logger.log(.err, "failed to finish HTTP response", .{ .err = err });
+        };
+
         const startedAt = Io.Timestamp.now(self.io, .awake);
         defer self.observeRequest(req, res, startedAt);
 

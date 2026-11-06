@@ -19,7 +19,37 @@ const stream_ids = @import("handlers/stream_ids.zig");
 const PprofAllocator = @import("pprof/PprofAllocator.zig");
 const Logger = @import("logging");
 
-var global_server: ?*httpz.Server(*Dispatcher) = null;
+var shutdownRequested: std.atomic.Value(bool) = .init(false);
+const ShutdownCoordinator = struct {
+    io: Io,
+    server: *httpz.Server(*Dispatcher),
+    dispatcher: *Dispatcher,
+    // TODO: make it a conditional variable or something? it's just spinning for that value
+    finished: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *ShutdownCoordinator) void {
+        var shutdownStarted = false;
+        while (!self.finished.load(.acquire)) {
+            if (shutdownRequested.load(.acquire)) {
+                if (!shutdownStarted) {
+                    Logger.log(.debug, "graceful shutdown started", .{});
+                    shutdownStarted = true;
+                }
+                self.dispatcher.drain();
+                // listen holds _mut until every worker can safely be stopped.
+                self.server._mut.lockUncancelable(self.io);
+                const listening = self.server._listener != null;
+                self.server._mut.unlock(self.io);
+                if (listening) {
+                    self.server.stop();
+                    return;
+                }
+            }
+            // Bound notification latency without running synchronization code in the signal handler.
+            Io.sleep(self.io, .fromMilliseconds(10), .real) catch {};
+        }
+    }
+};
 
 fn health(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -39,6 +69,11 @@ fn metrics(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
 }
 
 fn registerSigtermHandler() void {
+    // TODO: this flag must go away and test real restart of the process
+    // this is testing convinience,
+    // in order to test the in memory buffers flush we have to shutdown the app and start it again.
+    shutdownRequested.store(false, .release);
+
     const empty_set = std.mem.zeroes(std.posix.sigset_t);
     const act = std.posix.Sigaction{
         .handler = .{ .handler = handleSigterm },
@@ -51,9 +86,7 @@ fn registerSigtermHandler() void {
 }
 
 fn handleSigterm(_: std.posix.SIG) callconv(.c) void {
-    if (global_server) |server| {
-        server.stop();
-    }
+    shutdownRequested.store(true, .release);
 }
 
 pub const StartOptions = struct {
@@ -66,6 +99,8 @@ pub const StartOptions = struct {
 };
 
 pub fn startApp(io: Io, baseAllocator: std.mem.Allocator, options: StartOptions) !void {
+    registerSigtermHandler();
+
     var pprofAlloc: PprofAllocator = .{
         .child = baseAllocator,
         .io = io,
@@ -118,10 +153,16 @@ pub fn startApp(io: Io, baseAllocator: std.mem.Allocator, options: StartOptions)
     defer store.deinit(io, alloc);
     try store.start(io, alloc);
 
-    try startServer(io, alloc, conf, runtime, &store, &pprofAlloc);
+    startServer(io, alloc, conf, runtime, &store, &pprofAlloc) catch |err| {
+        Logger.log(.err, "server stopped unexpectedly", .{ .err = err });
+    };
+    store.shutdown(io) catch |err| {
+        Logger.log(.err, "server failed to shutdown", .{ .err = err });
+    };
+    Logger.log(.debug, "graceful shutdown completed", .{});
 }
 
-pub fn startServer(
+fn startServer(
     io: Io,
     allocator: std.mem.Allocator,
     conf: Conf,
@@ -131,9 +172,7 @@ pub fn startServer(
 ) !void {
     var dispatcher = try Dispatcher.init(io, allocator, &conf.app, runtime, store, pprofAlloc);
     defer {
-        dispatcher.accumulatorPool.flushAll(io) catch |err| {
-            Logger.log(.err, "failed to flush accumulator pool", .{ .err = err });
-        };
+        dispatcher.stopAndFlush(io);
         dispatcher.deinit();
     }
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
@@ -147,12 +186,7 @@ pub fn startServer(
             .retain_allocated_bytes = 4 * 1024 * 1024,
         },
     }, &dispatcher);
-    registerSigtermHandler();
     defer server.deinit();
-
-    global_server = &server;
-    defer global_server = null;
-
     var router = try server.router(.{});
     router.get("/health", health, .{});
     router.get("/metrics", metrics, .{});
@@ -165,23 +199,14 @@ pub fn startServer(
     router.post("/stream_ids", stream_ids.streamIDsHandler, .{});
     router.post("/flush", flush.flushHandler, .{});
 
-    // TODO: implement proper shutdown with cancel signal
-    // - graceful draining of connections
-    // - insert the rest incoming chunks
-    // - graceful data cleaning
-    // - stopping all the merge jobs
-    // TODO: handle the above described shutdown in case of resource lack:
-    // - memory resource (OOM)
-    // - disk resource (full disk)
-    // - file descriptors (too many open files)
-    server.listen() catch |err| switch (err) {
-        error.AddressInUse => {
-            Logger.log(.err, "can't start server, port is in use", .{ .port = conf.server.port });
-            return err;
-        },
-        else => {
-            Logger.log(.err, "can't start server, unexpected error", .{ .err = err });
-            return err;
-        },
+    var coordinator: ShutdownCoordinator = .{ .io = io, .server = &server, .dispatcher = &dispatcher };
+    // TODO: it feels wrong to run a thread to wait for a shutdown signal
+    const coordinatorThread = try std.Thread.spawn(.{}, ShutdownCoordinator.run, .{&coordinator});
+    defer {
+        coordinator.finished.store(true, .release);
+        coordinatorThread.join();
+    }
+    server.listen() catch |err| {
+        Logger.log(.err, "HTTP listener failed", .{ .err = err, .port = conf.server.port });
     };
 }
