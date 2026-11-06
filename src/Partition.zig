@@ -64,6 +64,8 @@ streamCache: *Cache(void),
 // TODO: worth moving it to Arc object, there are already 4 managed types:
 // partition, cache node, index and data tables
 refCounter: std.atomic.Value(u32) = .init(1),
+referencesMx: Io.Mutex = .init,
+referencesChanged: Io.Condition = .init,
 
 /// Partition is a managed resource by a ref counter,
 /// therefore it requires an allocator
@@ -118,7 +120,6 @@ pub fn open(
     errdefer indexRecorder.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop index recorder in partition opening", .{ .err = err });
     };
-    try indexRecorder.startTasks(io, alloc);
     const index = Index.init(indexRecorder);
 
     const data = try DataRecorder.init(
@@ -136,8 +137,6 @@ pub fn open(
     errdefer data.stop(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };
-    try data.startTasks(io, alloc);
-
     const partition = try alloc.create(Partition);
     errdefer alloc.destroy(partition);
     partition.* = Partition{
@@ -150,6 +149,18 @@ pub fn open(
         .streamCache = streamCache,
     };
 
+    // TODO: currently non active partitions still keep running background tasks,
+    // add a background task to identify non active partitions and stop their loops
+    if (!timerLoop.stopping.load(.acquire)) {
+        // start basic background tasks
+        try indexRecorder.startTasks(io, alloc);
+        try data.startTasks(io, alloc);
+        // collect timer tasks and register them all at once
+        const registrations = indexRecorder.taskRegistrations() ++ data.taskRegistrations();
+        try timerLoop.register(&registrations);
+        indexRecorder.tasksRegistered = true;
+        data.tasksRegistered = true;
+    }
     return partition;
 }
 
@@ -157,9 +168,29 @@ pub fn retain(self: *Partition) void {
     _ = self.refCounter.fetchAdd(1, .monotonic);
 }
 
+pub fn waitForLastRelease(self: *Partition, io: Io) void {
+    self.referencesMx.lockUncancelable(io);
+    defer self.referencesMx.unlock(io);
+
+    // every release comes a signal to the conditional,
+    // so we wait all the users to release it
+    // TODO: consider using waitgroup if the mutex contention would be less
+    while (self.refCounter.load(.acquire) != 1) self.referencesChanged.waitUncancelable(io, &self.referencesMx);
+}
+
 pub fn release(self: *Partition, io: Io) void {
-    const prev = self.refCounter.fetchSub(1, .acq_rel);
-    std.debug.assert(prev > 0);
+    const prev = blk: {
+        self.referencesMx.lockUncancelable(io);
+        self.referencesMx.unlock(io);
+
+        const prev = self.refCounter.fetchSub(1, .acq_rel);
+        std.debug.assert(prev > 0);
+        // prev 2 means the new value 1, the last reference belongs to the store,
+        // so we can broadcasat the conditional
+        if (prev == 2) self.referencesChanged.broadcast(io);
+
+        break :blk prev;
+    };
 
     if (prev != 1) return;
 
@@ -169,19 +200,30 @@ pub fn release(self: *Partition, io: Io) void {
     // read table release implementation as a sample
 }
 
+pub fn shutdown(self: *Partition, io: Io) !void {
+    self.index.recorder.halt(io);
+    self.data.halt(io);
+    self.index.recorder.drain(io);
+    self.data.drain(io);
+
+    self.index.recorder.stop(io, self.alloc) catch |err| {
+        Logger.log(.err, "index stop failed", .{ .partition = self.key, .err = err });
+    };
+    self.data.stop(io, self.alloc) catch |err| {
+        Logger.log(.err, "data stop failed", .{ .partition = self.key, .err = err });
+    };
+}
+
 pub fn close(
     self: *Partition,
     io: Io,
 ) void {
     const alloc = self.alloc;
 
-    self.index.recorder.stop(io, alloc) catch |err| {
-        std.debug.panic("failed to stop index recorder in partition close: {s}", .{@errorName(err)});
+    self.shutdown(io) catch |err| {
+        Logger.log(.err, "failed to persist partition buffers", .{ .partition = self.key, .err = err });
     };
     self.index.recorder.deinit(io, alloc);
-    self.data.stop(io, alloc) catch |err| {
-        std.debug.panic("failed to stop data recorder in partition close: {s}", .{@errorName(err)});
-    };
     self.data.deinit(io, alloc);
     self.* = undefined;
     alloc.destroy(self);
