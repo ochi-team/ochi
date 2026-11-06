@@ -1,0 +1,19 @@
+src/all_tests.zig
+  s_84e39b3b655be7::t_43227f6a41fbbd 4,7,21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b998d7eae421595dcbd85f7c3d8ab8f9a12e1f0",
+  "prompts": {},
+  "sessions": {
+    "s_84e39b3b655be7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1adbc-5df6-737d-ba7f-cf25e276b5d6",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
