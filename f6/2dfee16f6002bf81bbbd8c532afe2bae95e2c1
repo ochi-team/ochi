@@ -1,0 +1,16 @@
+src/AccumulatorPool.zig
+  h_2dd3d53392047d 11,35,59,74-88,90-91,94,99,104-106,122,124,143-144,146-159,164-166,168,172-173,219-222,227
+src/test/server.zig
+  h_2dd3d53392047d 462,464,470,718-722,760,781-803,900-901,927,943,989
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f62dfee16f6002bf81bbbd8c532afe2bae95e2c1",
+  "prompts": {},
+  "humans": {
+    "h_2dd3d53392047d": {
+      "author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
