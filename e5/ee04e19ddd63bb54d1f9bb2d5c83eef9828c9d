@@ -1,0 +1,16 @@
+src/Partition.zig
+  h_2dd3d53392047d 67-68,152-163,171-180,182-193,203-216,223-224
+src/dispatch.zig
+  h_2dd3d53392047d 103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5ee04e19ddd63bb54d1f9bb2d5c83eef9828c9d",
+  "prompts": {},
+  "humans": {
+    "h_2dd3d53392047d": {
+      "author": "Denis Dvornikov <candyboobers@gmail.com>"
+    }
+  }
+}
