@@ -100,7 +100,7 @@ pub const Dispatcher = struct {
         // close background tasks
         self.store.suspendTimers();
         // flush inmemory data
-        self.accumulatorPool.flushFinal(io) catch |err| {
+        self.accumulatorPool.shutdown(io) catch |err| {
             Logger.log(.err, "failed to flush accumulator pool during shutdown", .{ .err = err });
         };
     }
