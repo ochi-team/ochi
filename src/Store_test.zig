@@ -26,6 +26,16 @@ pub const Store = @import("Store.zig");
 
 const testing = std.testing;
 
+pub fn getPartitionLock(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
+    self.partitionsMx.lockUncancelable(io);
+    defer self.partitionsMx.unlock(io);
+
+    return self.getPartition(io, alloc, day);
+}
+
 test "partitionKeyFormat" {
     const io = testing.io;
     const inst = try zeit.instant(io, .{ .source = .{ .time = .{
@@ -339,19 +349,19 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     try testing.expectEqual(0, store.partitions.items.len);
 
-    const first = try store.getPartition(io, alloc, dayOne);
+    const first = try getPartitionLock(&store, io, alloc, dayOne);
     defer first.release(io);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const firstAgain = try store.getPartition(io, alloc, dayOne);
+    const firstAgain = try getPartitionLock(&store, io, alloc, dayOne);
     defer firstAgain.release(io);
     try testing.expectEqual(first, firstAgain);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const second = try store.getPartition(io, alloc, dayTwo);
+    const second = try getPartitionLock(&store, io, alloc, dayTwo);
     defer second.release(io);
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
@@ -380,7 +390,7 @@ test "flush doesn't crash overflow when the store has more partitions than reten
     // creating max + 1 partitions makes getPartitions write parts[30],
     // validate it doesn't fail on out of bound
     for (0..Store.retentionDays + 1) |day| {
-        const partition = try store.getPartition(io, alloc, @intCast(day));
+        const partition = try getPartitionLock(&store, io, alloc, @intCast(day));
         partition.release(io);
     }
     try testing.expectEqual(31, store.partitions.items.len);
@@ -422,6 +432,7 @@ fn withIngestionStore(alloc: Allocator, comptime check: fn (Allocator, *Store, u
         }
     }
 
+    store.suspendTimers();
     const nowNs: u64 = @intCast(Io.Timestamp.now(io, .real).nanoseconds);
     // three days stay inside retention
     const day = nowNs / std.time.ns_per_day - 3;
@@ -475,10 +486,10 @@ fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
             // Pre-open only the destination for the reuse case. Direct getPartition
             // avoids getPartitionOrLru, so this setup introduces no leaked LRU borrow.
             if (existingTarget) {
-                const target = try store.getPartition(io, alloc, @intCast(day));
+                const target = try getPartitionLock(store, io, alloc, @intCast(day));
                 target.release(io);
             }
-            const previousLru = try store.getPartition(io, alloc, @intCast(day + 2));
+            const previousLru = try getPartitionLock(store, io, alloc, @intCast(day + 2));
             previousLru.release(io);
 
             var fields = [_]Field{.{ .key = "message", .value = "kept" }};

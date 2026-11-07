@@ -11,6 +11,7 @@ const xev = @import("xev");
 
 const Layout = @import("Layout.zig");
 const Stop = @import("stds/Stop.zig");
+const Countdown = @import("stds/Countdown.zig");
 const StringsTable = @import("stds/strings.zig").StringsTable;
 
 const StoreMeter = @import("observe/StoreMeter.zig");
@@ -66,6 +67,8 @@ meter: StoreMeter,
 timerLoop: *TimerLoop,
 tickCtx: TaskCtx = undefined,
 stopped: Stop = .{},
+operations: Countdown = .{},
+shutdownComplete: bool = false,
 
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
 pathsBuf: std.ArrayList([]const u8) = .empty,
@@ -102,69 +105,72 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         Logger.log(.err, "unexpected failure to init Store", .{ .err = err });
     }
 
-    const file = try createLockFile(io, runtime.path);
-    errdefer file.close(io);
+    var store: Store = blk: {
+        const file = try createLockFile(io, runtime.path);
+        errdefer file.close(io);
 
-    var partitions = try std.ArrayList(*Partition).initCapacity(alloc, retentionDays);
-    errdefer {
-        for (partitions.items) |partition| {
-            partition.close(io);
+        var partitions = try std.ArrayList(*Partition).initCapacity(alloc, retentionDays);
+        errdefer partitions.deinit(alloc);
+
+        var streamCache = try Cache(void).init(io, alloc, .{ .meter = .{ .name = "stream" } });
+        errdefer streamCache.deinit();
+
+        const indexMemBlocksCache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "mem_blocks" } });
+        errdefer indexMemBlocksCache.deinit();
+
+        const indexQueryCache = try Cache(*QueryIndexCacheValue).init(io, alloc, .{ .meter = .{ .name = "index_query" } });
+        errdefer indexQueryCache.deinit();
+
+        const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, runtime.cpus);
+        errdefer timestampsEncoders.deinit(alloc);
+
+        const compressionPool = try CompressionPool.init(alloc, runtime.cpus);
+        errdefer compressionPool.deinit(alloc);
+
+        const decompressionPool = try DecompressionPool.init(alloc, runtime.cpus);
+        errdefer decompressionPool.deinit(alloc);
+
+        const lookupPool = try LookupPool.init(alloc, runtime.cpus);
+        errdefer lookupPool.deinit(io, alloc);
+
+        const threadPool = try alloc.create(xev.ThreadPool);
+        errdefer alloc.destroy(threadPool);
+        threadPool.* = .init(.{ .max_threads = runtime.cpus });
+        errdefer {
+            threadPool.shutdown();
+            threadPool.deinit();
         }
-        partitions.deinit(alloc);
-    }
 
-    var streamCache = try Cache(void).init(io, alloc, .{ .meter = .{ .name = "stream" } });
-    errdefer streamCache.deinit();
+        var meter = try StoreMeter.init(io, alloc);
+        errdefer meter.deinit();
 
-    const indexMemBlocksCache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "mem_blocks" } });
-    errdefer indexMemBlocksCache.deinit();
+        const timerLoop = try TimerLoop.init(alloc);
+        errdefer timerLoop.deinit();
 
-    const indexQueryCache = try Cache(*QueryIndexCacheValue).init(io, alloc, .{ .meter = .{ .name = "index_query" } });
-    errdefer indexQueryCache.deinit();
-
-    const timestampsEncoders = try TimestampsEncoder.TimestampsEncoderPool.init(alloc, runtime.cpus);
-    errdefer timestampsEncoders.deinit(alloc);
-
-    const compressionPool = try CompressionPool.init(alloc, runtime.cpus);
-    errdefer compressionPool.deinit(alloc);
-
-    const decompressionPool = try DecompressionPool.init(alloc, runtime.cpus);
-    errdefer decompressionPool.deinit(alloc);
-
-    const lookupPool = try LookupPool.init(alloc, runtime.cpus);
-    errdefer lookupPool.deinit(io, alloc);
-
-    const threadPool = try alloc.create(xev.ThreadPool);
-    errdefer alloc.destroy(threadPool);
-    threadPool.* = .init(.{ .max_threads = runtime.cpus });
-    errdefer {
-        threadPool.shutdown();
-        threadPool.deinit();
-    }
-
-    var meter = try StoreMeter.init(io, alloc);
-    errdefer meter.deinit();
-
-    const timerLoop = try TimerLoop.init(alloc);
-    errdefer timerLoop.deinit();
-
-    var store: Store = .{
-        .lockFile = file,
-        .partitions = partitions,
-        .streamCache = streamCache,
-        .indexMemBlocksCache = indexMemBlocksCache,
-        .indexQueryCache = indexQueryCache,
-        .timestampsEncoders = timestampsEncoders,
-        .compressionPool = compressionPool,
-        .decompressionPool = decompressionPool,
-        .lookupPool = lookupPool,
-        .threadPool = threadPool,
-        .meter = meter,
-        .runtime = runtime,
-        .conf = conf,
-        .timerLoop = timerLoop,
+        break :blk .{
+            .lockFile = file,
+            .partitions = partitions,
+            .streamCache = streamCache,
+            .indexMemBlocksCache = indexMemBlocksCache,
+            .indexQueryCache = indexQueryCache,
+            .timestampsEncoders = timestampsEncoders,
+            .compressionPool = compressionPool,
+            .decompressionPool = decompressionPool,
+            .lookupPool = lookupPool,
+            .threadPool = threadPool,
+            .meter = meter,
+            .runtime = runtime,
+            .conf = conf,
+            .timerLoop = timerLoop,
+        };
     };
+    errdefer store.deinit(io, alloc);
+    try store.setupPartitions(io, alloc, layout);
 
+    return store;
+}
+
+fn setupPartitions(self: *Store, io: Io, alloc: Allocator, layout: Layout) !void {
     // TODO: try making it parallel, it speed up start up time
     var it = layout.partitionsDir.iterate();
     // TODO: ban while loops via linter and set explicit loops
@@ -187,17 +193,15 @@ pub fn init(io: Io, alloc: Allocator, conf: *const Conf, runtime: *Runtime, layo
         errdefer alloc.free(dataPath);
 
         // discard partition because it appends it to the store state
-        _ = try store.openPartition(io, alloc, partitionPath, indexPath, dataPath, day);
+        _ = try self.openPartition(io, alloc, partitionPath, indexPath, dataPath, day);
     }
 
-    std.sort.pdq(*Partition, store.partitions.items, {}, Partition.lessThan);
+    std.sort.pdq(*Partition, self.partitions.items, {}, Partition.lessThan);
 
-    store.lruPartition = if (store.partitions.items.len > 0)
-        store.partitions.items[store.partitions.items.len - 1]
+    self.lruPartition = if (self.partitions.items.len > 0)
+        self.partitions.items[self.partitions.items.len - 1]
     else
         null;
-
-    return store;
 }
 
 pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
@@ -210,21 +214,39 @@ pub fn start(self: *Store, io: Io, alloc: Allocator) !void {
     try self.timerLoop.start();
 }
 
-pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
-    self.stopped.stop(io);
+pub fn suspendTimers(self: *Store) void {
     self.timerLoop.stop();
     self.timerLoop.join();
-    self.timerLoop.deinit();
+}
 
-    // TODO: this deinit produces "use after free",
-    // partitions are ref counters and they run background jobs,
-    // deiniting timer loop must happen after, but it requires making sure
-    // all the partitions are gone,
-    // perhaps requires tracking them via wait group in the store
+pub fn shutdown(self: *Store, io: Io) !void {
+    self.suspendTimers();
+
+    self.operations.close(io);
+    self.operations.wait(io);
+    self.stopped.stop(io);
+    if (self.shutdownComplete) return;
     for (self.partitions.items) |partition| {
+        partition.shutdown(io);
+    }
+    self.shutdownComplete = true;
+}
+
+/// Requires no borrowed partition references. Call shutdown explicitly to observe persistence errors.
+pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
+    self.shutdown(io) catch |err| {
+        Logger.log(.err, "store shutdown failed during cleanup", .{ .err = err });
+    };
+
+    for (self.partitions.items) |partition| {
+        std.debug.assert(partition.refCounter.load(.acquire) == 1);
         partition.release(io);
     }
     self.partitions.deinit(alloc);
+    self.timerLoop.deinit();
+    self.threadPool.shutdown();
+    self.threadPool.deinit();
+    alloc.destroy(self.threadPool);
 
     for (self.pathsBuf.items) |path| {
         alloc.free(path);
@@ -241,10 +263,6 @@ pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
     self.compressionPool.deinit(alloc);
     self.decompressionPool.deinit(alloc);
     self.lookupPool.deinit(io, alloc);
-
-    self.threadPool.shutdown();
-    self.threadPool.deinit();
-    alloc.destroy(self.threadPool);
 
     // close lock file later, it unlocks potentially another Ochi process
     self.lockFile.close(io);
@@ -374,6 +392,9 @@ pub fn addLines(
     encodedTags: []const u8,
     sid: SID,
 ) !void {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
     const z = tracy.Zone.begin(.{
         .src = @src(),
         .name = "Store.addLines",
@@ -495,6 +516,9 @@ pub fn queryLines(
     query: Query,
     sink: *Sink,
 ) !void {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
     const minDay: u32 = @intCast(query.start / std.time.ns_per_day);
     const maxDay: u32 = @intCast(query.end / std.time.ns_per_day);
 
@@ -540,6 +564,9 @@ pub fn queryStreamIDs(
     from: u64,
     to: u64,
 ) !std.AutoArrayHashMapUnmanaged(u128, void) {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
     const minDay: u32 = @intCast(from / std.time.ns_per_day);
     const maxDay: u32 = @intCast(to / std.time.ns_per_day);
 
@@ -563,6 +590,9 @@ pub fn queryStreamIDs(
 }
 
 pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
     var partsBuf: [partitionsBufferSize]*Partition = undefined;
     const partsLen = self.getPartitions(io, 0, std.math.maxInt(u32), &partsBuf);
     const parts = partsBuf[0..partsLen];
@@ -594,11 +624,13 @@ pub fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32,
     return slice[0..end];
 }
 
-fn getLruPartition(self: *Store) ?*Partition {
+fn getLruPartition(self: *Store, day: u32) ?*Partition {
     if (self.lruPartition) |part| {
-        part.retain();
-        return part;
+        if (part.day == day) {
+            return part;
+        }
     }
+
     return null;
 }
 
@@ -654,12 +686,9 @@ pub fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partitio
 }
 
 fn getPartitionOrLru(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
-    if (self.getLruPartition()) |part| {
-        if (part.day == day) {
-            return part;
-        }
-
-        part.release(io);
+    if (self.getLruPartition(day)) |part| {
+        part.retain();
+        return part;
     }
 
     return self.getPartition(io, alloc, day);
