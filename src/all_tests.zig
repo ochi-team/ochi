@@ -10,6 +10,7 @@ test {
     _ = @import("handlers/query_test.zig");
     _ = @import("Layout_test.zig");
     _ = @import("main.zig");
+    _ = @import("Partition_test.zig");
     _ = @import("pprof/PprofAllocator_test.zig");
     _ = @import("query/Loql_test.zig");
     _ = @import("query/Parser_test.zig");

@@ -175,7 +175,7 @@ pub fn waitForLastRelease(self: *Partition, io: Io) void {
     // every release comes a signal to the conditional,
     // so we wait all the users to release it
     // TODO: consider using waitgroup if the mutex contention would be less
-    while (self.refCounter.load(.acquire) != 1) self.referencesChanged.waitUncancelable(io, &self.referencesMx);
+    while (self.refCounter.load(.acquire) > 1) self.referencesChanged.waitUncancelable(io, &self.referencesMx);
 }
 
 pub fn release(self: *Partition, io: Io) void {
@@ -200,9 +200,12 @@ pub fn release(self: *Partition, io: Io) void {
     // read table release implementation as a sample
 }
 
-pub fn shutdown(self: *Partition, io: Io) !void {
+pub fn shutdown(self: *Partition, io: Io) void {
+    self.waitForLastRelease(io);
+
     self.index.recorder.halt(io);
     self.data.halt(io);
+
     self.index.recorder.drain(io);
     self.data.drain(io);
 
@@ -220,9 +223,7 @@ pub fn close(
 ) void {
     const alloc = self.alloc;
 
-    self.shutdown(io) catch |err| {
-        Logger.log(.err, "failed to persist partition buffers", .{ .partition = self.key, .err = err });
-    };
+    self.shutdown(io);
     self.index.recorder.deinit(io, alloc);
     self.data.deinit(io, alloc);
     self.* = undefined;
