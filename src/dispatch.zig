@@ -119,6 +119,7 @@ pub const Dispatcher = struct {
         defer self.requests.done(self.io);
 
         // write before admission is closed
+        // TODO: replace this workaround to graceful response draining
         defer res.write() catch |err| {
             Logger.log(.err, "failed to finish HTTP response", .{ .err = err });
         };

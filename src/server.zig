@@ -206,6 +206,8 @@ fn startServer(
         coordinator.finished.store(true, .release);
         coordinatorThread.join();
     }
+    // TODO: fix http partial worker startup cleanup to join every driver thread
+    // before worker deinit
     server.listen() catch |err| {
         Logger.log(.err, "HTTP listener failed", .{ .err = err, .port = conf.server.port });
     };
