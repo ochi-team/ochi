@@ -634,7 +634,20 @@ fn getLruPartition(self: *Store, day: u32) ?*Partition {
     return null;
 }
 
-pub fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
+// TODO: the admission API becomes confusing,
+// better to move to a designated public API and not to use store for data access/ingestion,
+// same for the others admission covered data: partitions, recorders
+pub fn getPartitionLock(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
+    if (!self.operations.add(io)) return error.Stopped;
+    defer self.operations.done(io);
+
+    self.partitionsMx.lockUncancelable(io);
+    defer self.partitionsMx.unlock(io);
+
+    return self.getPartition(io, alloc, day);
+}
+
+fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
     const n = std.sort.binarySearch(
         *Partition,
         self.partitions.items,

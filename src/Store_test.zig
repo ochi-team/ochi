@@ -26,16 +26,6 @@ pub const Store = @import("Store.zig");
 
 const testing = std.testing;
 
-pub fn getPartitionLock(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
-    if (!self.operations.add(io)) return error.Stopped;
-    defer self.operations.done(io);
-
-    self.partitionsMx.lockUncancelable(io);
-    defer self.partitionsMx.unlock(io);
-
-    return self.getPartition(io, alloc, day);
-}
-
 test "partitionKeyFormat" {
     const io = testing.io;
     const inst = try zeit.instant(io, .{ .source = .{ .time = .{
@@ -320,6 +310,194 @@ test "keepLatestLines sorts by timestamp and trims old rows" {
     try testing.expectEqualStrings("middle", lines.items[2].fields.items[0].value);
 }
 
+test "shutdown closes Store admission and joins retained partition references" {
+    const f = struct {
+        fn run(retainers: usize) !void {
+            const alloc = testing.allocator;
+            const io = testing.io;
+            var tmp = testing.tmpDir(.{});
+            defer tmp.cleanup();
+            const root = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+            defer alloc.free(root);
+            const conf = Conf.getConf();
+            const runtime = try Runtime.init(io, alloc, root, conf.app.maxCachePortion);
+            defer runtime.deinit(alloc);
+            var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+            const layout = try Layout.make(io, root, &pathBuf);
+            defer layout.partitionsDir.close(io);
+            var store = try Store.init(io, alloc, &conf, runtime, layout);
+            defer store.deinit(io, alloc);
+
+            const partition = try store.getPartitionLock(io, alloc, 0);
+            // 0 belongs to getPartitionLock
+            for (1..retainers) |_| partition.retain();
+            store.operations.close(io);
+            var future = try io.concurrent(Store.shutdown, .{ &store, io });
+
+            try testing.expectError(error.Stopped, store.getPartitionLock(io, alloc, 1));
+            try testing.expectError(error.Stopped, store.addLines(io, alloc, undefined, undefined, undefined, undefined));
+            try testing.expectError(error.Stopped, store.queryLines(io, alloc, alloc, undefined, undefined, undefined));
+            // +1 for the store initial reference
+            try testing.expectEqual(retainers + 1, partition.refCounter.load(.acquire));
+            for (0..retainers) |_| partition.release(io);
+            try future.await(io);
+            try store.shutdown(io);
+
+            const State = struct { complete: bool, partitions: usize, references: u32 };
+            try testing.expectEqualDeep(State{ .complete = true, .partitions = 1, .references = 1 }, State{
+                .complete = store.shutdownComplete,
+                .partitions = store.partitions.items.len,
+                .references = partition.refCounter.load(.acquire),
+            });
+        }
+    }.run;
+    try f(1);
+    try f(3);
+}
+
+// TODO: this test is complicated, instead of injecting the specific catalog error
+// we can inject a generic allocation failure and validate it's recovery,
+// including test "shutdown initialization rollback keeps shared dependencies alive for opened partitions"
+test "shutdown timer-driven partition rollback does not wait for its own loop" {
+    const Attempt = struct {
+        store: *Store,
+        io: Io,
+        alloc: Allocator,
+        day: u32,
+        entered: Io.Event = .unset,
+        done: Io.Event = .unset,
+        result: ?anyerror = null,
+
+        fn tick(ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (self.done.isSet()) return;
+
+            self.entered.set(self.io);
+            const partition = self.store.getPartitionLock(self.io, self.alloc, self.day) catch |err| {
+                self.result = err;
+                self.done.set(self.io);
+                return;
+            };
+
+            partition.release(self.io);
+            self.done.set(self.io);
+        }
+
+        fn run(day: u32, lockedRollback: bool) !void {
+            const alloc = testing.allocator;
+            const io = testing.io;
+            var tmp = testing.tmpDir(.{});
+            defer tmp.cleanup();
+            const root = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+            defer alloc.free(root);
+            const conf = Conf.getConf();
+            const runtime = try Runtime.init(io, alloc, root, conf.app.maxCachePortion);
+            defer runtime.deinit(alloc);
+            var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+            const layout = try Layout.make(io, root, &pathBuf);
+            defer layout.partitionsDir.close(io);
+            var store = try Store.init(io, alloc, &conf, runtime, layout);
+            defer store.deinit(io, alloc);
+
+            var keyBuf: [8]u8 = undefined;
+            const key = try Store.partitionKeyBuf(io, &keyBuf, day);
+            const path = try std.fs.path.join(alloc, &.{ root, filenames.partitions, key });
+            defer alloc.free(path);
+            const indexPath = try std.fs.path.join(alloc, &.{ path, filenames.indexTables });
+            defer alloc.free(indexPath);
+            const dataPath = try std.fs.path.join(alloc, &.{ path, filenames.dataTables });
+            defer alloc.free(dataPath);
+            try Partition.createDir(io, path, indexPath, dataPath);
+            const catalogPath = try std.fs.path.join(alloc, &.{ dataPath, filenames.tables });
+            defer alloc.free(catalogPath);
+            const catalog = try Dir.createFileAbsolute(io, catalogPath, .{});
+            defer catalog.close(io);
+            try catalog.writeStreamingAll(io, "{}");
+
+            var attempt: @This() = .{ .store = &store, .io = io, .alloc = alloc, .day = day };
+            // Failure occurs after opening the index; rollback runs inside the timer callback.
+            try store.timerLoop.addTimer(std.time.ns_per_ms, &attempt, tick);
+
+            // The callback cannot progress until this lock is released. Rollback
+            // must not wait for its acknowledgement while holding the same lock.
+            try testing.expectError(error.TablesFileExpectedArray, Partition.open(
+                io,
+                alloc,
+                path,
+                indexPath,
+                dataPath,
+                day,
+                store.streamCache,
+                runtime,
+                store.timestampsEncoders,
+                store.compressionPool,
+                store.decompressionPool,
+                store.threadPool,
+                store.timerLoop,
+            ));
+
+            if (lockedRollback) {
+                store.partitionsMx.lockUncancelable(io);
+                defer store.partitionsMx.unlock(io);
+                try store.timerLoop.start();
+                attempt.entered.waitUncancelable(io);
+            } else {
+                try store.timerLoop.start();
+            }
+            attempt.done.waitUncancelable(io);
+            store.suspendTimers();
+            try testing.expectEqual(error.TablesFileExpectedArray, attempt.result.?);
+            try testing.expectEqual(0, store.partitions.items.len);
+        }
+    };
+    try Attempt.run(0, false);
+    try Attempt.run(1, false);
+    try Attempt.run(0, true);
+    try Attempt.run(1, true);
+}
+
+test "shutdown initialization rollback keeps shared dependencies alive for opened partitions" {
+    const f = struct {
+        fn run(count: usize) !void {
+            const alloc = testing.allocator;
+            const io = testing.io;
+            var tmp = testing.tmpDir(.{});
+            defer tmp.cleanup();
+            const root = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+            defer alloc.free(root);
+            const conf = Conf.getConf();
+            const runtime = try Runtime.init(io, alloc, root, conf.app.maxCachePortion);
+            defer runtime.deinit(alloc);
+            var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
+            const layout = try Layout.make(io, root, &pathBuf);
+            defer layout.partitionsDir.close(io);
+
+            {
+                var store = try Store.init(io, alloc, &conf, runtime, layout);
+                defer store.deinit(io, alloc);
+                for (0..count) |day| {
+                    const partition = try store.getPartitionLock(io, alloc, @intCast(day));
+                    partition.release(io);
+                }
+            }
+
+            // corrupt the last iterated partition so rollback has live earlier owners
+            var last: [8]u8 = undefined;
+            var it = layout.partitionsDir.iterate();
+            while (try it.next(io)) |entry| @memcpy(&last, entry.name);
+            var badPath: [std.fs.max_path_bytes]u8 = undefined;
+            const catalogPath = try std.fmt.bufPrint(&badPath, "{s}/{s}/{s}", .{ last, filenames.indexTables, filenames.tables });
+            const catalog = try layout.partitionsDir.createFile(io, catalogPath, .{});
+            defer catalog.close(io);
+            try catalog.writeStreamingAll(io, "{}");
+            try testing.expectError(error.TablesFileExpectedArray, Store.init(io, alloc, &conf, runtime, layout));
+        }
+    }.run;
+    try f(1);
+    try f(2);
+    try f(3);
+}
+
 test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
     const alloc = testing.allocator;
     const io = testing.io;
@@ -349,19 +527,19 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     try testing.expectEqual(0, store.partitions.items.len);
 
-    const first = try getPartitionLock(&store, io, alloc, dayOne);
+    const first = try store.getPartitionLock(io, alloc, dayOne);
     defer first.release(io);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const firstAgain = try getPartitionLock(&store, io, alloc, dayOne);
+    const firstAgain = try store.getPartitionLock(io, alloc, dayOne);
     defer firstAgain.release(io);
     try testing.expectEqual(first, firstAgain);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const second = try getPartitionLock(&store, io, alloc, dayTwo);
+    const second = try store.getPartitionLock(io, alloc, dayTwo);
     defer second.release(io);
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
@@ -390,7 +568,7 @@ test "flush doesn't crash overflow when the store has more partitions than reten
     // creating max + 1 partitions makes getPartitions write parts[30],
     // validate it doesn't fail on out of bound
     for (0..Store.retentionDays + 1) |day| {
-        const partition = try getPartitionLock(&store, io, alloc, @intCast(day));
+        const partition = try store.getPartitionLock(io, alloc, @intCast(day));
         partition.release(io);
     }
     try testing.expectEqual(31, store.partitions.items.len);
@@ -486,10 +664,10 @@ fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
             // Pre-open only the destination for the reuse case. Direct getPartition
             // avoids getPartitionOrLru, so this setup introduces no leaked LRU borrow.
             if (existingTarget) {
-                const target = try getPartitionLock(store, io, alloc, @intCast(day));
+                const target = try store.getPartitionLock(io, alloc, @intCast(day));
                 target.release(io);
             }
-            const previousLru = try getPartitionLock(store, io, alloc, @intCast(day + 2));
+            const previousLru = try store.getPartitionLock(io, alloc, @intCast(day + 2));
             previousLru.release(io);
 
             var fields = [_]Field{.{ .key = "message", .value = "kept" }};
