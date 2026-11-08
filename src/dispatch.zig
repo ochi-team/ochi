@@ -94,15 +94,15 @@ pub const Dispatcher = struct {
         self.accumulatorPool.deinit(self.allocator);
     }
 
-    pub fn stopAndFlush(self: *Dispatcher, io: Io) void {
+    pub fn shutdown(self: *Dispatcher, io: Io) void {
         // close http
         self.drain();
-        // close background tasks
-        self.store.suspendTimers();
         // flush inmemory data
         self.accumulatorPool.shutdown(io) catch |err| {
             Logger.log(.err, "failed to flush accumulator pool during shutdown", .{ .err = err });
         };
+        // close background tasks
+        self.store.shutdown(io);
     }
 
     pub fn dispatch(

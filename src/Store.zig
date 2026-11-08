@@ -219,7 +219,7 @@ pub fn suspendTimers(self: *Store) void {
     self.timerLoop.join();
 }
 
-pub fn shutdown(self: *Store, io: Io) !void {
+pub fn shutdown(self: *Store, io: Io) void {
     self.suspendTimers();
 
     self.operations.close(io);
@@ -234,9 +234,7 @@ pub fn shutdown(self: *Store, io: Io) !void {
 
 /// Requires no borrowed partition references. Call shutdown explicitly to observe persistence errors.
 pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
-    self.shutdown(io) catch |err| {
-        Logger.log(.err, "store shutdown failed during cleanup", .{ .err = err });
-    };
+    self.shutdown(io);
 
     for (self.partitions.items) |partition| {
         std.debug.assert(partition.refCounter.load(.acquire) == 1);

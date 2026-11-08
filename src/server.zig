@@ -156,9 +156,6 @@ pub fn startApp(io: Io, baseAllocator: std.mem.Allocator, options: StartOptions)
     startServer(io, alloc, conf, runtime, &store, &pprofAlloc) catch |err| {
         Logger.log(.err, "server stopped unexpectedly", .{ .err = err });
     };
-    store.shutdown(io) catch |err| {
-        Logger.log(.err, "server failed to shutdown", .{ .err = err });
-    };
     Logger.log(.debug, "graceful shutdown completed", .{});
 }
 
@@ -172,7 +169,7 @@ fn startServer(
 ) !void {
     var dispatcher = try Dispatcher.init(io, allocator, &conf.app, runtime, store, pprofAlloc);
     defer {
-        dispatcher.stopAndFlush(io);
+        dispatcher.shutdown(io);
         dispatcher.deinit();
     }
     var server = try httpz.Server(*Dispatcher).init(io, allocator, .{
