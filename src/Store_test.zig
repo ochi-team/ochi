@@ -343,9 +343,9 @@ test "shutdown closes Store admission and joins retained partition references" {
             future.await(io);
             store.shutdown(io);
 
-            const State = struct { complete: bool, partitions: usize, references: u32 };
-            try testing.expectEqualDeep(State{ .complete = true, .partitions = 1, .references = 1 }, State{
-                .complete = store.shutdownComplete,
+            try testing.expectError(error.Stopped, store.getPartitionLock(io, alloc, 1));
+            const State = struct { partitions: usize, references: u32 };
+            try testing.expectEqualDeep(State{ .partitions = 1, .references = 1 }, State{
                 .partitions = store.partitions.items.len,
                 .references = partition.refCounter.load(.acquire),
             });

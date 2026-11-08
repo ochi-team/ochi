@@ -68,7 +68,6 @@ timerLoop: *TimerLoop,
 tickCtx: TaskCtx = undefined,
 stopped: Stop = .{},
 operations: Countdown = .{},
-shutdownComplete: bool = false,
 
 /// pathsBuf holds a garbage of created paths for partitions and it's tables
 pathsBuf: std.ArrayList([]const u8) = .empty,
@@ -225,11 +224,9 @@ pub fn shutdown(self: *Store, io: Io) void {
     self.operations.close(io);
     self.operations.wait(io);
     self.stopped.stop(io);
-    if (self.shutdownComplete) return;
     for (self.partitions.items) |partition| {
         partition.shutdown(io);
     }
-    self.shutdownComplete = true;
 }
 
 /// Requires no borrowed partition references. Call shutdown explicitly to observe persistence errors.
