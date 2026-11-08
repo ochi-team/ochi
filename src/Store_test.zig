@@ -340,8 +340,8 @@ test "shutdown closes Store admission and joins retained partition references" {
             // +1 for the store initial reference
             try testing.expectEqual(retainers + 1, partition.refCounter.load(.acquire));
             for (0..retainers) |_| partition.release(io);
-            try future.await(io);
-            try store.shutdown(io);
+            future.await(io);
+            store.shutdown(io);
 
             const State = struct { complete: bool, partitions: usize, references: u32 };
             try testing.expectEqualDeep(State{ .complete = true, .partitions = 1, .references = 1 }, State{
