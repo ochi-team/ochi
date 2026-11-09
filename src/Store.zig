@@ -38,6 +38,32 @@ const DecompressionPool = @import("store/compression/DecompressionPool.zig");
 const LookupPool = @import("store/index/lookup/LookupPool.zig");
 const QueryIndexCacheValue = @import("store/index/Index.zig").QueryIndexCacheValue;
 
+comptime {
+    const exposesPartition = struct {
+        fn check(comptime T: type) bool {
+            return switch (@typeInfo(T)) {
+                .error_union => |info| check(info.payload),
+                .optional => |info| check(info.child),
+                else => T == Partition or T == *Partition or T == *const Partition or T == []const Partition or T == []Partition or T == []const *Partition or T == []*Partition,
+            };
+        }
+    }.check;
+
+    // store is responsible for shutdown,
+    // all its APIs must never expose countdown waitgroup;
+    // this is more like a comptime assert
+    // TODO: consider moving countdown to partition and do .done on .release
+    // especially if it's the only source of countdown usage
+    for (@typeInfo(Store).@"struct".decls) |decl| {
+        const info = @typeInfo(@TypeOf(@field(Store, decl.name)));
+        if (info == .@"fn") {
+            if (exposesPartition(info.@"fn".return_type.?)) {
+                @compileError("Store must never expose Partition type as return");
+            }
+        }
+    }
+}
+
 pub const Store = @This();
 
 /// lockFile is used to ensure only one instance is running
@@ -225,11 +251,11 @@ pub fn shutdown(self: *Store, io: Io) void {
     self.operations.wait(io);
     self.stopped.stop(io);
     for (self.partitions.items) |partition| {
+        std.debug.assert(partition.refCounter.load(.acquire) == 1);
         partition.shutdown(io);
     }
 }
 
-/// Requires no borrowed partition references. Call shutdown explicitly to observe persistence errors.
 pub fn deinit(self: *Store, io: Io, alloc: Allocator) void {
     self.shutdown(io);
 
@@ -490,7 +516,8 @@ fn getPartitions(self: *Store, io: Io, minDay: u32, maxDay: u32, parts: []*Parti
     self.partitionsMx.lockUncancelable(io);
     defer self.partitionsMx.unlock(io);
 
-    const slice = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
+    const bound = selectPartitionsSliceInRange(self.partitions.items, minDay, maxDay);
+    const slice = self.partitions.items[bound.start..bound.end];
 
     for (0..slice.len) |i| {
         const part = slice[i];
@@ -598,7 +625,9 @@ pub fn flush(self: *Store, io: Io, alloc: Allocator) !void {
     }
 }
 
-pub fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32, maxDay: u32) []const *Partition {
+const Bound = struct { start: usize, end: usize };
+
+pub fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32, maxDay: u32) Bound {
     // Find first partition with day >= minDay
     const startIdx = std.sort.lowerBound(
         *Partition,
@@ -616,7 +645,7 @@ pub fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32,
         orderPartitions,
     );
 
-    return slice[0..end];
+    return .{ .start = startIdx, .end = end };
 }
 
 fn getLruPartition(self: *Store, day: u32) ?*Partition {
@@ -629,17 +658,19 @@ fn getLruPartition(self: *Store, day: u32) ?*Partition {
     return null;
 }
 
+/// ensures the designated day partition is open
 // TODO: the admission API becomes confusing,
 // better to move to a designated public API and not to use store for data access/ingestion,
 // same for the others admission covered data: partitions, recorders
-pub fn getPartitionLock(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
+pub fn ensurePartition(self: *Store, io: Io, alloc: Allocator, day: u32) !void {
     if (!self.operations.add(io)) return error.Stopped;
     defer self.operations.done(io);
 
     self.partitionsMx.lockUncancelable(io);
     defer self.partitionsMx.unlock(io);
 
-    return self.getPartition(io, alloc, day);
+    const partition = try self.getPartition(io, alloc, day);
+    defer partition.release(io);
 }
 
 fn getPartition(self: *Store, io: Io, alloc: Allocator, day: u32) !*Partition {
@@ -741,7 +772,7 @@ fn openPartition(
     return partition;
 }
 
-fn orderPartitions(day: u32, part: *Partition) std.math.Order {
+pub fn orderPartitions(day: u32, part: *Partition) std.math.Order {
     if (day < part.day) {
         return .lt;
     }
