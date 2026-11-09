@@ -158,7 +158,8 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
     const check = struct {
         fn run(partitions: []const *Partition, cases: []const Case) !void {
             for (cases) |case| {
-                const slice = Store.selectPartitionsSliceInRange(partitions, case.minDay, case.maxDay);
+                const bound = Store.selectPartitionsSliceInRange(partitions, case.minDay, case.maxDay);
+                const slice = partitions[bound.start..bound.end];
                 try testing.expectEqual(case.expectedDays.len, slice.len);
                 for (case.expectedDays, 0..) |day, i| {
                     try testing.expectEqual(day, slice[i].day);
@@ -310,51 +311,6 @@ test "keepLatestLines sorts by timestamp and trims old rows" {
     try testing.expectEqualStrings("middle", lines.items[2].fields.items[0].value);
 }
 
-test "shutdown closes Store admission and joins retained partition references" {
-    const f = struct {
-        fn run(retainers: usize) !void {
-            const alloc = testing.allocator;
-            const io = testing.io;
-            var tmp = testing.tmpDir(.{});
-            defer tmp.cleanup();
-            const root = try tmp.dir.realPathFileAlloc(io, ".", alloc);
-            defer alloc.free(root);
-            const conf = Conf.getConf();
-            const runtime = try Runtime.init(io, alloc, root, conf.app.maxCachePortion);
-            defer runtime.deinit(alloc);
-            var pathBuf: [std.fs.max_path_bytes]u8 = undefined;
-            const layout = try Layout.make(io, root, &pathBuf);
-            defer layout.partitionsDir.close(io);
-            var store = try Store.init(io, alloc, &conf, runtime, layout);
-            defer store.deinit(io, alloc);
-
-            const partition = try store.getPartitionLock(io, alloc, 0);
-            // 0 belongs to getPartitionLock
-            for (1..retainers) |_| partition.retain();
-            store.operations.close(io);
-            var future = try io.concurrent(Store.shutdown, .{ &store, io });
-
-            try testing.expectError(error.Stopped, store.getPartitionLock(io, alloc, 1));
-            try testing.expectError(error.Stopped, store.addLines(io, alloc, undefined, undefined, undefined, undefined));
-            try testing.expectError(error.Stopped, store.queryLines(io, alloc, alloc, undefined, undefined, undefined));
-            // +1 for the store initial reference
-            try testing.expectEqual(retainers + 1, partition.refCounter.load(.acquire));
-            for (0..retainers) |_| partition.release(io);
-            future.await(io);
-            store.shutdown(io);
-
-            try testing.expectError(error.Stopped, store.getPartitionLock(io, alloc, 1));
-            const State = struct { partitions: usize, references: u32 };
-            try testing.expectEqualDeep(State{ .partitions = 1, .references = 1 }, State{
-                .partitions = store.partitions.items.len,
-                .references = partition.refCounter.load(.acquire),
-            });
-        }
-    }.run;
-    try f(1);
-    try f(3);
-}
-
 // TODO: this test is complicated, instead of injecting the specific catalog error
 // we can inject a generic allocation failure and validate it's recovery,
 // including test "shutdown initialization rollback keeps shared dependencies alive for opened partitions"
@@ -373,13 +329,12 @@ test "shutdown timer-driven partition rollback does not wait for its own loop" {
             if (self.done.isSet()) return;
 
             self.entered.set(self.io);
-            const partition = self.store.getPartitionLock(self.io, self.alloc, self.day) catch |err| {
+            self.store.ensurePartition(self.io, self.alloc, self.day) catch |err| {
                 self.result = err;
                 self.done.set(self.io);
                 return;
             };
 
-            partition.release(self.io);
             self.done.set(self.io);
         }
 
@@ -476,8 +431,7 @@ test "shutdown initialization rollback keeps shared dependencies alive for opene
                 var store = try Store.init(io, alloc, &conf, runtime, layout);
                 defer store.deinit(io, alloc);
                 for (0..count) |day| {
-                    const partition = try store.getPartitionLock(io, alloc, @intCast(day));
-                    partition.release(io);
+                    try store.ensurePartition(io, alloc, @intCast(day));
                 }
             }
 
@@ -498,7 +452,7 @@ test "shutdown initialization rollback keeps shared dependencies alive for opene
     try f(3);
 }
 
-test "getPartition reuses partition, updates lru, deinit closes partitions and recorders" {
+test "ensurePartition reuses partition, updates lru, and retains only Store ownership" {
     const alloc = testing.allocator;
     const io = testing.io;
 
@@ -527,23 +481,25 @@ test "getPartition reuses partition, updates lru, deinit closes partitions and r
 
     try testing.expectEqual(0, store.partitions.items.len);
 
-    const first = try store.getPartitionLock(io, alloc, dayOne);
-    defer first.release(io);
+    try store.ensurePartition(io, alloc, dayOne);
+    const first = store.lruPartition;
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.partitions.items[0]);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const firstAgain = try store.getPartitionLock(io, alloc, dayOne);
-    defer firstAgain.release(io);
-    try testing.expectEqual(first, firstAgain);
+    try store.ensurePartition(io, alloc, dayOne);
     try testing.expectEqual(1, store.partitions.items.len);
     try testing.expectEqual(first, store.lruPartition.?);
 
-    const second = try store.getPartitionLock(io, alloc, dayTwo);
-    defer second.release(io);
+    try store.ensurePartition(io, alloc, dayTwo);
+    const second = store.lruPartition;
     try testing.expectEqual(2, store.partitions.items.len);
     try testing.expectEqual(second, store.partitions.items[1]);
     try testing.expectEqual(second, store.lruPartition.?);
+    try testing.expectEqualDeep([_]u32{ 1, 1 }, [_]u32{
+        store.partitions.items[0].refCounter.load(.acquire),
+        store.partitions.items[1].refCounter.load(.acquire),
+    });
 }
 
 test "flush doesn't crash overflow when the store has more partitions than retention days" {
@@ -568,8 +524,7 @@ test "flush doesn't crash overflow when the store has more partitions than reten
     // creating max + 1 partitions makes getPartitions write parts[30],
     // validate it doesn't fail on out of bound
     for (0..Store.retentionDays + 1) |day| {
-        const partition = try store.getPartitionLock(io, alloc, @intCast(day));
-        partition.release(io);
+        try store.ensurePartition(io, alloc, @intCast(day));
     }
     try testing.expectEqual(31, store.partitions.items.len);
 
@@ -661,14 +616,9 @@ fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
     try withIngestionStore(a, struct {
         fn check(alloc: Allocator, store: *Store, day: u64) !void {
             const io = testing.io;
-            // Pre-open only the destination for the reuse case. Direct getPartition
-            // avoids getPartitionOrLru, so this setup introduces no leaked LRU borrow.
-            if (existingTarget) {
-                const target = try store.getPartitionLock(io, alloc, @intCast(day));
-                target.release(io);
-            }
-            const previousLru = try store.getPartitionLock(io, alloc, @intCast(day + 2));
-            previousLru.release(io);
+            // Pre-open only the destination for the reuse case
+            if (existingTarget) try store.ensurePartition(io, alloc, @intCast(day));
+            try store.ensurePartition(io, alloc, @intCast(day + 2));
 
             var fields = [_]Field{.{ .key = "message", .value = "kept" }};
             var tags = [_]Field{.{ .key = "source", .value = "mixed-days" }};
@@ -677,11 +627,8 @@ fn checkLruSwitch(a: Allocator, comptime existingTarget: bool) !void {
             var lines = [_]Line{.{ .timestampNs = day * std.time.ns_per_day + 3, .fields = .view(&fields) }};
             try store.addLines(io, alloc, &lines, &tags, encoded, makeStreamID(1, encoded));
 
-            // getPartitionOrLru retains the old LRU before comparing days, but on
-            // a miss never releases it. Check that partition directly, isolating
-            // this borrow from the destination's ownership and any later switches.
-            // A leaked reference also prevents teardown from closing the old LRU.
-            try testing.expectEqual(1, previousLru.refCounter.load(.acquire));
+            // Switching the LRU must leave both partitions with only Store ownership.
+            for (store.partitions.items) |partition| try testing.expectEqual(1, partition.refCounter.load(.acquire));
         }
     }.check, false);
 }
