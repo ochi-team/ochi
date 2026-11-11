@@ -13,14 +13,3 @@ pub fn isStopped(self: *const Stop) bool {
     return self.event.isSet();
 }
 
-pub fn sleepOrStop(self: *Stop, io: Io, ns: u64) void {
-    if (self.isStopped()) return;
-
-    self.event.waitTimeout(io, .{ .duration = .{
-        .clock = .real,
-        .raw = .fromNanoseconds(ns),
-    } }) catch |err| switch (err) {
-        error.Timeout => {},
-        error.Canceled => {},
-    };
-}

@@ -4,7 +4,6 @@ const Io = std.Io;
 
 const tracy = @import("tracy");
 
-const Stop = @import("../../stds/Stop.zig");
 const Heap = @import("../../stds/heap.zig").Heap;
 
 const sizing = @import("../data/sizing.zig");
@@ -37,7 +36,7 @@ pub fn mergeBlocks(
     decompressionPool: *DecompressionPool,
     writer: *TableWriter,
     readers: *std.ArrayList(*BlockReader),
-    stopped: ?*const Stop,
+    stopped: ?*const Io.Event,
 ) !TableHeader {
     const z = tracy.Zone.begin(.{
         .src = @src(),
@@ -54,7 +53,7 @@ pub fn mergeBlocks(
     defer blockWriter.deinit(alloc);
 
     while (merger.heap.array.items.len > 0) {
-        if (stopped != null and stopped.?.isStopped()) {
+        if (stopped != null and stopped.?.isSet()) {
             // TODO: test whether break cleans the resources
             return error.Stopped;
         }

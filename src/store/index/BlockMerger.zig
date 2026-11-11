@@ -9,13 +9,12 @@
 //! - Uses a min-heap for k-way merge, O(n log k) complexity
 //! - Automatically merges consecutive tagToSids records with same prefix (tenant+tag)
 //! - Limited to maxStreamsPerRecord (32) stream IDs per merged tag record
-//! - Can be stopped mid-merge via Stop
+//! - Can be stopped mid-merge via an Io.Event
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-const Stop = @import("../../stds/Stop.zig");
 const BlockReader = @import("BlockReader.zig");
 const MemBlock = @import("MemBlock.zig");
 const MemEntry = MemBlock.MemEntry;
@@ -78,7 +77,7 @@ pub fn merge(
     io: Io,
     alloc: Allocator,
     writer: *BlockWriter,
-    stopped: ?*const Stop,
+    stopped: ?*const Io.Event,
 ) !TableHeader {
     var tableHeader = TableHeader{};
     errdefer tableHeader.deinit(alloc);
@@ -90,7 +89,7 @@ pub fn merge(
         }
 
         if (stopped) |s| {
-            if (s.isStopped()) return error.Stopped;
+            if (s.isSet()) return error.Stopped;
         }
 
         const reader = self.heap.array.items[0];

@@ -159,6 +159,7 @@ test "selectPartitionsSlice selects correct range and handles gaps" {
         fn run(partitions: []const *Partition, cases: []const Case) !void {
             for (cases) |case| {
                 const bound = Store.selectPartitionsSliceInRange(partitions, case.minDay, case.maxDay);
+                try testing.expectEqual(bound.start + case.expectedDays.len, bound.end);
                 const slice = partitions[bound.start..bound.end];
                 try testing.expectEqual(case.expectedDays.len, slice.len);
                 for (case.expectedDays, 0..) |day, i| {

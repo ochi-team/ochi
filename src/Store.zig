@@ -645,7 +645,7 @@ pub fn selectPartitionsSliceInRange(partitions: []const *Partition, minDay: u32,
         orderPartitions,
     );
 
-    return .{ .start = startIdx, .end = end };
+    return .{ .start = startIdx, .end = startIdx + end };
 }
 
 fn getLruPartition(self: *Store, day: u32) ?*Partition {

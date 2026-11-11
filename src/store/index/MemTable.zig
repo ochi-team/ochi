@@ -5,8 +5,6 @@ const Io = std.Io;
 const tracy = @import("tracy");
 const encoding = @import("encoding");
 
-const Stop = @import("../../stds/Stop.zig");
-
 const fs = @import("../../fs.zig");
 const filenames = @import("../../filenames.zig");
 
@@ -228,7 +226,7 @@ pub fn mergeBlocks(
     alloc: Allocator,
     writer: *BlockWriter,
     readers: *std.ArrayList(*BlockReader),
-    stopped: ?*const Stop,
+    stopped: ?*const Io.Event,
 ) !TableHeader {
     const z = tracy.Zone.begin(.{
         .src = @src(),
