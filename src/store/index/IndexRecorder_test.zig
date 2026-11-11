@@ -28,8 +28,8 @@ const TableKind = merge.TableKind;
 const swap = @import("../table/swap.zig");
 
 const Conf = @import("../../Conf.zig");
-const Stop = @import("../../stds/Stop.zig");
 const TimerLoop = @import("../../stds/xev/TimerLoop.zig");
+const shutdownTesting = @import("../../stds/testing/Shutdown.zig");
 const Runtime = @import("../../Runtime.zig");
 const Logger = @import("logging");
 const DebugIo = @import("../../stds/Io/DebugIo.zig");
@@ -109,6 +109,13 @@ fn countDiskItemsInRecorder(recorder: *IndexRecorder) u64 {
     return count;
 }
 
+fn startTasks(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
+    if (self.timerLoop.stopping.load(.acquire)) return;
+    try self.startTasks(io, alloc);
+    const registrations = self.taskRegistrations();
+    try self.timerLoop.register(&registrations);
+}
+
 const stableItems = [_][]const u8{
     "item-a", "item-b", "item-c", "item-d", "item-e", "item-f", "item-g", "item-h",
 };
@@ -167,7 +174,7 @@ const SkewedMergeFixture = struct {
             for (recorder.memTables.items) |table| table.release(io);
             recorder.memTables.clearRetainingCapacity();
             recorder.stop(io, alloc) catch unreachable;
-            recorder.deinit(io, alloc);
+            recorder.shutdown(io, alloc);
         }
 
         var selectionSize: u64 = 1;
@@ -255,7 +262,7 @@ test "flushForce clears index merge flags after a chunk fails" {
 
             // Keep list storage on the allocator used by fixture cleanup.
             try recorder.diskTables.ensureTotalCapacity(backingAlloc, count);
-            recorder.stopped.stop(testing.io);
+            recorder.halt(testing.io);
 
             // Two balanced groups require separate flush chunks.
             const largeGroupSize = 10000;
@@ -653,7 +660,7 @@ test "IndexRecorder background flusher survives load" {
         timerLoop.deinit();
     }
     recorder.maxMemBlockSize = 256;
-    try recorder.startTasks(io, alloc);
+    try startTasks(recorder, io, alloc);
 
     var g: std.Io.Group = .init;
     errdefer g.cancel(io);
@@ -713,7 +720,7 @@ test "IndexRecorder disk table merger survives large load" {
         timerLoop.join();
         timerLoop.deinit();
     }
-    try recorder.startTasks(io, alloc);
+    try startTasks(recorder, io, alloc);
 
     const minItemLen = 512;
     const maxItemLen = maxEntrySize;
@@ -844,7 +851,7 @@ test "IndexRecorder reads free disk space from runtime" {
     try testing.expect(firstSpace > 0);
     try testing.expectEqual(firstSpace, secondSpace);
 
-    recorder.stopped.stop(io);
+    recorder.halt(io);
     defer recorder.deinit(io, alloc);
     defer {
         timerLoop.stop();
@@ -1076,8 +1083,7 @@ test "addToMemTables publishes incoming rows when forced flush makes the second 
         timerLoop.deinit();
     }
     defer recorder.stop(io, alloc) catch unreachable;
-    // Stopped skips background merge submission; force still permits synchronous flushing.
-    recorder.stopped.stop(io);
+    recorder.halt(io);
 
     for (0..maxMemTables) |i| {
         const table = try createMemTableFromItems(io, alloc, &.{stableItems[i % stableItems.len]});
@@ -1106,7 +1112,7 @@ test "addToMemTables publishes incoming rows when forced flush makes the second 
         .diskRows = maxMemTables,
         // all the tables are flushed, but 1 the last is occupied via addToMemTables
         .permits = maxMemTables - 1,
-        .timerArms = 1,
+        .timerArms = 0,
         .pendingMerges = 0,
         .cacheVersion = 1,
         .needInvalidate = false,
@@ -1116,13 +1122,14 @@ test "addToMemTables publishes incoming rows when forced flush makes the second 
         .diskRows = countDiskItemsInRecorder(recorder),
         .permits = recorder.memTablesSem.permits,
         .timerArms = recorder.pendingTableArms.items.len,
-        .pendingMerges = recorder.pendingMerges.load(.acquire),
+        .pendingMerges = recorder.jobs.pending,
         .cacheVersion = recorder.indexCacheKeyVersion.load(.acquire),
         .needInvalidate = recorder.needInvalidate.load(.acquire),
     });
     try testing.expectEqual(incoming, recorder.memTables.items[0]);
-    try testing.expectEqual(incoming, recorder.pendingTableArms.items[0]);
-    try testing.expectEqual(2, incoming.refCounter.load(.acquire));
+    try testing.expectEqual(1, incoming.refCounter.load(.acquire));
+    incoming.retain();
+    defer incoming.release(io);
 
     try recorder.flushForce(io, alloc);
     try testing.expectEqual(0, recorder.memTables.items.len);
@@ -1221,7 +1228,6 @@ test "data table timer retains and rearms an early callback" {
         retainsTable: bool,
         references: u32,
         completion: xev.CompletionState,
-        activeTicks: usize,
         inMerge: bool,
     };
 
@@ -1231,8 +1237,7 @@ test "data table timer retains and rearms an early callback" {
         defer loop.deinit();
         var recorder: IndexRecorder = undefined;
         recorder.taskCtx = .{ .recorder = &recorder, .io = testing.io, .alloc = testing.allocator };
-        recorder.stopped = .{};
-        recorder.activeTicks = .init(0);
+        recorder.jobs = .{};
         recorder.mxTables = .init;
         var mem: MemTable = undefined;
         mem.flushAtUs = Io.Timestamp.now(testing.io, .real).toMicroseconds() + remainingSeconds * std.time.us_per_s;
@@ -1250,13 +1255,11 @@ test "data table timer retains and rearms an early callback" {
             .retainsTable = true,
             .references = 2,
             .completion = .active,
-            .activeTicks = 0,
             .inMerge = false,
         }, State{
             .retainsTable = slot.table == &table,
             .references = table.refCounter.load(.acquire),
             .completion = slot.completion.state(),
-            .activeTicks = recorder.activeTicks.load(.acquire),
             .inMerge = table.inMerge,
         });
     }

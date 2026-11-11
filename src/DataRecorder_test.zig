@@ -132,7 +132,7 @@ test "tablesMerger handles more source tables than merge window" {
     defer runtime.deinit(alloc);
 
     var recorder: DataRecorder = undefined;
-    recorder.stopped = .{};
+    recorder.jobs = .{};
     recorder.runtime = runtime;
     recorder.mxTables = .init;
 
@@ -821,7 +821,6 @@ test "data table timer retains and rearms an early callback" {
         retainsTable: bool,
         references: u32,
         completion: xev.CompletionState,
-        activeTicks: usize,
         inMerge: bool,
     };
 
@@ -831,8 +830,7 @@ test "data table timer retains and rearms an early callback" {
         defer loop.deinit();
         var recorder: DataRecorder = undefined;
         recorder.taskCtx = .{ .recorder = &recorder, .io = testing.io, .alloc = testing.allocator };
-        recorder.stopped = .{};
-        recorder.activeTicks = .init(0);
+        recorder.jobs = .{};
         recorder.mxTables = .init;
         var mem: MemTable = undefined;
         mem.flushAtUs = Io.Timestamp.now(testing.io, .real).toMicroseconds() + remainingSeconds * std.time.us_per_s;
@@ -850,13 +848,11 @@ test "data table timer retains and rearms an early callback" {
             .retainsTable = true,
             .references = 2,
             .completion = .active,
-            .activeTicks = 0,
             .inMerge = false,
         }, State{
             .retainsTable = slot.table == &table,
             .references = table.refCounter.load(.acquire),
             .completion = slot.completion.state(),
-            .activeTicks = recorder.activeTicks.load(.acquire),
             .inMerge = table.inMerge,
         });
     }
@@ -916,7 +912,7 @@ const SkewedMergeFixture = struct {
             // Initialization rollback must not allocate to flush partial input.
             for (recorder.memTables.items) |table| table.release(io);
             recorder.memTables.clearRetainingCapacity();
-            recorder.stop(io, alloc) catch unreachable;
+            recorder.shutdown(io, alloc) catch unreachable;
             recorder.deinit(io, alloc);
         }
 
@@ -952,7 +948,7 @@ const SkewedMergeFixture = struct {
         // Recover stranded flags only after assertions. With no background jobs,
         // this lets a rollback regression report its assertion instead of an ABRT.
         for (self.recorder.memTables.items) |table| table.inMerge = false;
-        self.recorder.stop(io, alloc) catch unreachable;
+        self.recorder.shutdown(io, alloc) catch unreachable;
         self.timerLoop.stop();
         self.timerLoop.join();
         self.timerLoop.deinit();
@@ -1011,7 +1007,7 @@ test "flushForce clears merge flags after a chunk fails" {
             try recorder.diskTables.ensureTotalCapacity(testing.allocator, count);
 
             // isolate synchronous flushing from background compaction
-            recorder.stopped.stop(testing.io);
+            recorder.halt(testing.io);
 
             // two balanced groups require separate flush chunks,
             const largeGroupSize = 10000;
@@ -1138,11 +1134,11 @@ test "capacity pressure merge survives shutdown and reopening" {
         .permits = maxMemTables - 1,
     }, fixture.state());
     // now they must have been flushed
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 
     const reopened = try fixture.openRecorder();
     defer reopened.deinit(io, alloc);
-    defer reopened.stop(io, alloc) catch unreachable;
+    defer reopened.shutdown(io, alloc) catch unreachable;
 
     try testing.expectEqual(1, reopened.diskTables.items.len);
     const table = reopened.diskTables.items[0];
