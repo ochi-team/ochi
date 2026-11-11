@@ -115,7 +115,7 @@ pub fn open(
         timerLoop,
     );
     errdefer indexRecorder.deinit(io, alloc);
-    errdefer indexRecorder.stop(io, alloc) catch |err| {
+    errdefer indexRecorder.shutdown(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop index recorder in partition opening", .{ .err = err });
     };
     const index = Index.init(indexRecorder);
@@ -132,7 +132,7 @@ pub fn open(
         timerLoop,
     );
     errdefer data.deinit(io, alloc);
-    errdefer data.stop(io, alloc) catch |err| {
+    errdefer data.shutdown(io, alloc) catch |err| {
         Logger.log(.err, "failed to stop data recorder in partition opening", .{ .err = err });
     };
     const partition = try alloc.create(Partition);
@@ -156,8 +156,6 @@ pub fn open(
         // collect timer tasks and register them all at once
         const registrations = indexRecorder.taskRegistrations() ++ data.taskRegistrations();
         try timerLoop.register(&registrations);
-        indexRecorder.tasksRegistered = true;
-        data.tasksRegistered = true;
     }
     return partition;
 }
@@ -185,10 +183,10 @@ pub fn shutdown(self: *Partition, io: Io) void {
     self.index.recorder.drain(io);
     self.data.drain(io);
 
-    self.index.recorder.stop(io, self.alloc) catch |err| {
+    self.index.recorder.shutdown(io, self.alloc) catch |err| {
         Logger.log(.err, "index stop failed", .{ .partition = self.key, .err = err });
     };
-    self.data.stop(io, self.alloc) catch |err| {
+    self.data.shutdown(io, self.alloc) catch |err| {
         Logger.log(.err, "data stop failed", .{ .partition = self.key, .err = err });
     };
 }

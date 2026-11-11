@@ -9,12 +9,12 @@
 //! - Uses a min-heap for k-way merge, O(n log k) complexity
 //! - Automatically merges consecutive tagToSids records with same prefix (tenant+tag)
 //! - Limited to maxStreamsPerRecord (32) stream IDs per merged tag record
-//! - Can be stopped mid-merge via Stop
+//! - Can be stopped mid-merge via an Io.Event
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-const Stop = @import("../../stds/Stop.zig");
 const BlockReader = @import("BlockReader.zig");
 const MemBlock = @import("MemBlock.zig");
 const BlockWriter = @import("BlockWriter.zig");
@@ -486,8 +486,8 @@ test "BlockMerger.merge stopped flag" {
     const decompressionPool = try DecompressionPool.init(alloc, 1);
     defer decompressionPool.deinit(alloc);
 
-    var stopped = Stop{};
-    stopped.stop(io);
+    var stopped: Io.Event = .unset;
+    stopped.set(io);
     var readers = try createTestReaders(alloc, &.{&.{ "a", "b", "c" }}, maxIndexBlockSize, decompressionPool);
     defer cleanupReaders(alloc, &readers);
 

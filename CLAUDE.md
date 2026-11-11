@@ -96,7 +96,8 @@ try memTables.append(testing.allocator, &source);
 
 ### ArrayList
 
-Make sure first it has enough space:
+This one is not applicable to simple cases.
+Make sure first it has enough space when it comes to the multiple states:
 ```zig
 // GOOD
 try self.garbage.ensureUnusedCapacity(alloc, 1);
@@ -130,6 +131,20 @@ var obj = try Object.init(alloc);
 defer obj.deinit(alloc); // this is the reason
 ```
 
+### State
+
+Avoid flags state to make less mistakes:
+```zig
+// GOOD
+try self.flushForce(io, alloc);
+// BAD
+flushed: bool = false,
+...
+if (!self.flushed) {
+    try self.flushForce(io, alloc);
+    self.flushed = true;
+}
+```
 ### Docs
 
 Use zigdoc to validate the API of the used Zig version, e.g.:

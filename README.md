@@ -97,3 +97,4 @@ For all questions, major changes, suggestions, notes, feel free to reach out to 
 - to produce effect it must take a data to produce a pre determined effect
 - pure functions are welcome
 - allocations first, mutating after
+- any state flags make the system error prone, avoid them
