@@ -558,6 +558,7 @@ fn submitMergeTask(
     alloc: Allocator,
     run: *const fn (*IndexRecorder, Io, Allocator) void,
 ) !void {
+    // MergeTask frees the job
     if (!self.jobs.add(io)) return;
     errdefer self.jobs.done(io);
 
