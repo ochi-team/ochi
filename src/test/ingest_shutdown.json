@@ -1,0 +1,35 @@
+{
+  "tenant": 9999,
+  "streams": [
+    {
+      "stream": { "env": "test", "service": "shutdown-web" },
+      "logs": [
+        {
+          "offsetMin": -2,
+          "message": "accepted request before shutdown",
+          "fields": { "id": "shutdown-web-001", "status": "200" }
+        },
+        {
+          "offsetMin": -1,
+          "message": "buffered request before shutdown",
+          "fields": { "id": "shutdown-web-002", "status": "201" }
+        }
+      ]
+    },
+    {
+      "stream": { "env": "test", "service": "shutdown-worker" },
+      "logs": [
+        {
+          "offsetMin": -4,
+          "message": "accepted job before shutdown",
+          "fields": { "id": "shutdown-worker-001", "queue": "shutdown" }
+        },
+        {
+          "offsetMin": -3,
+          "message": "buffered job before shutdown",
+          "fields": { "id": "shutdown-worker-002", "queue": "shutdown" }
+        }
+      ]
+    }
+  ]
+}
