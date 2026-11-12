@@ -600,7 +600,7 @@ fn requestTableTimer(self: *IndexRecorder, table: *Table) void {
     if (self.timerLoop.stopping.load(.acquire)) return;
     table.retain();
 
-{
+    {
         TimerLoop.spinLock(&self.pendingDeadlineMx);
         defer self.pendingDeadlineMx.unlock();
         self.pendingTableArms.append(self.taskCtx.alloc, table) catch |err| {

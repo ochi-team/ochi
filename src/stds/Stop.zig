@@ -12,4 +12,3 @@ pub fn stop(self: *Stop, io: Io) void {
 pub fn isStopped(self: *const Stop) bool {
     return self.event.isSet();
 }
-

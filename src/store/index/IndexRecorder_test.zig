@@ -173,8 +173,8 @@ const SkewedMergeFixture = struct {
             // Rollback must not allocate to flush partial input.
             for (recorder.memTables.items) |table| table.release(io);
             recorder.memTables.clearRetainingCapacity();
-            recorder.stop(io, alloc) catch unreachable;
-            recorder.shutdown(io, alloc);
+            recorder.shutdown(io, alloc) catch unreachable;
+            recorder.deinit(io, alloc);
         }
 
         var selectionSize: u64 = 1;
@@ -204,11 +204,11 @@ const SkewedMergeFixture = struct {
         const io = testing.io;
         // Recover stranded flags after assertions so rollback failures do not abort cleanup.
         for (self.recorder.memTables.items) |table| table.inMerge = false;
-        self.recorder.stop(io, alloc) catch unreachable;
+        self.recorder.shutdown(io, alloc) catch unreachable;
         self.timerLoop.stop();
         self.timerLoop.join();
-        self.timerLoop.deinit();
         self.recorder.deinit(io, alloc);
+        self.timerLoop.deinit();
         self.mergePool.shutdown();
         self.mergePool.deinit();
         alloc.destroy(self.mergePool);
@@ -350,9 +350,75 @@ test "tablesMerger on index disk tables does not flush memory tables" {
         var fixture = try SkewedMergeFixture.init(alloc, count);
         defer fixture.deinit();
         const before = fixture.state();
+
         try fixture.recorder.tablesMerger(testing.io, alloc, .disk);
         try testing.expectEqualDeep(before, fixture.state());
     }
+}
+
+test "shutdown index recorder closes the countdown to stop an executing merge" {
+    const f = struct {
+        fn run(skipAllocations: usize) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, maxMemTables);
+            defer fixture.deinit();
+            const before = fixture.state();
+            try shutdownTesting.expectRunningMergeStops(fixture.recorder, skipAllocations);
+            try testing.expectEqualDeep(before, fixture.state());
+        }
+    }.run;
+    try f(1);
+    try f(2);
+}
+
+// drain must join timer publishers and release timer owned references,
+// the remaining memory row checks ownership, not a ban on already running flush
+test "shutdown index recorder joins timer publication before releasing retained tables" {
+    const f = struct {
+        fn publish(recorder: *IndexRecorder, table: *Table) anyerror!void {
+            const alloc = testing.allocator;
+            try recorder.addToMemTables(testing.io, alloc, table, true);
+        }
+        fn run(failAllocation: bool) !void {
+            const alloc = testing.allocator;
+            const io = testing.io;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            const table = try createMemTableFromItems(io, alloc, &.{"timer-publication"});
+            try shutdownTesting.expectTimerPublicationReserved(fixture.recorder, publish, .{ fixture.recorder, table }, failAllocation);
+            try testing.expectEqual(1, countMemItemsInRecorder(fixture.recorder));
+        }
+    }.run;
+    try f(false);
+    try f(true);
+}
+
+test "shutdown index recorder drains queued merge tasks" {
+    const f = struct {
+        fn run(count: usize) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            try shutdownTesting.expectQueuedWorkDrained(fixture.recorder, count);
+        }
+    }.run;
+    try f(1);
+    try f(3);
+}
+
+// submission must reserve a job before allocation so shutdown cannot miss an admitted but unscheduled task,
+// both successful allocation and OOM must release that reservation; this checks admission accounting, not whether the merge runs.
+test "shutdown index recorder reserves submissions before allocation" {
+    const f = struct {
+        fn run(failAllocation: bool) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            try shutdownTesting.expectSubmissionReserved(fixture.recorder, failAllocation);
+        }
+    }.run;
+    try f(false);
+    try f(true);
 }
 
 test "index capacity pressure merge survives shutdown and reopening" {
@@ -366,10 +432,10 @@ test "index capacity pressure merge survives shutdown and reopening" {
         .memRows = maxMemTables,
         .permits = maxMemTables - 1,
     }, fixture.state());
-    try fixture.recorder.stop(io, alloc);
+    try fixture.recorder.shutdown(io, alloc);
     const reopened = try fixture.openRecorder();
     defer reopened.deinit(io, alloc);
-    defer reopened.stop(io, alloc) catch unreachable;
+    defer reopened.shutdown(io, alloc) catch unreachable;
     try testing.expectEqual(1, reopened.diskTables.items.len);
     const table = reopened.diskTables.items[0];
     try testing.expectEqualDeep(.{ false, maxMemTables }, .{ table.inMerge, table.tableHeader().entriesCount });
@@ -410,8 +476,8 @@ test "flushMemEntries non-force respects flush deadline" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -439,7 +505,7 @@ test "flushMemEntries non-force respects flush deadline" {
     try testing.expectEqual(0, recorder.blocksToFlush.items.len);
     try testing.expect(recorder.memTables.items.len > 0);
 
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 }
 
 test "mergeTables force single mem table creates disk table" {
@@ -467,8 +533,8 @@ test "mergeTables force single mem table creates disk table" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -484,7 +550,7 @@ test "mergeTables force single mem table creates disk table" {
     try testing.expectEqual(@as(usize, 1), recorder.diskTables.items.len);
     try testing.expect(recorder.diskTables.items[0].inner == .disk);
 
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 }
 
 test "IndexRecorder add and reopen preserves item count" {
@@ -514,8 +580,8 @@ test "IndexRecorder add and reopen preserves item count" {
 
         const timerLoop = try TimerLoop.init(alloc);
         const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer recorder.deinit(io, alloc);
         defer {
+            recorder.deinit(io, alloc);
             timerLoop.stop();
             timerLoop.join();
             timerLoop.deinit();
@@ -533,7 +599,7 @@ test "IndexRecorder add and reopen preserves item count" {
         try testing.expectEqual(@as(u64, 0), countMemItemsInRecorder(recorder));
         try testing.expectEqual(@as(u64, inserted), countDiskItemsInRecorder(recorder));
 
-        try recorder.stop(io, alloc);
+        try recorder.shutdown(io, alloc);
     }
 
     {
@@ -553,8 +619,8 @@ test "IndexRecorder add and reopen preserves item count" {
 
         const timerLoop = try TimerLoop.init(alloc);
         const reopened = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer reopened.deinit(io, alloc);
         defer {
+            reopened.deinit(io, alloc);
             timerLoop.stop();
             timerLoop.join();
             timerLoop.deinit();
@@ -653,8 +719,8 @@ test "IndexRecorder background flusher survives load" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -681,7 +747,7 @@ test "IndexRecorder background flusher survives load" {
     }
 
     try g.await(io);
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 
     try testing.expectEqual(0, countMemItemsInRecorder(recorder));
     try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
@@ -714,8 +780,8 @@ test "IndexRecorder disk table merger survives large load" {
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
     recorder.maxMemBlockSize = 4 * 1024;
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -758,7 +824,7 @@ test "IndexRecorder disk table merger survives large load" {
     }
 
     try g.await(io);
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 
     try testing.expectEqual(0, countMemItemsInRecorder(recorder));
     try testing.expectEqual(workers * rounds * testWorkerBatchSize, countDiskItemsInRecorder(recorder));
@@ -790,8 +856,8 @@ test "IndexRecorder flushForce skips oversized-only input without crash" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -852,8 +918,8 @@ test "IndexRecorder reads free disk space from runtime" {
     try testing.expectEqual(firstSpace, secondSpace);
 
     recorder.halt(io);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -890,8 +956,8 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -920,7 +986,7 @@ test "IndexRecorder large entries write to 3 shards sequentially" {
         blocksInShards += shard.blocks.items.len;
     }
     try testing.expectEqual(countAdditionalEntries, blocksInShards);
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 }
 
 test "IndexRecorder 3 shards addings small entries doesn't flush them" {
@@ -950,8 +1016,8 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -972,7 +1038,7 @@ test "IndexRecorder 3 shards addings small entries doesn't flush them" {
         try testing.expectEqualStrings(shortValue, shard.blocks.items[0].get(0));
     }
 
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
     var tables = try Table.openAll(io, alloc, rootPath, decompressionPool);
     try testing.expectEqual(tables.items.len, 1);
     defer {
@@ -1033,8 +1099,8 @@ test "IndexRecorder large entries write to 3 shards" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -1045,7 +1111,7 @@ test "IndexRecorder large entries write to 3 shards" {
 
     try testing.expectEqual(totalEntries - countAdditionalEntries, recorder.blocksToFlush.items.len);
 
-    try recorder.stop(io, alloc);
+    try recorder.shutdown(io, alloc);
 
     try testing.expectEqual(@as(usize, 0), recorder.memTables.items.len);
     try testing.expect(recorder.diskTables.items.len > 0);
@@ -1076,13 +1142,13 @@ test "addToMemTables publishes incoming rows when forced flush makes the second 
     }
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
     }
-    defer recorder.stop(io, alloc) catch unreachable;
+    defer recorder.shutdown(io, alloc) catch unreachable;
     recorder.halt(io);
 
     for (0..maxMemTables) |i| {
@@ -1191,8 +1257,8 @@ test "addToMemTables overflows memTables past maxMemTables when the semaphore wa
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try IndexRecorder.init(io, alloc, rootPath, runtime, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
