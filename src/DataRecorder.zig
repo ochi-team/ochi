@@ -433,7 +433,7 @@ pub fn halt(self: *DataRecorder, io: Io) void {
 pub fn drain(self: *DataRecorder, io: Io) void {
     self.halt(io);
     // join before detaching, otherwise an arm can appear after the barrier
-    self.waitForMergesToDrain(io);
+    self.jobs.wait(io);
     self.timerLoop.detach(io, self, &self.taskCtx, drainTimers);
     self.releaseTimerReferences(io);
 }
@@ -459,7 +459,7 @@ fn drainTimers(ctx: *anyopaque, loop: *xev.Loop) bool {
 
 pub fn flushForce(self: *DataRecorder, io: Io, alloc: Allocator) !void {
     try self.flushDataShards(io, alloc, true);
-    self.waitForMergesToDrain(io);
+    self.jobs.wait(io);
     try self.flushMemTables(io, alloc, true);
 }
 
@@ -483,10 +483,6 @@ pub fn deinit(self: *DataRecorder, io: Io, alloc: Allocator) void {
     self.pendingTableArms.deinit(alloc);
     self.* = undefined;
     alloc.destroy(self);
-}
-
-fn waitForMergesToDrain(self: *DataRecorder, io: Io) void {
-    self.jobs.wait(io);
 }
 
 fn releaseTimerReferences(self: *DataRecorder, io: Io) void {
