@@ -286,7 +286,7 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
         };
 
         if (self.thread == null) {
-            self.entries.append(self.alloc, entry);
+            try self.entries.append(self.alloc, entry);
             return;
         }
 
