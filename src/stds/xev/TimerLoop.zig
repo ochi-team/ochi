@@ -11,9 +11,11 @@ const Entry = struct {
     parent: *TimerLoop,
     xevTimer: xev.Timer,
     completion: xev.Completion = .{},
+    cancelCompletion: xev.Completion = .{},
     intervalMs: u64,
     ctx: *anyopaque,
     tick: TickFn,
+    detached: bool = false,
 
     fn callback(
         ud: ?*Entry,
@@ -26,11 +28,11 @@ const Entry = struct {
         };
         const entry = ud.?;
 
-        if (!entry.parent.stopping.load(.acquire)) {
+        if (!entry.detached and !entry.parent.stopping.load(.acquire)) {
             entry.tick(entry.ctx);
         }
 
-        if (entry.parent.stopping.load(.acquire)) {
+        if (entry.detached or entry.parent.stopping.load(.acquire)) {
             return .disarm;
         }
 
@@ -50,6 +52,7 @@ entries: std.ArrayList(*Entry) = .empty,
 // a spinlock is fine here: the critical section is a single array append
 // and contention is rare
 pendingMx: std.atomic.Mutex = .unlocked,
+joinMx: std.atomic.Mutex = .unlocked,
 pendingEntries: std.ArrayList(*Entry) = .empty,
 // callbacks invoked on every loop-thread wake, for owners that need to marshal
 // their own state onto the loop thread (xev.Loop/Completion registration is
@@ -57,11 +60,173 @@ pendingEntries: std.ArrayList(*Entry) = .empty,
 wakeHandlers: std.ArrayList(WakeHandler) = .empty,
 stopping: std.atomic.Value(bool) = .init(false),
 pool: std.heap.MemoryPool(Entry),
+detaching: ?*Detach = null,
+
+const Detach = struct {
+    ctx: *anyopaque,
+    periodicCtx: *anyopaque,
+    drain: *const fn (*anyopaque, *xev.Loop) bool,
+    io: std.Io,
+    done: std.Io.Event = .unset,
+    next: ?*Detach = null,
+};
+
+/// Detaches an independently destroyed owner. Published owners must detach outside the loop thread.
+/// drain cancels embedded completions and returns true only when all are dead.
+/// The owner must close scheduling admission before calling this method.
+/// Unpublished and fully detached owners are a no-op; embedded completions must
+/// only be armed through the owner's published registrations.
+pub fn detach(self: *TimerLoop, io: std.Io, ctx: *anyopaque, periodicCtx: *anyopaque, drain: *const fn (*anyopaque, *xev.Loop) bool) void {
+    var request: Detach = .{ .ctx = ctx, .periodicCtx = periodicCtx, .drain = drain, .io = io };
+    spinLock(&self.pendingMx);
+    // Rollback may hold a lock needed by an unrelated callback, or run on the driver itself.
+    // Only owners with published registrations or an outstanding detach need a barrier.
+    if (!self.hasOwner(ctx, periodicCtx)) {
+        self.pendingMx.unlock();
+        return;
+    }
+    if (self.stopping.load(.acquire)) {
+        self.pendingMx.unlock();
+        self.join();
+        return;
+    }
+    if (self.thread == null) {
+        _ = self.detachRegistrations(ctx, periodicCtx);
+        self.pendingMx.unlock();
+        return;
+    }
+    request.next = self.detaching;
+    self.detaching = &request;
+    self.pendingMx.unlock();
+    self.notify();
+    request.done.waitUncancelable(io);
+}
+
+fn hasOwner(self: *TimerLoop, ctx: *anyopaque, periodicCtx: *anyopaque) bool {
+    for (self.wakeHandlers.items) |handler| {
+        if (handler.ctx == ctx) return true;
+    }
+    for (self.entries.items) |entry| {
+        if (entry.ctx == ctx or entry.ctx == periodicCtx) return true;
+    }
+    for (self.pendingEntries.items) |entry| {
+        if (entry.ctx == ctx or entry.ctx == periodicCtx) return true;
+    }
+    // Wake registrations are removed before embedded completion cancellation finishes.
+    var request = self.detaching;
+    while (request) |pending| : (request = pending.next) {
+        if (pending.ctx == ctx) return true;
+    }
+    return false;
+}
+
+fn detachRegistrations(self: *TimerLoop, ctx: *anyopaque, periodicCtx: *anyopaque) bool {
+    var i: usize = 0;
+    while (i < self.wakeHandlers.items.len) {
+        if (self.wakeHandlers.items[i].ctx == ctx) {
+            _ = self.wakeHandlers.swapRemove(i);
+        } else i += 1;
+    }
+    const armed = self.detachEntries(&self.entries, ctx, periodicCtx);
+    const pending = self.detachEntries(&self.pendingEntries, ctx, periodicCtx);
+    return armed and pending;
+}
+
+fn detachEntries(self: *TimerLoop, entries: *std.ArrayList(*Entry), ctx: *anyopaque, periodicCtx: *anyopaque) bool {
+    var drained = true;
+    var i: usize = 0;
+    while (i < entries.items.len) {
+        const entry = entries.items[i];
+        if (entry.ctx != ctx and entry.ctx != periodicCtx) {
+            i += 1;
+            continue;
+        }
+        entry.detached = true;
+        if (cancelTimer(&self.loop, entry.xevTimer, &entry.completion, &entry.cancelCompletion)) {
+            _ = entries.swapRemove(i);
+            self.pool.destroy(entry);
+        } else {
+            drained = false;
+            i += 1;
+        }
+    }
+    return drained;
+}
+
+/// Called only on the loop thread. Both completion objects must remain alive until true.
+pub fn cancelTimer(loop: *xev.Loop, timer: xev.Timer, completion: *xev.Completion, cancelCompletion: *xev.Completion) bool {
+    if (cancelCompletion.state() != .dead) return false;
+    if (completion.state() == .dead) return true;
+    timer.cancel(loop, completion, cancelCompletion, void, null, cancelCallback);
+    return false;
+}
+
+fn cancelCallback(_: ?*void, _: *xev.Loop, _: *xev.Completion, result: xev.Timer.CancelError!void) xev.CallbackAction {
+    _ = result catch {};
+    return .disarm;
+}
 
 pub const WakeHandler = struct {
     ctx: *anyopaque,
     cb: *const fn (ctx: *anyopaque, loop: *xev.Loop) void,
 };
+
+pub const TimerRegistration = struct {
+    intervalNs: u64,
+    ctx: *anyopaque,
+    tick: TickFn,
+};
+
+pub const Registration = union(enum) {
+    timer: TimerRegistration,
+    wake: WakeHandler,
+};
+
+/// Publishes a complete set of owner registrations, or leaves none published on failure.
+/// No fallible owner initialization may follow publication: rollback could otherwise
+/// wait for this loop while holding a lock needed by one of its callbacks.
+pub fn register(self: *TimerLoop, registrations: []const Registration) !void {
+    try self.start();
+    spinLock(&self.pendingMx);
+    defer self.pendingMx.unlock();
+    if (self.stopping.load(.acquire)) return error.Stopped;
+
+    var timerCount: usize = 0;
+    var wakeCount: usize = 0;
+    for (registrations) |registration| switch (registration) {
+        .timer => timerCount += 1,
+        .wake => wakeCount += 1,
+    };
+    // Reserve for both armed and queued entries before publishing; driver-side arming cannot fail.
+    try self.entries.ensureUnusedCapacity(self.alloc, self.pendingEntries.items.len + timerCount);
+    try self.pendingEntries.ensureUnusedCapacity(self.alloc, timerCount);
+    try self.wakeHandlers.ensureUnusedCapacity(self.alloc, wakeCount);
+    var prepared: std.ArrayList(*Entry) = .empty;
+    defer prepared.deinit(self.alloc);
+    try prepared.ensureTotalCapacity(self.alloc, timerCount);
+    errdefer for (prepared.items) |entry| self.pool.destroy(entry);
+    for (registrations) |registration| switch (registration) {
+        .timer => |timer| {
+            const entry = try self.pool.create(self.alloc);
+            errdefer self.pool.destroy(entry);
+            entry.* = .{
+                .parent = self,
+                .xevTimer = try xev.Timer.init(),
+                .intervalMs = timer.intervalNs / std.time.ns_per_ms,
+                .ctx = timer.ctx,
+                .tick = timer.tick,
+            };
+            prepared.appendAssumeCapacity(entry);
+        },
+        .wake => {},
+    };
+    self.pendingEntries.appendSliceAssumeCapacity(prepared.items);
+    for (registrations) |registration| switch (registration) {
+        .timer => {},
+        .wake => |wake| self.wakeHandlers.appendAssumeCapacity(wake),
+    };
+    self.notify();
+}
 
 pub fn init(alloc: Allocator) !*TimerLoop {
     const self = try alloc.create(TimerLoop);
@@ -86,12 +251,14 @@ pub fn init(alloc: Allocator) !*TimerLoop {
 }
 
 pub fn deinit(self: *TimerLoop) void {
+    self.stop();
+    self.join();
+    self.loop.deinit();
+    self.wake.deinit();
     self.entries.deinit(self.alloc);
     self.pendingEntries.deinit(self.alloc);
     self.wakeHandlers.deinit(self.alloc);
     self.pool.deinit(self.alloc);
-    self.wake.deinit();
-    self.loop.deinit();
     self.alloc.destroy(self);
 }
 
@@ -106,6 +273,7 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
         spinLock(&self.pendingMx);
         defer self.pendingMx.unlock();
 
+        if (self.stopping.load(.acquire)) return error.Stopped;
         const entry = try self.pool.create(self.alloc);
         errdefer self.pool.destroy(entry);
 
@@ -118,7 +286,7 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
         };
 
         if (self.thread == null) {
-            try self.entries.append(self.alloc, entry);
+            self.entries.append(self.alloc, entry);
             return;
         }
 
@@ -139,6 +307,7 @@ pub fn spinLock(m: *std.atomic.Mutex) void {
 pub fn addWakeHandler(self: *TimerLoop, ctx: *anyopaque, cb: *const fn (ctx: *anyopaque, loop: *xev.Loop) void) !void {
     spinLock(&self.pendingMx);
     defer self.pendingMx.unlock();
+    if (self.stopping.load(.acquire)) return error.Stopped;
     try self.wakeHandlers.append(self.alloc, .{ .ctx = ctx, .cb = cb });
 }
 
@@ -146,6 +315,8 @@ pub fn addWakeHandler(self: *TimerLoop, ctx: *anyopaque, cb: *const fn (ctx: *an
 /// registered wake handler, lets owners marshal work onto the loop thread
 /// without a second xev.Async.
 pub fn notify(self: *TimerLoop) void {
+    if (self.stopping.load(.acquire)) return;
+
     self.wake.notify() catch |err| {
         Logger.log(.err, "TimerLoop: failed to notify wake async", .{ .err = err });
     };
@@ -163,31 +334,34 @@ fn wakeCallback(
     const self = ud.?;
 
     if (self.stopping.load(.acquire)) {
+        // Complete detach acknowledgements only after join; owners remain alive meanwhile.
         loop.stop();
         return .disarm;
-    }
-
-    var pending: std.ArrayList(*Entry) = blk: {
-        spinLock(&self.pendingMx);
-        defer self.pendingMx.unlock();
-        const p = self.pendingEntries;
-        self.pendingEntries = .empty;
-        break :blk p;
-    };
-    defer pending.deinit(self.alloc);
-
-    for (pending.items) |entry| {
-        self.entries.append(self.alloc, entry) catch |err| {
-            Logger.log(.err, "TimerLoop: failed to register pending timer", .{ .err = err });
-            continue;
-        };
-        entry.xevTimer.run(loop, &entry.completion, entry.intervalMs, Entry, entry, Entry.callback);
     }
 
     {
         spinLock(&self.pendingMx);
         defer self.pendingMx.unlock();
+        // Keep queued-to-armed transfer under the reservation lock so producers account for both lists.
+        for (self.pendingEntries.items) |entry| {
+            self.entries.appendAssumeCapacity(entry);
+            entry.xevTimer.run(loop, &entry.completion, entry.intervalMs, Entry, entry, Entry.callback);
+        }
+        self.pendingEntries.clearRetainingCapacity();
+
+        var link = &self.detaching;
+        while (link.*) |request| {
+            const periodicDrained = self.detachRegistrations(request.ctx, request.periodicCtx);
+            const ownerDrained = request.drain(request.ctx, loop);
+            if (periodicDrained and ownerDrained) {
+                link.* = request.next;
+                request.done.set(request.io);
+            } else {
+                link = &request.next;
+            }
+        }
         for (self.wakeHandlers.items) |h| h.cb(h.ctx, loop);
+        if (self.detaching != null) self.notify();
     }
 
     return .rearm;
@@ -197,7 +371,11 @@ fn wakeCallback(
 /// once (e.g. from several recorders sharing the same loop): a no-op if
 /// already started.
 pub fn start(self: *TimerLoop) !void {
+    spinLock(&self.pendingMx);
+    defer self.pendingMx.unlock();
+    if (self.stopping.load(.acquire)) return error.Stopped;
     if (self.thread != null) return;
+    errdefer self.stopping.store(true, .release);
 
     self.wake.wait(&self.loop, &self.wakeCompletion, TimerLoop, self, wakeCallback);
     for (self.entries.items) |entry| {
@@ -208,6 +386,16 @@ pub fn start(self: *TimerLoop) !void {
 }
 
 fn run(self: *TimerLoop) void {
+    defer {
+        spinLock(&self.pendingMx);
+        defer self.pendingMx.unlock();
+        // Driver failure is terminal too; no callback can enter after run returns.
+        self.stopping.store(true, .release);
+        while (self.detaching) |request| {
+            self.detaching = request.next;
+            request.done.set(request.io);
+        }
+    }
     self.loop.run(.until_done) catch |err| {
         Logger.log(.err, "TimerLoop: loop.run failed", .{ .err = err });
     };
@@ -216,13 +404,26 @@ fn run(self: *TimerLoop) void {
 /// requests the loop to stop; does not block, call join() to wait for the
 /// thread to exit.
 pub fn stop(self: *TimerLoop) void {
-    self.stopping.store(true, .release);
-    self.notify();
+    spinLock(&self.pendingMx);
+    const wasStopping = self.stopping.swap(true, .acq_rel);
+    self.pendingMx.unlock();
+    if (!wasStopping) self.wake.notify() catch {};
 }
 
 pub fn join(self: *TimerLoop) void {
-    if (self.thread) |t| {
-        t.join();
-        self.thread = null;
+    // may detach concurrently during shutdown,
+    // so it never holds pendingMx while joining
+    spinLock(&self.joinMx);
+    defer self.joinMx.unlock();
+    spinLock(&self.pendingMx);
+    const thread = self.thread;
+    self.pendingMx.unlock();
+    if (thread) |t| t.join();
+    spinLock(&self.pendingMx);
+    self.thread = null;
+    defer self.pendingMx.unlock();
+    while (self.detaching) |request| {
+        self.detaching = request.next;
+        request.done.set(request.io);
     }
 }
