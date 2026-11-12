@@ -343,6 +343,12 @@ fn wakeCallback(
         spinLock(&self.pendingMx);
         defer self.pendingMx.unlock();
         // Keep queued-to-armed transfer under the reservation lock so producers account for both lists.
+        self.entries.ensureUnusedCapacity(self.alloc, self.pendingEntries.items) catch |err| {
+            Logger.log(.err, "TimerLoop: failed to arm pending timer", .{ .err = err });
+            self.stopping.store(true, .release);
+            loop.stop();
+            return .disarm;
+        };
         for (self.pendingEntries.items) |entry| {
             self.entries.appendAssumeCapacity(entry);
             entry.xevTimer.run(loop, &entry.completion, entry.intervalMs, Entry, entry, Entry.callback);

@@ -159,6 +159,11 @@ test "TimerLoop arms admitted timers without allocating on the driver thread" {
             } else {
                 for (0..count) |_| try loop.addTimer(std.time.ns_per_hour, &owner, tick);
             }
+            {
+                TimerLoop.spinLock(&loop.pendingMx);
+                defer loop.pendingMx.unlock();
+                try testing.expect(loop.entries.capacity >= loop.entries.items.len + loop.pendingEntries.items.len);
+            }
             const allocations = failing.alloc_index;
             failing.fail_index = allocations;
             owner.release.set(io);
