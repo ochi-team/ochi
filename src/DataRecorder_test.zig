@@ -28,6 +28,7 @@ const Runtime = @import("Runtime.zig");
 const xev = @import("xev");
 
 const TimerLoop = @import("stds/xev/TimerLoop.zig");
+const shutdownTesting = @import("stds/testing/Shutdown.zig");
 
 const Consts = @import("Consts.zig");
 
@@ -360,8 +361,8 @@ test "DataRecorder.addLines flushes DataShard on automatic triggers" {
 
         const timerLoop = try TimerLoop.init(alloc);
         const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer recorder.deinit(io, alloc);
         defer {
+            recorder.deinit(io, alloc);
             timerLoop.stop();
             timerLoop.join();
             timerLoop.deinit();
@@ -459,8 +460,8 @@ test "DataRecorder.addLines does not crash when a shard exceeds Block.maxLines" 
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -509,8 +510,8 @@ test "DataShard.flush limits block columns per tenant" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -581,8 +582,8 @@ test "mergeTables force single mem table creates disk table" {
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -635,8 +636,8 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const timerLoop = try TimerLoop.init(alloc);
         const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer recorder.deinit(io, alloc);
         defer {
+            recorder.deinit(io, alloc);
             timerLoop.stop();
             timerLoop.join();
             timerLoop.deinit();
@@ -674,8 +675,8 @@ test "DataRecorder.addAndReopenPreservesLineCount" {
 
         const timerLoop = try TimerLoop.init(alloc);
         const reopened = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-        defer reopened.deinit(io, alloc);
         defer {
+            reopened.deinit(io, alloc);
             timerLoop.stop();
             timerLoop.join();
             timerLoop.deinit();
@@ -714,8 +715,8 @@ test "flushShard overflows memTables past maxMemTables when the semaphore wait t
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -772,8 +773,8 @@ test "flushShard resets checkpointsLen on semaphore timeout so the next appendLi
 
     const timerLoop = try TimerLoop.init(alloc);
     const recorder = try DataRecorder.init(io, alloc, rootPath, runtime, timestampsEncoders, compressionPool, decompressionPool, &mergePool, timerLoop);
-    defer recorder.deinit(io, alloc);
     defer {
+        recorder.deinit(io, alloc);
         timerLoop.stop();
         timerLoop.join();
         timerLoop.deinit();
@@ -951,8 +952,8 @@ const SkewedMergeFixture = struct {
         self.recorder.shutdown(io, alloc) catch unreachable;
         self.timerLoop.stop();
         self.timerLoop.join();
-        self.timerLoop.deinit();
         self.recorder.deinit(io, alloc);
+        self.timerLoop.deinit();
         self.mergePool.shutdown();
         self.mergePool.deinit();
         alloc.destroy(self.mergePool);
@@ -1117,6 +1118,69 @@ test "tablesMerger on disk tables does not flush memory tables" {
         try recorder.tablesMerger(testing.io, testing.allocator, .disk);
         try testing.expectEqualDeep(before, fixture.state());
     }
+}
+
+test "shutdown data recorder closes the countdown to stop an executing merge" {
+    const f = struct {
+        fn run(skipAllocations: usize) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, maxMemTables);
+            defer fixture.deinit();
+            const before = fixture.state();
+            try shutdownTesting.expectRunningMergeStops(fixture.recorder, skipAllocations);
+            try testing.expectEqualDeep(before, fixture.state());
+        }
+    }.run;
+    try f(1);
+    try f(2);
+}
+
+// drain must join timer publishers and release timer owned references,
+// the remaining memory row checks ownership, not a ban on already running flush
+test "shutdown data recorder joins timer publication before releasing retained tables" {
+    const f = struct {
+        fn publish(recorder: *DataRecorder) anyerror!void {
+            const alloc = testing.allocator;
+            try recorder.flushShard(testing.io, alloc, &recorder.shards[0], true);
+        }
+        fn run(failAllocation: bool) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            var lines = [_]Line{stableLine(1, 0)};
+            try fixture.recorder.shards[0].appendLines(alloc, &lines, stableSID(1));
+            try shutdownTesting.expectTimerPublicationReserved(fixture.recorder, publish, .{fixture.recorder}, failAllocation);
+            try testing.expectEqual(1, countMemLinesInRecorder(fixture.recorder));
+        }
+    }.run;
+    try f(false);
+    try f(true);
+}
+
+test "shutdown data recorder drains queued merge tasks" {
+    const f = struct {
+        fn run(count: usize) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            try shutdownTesting.expectQueuedWorkDrained(fixture.recorder, count);
+        }
+    }.run;
+    try f(1);
+    try f(3);
+}
+
+test "shutdown data recorder reserves submissions before allocation" {
+    const f = struct {
+        fn run(failAllocation: bool) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            try shutdownTesting.expectSubmissionReserved(fixture.recorder, failAllocation);
+        }
+    }.run;
+    try f(false);
+    try f(true);
 }
 
 test "capacity pressure merge survives shutdown and reopening" {
