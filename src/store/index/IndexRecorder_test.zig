@@ -924,7 +924,7 @@ test "IndexRecorder reads free disk space from runtime" {
         timerLoop.join();
         timerLoop.deinit();
     }
-    recorder.waitForMergesToDrain(io);
+    recorder.jobs.wait(io);
 }
 
 test "IndexRecorder large entries write to 3 shards sequentially" {

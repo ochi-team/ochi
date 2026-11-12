@@ -241,7 +241,7 @@ pub fn halt(self: *IndexRecorder, io: Io) void {
 pub fn drain(self: *IndexRecorder, io: Io) void {
     self.halt(io);
     // Join timer-arm publishers before detaching; otherwise an arm can appear after the barrier.
-    self.waitForMergesToDrain(io);
+    self.jobs.wait(io);
     self.timerLoop.detach(io, self, &self.taskCtx, drainTimers);
     self.releaseTimerReferences(io);
 }
@@ -270,7 +270,7 @@ pub fn flushForce(self: *IndexRecorder, io: Io, alloc: Allocator) !void {
     defer blocksDestination.deinit(alloc);
 
     try self.flushMemEntries(io, alloc, &blocksDestination, true);
-    self.waitForMergesToDrain(io);
+    self.jobs.wait(io);
     try self.flushMemTables(io, alloc, true);
 }
 
@@ -576,10 +576,6 @@ fn submitMergeTask(
     };
 
     self.mergePool.schedule(.from(&t.task));
-}
-
-pub fn waitForMergesToDrain(self: *IndexRecorder, io: Io) void {
-    self.jobs.wait(io);
 }
 
 fn releaseTimerReferences(self: *IndexRecorder, io: Io) void {
