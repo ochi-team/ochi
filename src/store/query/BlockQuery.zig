@@ -158,10 +158,17 @@ pub fn queryBlock(
         });
     }
 
-    var bq = try init(io, alloc, table, &blockHeader, decompressionPool, timestampsEncoders);
+    // back scratch with the table allocator, not the request arena
+    // otherwise retains all the intermediate buffers,
+    // because deinit on arena is usually noop
+    var scratchArena = std.heap.ArenaAllocator.init(table.alloc);
+    defer scratchArena.deinit();
+
+    const scratch = scratchArena.allocator();
+    var bq = try init(io, scratch, table, &blockHeader, decompressionPool, timestampsEncoders);
     defer bq.deinit();
     var result = try bq.query(&q);
-    defer result.deinit(alloc);
+    defer result.deinit(scratch);
     try sink.write(alloc, &result);
 }
 
