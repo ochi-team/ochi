@@ -79,9 +79,23 @@ pub fn next(self: *AccumulatorPool) *Slot {
     return self.ring.next();
 }
 
+// Start at the preferred slot to avoid favoring low-index fallbacks.
+fn tryAcquireSlot(self: *AccumulatorPool, preferred: *Slot) ?*Slot {
+    const start = preferred - self.slots.ptr;
+    for (0..self.slots.len) |offset| {
+        const slot = &self.slots[(start + offset) % self.slots.len];
+        if (slot.mx.tryLock()) return slot;
+    }
+
+    return null;
+}
+
 pub fn acquire(self: *AccumulatorPool, io: Io, bodySize: usize) !*Slot {
-    const slot = self.next();
-    slot.mx.lockUncancelable(io);
+    const preferred = self.next();
+    const slot = self.tryAcquireSlot(preferred) orelse blk: {
+        preferred.mx.lockUncancelable(io);
+        break :blk preferred;
+    };
     errdefer slot.mx.unlock(io);
 
     // TODO: implementing a compression this won't work,
@@ -197,4 +211,48 @@ fn timerCallback(
         Logger.log(.err, "AccumulatorPool: failed to run scheduled flush", .{ .err = err });
     };
     return .disarm;
+}
+
+const testing = std.testing;
+
+test "accumulator selection scans from the preferred slot and skips busy ones" {
+    const cases = [_]struct {
+        busy: u3,
+        preferred: usize,
+        expected: ?usize,
+    }{
+        .{ .busy = 0b000, .preferred = 2, .expected = 2 },
+        .{ .busy = 0b001, .preferred = 0, .expected = 1 },
+        .{ .busy = 0b010, .preferred = 1, .expected = 2 },
+        .{ .busy = 0b011, .preferred = 0, .expected = 2 },
+        .{ .busy = 0b110, .preferred = 2, .expected = 0 },
+        .{ .busy = 0b111, .preferred = 1, .expected = null },
+    };
+
+    for (cases) |case| {
+        var slots: [3]Slot = undefined;
+        for (&slots, 0..) |*slot, i| {
+            slot.mx = .init;
+            if (case.busy & (@as(u3, 1) << @intCast(i)) != 0) {
+                slot.mx.lockUncancelable(testing.io);
+            }
+        }
+        defer for (&slots, 0..) |*slot, i| {
+            if (case.busy & (@as(u3, 1) << @intCast(i)) != 0) {
+                slot.mx.unlock(testing.io);
+            }
+        };
+
+        var pool: AccumulatorPool = undefined;
+        pool.slots = &slots;
+
+        const selected = pool.tryAcquireSlot(&slots[case.preferred]);
+        defer if (selected) |slot| slot.mx.unlock(testing.io);
+
+        const expected: ?*Slot = if (case.expected) |i| &slots[i] else null;
+        try testing.expectEqual(expected, selected);
+        if (selected) |slot| {
+            try testing.expect(!slot.mx.tryLock());
+        }
+    }
 }

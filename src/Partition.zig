@@ -1,4 +1,5 @@
 const std = @import("std");
+const SharedBufferPool = @import("SharedBufferPool.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -206,6 +207,7 @@ pub fn addLines(
     sid: SID,
     blocksCache: *Cache(*MemBlock),
     lookupPool: *LookupPool,
+    buffer: ?*SharedBufferPool.Buffer,
 ) !void {
     const z = tracy.Zone.begin(.{
         .src = @src(),
@@ -220,7 +222,11 @@ pub fn addLines(
         try self.cache(io, sid);
     }
 
-    try self.data.addLines(io, allocator, lines.items, sid);
+    if (buffer) |owner| {
+        try self.data.addOwnedLines(io, allocator, lines.items, sid, owner);
+    } else {
+        try self.data.addLines(io, allocator, lines.items, sid);
+    }
 }
 
 // this api is not used, but if we want to collect more sids in the accumulator

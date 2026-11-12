@@ -4,6 +4,7 @@ const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Io = std.Io;
 
 const Store = @import("Store.zig").Store;
+const SharedBufferPool = @import("SharedBufferPool.zig");
 const Field = @import("store/lines.zig").Field;
 const Line = @import("store/lines.zig").Line;
 const SID = @import("store/lines.zig").SID;
@@ -16,7 +17,6 @@ const makeStreamID = @import("store/lines.zig").makeStreamID;
 
 const Consts = @import("Consts.zig");
 
-const maxBlockSize = Consts.maxBlockSize;
 const flushSizeThreshold = Consts.flushSizeThreshold;
 
 const Logger = @import("logging");
@@ -48,6 +48,7 @@ store: *Store,
 
 lines: std.ArrayList(Line) = .empty,
 buffer: FixedBufferAllocator,
+owner: *SharedBufferPool.Buffer,
 
 checkpoints: [maxCheckpoints]Checkpoint = undefined,
 checkpointsLen: u16 = 0,
@@ -65,12 +66,13 @@ currentSid: SID = .{ .tenantID = 0, .id = 0 },
 flushAtUs: ?u64 = null,
 
 pub fn init(alloc: Allocator, store: *Store) !Accumulator {
-    const buf = try alloc.alloc(u8, maxBlockSize);
-    errdefer alloc.free(buf);
+    _ = alloc;
+    const owner = try store.ingestBuffers.tryAcquire() orelse return error.SharedBuffersExhausted;
 
     return Accumulator{
         .store = store,
-        .buffer = FixedBufferAllocator.init(buf),
+        .buffer = FixedBufferAllocator.init(owner.bytes),
+        .owner = owner,
     };
 }
 
@@ -112,7 +114,7 @@ pub fn deinit(self: *Accumulator, alloc: Allocator) void {
     if (self.currentTags.items.len > 0) freeFields(alloc, self.currentTags);
     self.resetBuffered();
     self.lines.deinit(alloc);
-    alloc.free(self.buffer.buffer);
+    self.owner.release();
     self.* = undefined;
 }
 
@@ -169,12 +171,6 @@ fn appendLine(
 ) !void {
     try self.ensureActiveCheckpoint(io, alloc);
 
-    const bufferAlloc = self.buffer.allocator();
-    const line = Line{
-        .timestampNs = timestampNs,
-        .fields = try copyFields(bufferAlloc, fields),
-    };
-
     validate(fields) catch |err| {
         switch (err) {
             error.MaxFieldsPerLineExceeded => {
@@ -196,12 +192,44 @@ fn appendLine(
         }
     };
 
-    try self.lines.append(alloc, line);
+    try self.lines.ensureUnusedCapacity(alloc, 1);
+    const copiedFields = try self.copyLineFields(fields);
+    self.lines.appendAssumeCapacity(.{
+        .timestampNs = timestampNs,
+        .fields = copiedFields,
+    });
     self.checkpoints[self.currentCheckpoint].i = self.lines.items.len;
 
     if (self.mustFlush(io)) {
         try self.flush(io, alloc);
     }
+}
+
+fn copyLineFields(self: *Accumulator, fields: []const Field) !Fields {
+    const bufferAlloc = self.buffer.allocator();
+    if (self.lines.items.len == 0) return copyFields(bufferAlloc, fields);
+
+    // Flush clears the previous rows, so reused bytes always belong to this buffer.
+    const previous = self.lines.items[self.lines.items.len - 1].fields.items;
+    const start = self.buffer.end_index;
+    errdefer self.buffer.end_index = start;
+
+    const copied = try bufferAlloc.alloc(Field, fields.len);
+    for (fields, 0..) |field, i| {
+        const prev: ?Field = if (i < previous.len) previous[i] else null;
+        copied[i] = .{
+            .key = if (prev != null and std.mem.eql(u8, prev.?.key, field.key))
+                prev.?.key
+            else
+                try bufferAlloc.dupe(u8, field.key),
+            .value = if (prev != null and std.mem.eql(u8, prev.?.value, field.value))
+                prev.?.value
+            else
+                try bufferAlloc.dupe(u8, field.value),
+        };
+    }
+
+    return .view(copied);
 }
 
 pub fn mustFlush(self: *Accumulator, io: Io) bool {
@@ -215,13 +243,23 @@ pub fn flush(self: *Accumulator, io: Io, alloc: Allocator) !void {
     Logger.log(.debug, "flushing accumator buffer", .{
         .size = self.buffer.end_index,
     });
+    if (self.lines.items.len == 0) {
+        self.resetBuffered();
+        return;
+    }
+    const replacement = try self.store.acquireIngestBuffer(io, alloc);
+    errdefer replacement.release();
+
     var start: usize = 0;
     for (self.checkpoints[0..self.checkpointsLen]) |checkpoint| {
         const chunk = self.lines.items[start..checkpoint.i];
         start = checkpoint.i;
         if (chunk.len == 0) continue;
 
-        try self.store.addLines(io, alloc, chunk, checkpoint.tags.items, checkpoint.encodedTags, checkpoint.sid);
+        try self.store.addOwnedLines(io, alloc, chunk, checkpoint.tags.items, checkpoint.encodedTags, checkpoint.sid, self.owner);
     }
+    self.owner.release();
+    self.owner = replacement;
+    self.buffer = FixedBufferAllocator.init(replacement.bytes);
     self.resetBuffered();
 }
