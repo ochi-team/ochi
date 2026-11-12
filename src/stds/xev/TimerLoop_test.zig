@@ -151,7 +151,7 @@ test "TimerLoop arms admitted timers without allocating on the driver thread" {
             }
 
             if (batch) {
-                var registrations: [3]TimerLoop.Registration = undefined;
+                var registrations: [32]TimerLoop.Registration = undefined;
                 for (registrations[0..count]) |*registration| {
                     registration.* = .{ .timer = .{ .intervalNs = std.time.ns_per_hour, .ctx = &owner, .tick = tick } };
                 }
@@ -188,8 +188,10 @@ test "TimerLoop arms admitted timers without allocating on the driver thread" {
     };
     try Owner.run(false, 1);
     try Owner.run(false, 3);
+    try Owner.run(false, 17);
     try Owner.run(true, 1);
     try Owner.run(true, 3);
+    try Owner.run(true, 17);
 }
 
 test "shutdown TimerLoop registration batch is atomic on allocation failure" {

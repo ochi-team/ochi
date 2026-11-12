@@ -290,6 +290,10 @@ pub fn addTimer(self: *TimerLoop, intervalNs: u64, ctx: *anyopaque, tick: TickFn
             return;
         }
 
+        // include queued timers so arming never needs driver-thread allocation,
+        // it makes wakeCallback prepared not to fail
+        try self.entries.ensureUnusedCapacity(self.alloc, self.pendingEntries.items.len + 1);
+
         try self.pendingEntries.append(self.alloc, entry);
     }
 
@@ -343,7 +347,7 @@ fn wakeCallback(
         spinLock(&self.pendingMx);
         defer self.pendingMx.unlock();
         // Keep queued-to-armed transfer under the reservation lock so producers account for both lists.
-        self.entries.ensureUnusedCapacity(self.alloc, self.pendingEntries.items) catch |err| {
+        self.entries.ensureUnusedCapacity(self.alloc, self.pendingEntries.items.len) catch |err| {
             Logger.log(.err, "TimerLoop: failed to arm pending timer", .{ .err = err });
             self.stopping.store(true, .release);
             loop.stop();
