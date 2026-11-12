@@ -410,15 +410,15 @@ test "shutdown index recorder drains queued merge tasks" {
 // both successful allocation and OOM must release that reservation; this checks admission accounting, not whether the merge runs.
 test "shutdown index recorder reserves submissions before allocation" {
     const f = struct {
-        fn run(failAllocation: bool) !void {
-            const alloc = testing.allocator;
-            var fixture = try SkewedMergeFixture.init(alloc, 0);
+        fn run(alloc: Allocator) !void {
+            const backingAlloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(backingAlloc, 0);
             defer fixture.deinit();
-            try shutdownTesting.expectSubmissionReserved(fixture.recorder, failAllocation);
+            try shutdownTesting.expectSubmissionReserved(fixture.recorder, alloc);
         }
     }.run;
-    try f(false);
-    try f(true);
+    const alloc = testing.allocator;
+    try testing.checkAllAllocationFailures(alloc, f, .{});
 }
 
 test "index capacity pressure merge survives shutdown and reopening" {
