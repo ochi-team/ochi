@@ -113,6 +113,70 @@ test "shutdown TimerLoop detaches wake handlers and embedded deadlines while oth
     try Owner.run(true);
 }
 
+test "shutdown TimerLoop detach waits for an executing callback with live or stopping driver" {
+    const Owner = struct {
+        io: std.Io,
+        entered: std.Io.Event = .unset,
+        release: std.Io.Event = .unset,
+        detached: std.Io.Event = .unset,
+
+        fn tick(ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.entered.set(self.io);
+            self.release.waitUncancelable(self.io);
+        }
+        fn drain(_: *anyopaque, _: *xev.Loop) bool {
+            return true;
+        }
+        fn detach(self: *@This(), loop: *TimerLoop) void {
+            loop.detach(self.io, self, self, drain);
+            self.detached.set(self.io);
+        }
+
+        fn run(stop: bool) !void {
+            const alloc = testing.allocator;
+            const io = testing.io;
+            const loop = try TimerLoop.init(alloc);
+            defer {
+                loop.stop();
+                loop.join();
+                loop.deinit();
+            }
+
+            var owner: @This() = .{ .io = io };
+            defer owner.release.set(io);
+
+            try loop.addTimer(std.time.ns_per_ms, &owner, tick);
+            try loop.start();
+
+            owner.entered.waitUncancelable(io);
+            var detaching = try io.concurrent(detach, .{ &owner, loop });
+            defer {
+                owner.release.set(io);
+                detaching.await(io);
+            }
+
+            // queued detach proves the other task reached the barrier while tick is blocked
+            while (true) {
+                TimerLoop.spinLock(&loop.pendingMx);
+                const queued = loop.detaching != null;
+                loop.pendingMx.unlock();
+                if (queued or owner.detached.isSet()) break;
+                std.atomic.spinLoopHint();
+            }
+
+            try testing.expect(!owner.detached.isSet());
+            if (stop) loop.stop();
+            try testing.expect(!owner.detached.isSet());
+            owner.release.set(io);
+            detaching.await(io);
+            try testing.expect(owner.detached.isSet());
+        }
+    };
+    try Owner.run(false);
+    try Owner.run(true);
+}
+
 test "TimerLoop arms admitted timers without allocating on the driver thread" {
     const Owner = struct {
         io: std.Io,

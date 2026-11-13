@@ -965,12 +965,33 @@ const SkewedMergeFixture = struct {
         self.tmp.cleanup();
     }
 
-    /// Opens the same directory without starting background tasks.
     fn openRecorder(self: *SkewedMergeFixture) !*DataRecorder {
         return DataRecorder.init(testing.io, self.alloc, self.rootPath, self.runtime, self.timestampsEncoders, self.compressionPool, self.decompressionPool, self.mergePool, self.timerLoop);
     }
 
-    /// Captures row ownership, ingestion capacity, and merge claims together.
+    fn expectPersisted(self: *SkewedMergeFixture, expected: []const Line) !void {
+        const io = testing.io;
+        const alloc = self.alloc;
+
+        try self.recorder.shutdown(io, alloc);
+        const reopened = try self.openRecorder();
+        defer reopened.deinit(io, alloc);
+
+        var sink: Sink = .{};
+        defer sink.deinit(alloc);
+        try reopened.queryLines(io, alloc, &.{}, .{ .start = 0, .end = std.math.maxInt(u64) }, &sink);
+        std.sort.pdq(Line, sink.lines.items, {}, lineLessThan);
+
+        try testing.expectEqual(expected.len, sink.lines.items.len);
+        for (sink.lines.items, expected) |line, source| {
+            const fields = try alloc.dupe(Field, source.fields.items);
+            defer alloc.free(fields);
+            std.sort.pdq(Field, fields, {}, fieldLessThan);
+            std.sort.pdq(Field, line.fields.items, {}, fieldLessThan);
+            try testing.expectEqualDeep(.{ source.timestampNs, fields }, .{ line.timestampNs, line.fields.items });
+        }
+    }
+
     fn state(self: *SkewedMergeFixture) State {
         const recorder = self.recorder;
         recorder.mxTables.lockUncancelable(testing.io);
@@ -1151,10 +1172,43 @@ test "shutdown data recorder joins timer publication before releasing retained t
             try fixture.recorder.shards[0].appendLines(alloc, &lines, stableSID(1));
             try shutdownTesting.expectTimerPublicationReserved(fixture.recorder, publish, .{fixture.recorder}, failAllocation);
             try testing.expectEqual(1, countMemLinesInRecorder(fixture.recorder));
+            try fixture.expectPersisted(&lines);
         }
     }.run;
     try f(false);
     try f(true);
+}
+
+test "shutdown data recorder owns table and shard arms across loop stop boundaries" {
+    const f = struct {
+        fn publishTable(recorder: *DataRecorder) anyerror!void {
+            const alloc = testing.allocator;
+            try recorder.flushShard(testing.io, alloc, &recorder.shards[0], true);
+        }
+        fn publishShard(recorder: *DataRecorder) anyerror!void {
+            const alloc = testing.allocator;
+            var lines = [_]Line{stableLine(2, 1)};
+            try recorder.addLines(testing.io, alloc, &lines, stableSID(1));
+        }
+        fn run(comptime kind: shutdownTesting.ArmKind, stage: shutdownTesting.StopStage) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, if (kind == .table) 0 else 1);
+            defer fixture.deinit();
+            var expected = [_]Line{ stableLine(1, 0), stableLine(2, 1) };
+            if (kind == .table) {
+                try fixture.recorder.shards[0].appendLines(alloc, expected[0..1], stableSID(1));
+            }
+            const publish = if (kind == .table) publishTable else publishShard;
+            try shutdownTesting.expectStoppedTimerPublication(fixture.recorder, kind, publish, .{fixture.recorder}, stage);
+            try fixture.expectPersisted(expected[0..if (kind == .table) 1 else 2]);
+        }
+    }.run;
+    try f(.table, .beforeCheck);
+    try f(.table, .beforeInsertion);
+    try f(.table, .queued);
+    try f(.shard, .beforeCheck);
+    try f(.shard, .beforeInsertion);
+    try f(.shard, .queued);
 }
 
 test "shutdown data recorder drains queued merge tasks" {

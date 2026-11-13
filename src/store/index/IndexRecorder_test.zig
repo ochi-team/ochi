@@ -223,6 +223,28 @@ const SkewedMergeFixture = struct {
         return IndexRecorder.init(testing.io, self.alloc, self.rootPath, self.runtime, self.compressionPool, self.decompressionPool, self.mergePool, self.timerLoop);
     }
 
+    fn expectPersisted(self: *SkewedMergeFixture, expected: []const []const u8) !void {
+        const alloc = self.alloc;
+        const io = testing.io;
+
+        try self.recorder.shutdown(io, alloc);
+        const reopened = try self.openRecorder();
+        defer reopened.deinit(io, alloc);
+        try testing.expectEqual(1, reopened.diskTables.items.len);
+
+        const cache = try Cache(*MemBlock).init(io, alloc, .{ .meter = .{ .name = "" } });
+        defer cache.deinit();
+        var lookup = LookupTable.init(alloc, reopened.diskTables.items[0], Conf.getConf().app.maxIndexMemBlockSize, cache, self.decompressionPool);
+        defer lookup.deinit(alloc);
+
+        try lookup.seek(io, alloc, expected[0]);
+        for (expected) |row| {
+            try testing.expect(try lookup.next(io, alloc));
+            try testing.expectEqualStrings(row, lookup.current);
+        }
+        try testing.expect(!try lookup.next(io, alloc));
+    }
+
     fn state(self: *SkewedMergeFixture) State {
         const recorder = self.recorder;
         recorder.mxTables.lockUncancelable(testing.io);
@@ -387,10 +409,31 @@ test "shutdown index recorder joins timer publication before releasing retained 
             const table = try createMemTableFromItems(io, alloc, &.{"timer-publication"});
             try shutdownTesting.expectTimerPublicationReserved(fixture.recorder, publish, .{ fixture.recorder, table }, failAllocation);
             try testing.expectEqual(1, countMemItemsInRecorder(fixture.recorder));
+            try fixture.expectPersisted(&.{"timer-publication"});
         }
     }.run;
     try f(false);
     try f(true);
+}
+
+test "shutdown index recorder owns table arms across loop stop boundaries" {
+    const f = struct {
+        fn publish(recorder: *IndexRecorder, table: *Table) anyerror!void {
+            const alloc = testing.allocator;
+            try recorder.addToMemTables(testing.io, alloc, table, true);
+        }
+        fn run(stage: shutdownTesting.StopStage) !void {
+            const alloc = testing.allocator;
+            var fixture = try SkewedMergeFixture.init(alloc, 0);
+            defer fixture.deinit();
+            const table = try createMemTableFromItems(testing.io, alloc, SkewedMergeFixture.rows[0..1]);
+            try shutdownTesting.expectStoppedTimerPublication(fixture.recorder, .table, publish, .{ fixture.recorder, table }, stage);
+            try fixture.expectPersisted(SkewedMergeFixture.rows[0..1]);
+        }
+    }.run;
+    try f(.beforeCheck);
+    try f(.beforeInsertion);
+    try f(.queued);
 }
 
 test "shutdown index recorder drains queued merge tasks" {
