@@ -1,7 +1,7 @@
-import { Title } from '@solidjs/meta';
-import { Loading } from 'solid-js';
-import { paths, Router } from './router';
-import './App.css';
+import { Title } from "@solidjs/meta";
+import { Loading } from "solid-js";
+import { paths, Router } from "./router";
+import "./App.css";
 
 export default function App() {
   return (
@@ -17,9 +17,7 @@ export default function App() {
               Home
             </a>
           </nav>
-          <Loading fallback={<main class="px-4 py-12">Loading…</main>}>
-            {props.children}
-          </Loading>
+          <Loading fallback={<main class="px-4 py-12">Loading…</main>}>{props.children}</Loading>
         </>
       )}
     </Router>
