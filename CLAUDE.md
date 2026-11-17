@@ -107,6 +107,25 @@ self.garbage.appendAssumeCapacity(buf);
 try self.garbage.append(alloc, buf);
 ```
 
+### Arrays
+
+Prefer ArrayList over a raw buffer when the cap is known, but len is unknown:
+```zig
+// GOOD
+var headers: [3]std.http.Header = undefined;
+var headersArr: std.ArrayList(std.http.Header) = .initBuffer(&headers);
+if (options.contentType) |contentType| {
+    headersArr.appendAssumeCapacity(.{ .name = "Content-Type", .value = contentType });
+}
+// BAD
+var headers: [3]std.http.Header = undefined;
+var count: usize = 0;
+if (options.contentType) |contentType| {
+    headers[count] = .{ .name = "Content-Type", .value = contentType };
+    count += 1;
+}
+```
+
 ### Allocator.create
 
 If an object is destroyed in the same scope there is no benefit to create it via allocator:

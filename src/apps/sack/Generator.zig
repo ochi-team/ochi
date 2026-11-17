@@ -1,3 +1,4 @@
+// REFERENCE ONLY, NOT USED
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const DefaultPrng = std.Random.DefaultPrng;
@@ -18,7 +19,7 @@ const tagsSet: []const []const u8 = &.{
 };
 
 const tagsValues: []const []const []const u8 = &.{
-    &.{"debian", "ubuntu-14.04.6"},
+    &.{ "debian", "ubuntu-14.04.6" },
 };
 
 const Generator = @This();

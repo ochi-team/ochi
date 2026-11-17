@@ -1,3 +1,4 @@
+// REFERENCE ONLY, NOT USED
 const Conf = @This();
 
 maxKeys: u16,

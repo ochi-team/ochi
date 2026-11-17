@@ -188,6 +188,8 @@ pub fn expectStoppedTimerPublication(recorder: anytype, comptime kind: ArmKind, 
             loop.stop();
             gate.release.set(io);
             loop.join();
+            paused.release.set(io);
+            try @call(.auto, publish, args);
         },
         .beforeInsertion => {
             var publication = try io.concurrent(publish, args);
