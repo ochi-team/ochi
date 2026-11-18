@@ -28,7 +28,7 @@ pub fn main(init: std.process.Init) !void {
     };
     const timestamp_ns: u64 = @intCast(Io.Timestamp.now(init.io, .real).nanoseconds);
     var runDirBuf: [std.fs.max_path_bytes]u8 = undefined;
-    const runDir = try std.fmt.bufPrint(&runDirBuf, "{d}", .{timestamp_ns});
+    const runDir = try std.fmt.bufPrint(&runDirBuf, ".ochis{c}{d}", .{ std.fs.path.sep, timestamp_ns });
     std.debug.print("sack: working directory={s}\n", .{runDir});
     run(init.io, init.gpa, options, runDir, timestamp_ns, .fromSeconds(6)) catch |err| {
         std.debug.print("sack failed={s} working directory={s}\n", .{ @errorName(err), runDir });
@@ -39,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
 
 fn run(io: Io, alloc: Allocator, options: Options, runDir: []const u8, timestamp_ns: u64, settle_delay: Io.Duration) !void {
     // never reuse an existing directory data directory, create new
-    try Io.Dir.cwd().createDir(io, runDir, .default_dir);
+    try Io.Dir.cwd().createDirPath(io, runDir);
     var dir = try Io.Dir.cwd().openDir(io, runDir, .{});
     defer dir.close(io);
 

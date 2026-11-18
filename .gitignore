@@ -21,6 +21,9 @@ load/k6
 # default ochi store path
 .ochi/
 
+# ochi soak testing artifacts
+.ochis/
+
 # vector local state
 .vector/
 
