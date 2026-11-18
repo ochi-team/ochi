@@ -22,6 +22,7 @@ const std = @import("std");
 const TestRunner = std.Build.Step.Compile.TestRunner;
 
 const options = @import("src/build/options.zig");
+const run = @import("src/build/run.zig");
 const testing = @import("src/build/testing.zig");
 
 pub fn build(b: *std.Build) void {
@@ -187,9 +188,6 @@ pub fn build(b: *std.Build) void {
         },
     });
     const sack_exe = b.addExecutable(.{ .name = "sack", .root_module = sack_module });
-    const run_sack = b.addRunArtifact(sack_exe);
-    if (b.args) |args| run_sack.addArgs(args);
-    b.step("sack", "Run the external-server single-record smoke check").dependOn(&run_sack.step);
     const sack_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/apps/sack/all_tests.zig"),
@@ -205,18 +203,26 @@ pub fn build(b: *std.Build) void {
     });
     sack_tests.step.dependOn(testing.addTestsFile(b, "src/apps/sack/", &.{}));
 
-    // run command
-    const run_exe = b.addRunArtifact(exe);
-    if (b.args) |args| run_exe.addArgs(args);
-    const run_step = b.step("run", "Run the application");
-    run_step.dependOn(&run_exe.step);
-
-    const run_scooby = b.addRunArtifact(scooby_exe);
-    if (b.args) |args| {
-        run_scooby.addArgs(args);
-    }
-    const scooby_step = b.step("scooby", "Run the Scooby data debug tool");
-    scooby_step.dependOn(&run_scooby.step);
+    run.addRuns(b, &.{
+        .{
+            .artifact = exe,
+            .step = "run",
+            .description = "Run the application",
+            .forwardArgs = true,
+        },
+        .{
+            .artifact = scooby_exe,
+            .step = "scooby",
+            .description = "Run the Scooby data debug tool",
+            .forwardArgs = true,
+        },
+        .{
+            .artifact = sack_exe,
+            .step = "sack",
+            .description = "Run the external-server single-record smoke check",
+            .forwardArgs = true,
+        },
+    });
 
     // prepare test
     const unit_tests = b.addTest(.{
