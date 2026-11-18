@@ -13,19 +13,17 @@ cd /tmp/ochi-sack-server
 From the repository in another terminal, after the server is ready:
 
 TODO: run the server from sack process
-TODO: run-dir must be generated from the sack process, no flag required
 
 ```sh
 curl --fail http://127.0.0.1:9014/ingest/loki/ready
-zig build sack -- --url http://127.0.0.1:9014 --run-dir /tmp/sack-run-001
-# Or: ./zig-out/bin/sack --url http://127.0.0.1:9014 --run-dir /tmp/sack-run-001
+zig build sack -- --url http://127.0.0.1:9014
+# Or: ./zig-out/bin/sack --url http://127.0.0.1:9014
 ```
 
-Both flags are required. `--url` must be a plain HTTP. `--run-dir` must
-not exist; its parent must already exist. Sack exclusively creates and owns that
-directory, never reuses it, and preserves artifacts on success and failure.
-Stop the server yourself with SIGTERM or Ctrl-C. Use fresh server storage and a
-new run directory for another smoke run.
+`--url` is required and must be plain HTTP. Sack creates a directory named after
+the current nanosecond timestamp in the current directory. It never reuses a directory and preserves artifacts on
+success and failure. Stop the server yourself with SIGTERM or Ctrl-C. Use fresh
+server storage for another smoke run.
 
 ## Artifacts
 

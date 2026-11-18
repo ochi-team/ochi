@@ -8,7 +8,6 @@ const OchiClient = @import("OchiClient.zig");
 
 const Options = struct {
     url: []const u8,
-    run_dir: []const u8,
 };
 
 const Record = struct {
@@ -24,20 +23,24 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(alloc);
     const options = cli.parse(args[1..], Options) catch |err| {
-        std.debug.print("Usage: sack --url http://127.0.0.1:9014 --run_dir NEW_DIRECTORY\n", .{});
+        std.debug.print("Usage: sack --url http://127.0.0.1:9014\n", .{});
         return err;
     };
-    run(init.io, init.gpa, options, @intCast(Io.Timestamp.now(init.io, .real).nanoseconds), .fromSeconds(6)) catch |err| {
-        std.debug.print("sack failed: {s}; artifacts: {s}\n", .{ @errorName(err), options.run_dir });
+    const timestamp_ns: u64 = @intCast(Io.Timestamp.now(init.io, .real).nanoseconds);
+    var runDirBuf: [std.fs.max_path_bytes]u8 = undefined;
+    const runDir = try std.fmt.bufPrint(&runDirBuf, "{d}", .{timestamp_ns});
+    std.debug.print("sack: working directory={s}\n", .{runDir});
+    run(init.io, init.gpa, options, runDir, timestamp_ns, .fromSeconds(6)) catch |err| {
+        std.debug.print("sack failed={s} working directory={s}\n", .{ @errorName(err), runDir });
         return err;
     };
-    std.debug.print("sack: exact single-record response verified; artifacts: {s}\n", .{options.run_dir});
+    std.debug.print("sack: completed, working directory={s}\n", .{runDir});
 }
 
-fn run(io: Io, alloc: Allocator, options: Options, timestamp_ns: u64, settle_delay: Io.Duration) !void {
+fn run(io: Io, alloc: Allocator, options: Options, runDir: []const u8, timestamp_ns: u64, settle_delay: Io.Duration) !void {
     // never reuse an existing directory data directory, create new
-    try Io.Dir.cwd().createDir(io, options.run_dir, .default_dir);
-    var dir = try Io.Dir.cwd().openDir(io, options.run_dir, .{});
+    try Io.Dir.cwd().createDir(io, runDir, .default_dir);
+    var dir = try Io.Dir.cwd().openDir(io, runDir, .{});
     defer dir.close(io);
 
     const ingest = try std.fmt.allocPrint(
