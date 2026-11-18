@@ -8,11 +8,14 @@ pub const TestSuite = struct {
 };
 
 /// generates the app test entry point, excluding the standalone suites, e.g. encoding, cli modules, etc.
-pub fn addAllTestsFile(b: *std.Build, suites: []const TestSuite) *std.Build.Step {
+pub fn addTestsFile(b: *std.Build, sourceDir: []const u8, suites: []const TestSuite) *std.Build.Step {
     const out = b.run(&.{
         "sh",
         "-c",
-        "grep -rlE '^test( |\\{)' --include='*.zig' src | grep -v '^src/all_tests.zig$' | sort",
+        "grep -rlE '^test( |\\{)' --include='*.zig' \"$1\" | grep -vE '/(all_tests|test_all).zig$' | sort",
+        // sh -c reserves 0$ position for a name placeholder, doesn't mean anything
+        "test-discovery",
+        sourceDir,
     });
 
     var content: std.ArrayList(u8) = .empty;
@@ -26,13 +29,13 @@ pub fn addAllTestsFile(b: *std.Build, suites: []const TestSuite) *std.Build.Step
             }
         }
 
-        const path = std.mem.cutPrefix(u8, line, "src/") orelse line;
+        const path = std.mem.cutPrefix(u8, line, sourceDir) orelse line;
         content.print(b.allocator, "    _ = @import(\"{s}\");\n", .{path}) catch @panic("OOM");
     }
     content.appendSlice(b.allocator, "}\n") catch @panic("OOM");
 
     const generated = b.addWriteFiles().add("all_tests.zig", content.items);
     const update = b.addUpdateSourceFiles();
-    update.addCopyFileToSource(generated, "src/all_tests.zig");
+    update.addCopyFileToSource(generated, b.pathJoin(&.{ sourceDir, "all_tests.zig" }));
     return &update.step;
 }
