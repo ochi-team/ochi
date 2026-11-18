@@ -3,10 +3,10 @@
 // - pprof - enable allocator pprof api, exposes allocations pprof endpoint
 // zig build run - same as zig build, but runs the resulted executable
 //
-// build btest builds all the tests binary
-// - test-filter - string fitler to run specific tests
-// - allocationFailures - injects allocation failures, runs tests longer since runs more extensive failures
-// build test - same as btest, but runs the resulted executable
+// zig build btest - builds all test binaries into zig-out/bin/{suite}-test
+// - test-filter - string filter to run specific tests
+// - allocation-failures - enable exhaustive allocation failures
+// zig build test - runs those same test binaries
 //
 // build test-main - runs only main app tests, supports all the test flags
 // build test-{encoding,cli,sack,logging,etc.} - runs only designated package tests
@@ -171,7 +171,6 @@ pub fn build(b: *std.Build) void {
     });
 
     options.addRootOptions(b, scooby_exe, version, release, pprofEnabled);
-    b.installArtifact(scooby_exe);
 
     const sack_module = b.createModule(.{
         .root_source_file = b.path("src/apps/sack/main.zig"),
@@ -183,7 +182,6 @@ pub fn build(b: *std.Build) void {
         },
     });
     const sack_exe = b.addExecutable(.{ .name = "sack", .root_module = sack_module });
-    b.installArtifact(sack_exe);
     const run_sack = b.addRunArtifact(sack_exe);
     if (b.args) |args| run_sack.addArgs(args);
     b.step("sack", "Run the external-server single-record smoke check").dependOn(&run_sack.step);
@@ -194,6 +192,7 @@ pub fn build(b: *std.Build) void {
 
     // run command
     const run_exe = b.addRunArtifact(exe);
+    if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
 
@@ -215,7 +214,6 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("src/build/test_runner.zig"), .mode = .server },
     });
-    options.addTestOptions(b, unit_tests.root_module, allocationFailures);
     options.addRootOptions(b, unit_tests, version, release, pprofEnabled);
 
     // encoding module tests
@@ -232,69 +230,74 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &[_][]const u8{},
         .test_runner = .{ .path = b.path("src/build/test_runner.zig"), .mode = .server },
     });
-    options.addTestOptions(b, encoding_tests.root_module, allocationFailures);
 
     const cli_tests = b.addTest(.{
         .root_module = cliModule,
         .filters = if (test_filter) |filter| filter else &.{},
     });
 
+    const logging_tests = b.addTest(.{
+        .root_module = loggerModule,
+        .filters = test_filter orelse &.{},
+    });
+
     // unit tests source tree for its discovery
     const suites = [_]testing.TestSuite{
-        .{ .name = "app", .sourceDir = null, .tests = unit_tests },
+        .{ .name = "main", .sourceDir = null, .tests = unit_tests },
         .{ .name = "encoding", .sourceDir = "src/lib/encoding/", .tests = encoding_tests },
         .{ .name = "cli", .sourceDir = "src/lib/cli/", .tests = cli_tests },
         .{ .name = "sack", .sourceDir = "src/apps/sack/", .tests = sack_tests },
+        .{ .name = "logging", .sourceDir = "src/lib/logging/", .tests = logging_tests },
     };
     const genTestEntryPointStep = testing.addAllTestsFile(b, &suites);
     unit_tests.step.dependOn(genTestEntryPointStep);
 
-    const test_step = b.step("test", "Run all test suites (app, encoding, cli, sack)");
-    const all_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test_all.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &imports,
-        }),
-        .filters = if (test_filter) |filter| filter else &.{},
-        .test_runner = .{ .path = b.path("src/build/test_runner.zig"), .mode = .server },
+    const test_step = b.step("test", "Run all test suites (main, encoding, cli, sack, logging)");
+    const btest_step = b.step("btest", "Build and install bin/{suite}-test without running tests");
+    const cover_step = b.step("kcov", "Run all test suites and merge their coverage report");
+    b.step("cover", "Alias for kcov").dependOn(cover_step);
+    const coverage_data = b.pathJoin(&.{ b.install_path, "cov-data" });
+    const coverage_dir = b.addSystemCommand(&.{ "mkdir", "-p", coverage_data });
+    coverage_dir.has_side_effects = true;
+    const merge_coverage = b.addSystemCommand(&.{
+        "kcov",
+        "--merge",
+        b.pathJoin(&.{ b.install_path, "cov" }),
     });
-    all_tests.root_module.addImport("cli", all_tests.root_module);
-    all_tests.root_module.addImport("encoding", all_tests.root_module);
-    options.addTestOptions(b, all_tests.root_module, allocationFailures);
-    options.addRootOptions(b, all_tests, version, release, pprofEnabled);
-    all_tests.step.dependOn(genTestEntryPointStep);
-    const install_all_tests = b.addInstallArtifact(all_tests, .{});
-    const btest_step = b.step("btest", "Build and install bin/test containing all suites without running it");
-    btest_step.dependOn(&install_all_tests.step);
+    cover_step.dependOn(&merge_coverage.step);
     for (suites) |suite| {
+        options.addTestOptions(b, suite.tests.root_module, allocationFailures);
         const runner = b.addRunArtifact(suite.tests);
         const stepName = b.fmt("test-{s}", .{suite.name});
-        b.step(stepName, b.fmt("Run only the {s} test suite", .{suite.name})).dependOn(&runner.step);
+        const suite_step = b.step(stepName, b.fmt("Run only the {s} test suite", .{suite.name}));
+        suite_step.dependOn(&runner.step);
+        if (std.mem.eql(u8, suite.name, "main")) {
+            b.step("test-app", "Alias for test-main").dependOn(suite_step);
+        }
         test_step.dependOn(&runner.step);
 
         const install = b.addInstallArtifact(suite.tests, .{
             .dest_sub_path = b.fmt("{s}-test", .{suite.name}),
         });
         btest_step.dependOn(&install.step);
-    }
 
-    const run_cover = b.addSystemCommand(&.{
-        "kcov",
-        "--clean",
-        "--skip-solibs",
-        "--include-pattern=ochi/src",
-        b.pathJoin(&.{ b.install_path, "cov" }),
-    });
-    run_cover.addArtifactArg(unit_tests);
-    const cover_step = b.step("cover", "Generate test coverage report");
-    cover_step.dependOn(&run_cover.step);
+        const run_cover = b.addSystemCommand(&.{
+            "kcov",
+            "--clean",
+            "--skip-solibs",
+            b.fmt("--include-path={s}", .{b.pathFromRoot("src")}),
+            b.pathJoin(&.{ coverage_data, suite.name }),
+        });
+        run_cover.addArtifactArg(suite.tests);
+        run_cover.step.dependOn(&coverage_dir.step);
+        merge_coverage.addArg(b.pathJoin(&.{ coverage_data, suite.name }));
+        merge_coverage.step.dependOn(&run_cover.step);
+    }
 
     // check command
     const check = b.step("check", "Check if compiles");
     check.dependOn(&exe.step);
     check.dependOn(&scooby_exe.step);
     check.dependOn(&sack_exe.step);
-    check.dependOn(&unit_tests.step);
+    for (suites) |suite| check.dependOn(&suite.tests.step);
 }
