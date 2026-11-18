@@ -115,6 +115,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // ------- modules -------
+
     // Create C bindings module
     const cModule = b.createModule(.{
         .root_source_file = b.path("src/lib/c/c.zig"),
@@ -150,7 +152,7 @@ pub fn build(b: *std.Build) void {
     // ------- test runner -------
     const testRunner: TestRunner = .{ .path = b.path("src/build/test_runner.zig"), .mode = .server };
 
-    // ------- executables -------
+    // ------- shared imports -------
 
     // all the projects imports, main bin and tests
     const tracyImpl = if (tracyEnabled) "tracy_impl_enabled" else "tracy_impl_disabled";
@@ -169,6 +171,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "encoding", .module = encodeModule },
         .{ .name = "xev", .module = xev.module("xev") },
     };
+
+    // ------- executables -------
 
     const executables = executable.addExecutables(b, target, optimize, &.{
         .{
@@ -196,6 +200,8 @@ pub fn build(b: *std.Build) void {
     const scooby_exe = executables.get(.scooby);
     const sack_exe = executables.get(.sack);
 
+    // ------- run steps -------
+
     run.addRuns(b, &.{
         .{
             .artifact = exe,
@@ -216,6 +222,12 @@ pub fn build(b: *std.Build) void {
             .forwardArgs = true,
         },
     });
+
+    // ------- test suites -------
+    //
+    // defiens test compile targets,
+    // it couples to root = all_tests.zig that doesn't exist yet,
+    // discovery step generates them
 
     const testSuites = testing.addTestSuites(b, target, optimize, testRunner, test_filter orelse &.{}, allocationFailures, &.{
         .{
@@ -255,6 +267,12 @@ pub fn build(b: *std.Build) void {
     });
     const suites = testSuites.entries;
     const unit_tests = testSuites.get(.main);
+
+    // ------- test discovery -------
+    //
+    // generates tests entry point files
+    // required to run testSuites
+
     testing.addDiscoveries(b, testSuites, &.{
         .{
             .sourceDir = "src/",
@@ -284,26 +302,12 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const test_step = b.step("test", "Run all standalone test suites");
-    install.addInstalls(b, &.{
-        .{ .artifact = exe, .destination = .default },
-        .{
-            .artifact = unit_tests,
-            .options = .{ .dest_sub_path = "test" },
-            .destination = .{ .step = .{
-                .name = "btest",
-                .description = "Build and install bin/test for the main app without running tests",
-            } },
-        },
-    });
+    // ------- test steps and aliases -------
+    //
+    // defines test step to run the suites
 
-    coverage.addCoverage(b, .{
-        .suites = suites,
-        .includePath = b.pathFromRoot("src"),
-        .outputPath = b.pathFromRoot("cov"),
-        .step = "kcov",
-        .description = "Run all test suites and merge their coverage report",
-    });
+    const test_step = b.step("test", "Run all standalone test suites");
+
     for (suites) |suite| {
         const runner = b.addRunArtifact(suite.tests);
         test_step.dependOn(&runner.step);
@@ -316,7 +320,32 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    // check command
+    // ------- installation -------
+
+    install.addInstalls(b, &.{
+        .{ .artifact = exe, .destination = .default },
+        .{
+            .artifact = unit_tests,
+            .options = .{ .dest_sub_path = "test" },
+            .destination = .{ .step = .{
+                .name = "btest",
+                .description = "Build and install bin/test for the main app without running tests",
+            } },
+        },
+    });
+
+    // ------- coverage -------
+
+    coverage.addCoverage(b, .{
+        .suites = suites,
+        .includePath = b.pathFromRoot("src"),
+        .outputPath = b.pathFromRoot("cov"),
+        .step = "kcov",
+        .description = "Run all test suites and merge their coverage report",
+    });
+
+    // ------- compile checks -------
+
     const check = b.step("check", "Check if compiles");
     check.dependOn(&exe.step);
     check.dependOn(&scooby_exe.step);
