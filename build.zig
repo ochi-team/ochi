@@ -31,7 +31,6 @@ const TestRunner = std.Build.Step.Compile.TestRunner;
 const coverage = @import("src/build/coverage.zig");
 const executable = @import("src/build/executable.zig");
 const install = @import("src/build/install.zig");
-const options = @import("src/build/options.zig");
 const run = @import("src/build/run.zig");
 const testing = @import("src/build/testing.zig");
 
@@ -174,21 +173,18 @@ pub fn build(b: *std.Build) void {
     const executables = executable.addExecutables(b, target, optimize, &.{
         .{
             .id = .ochi,
-            .name = "ochi",
             .root = b.path("src/main.zig"),
             .imports = &imports,
             .options = rootOptions,
         },
         .{
             .id = .scooby,
-            .name = "scooby",
             .root = b.path("src/scooby.zig"),
             .imports = &imports,
             .options = rootOptions,
         },
         .{
             .id = .sack,
-            .name = "sack",
             .root = b.path("src/apps/sack/main.zig"),
             .imports = &.{
                 .{ .name = "zeit", .module = zeit.module("zeit") },
@@ -199,20 +195,6 @@ pub fn build(b: *std.Build) void {
     const exe = executables.get(.ochi);
     const scooby_exe = executables.get(.scooby);
     const sack_exe = executables.get(.sack);
-
-    const sack_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/apps/sack/all_tests.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zeit", .module = zeit.module("zeit") },
-                .{ .name = "cli", .module = cliModule },
-            },
-        }),
-        .filters = if (test_filter) |filter| filter else &.{},
-        .test_runner = testRunner,
-    });
 
     run.addRuns(b, &.{
         .{
@@ -235,66 +217,49 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // prepare test
-    const unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
+    const testSuites = testing.addTestSuites(b, target, optimize, testRunner, test_filter orelse &.{}, allocationFailures, &.{
+        .{
+            .id = .main,
+            .root = b.path("src/main.zig"),
+            // Preserve module imports even when combined discovery also imports their sources.
             .imports = &imports,
-        }),
-        .filters = if (test_filter) |filter| filter else &[_][]const u8{},
-        .test_runner = testRunner,
-    });
-    options.addRootOptions(b, unit_tests, version, release, pprofEnabled);
-
-    // encoding module tests
-    const encoding_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib/encoding/all_tests.zig"),
-            .target = target,
-            .optimize = optimize,
+            .options = rootOptions,
+        },
+        .{
+            .id = .encoding,
+            .root = b.path("src/lib/encoding/all_tests.zig"),
             .imports = &.{
                 .{ .name = "c", .module = cModule },
                 .{ .name = "logging", .module = loggerModule },
             },
-        }),
-        .filters = if (test_filter) |filter| filter else &[_][]const u8{},
-        .test_runner = testRunner,
-    });
-
-    const cli_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib/cli/all_tests.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-        .filters = if (test_filter) |filter| filter else &.{},
-        .test_runner = testRunner,
-    });
-
-    const logging_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib/logging/all_tests.zig"),
-            .target = target,
-            .optimize = optimize,
+            .sourceDir = "src/lib/encoding/",
+        },
+        .{
+            .id = .cli,
+            .root = b.path("src/lib/cli/all_tests.zig"),
+            .sourceDir = "src/lib/cli/",
+        },
+        .{
+            .id = .sack,
+            .root = b.path("src/apps/sack/all_tests.zig"),
+            .imports = &.{
+                .{ .name = "zeit", .module = zeit.module("zeit") },
+                .{ .name = "cli", .module = cliModule },
+            },
+            .sourceDir = "src/apps/sack/",
+        },
+        .{
+            .id = .logging,
+            .root = b.path("src/lib/logging/all_tests.zig"),
             .imports = &.{
                 .{ .name = "logz", .module = logz.module("logz") },
             },
-        }),
-        .filters = test_filter orelse &.{},
-        .test_runner = testRunner,
+            .sourceDir = "src/lib/logging/",
+        },
     });
-
-    // unit tests source tree for its discovery
-    const suites = [_]testing.TestSuite{
-        .{ .name = "main", .sourceDir = null, .tests = unit_tests },
-        .{ .name = "encoding", .sourceDir = "src/lib/encoding/", .tests = encoding_tests },
-        .{ .name = "cli", .sourceDir = "src/lib/cli/", .tests = cli_tests },
-        .{ .name = "sack", .sourceDir = "src/apps/sack/", .tests = sack_tests },
-        .{ .name = "logging", .sourceDir = "src/lib/logging/", .tests = logging_tests },
-    };
-    const genTestEntryPointStep = testing.addTestsFile(b, "src/", &suites);
+    const suites = testSuites.entries;
+    const unit_tests = testSuites.get(.main);
+    const genTestEntryPointStep = testing.addTestsFile(b, "src/", suites);
     unit_tests.step.dependOn(genTestEntryPointStep);
     for (suites) |suite| {
         if (suite.sourceDir) |sourceDir| {
@@ -316,20 +281,20 @@ pub fn build(b: *std.Build) void {
     });
 
     coverage.addCoverage(b, .{
-        .suites = &suites,
+        .suites = suites,
         .includePath = b.pathFromRoot("src"),
         .outputPath = b.pathFromRoot("cov"),
         .step = "kcov",
         .description = "Run all test suites and merge their coverage report",
     });
     for (suites) |suite| {
-        options.addTestOptions(b, suite.tests.root_module, allocationFailures);
         const runner = b.addRunArtifact(suite.tests);
         test_step.dependOn(&runner.step);
-        const stepName = b.fmt("test-{s}", .{suite.name});
-        const suite_step = b.step(stepName, b.fmt("Run only the {s} test suite", .{suite.name}));
+        const name = @tagName(suite.id);
+        const stepName = b.fmt("test-{s}", .{name});
+        const suite_step = b.step(stepName, b.fmt("Run only the {s} test suite", .{name}));
         suite_step.dependOn(&runner.step);
-        if (std.mem.eql(u8, suite.name, "main")) {
+        if (suite.id == .main) {
             b.step("test-app", "Alias for test-main").dependOn(suite_step);
         }
     }

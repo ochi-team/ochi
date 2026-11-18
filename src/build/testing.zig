@@ -1,11 +1,64 @@
 const std = @import("std");
+const executable = @import("executable.zig");
+const options = @import("options.zig");
+
+pub const Id = enum { main, encoding, cli, sack, logging };
 
 pub const TestSuite = struct {
-    name: []const u8,
+    id: Id,
     /// Null for the app suite, which owns sources outside standalone suites.
     sourceDir: ?[]const u8,
     tests: *std.Build.Step.Compile,
 };
+
+pub const TestSuiteSpec = struct {
+    id: Id,
+    root: std.Build.LazyPath,
+    imports: []const std.Build.Module.Import = &.{},
+    sourceDir: ?[]const u8 = null,
+    options: ?executable.RootOptions = null,
+};
+
+pub const Suites = struct {
+    entries: []const TestSuite,
+    byId: std.EnumArray(Id, ?*std.Build.Step.Compile) = .initFill(null),
+
+    pub fn get(self: Suites, id: Id) *std.Build.Step.Compile {
+        return self.byId.get(id).?;
+    }
+};
+
+pub fn addTestSuites(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    runner: std.Build.Step.Compile.TestRunner,
+    filters: []const []const u8,
+    allocationFailures: bool,
+    specs: []const TestSuiteSpec,
+) Suites {
+    const entries = b.allocator.alloc(TestSuite, specs.len) catch @panic("OOM");
+    var suites: Suites = .{ .entries = entries };
+    for (specs, entries) |spec, *entry| {
+        const artifact = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = spec.root,
+                .target = target,
+                .optimize = optimize,
+                .imports = spec.imports,
+            }),
+            .filters = filters,
+            .test_runner = runner,
+        });
+        if (spec.options) |rootOptions| {
+            options.addRootOptions(b, artifact, rootOptions.version, rootOptions.release, rootOptions.pprof);
+        }
+        options.addTestOptions(b, artifact.root_module, allocationFailures);
+        suites.byId.set(spec.id, artifact);
+        entry.* = .{ .id = spec.id, .sourceDir = spec.sourceDir, .tests = artifact };
+    }
+    return suites;
+}
 
 /// Generates a test entry point for sourceDir, excluding the supplied standalone suites.
 pub fn addTestsFile(b: *std.Build, sourceDir: []const u8, suites: []const TestSuite) *std.Build.Step {

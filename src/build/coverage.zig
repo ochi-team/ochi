@@ -22,7 +22,7 @@ pub fn addCoverage(b: *std.Build, spec: CoverageSpec) void {
     step.dependOn(&merge.step);
 
     for (spec.suites) |suite| {
-        const output = b.pathJoin(&.{ dataPath, suite.name });
+        const output = b.pathJoin(&.{ dataPath, @tagName(suite.id) });
         const run = b.addSystemCommand(&.{
             "kcov",
             "--clean",

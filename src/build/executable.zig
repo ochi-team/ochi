@@ -11,7 +11,6 @@ pub const RootOptions = struct {
 
 pub const ExecutableSpec = struct {
     id: Id,
-    name: []const u8,
     root: std.Build.LazyPath,
     imports: []const std.Build.Module.Import = &.{},
     options: ?RootOptions = null,
@@ -34,7 +33,7 @@ pub fn addExecutables(
     var artifacts: Artifacts = .{};
     for (specs) |spec| {
         const artifact = b.addExecutable(.{
-            .name = spec.name,
+            .name = @tagName(spec.id),
             .root_module = b.createModule(.{
                 .root_source_file = spec.root,
                 .target = target,
