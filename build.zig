@@ -8,8 +8,8 @@
 // - allocationFailures - injects allocation failures, runs tests longer since runs more extensive failures
 // build test - same as btest, but runs the resulted executable
 //
-// build test-ochi - runs only main app tests, supports all the test flags
-// build test-{encoding,cli,sack,etc.} - runs only designated package tests
+// build test-main - runs only main app tests, supports all the test flags
+// build test-{encoding,cli,sack,logging,etc.} - runs only designated package tests
 //
 // build sack - runs soak testing from apps/sack
 //
@@ -109,7 +109,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const loggerModule = b.createModule(.{
-        .root_source_file = b.path("src/observe/Logger.zig"),
+        .root_source_file = b.path("src/lib/logging/logging.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{

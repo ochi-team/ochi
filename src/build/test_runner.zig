@@ -834,4 +834,3 @@ fn printColorElapsedLog(elapsed_ns: u64) void {
         printColorLog("({d:.2}{s})\n", .{ num, unit }, color);
     }
 }
-
