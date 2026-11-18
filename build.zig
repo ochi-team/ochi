@@ -290,29 +290,8 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    const all_tests = b.addTest(.{
-        .name = "test",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/test_all.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &imports,
-        }),
-        .filters = test_filter orelse &.{},
-        .test_runner = testRunner,
-    });
-    for ([_][]const u8{ "cli", "encoding", "logging" }) |name| {
-        all_tests.root_module.addImport(name, all_tests.root_module);
-    }
-    options.addRootOptions(b, all_tests, version, release, pprofEnabled);
-    options.addTestOptions(b, all_tests.root_module, allocationFailures);
-    all_tests.step.dependOn(genTestEntryPointStep);
-    all_tests.step.dependOn(testing.addTestsFile(b, "src/apps/sack/", &.{}));
-
-    const test_step = b.step("test", "Run the combined test binary containing all suites");
-    const btest_step = b.step("btest", "Build and install bin/test containing all suites without running it");
-    const install_tests = b.addInstallArtifact(all_tests, .{});
-    btest_step.dependOn(&install_tests.step);
+    const test_step = b.step("test", "Run all standalone test suites");
+    const btest_step = b.step("btest", "Build and install bin/test-{suite} without running tests");
     const cover_step = b.step("kcov", "Run all test suites and merge their coverage report");
     b.step("cover", "Alias for kcov").dependOn(cover_step);
     const coverage_data = b.pathJoin(&.{ b.install_path, "cov-data" });
@@ -329,6 +308,8 @@ pub fn build(b: *std.Build) void {
         const runner = b.addRunArtifact(suite.tests);
         test_step.dependOn(&runner.step);
         const stepName = b.fmt("test-{s}", .{suite.name});
+        const install_tests = b.addInstallArtifact(suite.tests, .{ .dest_sub_path = stepName });
+        btest_step.dependOn(&install_tests.step);
         const suite_step = b.step(stepName, b.fmt("Run only the {s} test suite", .{suite.name}));
         suite_step.dependOn(&runner.step);
         if (std.mem.eql(u8, suite.name, "main")) {
@@ -353,5 +334,4 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&scooby_exe.step);
     check.dependOn(&sack_exe.step);
     for (suites) |suite| check.dependOn(&suite.tests.step);
-    check.dependOn(&all_tests.step);
 }
