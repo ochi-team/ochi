@@ -29,6 +29,7 @@ const std = @import("std");
 const TestRunner = std.Build.Step.Compile.TestRunner;
 
 const coverage = @import("src/build/coverage.zig");
+const executable = @import("src/build/executable.zig");
 const install = @import("src/build/install.zig");
 const options = @import("src/build/options.zig");
 const run = @import("src/build/run.zig");
@@ -44,20 +45,28 @@ pub fn build(b: *std.Build) void {
 
     // explicit release flag since we use ReleaseSafe for profiling
     const release = b.option(bool, "release", "Release") orelse false;
+
+    const versionArgs = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
+    const version = b.run(versionArgs);
+
+    const pprofEnabled = b.option(
+        bool,
+        "pprof",
+        "Enable pprof profile",
+    ) orelse false;
+
+    const rootOptions: executable.RootOptions = .{
+        .version = version,
+        .release = release,
+        .pprof = pprofEnabled,
+    };
+
     // Allow the user to enable or disable Tracy support with a build flag
     const tracyEnabled = b.option(
         bool,
         "tracy",
         "Build with Tracy support.",
     ) orelse false;
-    // pprof profile
-    const pprofEnabled = b.option(
-        bool,
-        "pprof",
-        "Enable pprof profile",
-    ) orelse false;
-    const versionArgs = &[_][]const u8{ "sh", "-c", "git describe --exact-match --tags HEAD 2>/dev/null || echo \"$(git rev-parse --abbrev-ref HEAD)-$(git rev-parse --short HEAD)\"" };
-    const version = b.run(versionArgs);
 
     // test filter to run a specific set of tests
     const test_filter = b.option([]const []const u8, "test-filter", "Test filter");
@@ -162,41 +171,35 @@ pub fn build(b: *std.Build) void {
         .{ .name = "xev", .module = xev.module("xev") },
     };
 
-    const exe = b.addExecutable(.{
-        .name = "ochi",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
+    const executables = executable.addExecutables(b, target, optimize, &.{
+        .{
+            .id = .ochi,
+            .name = "ochi",
+            .root = b.path("src/main.zig"),
             .imports = &imports,
-            // .sanitize_thread = optimize == .Debug,
-        }),
-    });
-
-    options.addRootOptions(b, exe, version, release, pprofEnabled);
-
-    const scooby_exe = b.addExecutable(.{
-        .name = "scooby",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/scooby.zig"),
-            .target = target,
-            .optimize = optimize,
+            .options = rootOptions,
+        },
+        .{
+            .id = .scooby,
+            .name = "scooby",
+            .root = b.path("src/scooby.zig"),
             .imports = &imports,
-        }),
-    });
-
-    options.addRootOptions(b, scooby_exe, version, release, pprofEnabled);
-
-    const sack_module = b.createModule(.{
-        .root_source_file = b.path("src/apps/sack/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zeit", .module = zeit.module("zeit") },
-            .{ .name = "cli", .module = cliModule },
+            .options = rootOptions,
+        },
+        .{
+            .id = .sack,
+            .name = "sack",
+            .root = b.path("src/apps/sack/main.zig"),
+            .imports = &.{
+                .{ .name = "zeit", .module = zeit.module("zeit") },
+                .{ .name = "cli", .module = cliModule },
+            },
         },
     });
-    const sack_exe = b.addExecutable(.{ .name = "sack", .root_module = sack_module });
+    const exe = executables.get(.ochi);
+    const scooby_exe = executables.get(.scooby);
+    const sack_exe = executables.get(.sack);
+
     const sack_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/apps/sack/all_tests.zig"),
