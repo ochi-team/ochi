@@ -16,7 +16,7 @@
 // build kcov - runs unit tests and reports its coverage
 //
 // build check - editor command, used internally in zls
-// TODO: btest and test commands are inconsistent, 
+// TODO: btest and test commands are inconsistent,
 // test runs all the tests,
 // btest builds only main tests,
 // historically btest was introduced only for editor needs in order to debug app tests,
@@ -28,6 +28,7 @@ const std = @import("std");
 
 const TestRunner = std.Build.Step.Compile.TestRunner;
 
+const install = @import("src/build/install.zig");
 const options = @import("src/build/options.zig");
 const run = @import("src/build/run.zig");
 const testing = @import("src/build/testing.zig");
@@ -35,7 +36,8 @@ const testing = @import("src/build/testing.zig");
 pub fn build(b: *std.Build) void {
     // ------- options -------
 
-    // TODO: find what is baseline and how to setup a proper target including v3/v4
+    // TODO: find what is baseline and how to setup a proper target including v3/v4,
+    // depends on the deployment target
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -171,7 +173,6 @@ pub fn build(b: *std.Build) void {
     });
 
     options.addRootOptions(b, exe, version, release, pprofEnabled);
-    b.installArtifact(exe);
 
     const scooby_exe = b.addExecutable(.{
         .name = "scooby",
@@ -298,9 +299,17 @@ pub fn build(b: *std.Build) void {
     }
 
     const test_step = b.step("test", "Run all standalone test suites");
-    const btest_step = b.step("btest", "Build and install bin/test for the main app without running tests");
-    const install_tests = b.addInstallArtifact(unit_tests, .{ .dest_sub_path = "test" });
-    btest_step.dependOn(&install_tests.step);
+    install.addInstalls(b, &.{
+        .{ .artifact = exe, .destination = .default },
+        .{
+            .artifact = unit_tests,
+            .options = .{ .dest_sub_path = "test" },
+            .destination = .{ .step = .{
+                .name = "btest",
+                .description = "Build and install bin/test for the main app without running tests",
+            } },
+        },
+    });
     const cover_step = b.step("kcov", "Run all test suites and merge their coverage report");
     b.step("cover", "Alias for kcov").dependOn(cover_step);
     const coverage_data = b.pathJoin(&.{ b.install_path, "cov-data" });
