@@ -3,7 +3,7 @@
 // - pprof - enable allocator pprof api, exposes allocations pprof endpoint
 // zig build run - same as zig build, but runs the resulted executable
 //
-// zig build btest - builds one binary containing all tests into zig-out/bin/test
+// zig build btest - builds the main app test binary into zig-out/bin/test
 // - test-filter - string filter to run specific tests
 // - allocation-failures - enable exhaustive allocation failures
 // zig build test - runs the combined test binary
@@ -16,6 +16,13 @@
 // build kcov - runs unit tests and reports its coverage
 //
 // build check - editor command, used internally in zls
+// TODO: btest and test commands are inconsistent, 
+// test runs all the tests,
+// btest builds only main tests,
+// historically btest was introduced only for editor needs in order to debug app tests,
+// but ideally we have either 2 btest (btest and btest-{main,etc.})
+// or we make btest building all the binary, which is not easy to solve and performance wise not the best,
+// therefore it hurts a human driving an IDE feedback loop
 
 const std = @import("std");
 
@@ -291,7 +298,9 @@ pub fn build(b: *std.Build) void {
     }
 
     const test_step = b.step("test", "Run all standalone test suites");
-    const btest_step = b.step("btest", "Build and install bin/test-{suite} without running tests");
+    const btest_step = b.step("btest", "Build and install bin/test for the main app without running tests");
+    const install_tests = b.addInstallArtifact(unit_tests, .{ .dest_sub_path = "test" });
+    btest_step.dependOn(&install_tests.step);
     const cover_step = b.step("kcov", "Run all test suites and merge their coverage report");
     b.step("cover", "Alias for kcov").dependOn(cover_step);
     const coverage_data = b.pathJoin(&.{ b.install_path, "cov-data" });
@@ -308,8 +317,6 @@ pub fn build(b: *std.Build) void {
         const runner = b.addRunArtifact(suite.tests);
         test_step.dependOn(&runner.step);
         const stepName = b.fmt("test-{s}", .{suite.name});
-        const install_tests = b.addInstallArtifact(suite.tests, .{ .dest_sub_path = stepName });
-        btest_step.dependOn(&install_tests.step);
         const suite_step = b.step(stepName, b.fmt("Run only the {s} test suite", .{suite.name}));
         suite_step.dependOn(&runner.step);
         if (std.mem.eql(u8, suite.name, "main")) {

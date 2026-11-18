@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,10 +12,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 class BuildCommandsTest(unittest.TestCase):
-    def build(self, *args, env=None):
+    def build(self, *args, env=None, run_args=None, cwd=ROOT):
+        command = ["zig", "build", *args, "--color", "off", "--summary", "all"]
+        if run_args is not None:
+            command.extend(["--", *run_args])
         result = subprocess.run(
-            ["zig", "build", *args, "--color", "off", "--summary", "all"],
-            cwd=ROOT,
+            command,
+            cwd=cwd,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -25,9 +29,69 @@ class BuildCommandsTest(unittest.TestCase):
 
     def test_documented_steps(self):
         output = self.build("--help")
-        for name in ("run", "btest", "test", "test-main", "test-encoding", "test-cli", "test-sack", "test-logging", "sack", "kcov", "check"):
+        for name in ("install", "run", "scooby", "btest", "test", "test-main", "test-app", "test-encoding", "test-cli", "test-sack", "test-logging", "sack", "kcov", "cover", "check"):
             with self.subTest(step=name):
                 self.assertRegex(output, rf"(?m)^  {name} +")
+
+    def test_default_installation(self):
+        for steps in ((), ("install",)):
+            with self.subTest(steps=steps), tempfile.TemporaryDirectory() as prefix:
+                output = self.build(*steps, "--prefix", prefix)
+                self.assertEqual(
+                    sorted(path.name for path in (pathlib.Path(prefix) / "bin").iterdir()),
+                    ["ochi"],
+                )
+                self.assertNotIn("run exe", output)
+                self.assertNotIn("run test", output)
+
+    def test_main_suite_alias(self):
+        for step in ("test-main", "test-app"):
+            with self.subTest(step=step):
+                output = self.build(step, "-Dtest-filter=options require explicit data")
+                self.assertIn("2 pass", output)
+                self.assertIn("2 total", output)
+                self.assertEqual(output.count("run test"), 1)
+
+    def test_run_steps_forward_arguments(self):
+        # Keep the real build graph, but replace entry points to avoid server/data side effects.
+        probe = (
+            'const std = @import("std");\n'
+            'pub fn main(init: std.process.Init) !void {\n'
+            '    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);\n'
+            '    defer args.deinit();\n'
+            '    _ = args.skip();\n'
+            '    while (args.next()) |arg| std.debug.print("forwarded: [{s}]\\n", .{arg});\n'
+            '}\n'
+        )
+        arguments = ["--build-contract=two words", "", "--second"]
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary)
+            for name in ("build.zig", "build.zig.zon"):
+                shutil.copy2(ROOT / name, workspace / name)
+            shutil.copytree(ROOT / "src", workspace / "src")
+            for entry in ("src/main.zig", "src/scooby.zig", "src/apps/sack/main.zig"):
+                (workspace / entry).write_text(probe)
+            for step, artifact in (("run", "ochi"), ("scooby", "scooby"), ("sack", "sack")):
+                with self.subTest(step=step):
+                    output = self.build(step, run_args=arguments, cwd=workspace)
+                    self.assertIn(f"run exe {artifact}", output)
+                    self.assertEqual(
+                        re.findall(r"^forwarded: \[(.*)\]$", output, re.MULTILINE), arguments,
+                    )
+                    self.assertFalse((workspace / "zig-out" / "bin").exists())
+
+    def test_check_membership(self):
+        with tempfile.TemporaryDirectory() as prefix:
+            output = self.build(
+                "check", "-Dtest-filter=options require explicit data", "--prefix", prefix,
+            )
+            # Only direct children count: libraries are transitive compile dependencies.
+            members = re.findall(r"^\+- compile (exe \S+|test) ", output, re.MULTILINE)
+            self.assertCountEqual(members, ["exe ochi", "exe scooby", "exe sack", *(["test"] * 5)])
+            self.assertNotIn("run exe", output)
+            self.assertNotIn("run test", output)
+            self.assertNotIn("install ", output)
+            self.assertFalse((pathlib.Path(prefix) / "bin").exists())
 
     def test_btest_installs_without_running(self):
         with tempfile.TemporaryDirectory() as prefix:
@@ -86,9 +150,9 @@ class BuildCommandsTest(unittest.TestCase):
             kcov.chmod(0o755)
             env = dict(os.environ, PATH=f"{root}{os.pathsep}{os.environ['PATH']}")
             prefix = root / "fresh-output"
-            for attempt in range(2):
-                with self.subTest(attempt=attempt):
-                    self.build("kcov", "-Dtest-filter=options require explicit data", "--prefix", str(prefix), env=env)
+            for step in ("kcov", "cover"):
+                with self.subTest(step=step):
+                    self.build(step, "-Dtest-filter=options require explicit data", "--prefix", str(prefix), env=env)
                     self.assertEqual(
                         (prefix / "cov" / "index.html").read_text(),
                         "cli,encoding,logging,main,sack",
