@@ -232,12 +232,10 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "c", .module = cModule },
                 .{ .name = "logging", .module = loggerModule },
             },
-            .sourceDir = "src/lib/encoding/",
         },
         .{
             .id = .cli,
             .root = b.path("src/lib/cli/all_tests.zig"),
-            .sourceDir = "src/lib/cli/",
         },
         .{
             .id = .sack,
@@ -246,7 +244,6 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zeit", .module = zeit.module("zeit") },
                 .{ .name = "cli", .module = cliModule },
             },
-            .sourceDir = "src/apps/sack/",
         },
         .{
             .id = .logging,
@@ -254,18 +251,38 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "logz", .module = logz.module("logz") },
             },
-            .sourceDir = "src/lib/logging/",
         },
     });
     const suites = testSuites.entries;
     const unit_tests = testSuites.get(.main);
-    const genTestEntryPointStep = testing.addTestsFile(b, "src/", suites);
-    unit_tests.step.dependOn(genTestEntryPointStep);
-    for (suites) |suite| {
-        if (suite.sourceDir) |sourceDir| {
-            suite.tests.step.dependOn(testing.addTestsFile(b, sourceDir, &.{}));
-        }
-    }
+    testing.addDiscoveries(b, testSuites, &.{
+        .{
+            .sourceDir = "src/",
+            .output = "src/all_tests.zig",
+            .excludeDirs = &.{ "src/lib/encoding/", "src/lib/cli/", "src/apps/sack/", "src/lib/logging/" },
+            .consumers = &.{.main},
+        },
+        .{
+            .sourceDir = "src/lib/encoding/",
+            .output = "src/lib/encoding/all_tests.zig",
+            .consumers = &.{.encoding},
+        },
+        .{
+            .sourceDir = "src/lib/cli/",
+            .output = "src/lib/cli/all_tests.zig",
+            .consumers = &.{.cli},
+        },
+        .{
+            .sourceDir = "src/apps/sack/",
+            .output = "src/apps/sack/all_tests.zig",
+            .consumers = &.{.sack},
+        },
+        .{
+            .sourceDir = "src/lib/logging/",
+            .output = "src/lib/logging/all_tests.zig",
+            .consumers = &.{.logging},
+        },
+    });
 
     const test_step = b.step("test", "Run all standalone test suites");
     install.addInstalls(b, &.{
