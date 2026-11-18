@@ -201,7 +201,6 @@ pub fn build(b: *std.Build) void {
         .filters = if (test_filter) |filter| filter else &.{},
         .test_runner = testRunner,
     });
-    sack_tests.step.dependOn(testing.addTestsFile(b, "src/apps/sack/", &.{}));
 
     run.addRuns(b, &.{
         .{
@@ -240,7 +239,7 @@ pub fn build(b: *std.Build) void {
     // encoding module tests
     const encoding_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lib/encoding/root.zig"),
+            .root_source_file = b.path("src/lib/encoding/all_tests.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -253,13 +252,24 @@ pub fn build(b: *std.Build) void {
     });
 
     const cli_tests = b.addTest(.{
-        .root_module = cliModule,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lib/cli/all_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .filters = if (test_filter) |filter| filter else &.{},
         .test_runner = testRunner,
     });
 
     const logging_tests = b.addTest(.{
-        .root_module = loggerModule,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lib/logging/all_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "logz", .module = logz.module("logz") },
+            },
+        }),
         .filters = test_filter orelse &.{},
         .test_runner = testRunner,
     });
@@ -274,6 +284,11 @@ pub fn build(b: *std.Build) void {
     };
     const genTestEntryPointStep = testing.addTestsFile(b, "src/", &suites);
     unit_tests.step.dependOn(genTestEntryPointStep);
+    for (suites) |suite| {
+        if (suite.sourceDir) |sourceDir| {
+            suite.tests.step.dependOn(testing.addTestsFile(b, sourceDir, &.{}));
+        }
+    }
 
     const all_tests = b.addTest(.{
         .name = "test",
@@ -295,8 +310,6 @@ pub fn build(b: *std.Build) void {
     all_tests.step.dependOn(testing.addTestsFile(b, "src/apps/sack/", &.{}));
 
     const test_step = b.step("test", "Run the combined test binary containing all suites");
-    const all_runner = b.addRunArtifact(all_tests);
-    test_step.dependOn(&all_runner.step);
     const btest_step = b.step("btest", "Build and install bin/test containing all suites without running it");
     const install_tests = b.addInstallArtifact(all_tests, .{});
     btest_step.dependOn(&install_tests.step);
@@ -314,6 +327,7 @@ pub fn build(b: *std.Build) void {
     for (suites) |suite| {
         options.addTestOptions(b, suite.tests.root_module, allocationFailures);
         const runner = b.addRunArtifact(suite.tests);
+        test_step.dependOn(&runner.step);
         const stepName = b.fmt("test-{s}", .{suite.name});
         const suite_step = b.step(stepName, b.fmt("Run only the {s} test suite", .{suite.name}));
         suite_step.dependOn(&runner.step);

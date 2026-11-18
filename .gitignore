@@ -23,3 +23,6 @@ load/k6
 
 # vector local state
 .vector/
+
+# unit tests
+all_tests.zig
