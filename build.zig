@@ -28,6 +28,7 @@ const std = @import("std");
 
 const TestRunner = std.Build.Step.Compile.TestRunner;
 
+const coverage = @import("src/build/coverage.zig");
 const install = @import("src/build/install.zig");
 const options = @import("src/build/options.zig");
 const run = @import("src/build/run.zig");
@@ -310,17 +311,14 @@ pub fn build(b: *std.Build) void {
             } },
         },
     });
-    const cover_step = b.step("kcov", "Run all test suites and merge their coverage report");
-    b.step("cover", "Alias for kcov").dependOn(cover_step);
-    const coverage_data = b.pathJoin(&.{ b.install_path, "cov-data" });
-    const coverage_dir = b.addSystemCommand(&.{ "mkdir", "-p", coverage_data });
-    coverage_dir.has_side_effects = true;
-    const merge_coverage = b.addSystemCommand(&.{
-        "kcov",
-        "--merge",
-        b.pathJoin(&.{ b.install_path, "cov" }),
+
+    coverage.addCoverage(b, .{
+        .suites = &suites,
+        .includePath = b.pathFromRoot("src"),
+        .outputPath = b.pathFromRoot("cov"),
+        .step = "kcov",
+        .description = "Run all test suites and merge their coverage report",
     });
-    cover_step.dependOn(&merge_coverage.step);
     for (suites) |suite| {
         options.addTestOptions(b, suite.tests.root_module, allocationFailures);
         const runner = b.addRunArtifact(suite.tests);
@@ -331,17 +329,6 @@ pub fn build(b: *std.Build) void {
         if (std.mem.eql(u8, suite.name, "main")) {
             b.step("test-app", "Alias for test-main").dependOn(suite_step);
         }
-        const run_cover = b.addSystemCommand(&.{
-            "kcov",
-            "--clean",
-            "--skip-solibs",
-            b.fmt("--include-path={s}", .{b.pathFromRoot("src")}),
-            b.pathJoin(&.{ coverage_data, suite.name }),
-        });
-        run_cover.addArtifactArg(suite.tests);
-        run_cover.step.dependOn(&coverage_dir.step);
-        merge_coverage.addArg(b.pathJoin(&.{ coverage_data, suite.name }));
-        merge_coverage.step.dependOn(&run_cover.step);
     }
 
     // check command
