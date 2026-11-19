@@ -11,4 +11,3 @@
 minimumReleaseAgeExclude:
   - solid-js
   - "@solidjs/*"
-  - filesystem-routing

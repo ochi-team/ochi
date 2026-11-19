@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
-    // General
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "jsx": "preserve",
     "jsxImportSource": "@solidjs/web",
     "target": "ESNext",

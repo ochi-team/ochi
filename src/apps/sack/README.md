@@ -12,8 +12,6 @@ cd /tmp/ochi-sack-server
 
 From the repository in another terminal, after the server is ready:
 
-TODO: run the server from sack process
-
 ```sh
 curl --fail http://127.0.0.1:9014/ingest/loki/ready
 zig build sack -- --url http://127.0.0.1:9014

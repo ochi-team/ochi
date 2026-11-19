@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="play" viewBox="0 0 12 12">
+    <path d="m3 2 7 4-7 4Z" fill="currentColor"/>
+  </symbol>
+  <symbol id="history" viewBox="0 0 14 14">
+    <path d="M2 6a5 5 0 1 1 .8 4M2 2v4h4M7 4v3l2 1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  </symbol>
+</svg>

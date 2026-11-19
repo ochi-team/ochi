@@ -1,1 +1,165 @@
 @import "tailwindcss";
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter-400.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/inter-500.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter-600.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/inter-700.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/fira-code-400.ttf") format("truetype");
+}
+
+@theme {
+  --color-bg: oklch(18.2% 0 0);
+  --color-gray-2: oklch(21.7% 0.007 314.7);
+  --color-gray-3: oklch(29% 0.011 300.9);
+  --color-gray-6: oklch(35.8% 0.013 305.1);
+  --color-gray-11: oklch(77.8% 0.019 303.3);
+  --color-gray-12: oklch(95.1% 0.004 301.4);
+  --color-dark-primary: oklch(55.7% 0.111 153.3);
+  --color-dark-accent: oklch(26% 0.022 147.6);
+  --color-dark-ring: oklch(73.5% 0.104 151.4);
+  --color-dark-destructive: oklch(39.1% 0.083 21.6);
+  --color-dark-accent-foreground: oklch(89.2% 0.054 150.1);
+  --color-dark-primary-foreground: oklch(22.1% 0.016 149.1);
+  --color-status-error-text: oklch(78% 0.105 21.6);
+  --color-status-warning-text: oklch(82% 0.11 85);
+  --color-status-warning-bg: oklch(28% 0.035 85);
+  --color-status-error-border: oklch(63.2% 0.131 21.5);
+  --color-chart-bar: oklch(34.9% 0.045 151.1);
+  --color-chart-bar-strong: oklch(49.4% 0.069 152.1);
+  --color-text-secondary: #b8b6bf;
+  --color-text-subtle: #77757e;
+  --color-text-disabled: #88858f;
+  --color-status-info-text: #83b58e;
+  --color-status-warning-border: #665738;
+  --color-chart-warning: #c6a16b;
+  --color-text-warning-muted: #9b947f;
+  --color-log-selection-border: #76bc88;
+  --color-log-selection-text: #a8d1b0;
+  --color-transparent: #00000000;
+  --color-keycap-primary-bg: #2c7043;
+  --color-keycap-primary-border: #245b36;
+  --color-keycap-primary-text: #d0e9d7;
+  --font-inter: "Inter";
+  --font-system: system-ui, sans-serif;
+  --font-mono: "Fira Code", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-fira-code: "Fira Code";
+  --text-10: 10px;
+  --text-11: 11px;
+  --text-12: 12px;
+  --text-13: 13px;
+  --text-14: 14px;
+  --text-16: 16px;
+  --text-20: 20px;
+  --text-24: 24px;
+  --text-32: 32px;
+  --font-weight-500: 500;
+  --font-weight-600: 600;
+  --font-weight-700: 700;
+  --leading-12: 12px;
+  --leading-14: 14px;
+  --leading-16: 16px;
+  --leading-18: 18px;
+  --leading-20: 20px;
+  --leading-22: 22px;
+  --leading-24: 24px;
+  --leading-32: 32px;
+  --leading-40: 40px;
+  --spacing-ds-2: 2px;
+  --spacing-ds-3: 3px;
+  --spacing-ds-4: 4px;
+  --spacing-ds-5: 5px;
+  --spacing-ds-6: 6px;
+  --spacing-ds-7: 7px;
+  --spacing-ds-8: 8px;
+  --spacing-ds-10: 10px;
+  --spacing-ds-12: 12px;
+  --spacing-ds-16: 16px;
+  --spacing-ds-18: 18px;
+  --spacing-ds-20: 20px;
+  --spacing-ds-24: 24px;
+  --spacing-ds-32: 32px;
+  --spacing-ds-40: 40px;
+  --spacing-ds-48: 48px;
+  --spacing-ds-60: 60px;
+  --spacing-ds-176: 176px;
+  --radius-1: 1px;
+  --radius-2: 2px;
+  --radius-3: 3px;
+  --radius-4: 4px;
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-12: 12px;
+  --radius-20: 20px;
+  --radius-99: 99px;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-synthesis: none;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-gray-12);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  a,
+  input {
+    &:focus-visible {
+      outline: 2px solid var(--color-dark-ring);
+      outline-offset: 2px;
+    }
+  }
+
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+}
+
+@utility bg-query-glow {
+  background-image: radial-gradient(
+    circle farthest-corner at 50% 40% in oklab,
+    oklch(55.7% 0.111 153.3 / 8%) 0%,
+    transparent 65%
+  );
+}

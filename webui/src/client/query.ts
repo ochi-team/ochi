@@ -34,7 +34,7 @@ type QueryLogsParams = {
   tenantID?: string;
 };
 
-const queryEndpoint = `${import.meta.env.OCHI_HOST}/query`;
+const queryEndpoint = `${import.meta.env.OCHI_HOST ?? ""}/query`;
 
 export function buildLoqlQuery(timeRangeQueryToken: string, query: string): string {
   return `[${timeRangeQueryToken}, now] ${query}`;
@@ -51,26 +51,29 @@ export async function queryLogs(params: QueryLogsParams): Promise<QueryResponse>
   });
 
   if (!response.ok) {
-    const body = await response.text();
     try {
-      const parsedError = parseQueryErrorResponse(JSON.parse(body));
+      const body = await response.json();
+      const parsedError = parseQueryErrorResponse(body);
       if (parsedError) throw parsedError;
+      throw new Error(`Query failed with HTTP ${response.status}: ${body}`);
     } catch (err) {
       if (err instanceof QuerySyntaxError) throw err;
+
+      console.error("Query request failed", err);
+      throw new Error("Unexpected error", { cause: err });
     }
-    throw new Error(body || `Query failed with HTTP ${response.status}`);
   }
 
   return parseQueryLogsResponse(await response.json());
 }
 
-function parseQueryLogsResponse(text: string): QueryResponse {
+function parseQueryLogsResponse(obj: object): QueryResponse {
   return {
     lines: [],
     status: 1,
   };
 }
 
-function parseQueryErrorResponse(text: string): Error {
+function parseQueryErrorResponse(obj: object): Error {
   return new Error("unexpected error");
 }
