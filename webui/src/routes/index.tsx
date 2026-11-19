@@ -3,11 +3,7 @@ import { createSignal, For, onSettled, Show } from "solid-js";
 import { buildLoqlQuery, queryLogs, type LogEntry } from "../client/query";
 import { loadQueryHistory, pushQueryHistory } from "../modules/queryHistory";
 
-import Keycap from "@/components/Keycap";
-
 const example = "[-15m, now] {service=api OR service=worker}";
-const presets = ["5m", "15m", "1h", "6h", "24h"];
-const control = "rounded-6 border border-gray-6 px-ds-10 h-7 text-16 hover:bg-gray-3";
 
 export default function Home() {
   const [draft, setDraft] = createSignal("");
@@ -18,6 +14,7 @@ export default function Home() {
   const [error, setError] = createSignal("");
   const [lines, setLines] = createSignal<LogEntry[]>([]);
   const [collapsed, setCollapsed] = createSignal(false);
+
   let input: HTMLInputElement | undefined;
   let controller: AbortController | undefined;
 
@@ -29,7 +26,6 @@ export default function Home() {
   function useExample() {
     setDraft(example);
     setRange("-15m");
-    input?.focus();
   }
 
   async function run() {
@@ -105,93 +101,93 @@ export default function Home() {
         </a>
       </header>
 
-      <section
-        aria-label="Query controls"
-        class="flex h-32 shrink-0 flex-col gap-ds-12 border-b border-gray-6 bg-gray-2 px-ds-16 py-ds-12"
-      >
-        <form
-          class="flex h-[52px] items-center gap-ds-12"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void run();
-          }}
-        >
-          <label class="flex h-full min-w-0 flex-1 items-center gap-ds-16 rounded-6 border border-gray-6 bg-bg px-ds-12 focus-within:border-dark-ring">
-            <span>LOQL</span>
-            <input
-              ref={(el) => {
-                input = el;
-              }}
-              aria-label="LOQL query"
-              class="min-w-0 flex-1 bg-transparent font-mono text-13 text-gray-12 outline-none! placeholder:text-gray-11"
-              placeholder="Write a query, or use the example below"
-              value={draft()}
-              onInput={(event) => setDraft(event.currentTarget.value)}
-              spellcheck="false"
-              autocomplete="off"
-            />
-            <kbd class="rounded-2 border border-gray-6 px-ds-6 font-sans">a</kbd>
-          </label>
-          <button
-            type="submit"
-            disabled={!draft().trim() || pending()}
-            class="group flex h-9 w-36 shrink-0 items-center justify-center gap-ds-8 rounded-6 border border-gray-6 bg-dark-primary text-dark-primary-foreground enabled:border-dark-primary enabled:hover:brightness-110 disabled:bg-gray-3 disabled:text-gray-11 disabled:opacity-45"
-          >
-            <svg aria-hidden="true" width="12" height="12" class="shrink-0">
-              <use href="/icons.svg#play" />
-            </svg>
-            <span class="text-14 font-medium">{pending() ? "Running…" : "Run"}</span>
-            <span class="flex gap-ds-3">
-              <Keycap label="⌘" />
-              <Keycap label="↵" />
-            </span>
-          </button>
-        </form>
-        <div class="flex h-7 items-center gap-ds-8">
-          <span class="pr-ds-4">Time</span>
-          <For each={presets}>
-            {(preset) => (
-              <button
-                class={[
-                  control,
-                  {
-                    "border-dark-ring bg-dark-accent text-dark-accent-foreground":
-                      range() === `-${preset}`,
-                  },
-                ]}
-                aria-pressed={range() === `-${preset}` ? "true" : "false"}
-                onClick={() => selectRange(`-${preset}`)}
-              >
-                {preset}
-              </button>
-            )}
-          </For>
-          <details class="relative ml-auto">
-            <summary class="flex cursor-pointer list-none items-center gap-ds-8 px-ds-8 text-16">
-              <svg aria-hidden="true" width="14" height="14" class="shrink-0">
-                <use href="/icons.svg#history" />
-              </svg>
-              History
-            </summary>
-            <div class="absolute top-9 right-0 z-10 max-h-80 w-[min(480px,90vw)] overflow-auto rounded-8 border border-gray-6 bg-gray-2 p-ds-12 shadow-xl">
-              <For each={history()} fallback={<p>No query history</p>}>
-                {(query) => (
-                  <button
-                    class="block w-full rounded-4 p-ds-8 text-left font-mono hover:bg-gray-3"
-                    onClick={(event) => {
-                      setDraft(query);
-                      input?.focus();
-                      event.currentTarget.closest("details")?.removeAttribute("open");
-                    }}
-                  >
-                    {query}
-                  </button>
-                )}
-              </For>
-            </div>
-          </details>
-        </div>
-      </section>
+      {/* <section */}
+      {/*   aria-label="Query controls" */}
+      {/*   class="flex h-32 shrink-0 flex-col gap-ds-12 border-b border-gray-6 bg-gray-2 px-ds-16 py-ds-12" */}
+      {/* > */}
+      {/*   <form */}
+      {/*     class="flex h-[52px] items-center gap-ds-12" */}
+      {/*     onSubmit={(event) => { */}
+      {/*       event.preventDefault(); */}
+      {/*       void run(); */}
+      {/*     }} */}
+      {/*   > */}
+      {/*     <label class="flex h-full min-w-0 flex-1 items-center gap-ds-16 rounded-6 border border-gray-6 bg-bg px-ds-12 focus-within:border-dark-ring"> */}
+      {/*       <span>LOQL</span> */}
+      {/*       <input */}
+      {/*         ref={(el) => { */}
+      {/*           input = el; */}
+      {/*         }} */}
+      {/*         aria-label="LOQL query" */}
+      {/*         class="min-w-0 flex-1 bg-transparent font-mono text-13 text-gray-12 outline-none! placeholder:text-gray-11" */}
+      {/*         placeholder="Write a query, or use the example below" */}
+      {/*         value={draft()} */}
+      {/*         onInput={(event) => setDraft(event.currentTarget.value)} */}
+      {/*         spellcheck="false" */}
+      {/*         autocomplete="off" */}
+      {/*       /> */}
+      {/*       <kbd class="rounded-2 border border-gray-6 px-ds-6 font-sans">a</kbd> */}
+      {/*     </label> */}
+      {/*     <button */}
+      {/*       type="submit" */}
+      {/*       disabled={!draft().trim() || pending()} */}
+      {/*       class="group flex h-9 w-36 shrink-0 items-center justify-center gap-ds-8 rounded-6 border border-gray-6 bg-dark-primary text-dark-primary-foreground enabled:border-dark-primary enabled:hover:brightness-110 disabled:bg-gray-3 disabled:text-gray-11 disabled:opacity-45" */}
+      {/*     > */}
+      {/*       <svg aria-hidden="true" width="12" height="12" class="shrink-0"> */}
+      {/*         <use href="/icons.svg#play" /> */}
+      {/*       </svg> */}
+      {/*       <span class="text-14 font-medium">{pending() ? "Running…" : "Run"}</span> */}
+      {/*       <span class="flex gap-ds-3"> */}
+      {/*         <Keycap label="⌘" /> */}
+      {/*         <Keycap label="↵" /> */}
+      {/*       </span> */}
+      {/*     </button> */}
+      {/*   </form> */}
+      {/*   <div class="flex h-7 items-center gap-ds-8"> */}
+      {/*     <span class="pr-ds-4">Time</span> */}
+      {/*     <For each={presets}> */}
+      {/*       {(preset) => ( */}
+      {/*         <button */}
+      {/*           class={[ */}
+      {/*             "rounded-6 border border-gray-6 px-ds-10 h-7 text-16 hover:bg-gray-3", */}
+      {/*             { */}
+      {/*               "border-dark-ring bg-dark-accent text-dark-accent-foreground": */}
+      {/*                 range() === `-${preset}`, */}
+      {/*             }, */}
+      {/*           ]} */}
+      {/*           aria-pressed={range() === `-${preset}` ? "true" : "false"} */}
+      {/*           onClick={() => selectRange(`-${preset}`)} */}
+      {/*         > */}
+      {/*           {preset} */}
+      {/*         </button> */}
+      {/*       )} */}
+      {/*     </For> */}
+      {/*     <details class="relative ml-auto"> */}
+      {/*       <summary class="flex cursor-pointer list-none items-center gap-ds-8 px-ds-8 text-16"> */}
+      {/*         <svg aria-hidden="true" width="14" height="14" class="shrink-0"> */}
+      {/*           <use href="/icons.svg#history" /> */}
+      {/*         </svg> */}
+      {/*         History */}
+      {/*       </summary> */}
+      {/*       <div class="absolute top-9 right-0 z-10 max-h-80 w-[min(480px,90vw)] overflow-auto rounded-8 border border-gray-6 bg-gray-2 p-ds-12 shadow-xl"> */}
+      {/*         <For each={history()} fallback={<p>No query history</p>}> */}
+      {/*           {(query) => ( */}
+      {/*             <button */}
+      {/*               class="block w-full rounded-4 p-ds-8 text-left font-mono hover:bg-gray-3" */}
+      {/*               onClick={(event) => { */}
+      {/*                 setDraft(query); */}
+      {/*                 input?.focus(); */}
+      {/*                 event.currentTarget.closest("details")?.removeAttribute("open"); */}
+      {/*               }} */}
+      {/*             > */}
+      {/*               {query} */}
+      {/*             </button> */}
+      {/*           )} */}
+      {/*         </For> */}
+      {/*       </div> */}
+      {/*     </details> */}
+      {/*   </div> */}
+      {/* </section> */}
 
       <div class="flex min-h-0 flex-1">
         <aside
@@ -202,7 +198,7 @@ export default function Home() {
         >
           <div class="flex h-11 shrink-0 items-center justify-between px-ds-16">
             <Show when={!collapsed()}>
-              <h2 class="text-16 font-bold leading-20 text-gray-12">Streams</h2>
+              <h2 class="text-16 leading-20 font-bold text-gray-12">Streams</h2>
             </Show>
             <button
               aria-label={collapsed() ? "Expand sidebar" : "Collapse sidebar"}
@@ -225,7 +221,7 @@ export default function Home() {
               <br />a query has run.
             </p>
             <section class="flex flex-col gap-ds-12 border-t border-gray-6 p-ds-16">
-              <h2 class="text-16 font-bold leading-20 text-gray-12">Fields</h2>
+              <h2 class="text-16 leading-20 font-bold text-gray-12">Fields</h2>
               <Show
                 when={hasRun()}
                 fallback={<p class="leading-20">Run a query to discover fields</p>}
@@ -271,8 +267,8 @@ export default function Home() {
             fallback={
               <div class="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-query-glow p-ds-24">
                 <div class="flex w-full max-w-[640px] flex-col items-start gap-ds-16 pb-ds-60">
-                  <h1 class="text-24 font-bold leading-32 text-gray-12">Run a query</h1>
-                  <code class="w-full overflow-x-auto whitespace-nowrap rounded-6 border border-gray-6 bg-gray-2 p-ds-12 font-mono text-13 leading-20 text-gray-12">
+                  <h1 class="text-24 leading-32 font-bold text-gray-12">Run a query</h1>
+                  <code class="w-full overflow-x-auto rounded-6 border border-gray-6 bg-gray-2 p-ds-12 font-mono text-13 leading-20 whitespace-nowrap text-gray-12">
                     {example}
                   </code>
                   <button
