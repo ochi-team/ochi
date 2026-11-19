@@ -1,11 +1,62 @@
-import { For } from "solid-js";
+import { action, createOptimistic, createSignal, onSettled } from "solid-js";
+
+import { loadQueryHistory, pushQueryHistory } from "@/modules/queryHistory";
 
 import Keycap from "@/components/Keycap";
+import QueryHistory from "@/components/widgets/QueryHistory";
+import QueryTimePresets from "@/components/widgets/QueryTimePresets";
+import QueryEditor from "./QueryEditor";
 
+interface QueryProps {
+  range: string;
+  setRange: (value: string) => void;
 
-const presets = ["5m", "15m", "1h", "6h", "24h"];
+  query: string;
+  setQuery: (value: string) => void;
 
-export default function Query(props: {}) {
+  runQuery: () => Promise<string | undefined>;
+}
+
+export default function Query(props: QueryProps) {
+  const [pending, setPending] = createOptimistic(false);
+  const [history, setHistory] = createSignal<readonly string[]>([]);
+  const [input, setInput] = createSignal<HTMLInputElement>();
+
+  const run = action(function* () {
+    if (!props.query || pending()) return;
+    setPending(true);
+    const executedQuery: string | undefined = yield props.runQuery();
+    if (executedQuery) setHistory(pushQueryHistory(executedQuery));
+  });
+
+  onSettled(() => {
+    setHistory(loadQueryHistory());
+
+    const onKey = (event: KeyboardEvent) => {
+      // cmd + enter => run query
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        run();
+        // a => edit query
+      } else if (
+        event.key === "a" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !(
+          event.target instanceof HTMLElement &&
+          (event.target.closest("input, textarea, select") || event.target.isContentEditable)
+        )
+      ) {
+        event.preventDefault();
+        input()?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   return (
     <section
       aria-label="Query controls"
@@ -15,34 +66,19 @@ export default function Query(props: {}) {
         class="flex h-[52px] items-center gap-ds-12"
         onSubmit={(event) => {
           event.preventDefault();
-          void run();
+          return run();
         }}
       >
-        <label class="flex h-full min-w-0 flex-1 items-center gap-ds-16 rounded-6 border border-gray-6 bg-bg px-ds-12 focus-within:border-dark-ring">
-          <span>LOQL</span>
-          <input
-            ref={(el) => {
-              input = el;
-            }}
-            aria-label="LOQL query"
-            class="min-w-0 flex-1 bg-transparent font-mono text-13 text-gray-12 outline-none! placeholder:text-gray-11"
-            placeholder="Write a query, or use the example below"
-            value={draft()}
-            onInput={(event) => setDraft(event.currentTarget.value)}
-            spellcheck="false"
-            autocomplete="off"
-          />
-          <kbd class="rounded-2 border border-gray-6 px-ds-6 font-sans">a</kbd>
-        </label>
+        <QueryEditor query={props.query} setQuery={props.setQuery} setInputRef={setInput} />
         <button
           type="submit"
-          disabled={!draft().trim() || pending()}
+          disabled={!props.query.trim() || pending()}
           class="group flex h-9 w-36 shrink-0 items-center justify-center gap-ds-8 rounded-6 border border-gray-6 bg-dark-primary text-dark-primary-foreground enabled:border-dark-primary enabled:hover:brightness-110 disabled:bg-gray-3 disabled:text-gray-11 disabled:opacity-45"
         >
           <svg aria-hidden="true" width="12" height="12" class="shrink-0">
             <use href="/icons.svg#play" />
           </svg>
-          <span class="text-14 font-medium">{pending() ? "Running…" : "Run"}</span>
+          <span class="text-14 font-medium">{pending() ? "Running" : "Run"}</span>
           <span class="flex gap-ds-3">
             <Keycap label="⌘" />
             <Keycap label="↵" />
@@ -50,48 +86,8 @@ export default function Query(props: {}) {
         </button>
       </form>
       <div class="flex h-7 items-center gap-ds-8">
-        <span class="pr-ds-4">Time</span>
-        <For each={presets}>
-          {(preset) => (
-            <button
-              class={[
-                "h-7 rounded-6 border border-gray-6 px-ds-10 text-16 hover:bg-gray-3",
-                {
-                  "border-dark-ring bg-dark-accent text-dark-accent-foreground":
-                    range() === `-${preset}`,
-                },
-              ]}
-              aria-pressed={range() === `-${preset}` ? "true" : "false"}
-              onClick={() => selectRange(`-${preset}`)}
-            >
-              {preset}
-            </button>
-          )}
-        </For>
-        <details class="relative ml-auto">
-          <summary class="flex cursor-pointer list-none items-center gap-ds-8 px-ds-8 text-16">
-            <svg aria-hidden="true" width="14" height="14" class="shrink-0">
-              <use href="/icons.svg#history" />
-            </svg>
-            History
-          </summary>
-          <div class="absolute top-9 right-0 z-10 max-h-80 w-[min(480px,90vw)] overflow-auto rounded-8 border border-gray-6 bg-gray-2 p-ds-12 shadow-xl">
-            <For each={history()} fallback={<p>No query history</p>}>
-              {(query) => (
-                <button
-                  class="block w-full rounded-4 p-ds-8 text-left font-mono hover:bg-gray-3"
-                  onClick={(event) => {
-                    setDraft(query);
-                    input?.focus();
-                    event.currentTarget.closest("details")?.removeAttribute("open");
-                  }}
-                >
-                  {query}
-                </button>
-              )}
-            </For>
-          </div>
-        </details>
+        <QueryTimePresets range={props.range} setRange={props.setRange} />
+        <QueryHistory history={history()} input={input()} setQuery={props.setQuery} />
       </div>
     </section>
   );

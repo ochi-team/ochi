@@ -13,8 +13,9 @@ export function loadQueryHistory(): string[] {
   }
 }
 
-export function pushQueryHistory(history: readonly string[], query: string): readonly string[] {
+export function pushQueryHistory(query: string): readonly string[] {
   try {
+    const history = loadQueryHistory();
     if (!query) return history;
 
     const res = [query, ...history].slice(0, queryHistoryLimit);
