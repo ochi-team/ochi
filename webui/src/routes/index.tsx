@@ -178,6 +178,7 @@
 // }
 import { Title } from "@solidjs/meta";
 import { createSignal, onCleanup } from "solid-js";
+import { setQueryExtractingRange, setRangeSubstitutingQuery } from "@/modules/query";
 import { buildLoqlQuery, queryLogs, type LogEntry } from "../client/query";
 import Query from "../components/widgets/Query";
 
@@ -186,18 +187,16 @@ export default function Home() {
   const [range, setRange] = createSignal("");
 
   // sets query and time range
-  function setQueryExtractingRange(query: string) {
-    setQuery(query);
-
-    if (!query.startsWith("[")) return;
-    const range = /^\[\s*(-\d+[a-z]+)\s*,\s*now\s*\]/.exec(query)?.[1] ?? "";
-    console.log(range);
-    setRange(range);
+  function updateQuery(value: string) {
+    const next = setQueryExtractingRange(value);
+    setQuery(next.query);
+    setRange(next.range);
   }
 
-  function setRangeSubstitutingQuery(value: string) {
-    setRange(value);
-    setQuery(query().replace(/^\[[^\]]*\]\s*/, `[${value}, now] `));
+  function updateRange(value: string) {
+    const next = setRangeSubstitutingQuery(query(), value);
+    setRange(next.range);
+    setQuery(next.query);
   }
 
   let controller: AbortController | undefined;
@@ -235,9 +234,9 @@ export default function Home() {
 
       <Query
         query={query()}
-        setQuery={setQueryExtractingRange}
+        setQuery={updateQuery}
         range={range()}
-        setRange={setRangeSubstitutingQuery}
+        setRange={updateRange}
         runQuery={runQuery}
       />
     </main>

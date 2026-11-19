@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
-    "test": "node --test tests/*.test.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "oxlint src --fix",
     "lint:ci": "oxlint src",
     "fmt": "oxfmt",
@@ -23,13 +24,17 @@
   "devDependencies": {
     "@solidjs/diagnostics": "^2.0.0-rc.21",
     "@solidjs/start-devtools": "1.0.0-next.9",
+    "@solidjs/testing-library": "1.0.0-rc.2",
     "@solidjs/vite-plugin": "^3.0.0-next.57",
     "@tailwindcss/vite": "^4.3.5",
+    "@testing-library/jest-dom": "^7.0.1",
     "eslint-plugin-solid": "~0.19.0",
+    "happy-dom": "^21.0.4",
     "oxfmt": "^0.78.0",
     "oxlint": "~1.92.0",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "vitest": "^5.1.1"
   }
 }

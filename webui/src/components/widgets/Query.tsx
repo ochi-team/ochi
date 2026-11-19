@@ -1,5 +1,6 @@
 import { action, createMemo, createOptimistic, createSignal, onSettled } from "solid-js";
 
+import { queryTimeRangeRegex } from "@/modules/query";
 import { loadQueryHistory, pushQueryHistory } from "@/modules/queryHistory";
 
 import Keycap from "@/components/Keycap";
@@ -22,7 +23,7 @@ export default function Query(props: QueryProps) {
   const [history, setHistory] = createSignal<readonly string[]>([]);
   const [input, setInput] = createSignal<HTMLInputElement>();
 
-  const queryHasTimeRange = createMemo(() => /^\[\s*(-\d+[a-z]+)\s*,\s*now\s*\]/.test(props.query));
+  const queryHasTimeRange = createMemo(() => queryTimeRangeRegex.test(props.query));
 
   const run = action(function* () {
     if (!props.query || pending()) return;
