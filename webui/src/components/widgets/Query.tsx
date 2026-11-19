@@ -1,4 +1,4 @@
-import { action, createOptimistic, createSignal, onSettled } from "solid-js";
+import { action, createMemo, createOptimistic, createSignal, onSettled } from "solid-js";
 
 import { loadQueryHistory, pushQueryHistory } from "@/modules/queryHistory";
 
@@ -21,6 +21,8 @@ export default function Query(props: QueryProps) {
   const [pending, setPending] = createOptimistic(false);
   const [history, setHistory] = createSignal<readonly string[]>([]);
   const [input, setInput] = createSignal<HTMLInputElement>();
+
+  const queryHasTimeRange = createMemo(() => /^\[\s*(-\d+[a-z]+)\s*,\s*now\s*\]/.test(props.query));
 
   const run = action(function* () {
     if (!props.query || pending()) return;
@@ -86,7 +88,11 @@ export default function Query(props: QueryProps) {
         </button>
       </form>
       <div class="flex h-7 items-center gap-ds-8">
-        <QueryTimePresets range={props.range} setRange={props.setRange} />
+        <QueryTimePresets
+          range={props.range}
+          setRange={props.setRange}
+          queryHasTimeRange={queryHasTimeRange()}
+        />
         <QueryHistory history={history()} input={input()} setQuery={props.setQuery} />
       </div>
     </section>

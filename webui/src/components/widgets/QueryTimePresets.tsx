@@ -3,6 +3,7 @@ import { For } from "solid-js";
 interface QueryTimePresetsProps {
   range: string;
   setRange: (value: string) => void;
+  queryHasTimeRange: boolean;
 }
 
 const presets = ["5m", "15m", "1h", "6h", "24h"];
@@ -17,9 +18,11 @@ export default function QueryTimePresets(props: QueryTimePresetsProps) {
       <For each={presets}>
         {(preset) => (
           <button
+            disabled={!props.queryHasTimeRange}
             class={[
-              "h-7 rounded-6 border border-gray-6 px-ds-10 text-16 hover:bg-gray-3",
+              "h-7 rounded-6 border border-gray-6 px-ds-10 text-16",
               {
+                "hover:bg-gray-3": props.queryHasTimeRange,
                 "border-dark-ring bg-dark-accent text-dark-accent-foreground":
                   props.range === `-${preset}`,
               },
