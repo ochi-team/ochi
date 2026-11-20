@@ -33,8 +33,9 @@ const HotkeysContext = createContext<HotkeysContextValue | null>(null);
 
 export function browserPlatform(): HotkeyPlatform {
   if (typeof navigator === "undefined") return "linux";
-  // iPadOS can identify as a Mac; older iOS user agents need an explicit match.
-  const agent = `${navigator.platform} ${navigator.userAgent}`;
+  const client = navigator as Navigator & { userAgentData?: { platform?: string } };
+  // Client hints are not supported by Safari/Firefox; iPadOS may identify as macOS.
+  const agent = client.userAgentData?.platform || navigator.userAgent;
   return /Mac|iPhone|iPad|iPod/i.test(agent) ? "mac" : detectPlatform(agent);
 }
 

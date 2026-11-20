@@ -6,8 +6,8 @@ export const appHotkeys = defineAppHotkeys({
   queryClose: { hotkey: "Escape", scope: "query", meta: { name: "Unfocus" } },
   historyOpen: { hotkey: "H", scope: "query", meta: { name: "Query history" } },
 
-  up: { hotkey: "J", scope: "history", meta: { name: "Up" } },
-  down: { hotkey: "K", scope: "history", meta: { name: "Down" } },
-  select: { hotkey: "Enter", scope: "history", meta: { name: "Select item" } },
-  close: { hotkey: "Escape", scope: "history", meta: { name: "Close" } },
+  up: { hotkey: "K", meta: { name: "Up" } },
+  down: { hotkey: "J", meta: { name: "Down" } },
+  select: { hotkey: "Enter", meta: { name: "Select item" } },
+  close: { hotkey: "Escape", meta: { name: "Close" } },
 });

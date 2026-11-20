@@ -1,21 +1,25 @@
 import { onSettled } from "solid-js";
+import type { HotkeyCommonOptions } from "@tanstack/hotkeys";
 
 import { useHotkey } from "@/modules/hotkeys";
 import { appHotkeys } from "@/modules/keymap";
 
+import { AppHotkey } from "@tanstack/hotkeys";
+
 export function useDismiss(
   root: () => HTMLDetailsElement | undefined,
-  open: () => boolean,
   close: () => void,
+  toggleKey: AppHotkey | undefined = undefined,
+  options: HotkeyCommonOptions = {},
 ) {
-  // close on esc
-  useHotkey(appHotkeys.close, () => close(), { ignoreInputs: false });
+  useHotkey(appHotkeys.close, close, { ignoreInputs: false, ...options });
+  if (toggleKey) useHotkey(toggleKey, close, { ignoreInputs: false, ...options });
 
   // close on click outside
   onSettled(() => {
     const outside = (event: Event) => {
       const r = root();
-      if (r && open() && event.target instanceof Node && !event.composedPath().includes(r)) close();
+      if (r && event.target instanceof Node && !event.composedPath().includes(r)) close();
     };
     document.addEventListener("pointerdown", outside);
     return () => {

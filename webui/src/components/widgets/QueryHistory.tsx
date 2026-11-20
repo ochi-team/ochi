@@ -14,6 +14,14 @@ interface HistoryItemsProps {
 }
 
 function HistoryItems(props: HistoryItemsProps) {
+  let list: HTMLDivElement | undefined;
+  createEffect(
+    () => props.selected,
+    () => {
+      list?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    },
+  );
+
   useHotkey(
     appHotkeys.down,
     () => {
@@ -40,6 +48,9 @@ function HistoryItems(props: HistoryItemsProps) {
 
   return (
     <div
+      ref={(el) => {
+        list = el;
+      }}
       role="listbox"
       aria-label="Query history"
       class="absolute top-9 right-0 z-10 max-h-80 w-[min(480px,90vw)] overflow-auto rounded-8 border border-gray-6 bg-gray-2 p-ds-12 shadow-xl"
@@ -52,7 +63,7 @@ function HistoryItems(props: HistoryItemsProps) {
             aria-selected={props.selected === index() ? "true" : "false"}
             class={[
               "block w-full rounded-4 p-ds-8 text-left font-mono hover:bg-gray-3",
-              { "bg-gray-4": props.selected === index() },
+              { "bg-gray-3": props.selected === index() },
             ]}
             onMouseEnter={() => props.setSelected(index())}
             onClick={() => props.select(query)}
@@ -92,12 +103,7 @@ export default function QueryHistory(props: QueryHistoryProps) {
   };
 
   useHotkey(appHotkeys.historyOpen, show);
-
-  useDismiss(() => root, open, close);
-
-  createEffect(selected, () => {
-    root?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-  });
+  useDismiss(() => root, close, appHotkeys.historyOpen, { scope: "history" });
 
   return (
     <details
