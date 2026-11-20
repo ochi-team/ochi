@@ -32,10 +32,7 @@ function Sheet(props: { close: () => void }) {
         {(item) => (
           <div class="flex items-center justify-between gap-ds-12 py-ds-8">
             <span>{item.appHotkey.meta?.name}</span>
-            <span
-              aria-label={`Rebind ${item.appHotkey.meta?.name}`}
-              class="ml-auto rounded-4 border border-gray-6 px-ds-8"
-            >
+            <span class="ml-auto rounded-4 border border-gray-6 px-ds-8">
               {useHotkeyLabel(item.appHotkey)()}
             </span>
           </div>

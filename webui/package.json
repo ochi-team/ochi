@@ -9,6 +9,8 @@
     "build": "vite build",
     "serve": "vite preview",
     "test": "vitest run",
+    "test:a": "vitest run --reporter=dot --silent --hideSkippedTests --no-color",
+    "test:a:verbose": "vitest run --reporter=dot --silent=passed-only --hideSkippedTests --no-color",
     "test:watch": "vitest",
     "lint": "oxlint src --fix",
     "lint:ci": "oxlint src",

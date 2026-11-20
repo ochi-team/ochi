@@ -1,3 +1,7 @@
+# validation
+
+Run tests using `pnpm test:a` or `pnpm test:a:verbose`.
+
 # Style
 
 Cut taglines, helper text and secondary labels. If a screen needs them to make sense, fix the layout.
