@@ -17,6 +17,9 @@ importers:
       '@solidjs/web':
         specifier: ^2.0.0-rc.21
         version: 2.0.0-rc.21(solid-js@2.0.0-rc.21)
+      '@tanstack/hotkeys':
+        specifier: ^0.33.0
+        version: 0.33.0
       solid-js:
         specifier: ^2.0.0-rc.21
         version: 2.0.0-rc.21
@@ -819,6 +822,10 @@ packages:
     resolution: {integrity: sha512-BCNiY0a1ZjdOHVqw7kyb7U72BwfMF3dfUuN+tQsLWky/J5JOI/r7abibglXfygrZhVO/3u3V+E25kkKTeMkXaQ==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
+
+  '@tanstack/hotkeys@0.33.0':
+    resolution: {integrity: sha512-xZ7A28qJ2YUq+bxhclEquxvM6LpwGMLUK0daiNC2hJ5frXHeGFdyjgG+Onz77ZwQw2XWHK5hLnWhQQ1vCZUkQQ==}
+    engines: {node: '>=20'}
 
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
@@ -2136,6 +2143,8 @@ snapshots:
       '@tailwindcss/oxide': 4.3.5
       tailwindcss: 4.3.5
       vite: 8.3.5(@types/node@26.6.6)(jiti@2.7.0)
+
+  '@tanstack/hotkeys@0.33.0': {}
 
   '@testing-library/dom@10.4.2':
     dependencies:

@@ -4,6 +4,9 @@ import { queryTimeRangeRegex } from "@/modules/query";
 import { loadQueryHistory, pushQueryHistory } from "@/modules/queryHistory";
 
 import Keycap from "@/components/Keycap";
+import { HotkeysProvider, useHotkey, useHotkeyLabel } from "@/modules/hotkeys";
+import { appHotkeys } from "@/modules/keymap";
+import HotkeySheet from "@/components/HotkeySheet";
 import QueryHistory from "@/components/widgets/QueryHistory";
 import QueryTimePresets from "@/components/widgets/QueryTimePresets";
 import QueryEditor from "./QueryEditor";
@@ -19,6 +22,15 @@ interface QueryProps {
 }
 
 export default function Query(props: QueryProps) {
+  return (
+    <HotkeysProvider scope="query">
+      <QueryControls {...props} />
+    </HotkeysProvider>
+  );
+}
+
+function QueryControls(props: QueryProps) {
+  const runLabel = useHotkeyLabel(appHotkeys.queryRun);
   const [pending, setPending] = createOptimistic(false);
   const [history, setHistory] = createSignal<readonly string[]>([]);
   const [input, setInput] = createSignal<HTMLInputElement>();
@@ -36,31 +48,11 @@ export default function Query(props: QueryProps) {
 
   onSettled(() => {
     setHistory(loadQueryHistory());
-
-    const onKey = (event: KeyboardEvent) => {
-      // cmd + enter => run query
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-        event.preventDefault();
-        run();
-        // a => edit query
-      } else if (
-        event.key === "a" &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey &&
-        !(
-          event.target instanceof HTMLElement &&
-          (event.target.closest("input, textarea, select") || event.target.isContentEditable)
-        )
-      ) {
-        event.preventDefault();
-        input()?.focus();
-      }
-    };
-
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   });
+
+  useHotkey(appHotkeys.queryRun, run);
+  useHotkey(appHotkeys.queryEdit, () => input()?.focus());
+  useHotkey(appHotkeys.queryClose, () => input()?.blur());
 
   return (
     <section
@@ -84,10 +76,7 @@ export default function Query(props: QueryProps) {
             <use href="/icons.svg#play" />
           </svg>
           <span class="text-14 font-medium">{pending() ? "Running" : "Run"}</span>
-          <span class="flex gap-ds-3">
-            <Keycap label="⌘" />
-            <Keycap label="↵" />
-          </span>
+          <Keycap label={runLabel()} />
         </button>
       </form>
       <div class="flex h-7 items-center gap-ds-8">
@@ -97,6 +86,7 @@ export default function Query(props: QueryProps) {
           queryHasRangeToReplace={queryHasTimeRange()}
         />
         <QueryHistory history={history()} input={input()} setQuery={props.setQuery} />
+        <HotkeySheet />
       </div>
     </section>
   );

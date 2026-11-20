@@ -19,6 +19,7 @@
     "@solidjs/meta": "^1.0.0-next.2",
     "@solidjs/router": "^2.0.0-next.44",
     "@solidjs/web": "^2.0.0-rc.21",
+    "@tanstack/hotkeys": "^0.33.0",
     "solid-js": "^2.0.0-rc.21"
   },
   "devDependencies": {

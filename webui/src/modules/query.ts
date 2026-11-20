@@ -1,5 +1,5 @@
 export const queryTimeRangeRegex =
-  /^\s*\[\s*([^\s,\[\]][^,\[\]]*?)\s*,\s*[^\s,\[\]][^,\[\]]*?\s*\]\s*/;
+  /^\s*\[\s*([^\s,[\]][^,[\]]*?)\s*,\s*[^\s,[\]][^,[\]]*?\s*\]\s*/;
 
 export function setQueryExtractingRange(query: string) {
   const range = /^\s*\[\s*(-\d+[smhd])\s*,\s*now\s*\]/.exec(query)?.[1] ?? "";

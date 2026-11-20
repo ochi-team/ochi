@@ -1,3 +1,6 @@
+import { useHotkeyLabel } from "@/modules/hotkeys";
+import { appHotkeys } from "@/modules/keymap";
+
 interface QueryEditorProps {
   query: string;
   setQuery: (value: string) => void;
@@ -6,6 +9,7 @@ interface QueryEditorProps {
 }
 
 export default function QueryEditor(props: QueryEditorProps) {
+  const label = useHotkeyLabel(appHotkeys.queryEdit);
   return (
     <label class="flex h-full min-w-0 flex-1 items-center gap-ds-16 rounded-6 border border-gray-6 bg-bg px-ds-12 focus-within:border-dark-ring">
       <span>LOQL</span>
@@ -19,7 +23,7 @@ export default function QueryEditor(props: QueryEditorProps) {
         spellcheck="false"
         autocomplete="off"
       />
-      <kbd class="rounded-2 border border-gray-6 px-ds-6 font-sans">a</kbd>
+      <kbd class="rounded-2 border border-gray-6 px-ds-6 font-sans">{label()}</kbd>
     </label>
   );
 }
