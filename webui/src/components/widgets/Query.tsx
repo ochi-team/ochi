@@ -23,7 +23,9 @@ export default function Query(props: QueryProps) {
   const [history, setHistory] = createSignal<readonly string[]>([]);
   const [input, setInput] = createSignal<HTMLInputElement>();
 
-  const queryHasTimeRange = createMemo(() => queryTimeRangeRegex.test(props.query));
+  const queryHasTimeRange = createMemo(() =>
+    props.query ? queryTimeRangeRegex.test(props.query) : true,
+  );
 
   const run = action(function* () {
     if (!props.query || pending()) return;
@@ -92,7 +94,7 @@ export default function Query(props: QueryProps) {
         <QueryTimePresets
           range={props.range}
           setRange={props.setRange}
-          queryHasTimeRange={queryHasTimeRange()}
+          queryHasRangeToReplace={queryHasTimeRange()}
         />
         <QueryHistory history={history()} input={input()} setQuery={props.setQuery} />
       </div>
