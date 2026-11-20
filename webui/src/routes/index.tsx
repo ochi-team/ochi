@@ -189,14 +189,14 @@ export default function Home() {
   // sets query and time range
   function updateQuery(value: string) {
     const next = setQueryExtractingRange(value);
-    setQuery(next.query);
+    setQuery(next.query.trim());
     setRange(next.range);
   }
 
   function updateRange(value: string) {
     const next = setRangeSubstitutingQuery(query(), value);
     setRange(next.range);
-    setQuery(next.query);
+    setQuery(next.query.trim());
   }
 
   let controller: AbortController | undefined;

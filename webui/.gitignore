@@ -10,3 +10,6 @@ dist
 
 # router
 file-routes.d.ts
+
+# tests
+.vitest

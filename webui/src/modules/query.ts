@@ -8,7 +8,7 @@ export function setQueryExtractingRange(query: string) {
 
 export function setRangeSubstitutingQuery(query: string, range: string) {
   return {
-    query: query.replace(queryTimeRangeRegex, `[${range}, now] `),
+    query: query.trim() ? query.replace(queryTimeRangeRegex, `[${range}, now] `) : `[${range}, now]`,
     range,
   };
 }
