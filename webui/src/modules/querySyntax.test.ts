@@ -75,6 +75,55 @@ test("scanQuery keeps comparison operators atomic and covers delimiters", () => 
   ]);
 });
 
+test("scanQuery preserves quoted literals without recognizing their contents as syntax", () => {
+  expectTokens(`"AND OR = //" 'OR AND !='`, [
+    ["literal", `"AND OR = //"`],
+    ["whitespace", " "],
+    ["literal", "'OR AND !='"],
+  ]);
+  expectTokens(`""''"a'b"'a"b'`, [
+    ["literal", '""'],
+    ["literal", "''"],
+    ["literal", `"a'b"`],
+    ["literal", `'a"b'`],
+  ]);
+  expectTokens('"日本語😀\nOR=値"=42', [
+    ["literal", '"日本語😀\nOR=値"'],
+    ["equal", "="],
+    ["literal", "42"],
+  ]);
+});
+
+test("scanQuery respects escaped quotes and backslash parity", () => {
+  expectTokens(String.raw`"a\" AND=b" 'c\' OR=d'`, [
+    ["literal", String.raw`"a\" AND=b"`],
+    ["whitespace", " "],
+    ["literal", String.raw`'c\' OR=d'`],
+  ]);
+  expectTokens(String.raw`"a\\" AND 'b\\'`, [
+    ["literal", String.raw`"a\\"`],
+    ["whitespace", " "],
+    ["and", "AND"],
+    ["whitespace", " "],
+    ["literal", String.raw`'b\\'`],
+  ]);
+});
+
+test("scanQuery retains unterminated quotes as incomplete literals", () => {
+  expectTokens('"', [["unterminatedLiteral", '"']]);
+  expectTokens("'AND =😀\nOR", [["unterminatedLiteral", "'AND =😀\nOR"]]);
+  expectTokens('"escaped\\"', [["unterminatedLiteral", '"escaped\\"']]);
+  expectTokens("'trailing\\", [["unterminatedLiteral", "'trailing\\"]]);
+});
+
+test("scanQuery preserves http schema as a literal", () => {
+  expectTokens("/health https://host/path", [
+    ["literal", "/health"],
+    ["whitespace", " "],
+    ["literal", "https://host/path"],
+  ]);
+});
+
 test("scanQuery preserves unknown characters", () => {
   expectTokens("!<>?", [
     ["unknown", "!"],

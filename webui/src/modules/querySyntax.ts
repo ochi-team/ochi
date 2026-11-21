@@ -1,5 +1,6 @@
 export type TokenKind =
   | "literal"
+  | "unterminatedLiteral"
   | "whitespace"
   | "equal"
   | "notEqual"
@@ -51,6 +52,19 @@ export function scanQuery(source: string): QueryToken[] {
     if (whitespaceCharacter.test(char)) {
       kind = "whitespace";
       while (offset < source.length && whitespaceCharacter.test(source[offset])) offset++;
+    } else if (char === '"' || char === "'") {
+      kind = "unterminatedLiteral";
+      offset++;
+      while (offset < source.length) {
+        const current = source[offset++];
+        if (current === "\\") {
+          // A backslash escapes exactly one UTF-16 unit, including another backslash.
+          if (offset < source.length) offset++;
+        } else if (current === char) {
+          kind = "literal";
+          break;
+        }
+      }
     } else if (literalCharacter.test(char)) {
       while (offset < source.length && literalCharacter.test(source[offset])) offset++;
       const word = source.slice(start, offset).toLowerCase();
