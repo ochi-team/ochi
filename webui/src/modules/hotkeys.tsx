@@ -152,7 +152,7 @@ export function useAppHotkeyList() {
   const context = useContext(HotkeysContext)!;
   const app = useStoreState(context.store.store);
 
-  return createMemo(() => Object.values(app().appHotkeys).map((appHotkey) => ({ appHotkey })));
+  return createMemo(() => Object.values(app().appHotkeys).map((appHotkey) => appHotkey));
 }
 
 function useStoreState<T>(store: {

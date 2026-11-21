@@ -1,20 +1,38 @@
 import { For, Show, createMemo, createSignal, onSettled } from "solid-js";
-import { HotkeysProvider, useAppHotkeyList, useHotkey, useHotkeyLabel } from "@/modules/hotkeys";
+import { formatForDisplay, type HotkeyPlatform, type AppHotkey } from "@tanstack/hotkeys";
+import { browserPlatform, HotkeysProvider, useAppHotkeyList, useHotkey } from "@/modules/hotkeys";
 import { appHotkeys } from "@/modules/keymap";
 import { useDismiss } from "@/modules/dialog";
 
+function hotkeysByScope(hostKeyList: AppHotkey[], platform: HotkeyPlatform) {
+  const scopes = new Map<string, { name: string; group?: string; label: string }[]>();
+
+  for (const appHotkey of hostKeyList) {
+    const scope = appHotkey.meta?.scope ?? "";
+    const items = scopes.get(scope) ?? [];
+    const name = appHotkey.meta?.group ?? appHotkey.meta?.name ?? "";
+    const group = appHotkey.meta?.group;
+    const label = appHotkey.hotkey ? formatForDisplay(appHotkey.hotkey, { platform }) : "";
+
+    const grouped = group && items.find((row) => row.group === group);
+    if (grouped) {
+      // update same group keys view, don't create a new key in the sheet
+      grouped.label += ` / ${label}`;
+      continue;
+    }
+
+    // collect the key view
+    items.push({ name, group, label });
+    scopes.set(scope, items);
+  }
+
+  return Array.from(scopes, ([name, items]) => ({ name, items }));
+}
+
 function Sheet(props: { close: () => void; root: () => HTMLElement | undefined }) {
   const list = useAppHotkeyList();
-  const groups = createMemo(() => {
-    const scopes = new Map<string, ReturnType<typeof list>>();
-    for (const item of list()) {
-      const scope = item.appHotkey.meta?.scope ?? "";
-      const items = scopes.get(scope) ?? [];
-      items.push(item);
-      scopes.set(scope, items);
-    }
-    return Array.from(scopes, ([name, items]) => ({ name, items }));
-  });
+  const platform = browserPlatform();
+  const groups = createMemo(() => hotkeysByScope(list(), platform));
 
   let closeButton: HTMLButtonElement | undefined;
   onSettled(() => closeButton?.focus());
@@ -51,17 +69,14 @@ function Sheet(props: { close: () => void; root: () => HTMLElement | undefined }
           <section aria-label={group.name} class="flex flex-col gap-ds-4 px-ds-16 pt-ds-12 pb-ds-6">
             <h3 class="text-12 leading-20 font-semibold">{group.name}</h3>
             <For each={group.items}>
-              {(item) => {
-                const label = useHotkeyLabel(item.appHotkey);
-                return (
-                  <div class="flex h-7 shrink-0 items-center justify-between gap-ds-12 text-13 leading-16">
-                    <span>{item.appHotkey.meta?.name}</span>
-                    <kbd class="shrink-0 rounded-3 border border-gray-6 px-ds-6 py-ds-2 font-sans text-12 leading-16">
-                      {label()}
-                    </kbd>
-                  </div>
-                );
-              }}
+              {(item) => (
+                <div class="flex h-7 shrink-0 items-center justify-between gap-ds-12 text-13 leading-16">
+                  <span>{item.name}</span>
+                  <kbd class="shrink-0 rounded-3 border border-gray-6 px-ds-6 py-ds-2 font-sans text-12 leading-16">
+                    {item.label}
+                  </kbd>
+                </div>
+              )}
             </For>
           </section>
         )}

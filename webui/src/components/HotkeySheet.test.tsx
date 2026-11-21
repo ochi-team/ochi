@@ -65,11 +65,22 @@ test.each([
     const bindings = Object.values(appHotkeys);
     expect(
       Array.from(sheet.querySelectorAll("section > div > span"), (label) => label.textContent),
-    ).toEqual(bindings.map((binding) => binding.meta?.name));
-    expect(sheet.querySelectorAll("kbd")).toHaveLength(bindings.length);
+    ).toEqual([...new Set(bindings.map((binding) => binding.meta?.group ?? binding.meta?.name))]);
+    expect(sheet.querySelectorAll("kbd")).toHaveLength(bindings.length - 1);
     expect(within(sheet).getByRole("region", { name: "Query" })).toHaveTextContent(modifier);
   },
 );
+
+test.each([
+  [{}, "K / J"],
+  [{ down: "N", up: "P" }, "P / N"],
+])("Shortcut popover combines navigation bindings: %j", (customHotkeys, expected) => {
+  const { sheet } = openSheet(customHotkeys);
+  const row = within(sheet).getByText("Up / Down").parentElement!;
+  expect(row.querySelector("kbd")).toHaveTextContent(expected);
+  expect(within(sheet).queryByText("Up")).not.toBeInTheDocument();
+  expect(within(sheet).queryByText("Down")).not.toBeInTheDocument();
+});
 
 test.each(["close", "escape", "outside", "hotkey"])(
   "Shortcut popover dismisses using %s",
