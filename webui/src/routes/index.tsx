@@ -176,6 +176,7 @@
 //     </main>
 //   );
 // }
+import HotkeySheet from "@/components/HotkeySheet";
 import { Title } from "@solidjs/meta";
 import { createSignal, onCleanup } from "solid-js";
 import { setQueryExtractingRange, setRangeSubstitutingQuery } from "@/modules/query";
@@ -239,6 +240,7 @@ export default function Home() {
         setRange={updateRange}
         runQuery={runQuery}
       />
+      <HotkeySheet />
     </main>
   );
 }

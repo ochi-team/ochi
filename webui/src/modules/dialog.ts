@@ -7,7 +7,7 @@ import { appHotkeys } from "@/modules/keymap";
 import { AppHotkey } from "@tanstack/hotkeys";
 
 export function useDismiss(
-  root: () => HTMLDetailsElement | undefined,
+  root: () => EventTarget | undefined,
   close: () => void,
   toggleKey: AppHotkey | undefined = undefined,
   options: HotkeyCommonOptions = {},

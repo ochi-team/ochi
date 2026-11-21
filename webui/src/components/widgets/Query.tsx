@@ -6,7 +6,6 @@ import { loadQueryHistory, pushQueryHistory } from "@/modules/queryHistory";
 import Keycap from "@/components/Keycap";
 import { HotkeysProvider, useHotkey, useHotkeyLabel } from "@/modules/hotkeys";
 import { appHotkeys } from "@/modules/keymap";
-import HotkeySheet from "@/components/HotkeySheet";
 import QueryHistory from "@/components/widgets/QueryHistory";
 import QueryTimePresets from "@/components/widgets/QueryTimePresets";
 import QueryEditor from "./QueryEditor";
@@ -86,7 +85,6 @@ function QueryControls(props: QueryProps) {
           queryHasRangeToReplace={queryHasTimeRange()}
         />
         <QueryHistory history={history()} input={input()} setQuery={props.setQuery} />
-        <HotkeySheet />
       </div>
     </section>
   );

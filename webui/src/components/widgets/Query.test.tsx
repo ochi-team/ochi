@@ -3,7 +3,12 @@ import { parseHotkey } from "@tanstack/hotkeys";
 import { createSignal, flush } from "solid-js";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-import { browserPlatform, HotkeysProvider, loadCustomHotkeys, saveCustomHotkeys } from "@/modules/hotkeys";
+import {
+  browserPlatform,
+  HotkeysProvider,
+  loadCustomHotkeys,
+  saveCustomHotkeys,
+} from "@/modules/hotkeys";
 import { appHotkeys } from "@/modules/keymap";
 import { pushQueryHistory, loadQueryHistory } from "@/modules/queryHistory";
 
@@ -134,6 +139,8 @@ test("Query history hotkeys do not interrupt typing and handle empty history", (
   expect(details.open).toBe(false);
 });
 
+// TODO: there must be a better place for that test to validate 
+// it uses formatForDisplay and formatForDisplay correctly
 test.each([
   ["MacIntel", "⌘"],
   ["iPhone", "⌘"],
@@ -146,21 +153,6 @@ test.each([
 
   const button = screen.getByRole("button", { name: /^Run/ });
   expect(button).toHaveTextContent(label);
-});
-
-test("Query shortcut sheet displays the app keymap and closes", () => {
-  renderQuery();
-  fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
-  flush();
-
-  const sheet = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
-  expect(
-    Array.from(sheet.querySelectorAll(":scope > div > span:first-child"), (label) => label.textContent),
-  ).toEqual(Object.values(appHotkeys).map((hotkey) => hotkey.meta?.name));
-
-  fireEvent.click(within(sheet).getByRole("button", { name: "Close" }));
-  flush();
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 test("Query loads persisted custom shortcuts", () => {
@@ -213,7 +205,10 @@ test.each([[[]], [["{}"]], [["{service=api}", "{}"]]])(
   "Query loads its own history: %j",
   (stored) => {
     // reversed because push pushes to the beginning of the history
-    stored.slice().reverse().forEach((it) => pushQueryHistory(it));
+    stored
+      .slice()
+      .reverse()
+      .forEach((it) => pushQueryHistory(it));
     renderQuery();
 
     const history = openHistory();
