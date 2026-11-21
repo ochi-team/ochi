@@ -30,7 +30,7 @@ export default function Query(props: QueryProps) {
 
 function QueryControls(props: QueryProps) {
   const runLabel = useHotkeyLabel(appHotkeys.queryRun);
-  const [pending, setPending] = createOptimistic(false);
+  const [running, setRunning] = createOptimistic(false);
   const [history, setHistory] = createSignal<readonly string[]>([]);
   const [input, setInput] = createSignal<HTMLInputElement>();
 
@@ -39,8 +39,9 @@ function QueryControls(props: QueryProps) {
   );
 
   const run = action(function* () {
-    if (!props.query || pending()) return;
-    setPending(true);
+    if (!props.query || running()) return;
+    setRunning(true);
+
     const executedQuery: string | undefined = yield props.runQuery();
     if (executedQuery) setHistory(pushQueryHistory(executedQuery));
   });
@@ -68,13 +69,13 @@ function QueryControls(props: QueryProps) {
         <QueryEditor query={props.query} setQuery={props.setQuery} setInputRef={setInput} />
         <button
           type="submit"
-          disabled={!props.query.trim() || pending()}
+          disabled={!props.query.trim() || running()}
           class="group flex h-9 w-36 shrink-0 items-center justify-center gap-ds-8 rounded-6 border border-gray-6 bg-dark-primary text-dark-primary-foreground enabled:border-dark-primary enabled:hover:brightness-110 disabled:bg-gray-3 disabled:text-gray-11 disabled:opacity-45"
         >
           <svg aria-hidden="true" width="12" height="12" class="shrink-0">
             <use href="/icons.svg#play" />
           </svg>
-          <span class="text-14 font-medium">{pending() ? "Running" : "Run"}</span>
+          <span class="text-14 font-medium">{running() ? "Running" : "Run"}</span>
           <Keycap label={runLabel()} />
         </button>
       </form>
