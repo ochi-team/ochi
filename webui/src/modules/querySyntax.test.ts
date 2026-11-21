@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 
-import { scanQuery, type TokenKind } from "./querySyntax";
+import { recognizeQueryComparisons, scanQuery, type TokenKind } from "./querySyntax";
 
 function expectTokens(source: string, parts: [TokenKind, string][]) {
   let offset = 0;
@@ -116,7 +116,7 @@ test("scanQuery retains unterminated quotes as incomplete literals", () => {
   expectTokens("'trailing\\", [["unterminatedLiteral", "'trailing\\"]]);
 });
 
-test("scanQuery preserves http schema as a literal", () => {
+test("scanQuery preserves schema in http", () => {
   expectTokens("/health https://host/path", [
     ["literal", "/health"],
     ["whitespace", " "],
@@ -131,4 +131,76 @@ test("scanQuery preserves unknown characters", () => {
     ["unknown", ">"],
     ["unknown", "?"],
   ]);
+});
+
+function expectComparisons(source: string, expressions: [string, string, string, string][]) {
+  let offset = 0;
+  const expected = expressions.map(([text, key, operator, value]) => {
+    const start = source.indexOf(text, offset);
+    expect(start).toBeGreaterThanOrEqual(offset);
+    const keyEnd = start + key.length;
+    const operatorStart = source.indexOf(operator, keyEnd);
+    const valueStart = source.indexOf(value, operatorStart + operator.length);
+    offset = start + text.length;
+    return {
+      kind: "comparison",
+      start,
+      end: offset,
+      key: { start, end: keyEnd },
+      operator: { start: operatorStart, end: operatorStart + operator.length },
+      value: { start: valueStart, end: offset },
+    };
+  });
+  expect(recognizeQueryComparisons(source)).toEqual(expected);
+}
+
+test("recognizeQueryComparisons exposes complete comparison and role ranges", () => {
+  expectComparisons("tenant=42", [["tenant=42", "tenant", "=", "42"]]);
+  expectComparisons(" \tlevel \t!=\n ERROR  ", [["level \t!=\n ERROR", "level", "!=", "ERROR"]]);
+  expectComparisons("path~/health AND service!~api", [
+    ["path~/health", "path", "~", "/health"],
+    ["service!~api", "service", "!~", "api"],
+  ]);
+});
+
+test("recognizeQueryComparisons preserves quoted roles and UTF-16 offsets", () => {
+  const key = '"日本語😀"';
+  const value = String.raw`'AND OR = \'値'`;
+  expectComparisons(`  ${key} = ${value} `, [[`${key} = ${value}`, key, "=", value]]);
+  expectComparisons(`"AND"="" 'OR'!=''`, [
+    ['"AND"=""', '"AND"', "=", '""'],
+    ["'OR'!=''", "'OR'", "!=", "''"],
+  ]);
+});
+
+test("recognizeQueryComparisons distinguishes repeated and adjacent comparisons", () => {
+  expectComparisons("(a=1 OR a=1) a=1", [
+    ["a=1", "a", "=", "1"],
+    ["a=1", "a", "=", "1"],
+    ["a=1", "a", "=", "1"],
+  ]);
+  expectComparisons("raw {tenant=42} | ? level=ERROR", [
+    ["tenant=42", "tenant", "=", "42"],
+    ["level=ERROR", "level", "=", "ERROR"],
+  ]);
+});
+
+test("recognizeQueryComparisons leaves incomplete and nonliteral comparisons raw", () => {
+  for (const source of [
+    "",
+    "tenant",
+    "tenant=",
+    "tenant != \t",
+    "=42",
+    "tenant==42",
+    "tenant=AND",
+    "OR=42",
+    'tenant="unfinished',
+    "'unfinished=42",
+    "tenant=?",
+    "tenant=(42)",
+  ]) {
+    expectComparisons(source, []);
+  }
+  expectComparisons("tenant= AND level=ERROR", [["level=ERROR", "level", "=", "ERROR"]]);
 });

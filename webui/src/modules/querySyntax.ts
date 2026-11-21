@@ -18,10 +18,22 @@ export type TokenKind =
   | "pipe"
   | "unknown";
 
-export interface QueryToken {
-  kind: TokenKind;
+const comparisonTokens: TokenKind[] = ["equal", "notEqual", "matchRegex", "notMatchRegex"];
+
+export interface QuerySourceRange {
   start: number;
   end: number;
+}
+
+export interface QueryToken extends QuerySourceRange {
+  kind: TokenKind;
+}
+
+export interface QueryComparisonNode extends QuerySourceRange {
+  kind: "comparison";
+  key: QuerySourceRange;
+  operator: QuerySourceRange;
+  value: QuerySourceRange;
 }
 
 const punctuation = new Map<string, TokenKind>([
@@ -80,4 +92,28 @@ export function scanQuery(source: string): QueryToken[] {
     tokens.push({ kind, start, end: offset });
   }
   return tokens;
+}
+
+export function recognizeQueryComparisons(source: string): QueryComparisonNode[] {
+  const tokens = scanQuery(source).filter((token) => token.kind !== "whitespace");
+  const nodes: QueryComparisonNode[] = [];
+
+  for (let index = 0; index + 2 < tokens.length; index++) {
+    const key = tokens[index];
+    const operator = tokens[index + 1];
+    const value = tokens[index + 2];
+    if (key.kind !== "literal" || value.kind !== "literal") continue;
+    if (!comparisonTokens.includes(operator.kind)) continue;
+
+    nodes.push({
+      kind: "comparison",
+      start: key.start,
+      end: value.end,
+      key: { start: key.start, end: key.end },
+      operator: { start: operator.start, end: operator.end },
+      value: { start: value.start, end: value.end },
+    });
+    index += 2;
+  }
+  return nodes;
 }
