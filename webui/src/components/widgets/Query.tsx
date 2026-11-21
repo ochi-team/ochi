@@ -1,4 +1,4 @@
-import { action, createMemo, createOptimistic, createSignal, onSettled } from "solid-js";
+import { createMemo, createSignal, onSettled } from "solid-js";
 
 import { queryTimeRangeRegex } from "@/modules/query";
 import { loadQueryHistory, pushQueryHistory } from "@/modules/queryHistory";
@@ -30,7 +30,7 @@ export default function Query(props: QueryProps) {
 
 function QueryControls(props: QueryProps) {
   const runLabel = useHotkeyLabel(appHotkeys.queryRun);
-  const [running, setRunning] = createOptimistic(false);
+  const [running, setRunning] = createSignal(false);
   const [history, setHistory] = createSignal<readonly string[]>([]);
   const [input, setInput] = createSignal<HTMLInputElement>();
 
@@ -38,13 +38,17 @@ function QueryControls(props: QueryProps) {
     props.query ? queryTimeRangeRegex.test(props.query) : true,
   );
 
-  const run = action(function* () {
+  const run = async () => {
     if (!props.query || running()) return;
     setRunning(true);
 
-    const executedQuery: string | undefined = yield props.runQuery();
-    if (executedQuery) setHistory(pushQueryHistory(executedQuery));
-  });
+    try {
+      const executedQuery: string | undefined = await props.runQuery();
+      if (executedQuery) setHistory(pushQueryHistory(executedQuery));
+    } finally {
+      setRunning(false);
+    }
+  };
 
   onSettled(() => {
     setHistory(loadQueryHistory());
