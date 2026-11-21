@@ -20,6 +20,22 @@ export type TokenKind =
 
 const comparisonTokens: TokenKind[] = ["equal", "notEqual", "matchRegex", "notMatchRegex"];
 
+const punctuation = new Map<string, TokenKind>([
+  ["[", "leftSquareBracket"],
+  ["]", "rightSquareBracket"],
+  ["{", "leftCurlyBracket"],
+  ["}", "rightCurlyBracket"],
+  ["(", "leftParenthesis"],
+  [")", "rightParenthesis"],
+  [",", "comma"],
+  ["|", "pipe"],
+  ["=", "equal"],
+  ["~", "matchRegex"],
+]);
+
+const literalCharacter = /[a-zA-Z0-9_\-:/@.+]/;
+const whitespaceCharacter = /[ \t\n]/;
+
 export interface QuerySourceRange {
   start: number;
   end: number;
@@ -36,21 +52,80 @@ export interface QueryComparisonNode extends QuerySourceRange {
   value: QuerySourceRange;
 }
 
-const punctuation = new Map<string, TokenKind>([
-  ["[", "leftSquareBracket"],
-  ["]", "rightSquareBracket"],
-  ["{", "leftCurlyBracket"],
-  ["}", "rightCurlyBracket"],
-  ["(", "leftParenthesis"],
-  [")", "rightParenthesis"],
-  [",", "comma"],
-  ["|", "pipe"],
-  ["=", "equal"],
-  ["~", "matchRegex"],
-]);
+export interface QueryBooleanNode extends QuerySourceRange {
+  kind: "and" | "or";
+  operator: QuerySourceRange;
+  left: QueryExpressionNode;
+  right: QueryExpressionNode;
+}
 
-const literalCharacter = /[a-zA-Z0-9_\-:/@.+]/;
-const whitespaceCharacter = /[ \t\n]/;
+export type QueryExpressionNode = QueryComparisonNode | QueryBooleanNode;
+
+export interface QuerySyntax {
+  roots: QueryExpressionNode[];
+  parents: Map<QueryExpressionNode, QueryBooleanNode>;
+}
+
+export function parseQuerySyntax(source: string): QuerySyntax {
+  const tokens = scanQuery(source).filter((token) => token.kind !== "whitespace");
+  const comparisons = new Map(recognizeQueryComparisons(source).map((node) => [node.start, node]));
+
+  const roots: QueryExpressionNode[] = [];
+  const parents = new Map<QueryExpressionNode, QueryBooleanNode>();
+
+  let index = 0;
+  while (index < tokens.length) {
+    const first = comparisons.get(tokens[index].start);
+    if (!first) {
+      index++;
+      continue;
+    }
+    const operands: QueryExpressionNode[] = [first];
+    const operators: QueryToken[] = [];
+    while (index < tokens.length && tokens[index].end <= first.end) index++;
+
+    const reduce = () => {
+      const operator = operators.pop()!;
+      const right = operands.pop()!;
+      const left = operands.pop()!;
+      const node: QueryBooleanNode = {
+        kind: operator.kind as "and" | "or",
+        start: left.start,
+        end: right.end,
+        operator: { start: operator.start, end: operator.end },
+        left,
+        right,
+      };
+      parents.set(left, node);
+      parents.set(right, node);
+      operands.push(node);
+    };
+
+    while (index + 1 < tokens.length) {
+      const operator = tokens[index];
+      if (operator.kind !== "and" && operator.kind !== "or") break;
+
+      const right = comparisons.get(tokens[index + 1].start);
+      if (!right) break;
+
+      // Reduce equal precedence for left associativity; AND binds tighter than OR.
+      while (
+        operators.length &&
+        (operators[operators.length - 1].kind === "and" || operator.kind === "or")
+      ) {
+        reduce();
+      }
+      operators.push(operator);
+      operands.push(right);
+      index++;
+      while (index < tokens.length && tokens[index].end <= right.end) index++;
+    }
+
+    while (operators.length) reduce();
+    roots.push(operands[0]);
+  }
+  return { roots, parents };
+}
 
 export function scanQuery(source: string): QueryToken[] {
   const tokens: QueryToken[] = [];

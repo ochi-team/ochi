@@ -1,6 +1,12 @@
 import { expect, test } from "vitest";
 
-import { recognizeQueryComparisons, scanQuery, type TokenKind } from "./querySyntax";
+import {
+  parseQuerySyntax,
+  recognizeQueryComparisons,
+  scanQuery,
+  type QueryExpressionNode,
+  type TokenKind,
+} from "./querySyntax";
 
 function expectTokens(source: string, parts: [TokenKind, string][]) {
   let offset = 0;
@@ -183,6 +189,74 @@ test("recognizeQueryComparisons distinguishes repeated and adjacent comparisons"
     ["tenant=42", "tenant", "=", "42"],
     ["level=ERROR", "level", "=", "ERROR"],
   ]);
+});
+
+function expectBooleanTree(
+  source: string,
+  build: (
+    comparisons: ReturnType<typeof recognizeQueryComparisons>,
+    boolean: (
+      kind: "and" | "or",
+      left: QueryExpressionNode,
+      right: QueryExpressionNode,
+    ) => QueryExpressionNode,
+  ) => QueryExpressionNode[],
+) {
+  const expected = build(recognizeQueryComparisons(source), (kind, left, right) => {
+    const operatorStart = source.toLowerCase().indexOf(kind, left.end);
+    return {
+      kind,
+      start: left.start,
+      end: right.end,
+      operator: { start: operatorStart, end: operatorStart + kind.length },
+      left,
+      right,
+    };
+  });
+  const parsed = parseQuerySyntax(source);
+  expect(parsed.roots).toEqual(expected);
+
+  const parents = new Map<QueryExpressionNode, QueryExpressionNode>();
+  const pending = [...parsed.roots];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (node.kind === "comparison") continue;
+    parents.set(node.left, node);
+    parents.set(node.right, node);
+    pending.push(node.left, node.right);
+  }
+  expect(parsed.parents).toEqual(parents);
+  for (const [child, parent] of parents) {
+    expect(parsed.parents.get(child)).toBe(parent);
+  }
+  for (const root of parsed.roots) expect(parsed.parents.has(root)).toBe(false);
+}
+
+test("parseQuerySyntax gives AND precedence over OR", () => {
+  expectBooleanTree("a=1 OR b=2 AND c=3", ([a, b, c], op) => [op("or", a, op("and", b, c))]);
+  expectBooleanTree(" a=1 aNd b=2 oR c=3 AnD d=4 ", ([a, b, c, d], op) => [
+    op("or", op("and", a, b), op("and", c, d)),
+  ]);
+});
+
+test("parseQuerySyntax associates explicit Boolean chains to the left", () => {
+  expectBooleanTree("a=1 AND b=2 AND c=3", ([a, b, c], op) => [op("and", op("and", a, b), c)]);
+  expectBooleanTree("a=1 or b=2 OR c=3", ([a, b, c], op) => [op("or", op("or", a, b), c)]);
+});
+
+test("parseQuerySyntax preserves distinct operands, roles, and UTF-16 source ranges", () => {
+  expectBooleanTree("a=1 AND a=1 OR a=1", ([a, b, c], op) => [op("or", op("and", a, b), c)]);
+  expectBooleanTree(` \t"😀" != 'AND'\nOr\tpath !~ "OR =" `, ([a, b], op) => [op("or", a, b)]);
+});
+
+test("parseQuerySyntax only links comparisons separated by one explicit Boolean operator", () => {
+  expectBooleanTree("", () => []);
+  expectBooleanTree(" a=1 ", ([a]) => [a]);
+  expectBooleanTree("a=1 b=2", ([a, b]) => [a, b]);
+  expectBooleanTree("a=1 AND ? b=2 OR c=3", ([a, b, c], op) => [a, op("or", b, c)]);
+  expectBooleanTree("a=1 OR AND b=2", ([a, b]) => [a, b]);
+  expectBooleanTree("a=1 AND", ([a]) => [a]);
+  expectBooleanTree("a=1 | b=2", ([a, b]) => [a, b]);
 });
 
 test("recognizeQueryComparisons leaves incomplete and nonliteral comparisons raw", () => {
