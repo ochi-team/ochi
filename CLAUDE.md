@@ -1,15 +1,33 @@
 # Agent Guidelines for Ochi
 
 ## Logging database server
+
 Default port is 9014
 
+## Comments
+
+Plain technical English, simple sentences.
+In general avoid comments, rather care about code readability.
+
+Inner function comment worth to write on:
+
+- non obvious corner cases, e.g. early returns/continue/break and other branching
+- complex calculations
+
+Outer function comments worth to write when:
+
+- the function is in not in linear data flow, specific corner case
+- its arguments are not obvious, e.g. hard to assert, but input types don't describe the full type
+
 ## Build/Test Commands
+
 - **Build**: `zig build`
 - **Run**: `zig build run`
 - **Test all**: `zig build test`
 - **Test single**: `zig build test -Dtest-filter="SIGTERM"` (use substring from test name)
 
 ## Code Style
+
 - **Naming**: PascalCase for types/structs, camelCase for variables/fields and functions, but if a function returns a type - PascalCase
 - **Comments**: TODO comments for future work, doc comments (///) for public API
 
@@ -32,6 +50,7 @@ defer sink.deinit(a);
 ### Test
 
 Good test has multiple cases
+
 ```zig
 // GOOD
 test "bitsetIsEmpty" {
@@ -75,6 +94,7 @@ try std.testing.expectEqual(case.header.maxTs, h.maxTs);
 ```
 
 Assertions infer types implicitly:
+
 ```zig
 // GOOD
 try testing.expectEqual(1, calls);
@@ -83,6 +103,7 @@ try testing.expectEqual(@as(usize, 1), calls);
 ```
 
 Don't use testing global instances directly:
+
 ```zig
 // GOOD
 const alloc = testing.allocator;
@@ -98,6 +119,7 @@ try memTables.append(testing.allocator, &source);
 
 This one is not applicable to simple cases.
 Make sure first it has enough space when it comes to the multiple states:
+
 ```zig
 // GOOD
 try self.garbage.ensureUnusedCapacity(alloc, 1);
@@ -110,6 +132,7 @@ try self.garbage.append(alloc, buf);
 ### Arrays
 
 Prefer ArrayList over a raw buffer when the cap is known, but len is unknown:
+
 ```zig
 // GOOD
 var headers: [3]std.http.Header = undefined;
@@ -129,6 +152,7 @@ if (options.contentType) |contentType| {
 ### Allocator.create
 
 If an object is destroyed in the same scope there is no benefit to create it via allocator:
+
 ```zig
 // GOOD
 fn init() Object {
@@ -153,6 +177,7 @@ defer obj.deinit(alloc); // this is the reason
 ### State
 
 Avoid flags state to make less mistakes:
+
 ```zig
 // GOOD
 try self.flushForce(io, alloc);
@@ -164,10 +189,11 @@ if (!self.flushed) {
     self.flushed = true;
 }
 ```
+
 ### Docs
 
 Use zigdoc to validate the API of the used Zig version, e.g.:
+
 - zigdoc std.ArrayList
 - zigdoc std.mem.Allocator
 - zigdoc std.http.Server
-

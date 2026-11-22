@@ -21,6 +21,8 @@ export type TokenKind =
   | "pipe"
   | "unknown";
 
+const maxGroupDepth = 128;
+
 const comparisonTokens: TokenKind[] = ["equal", "notEqual", "matchRegex", "notMatchRegex"];
 
 const punctuation = new Map<string, TokenKind>([
@@ -330,6 +332,19 @@ function parseRegion(
   comparisons: Map<number, QueryComparisonNode>,
 ): QueryExpressionNode[] {
   const groups = new Map<number, QueryGroupNode>();
+
+  // Unclosed groups cannot establish safe ownership, including within their tail.
+  // A depth overflow conservatively disables expression targets for this region.
+  const unmatched: number[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index].kind === "leftParenthesis") {
+      unmatched.push(index);
+      if (unmatched.length > maxGroupDepth) return [];
+    } else if (tokens[index].kind === "rightParenthesis" && unmatched.length) {
+      unmatched.pop();
+    }
+  }
+  if (unmatched.length) tokens = tokens.slice(0, unmatched[0]);
 
   const openings: number[] = [];
   for (let index = 0; index < tokens.length; index++) {

@@ -431,9 +431,7 @@ test("parseQuerySyntax keeps time-range contents opaque", () => {
     ["tagBlock", "{tenant=42}", ["tenant=42"]],
     ["queryExpression", "level=ERROR", ["level=ERROR"]],
   ]);
-  expectRegions("[a=1 AND b=2] ", [
-    ["timeRange", "[a=1 AND b=2]"],
-  ]);
+  expectRegions("[a=1 AND b=2] ", [["timeRange", "[a=1 AND b=2]"]]);
 });
 
 test("parseQuerySyntax retains Boolean and group ownership only within structural regions", () => {
@@ -449,7 +447,6 @@ test("parseQuerySyntax retains Boolean and group ownership only within structura
 });
 
 test("parseQuerySyntax does not promote late or repeated structural blocks to regions", () => {
-  expectRegions("a=1 [now, now] b=2", [["queryExpression", "a=1", ["a=1"]]]);
   expectRegions("a=1 {b=2} c=3", [["queryExpression", "a=1", ["a=1"]]]);
   expectRegions("[now, now] [now, now] {a=1}", [["timeRange", "[now, now]"]]);
   expectRegions("{a=1} {b=2} c=3", [["tagBlock", "{a=1}", ["a=1"]]]);
@@ -473,6 +470,57 @@ test("parseQuerySyntax retains the entire first-pipe suffix opaquely", () => {
   }
   expectRegions(" | a=1 | {b=2} ", [["pipeSuffix", "| a=1 | {b=2} "]]);
   expectRegions("[now | a=1] {b=2}", [["pipeSuffix", "| a=1] {b=2}"]]);
+});
+
+test("parseQuerySyntax ignores malformed structural tails without resuming recognition", () => {
+  expectRegions("a=1 [now, now] b=2", [["queryExpression", "a=1", ["a=1"]]]);
+  expectRegions("[now, now] [later, now] b=2", [["timeRange", "[now, now]"]]);
+  expectRegions("a=1 {b=2} c=3", [["queryExpression", "a=1", ["a=1"]]]);
+  expectRegions("{a=1} {b=2} c=3", [["tagBlock", "{a=1}", ["a=1"]]]);
+  expectRegions("{a=1} [now, now] b=2", [["tagBlock", "{a=1}", ["a=1"]]]);
+  for (const source of ["[a=1", "{a=1", "[{a=1}] b=2", "{a=1 [now]} b=2", "] a=1", "} a=1"]) {
+    expectRegions(source, []);
+  }
+  expectRegions("a=1 } b=2", [["queryExpression", "a=1", ["a=1"]]]);
+  expectRegions("{a=1 | b=2} [now] c=3 | d=4", [["pipeSuffix", "| b=2} [now] c=3 | d=4"]]);
+});
+
+test("parseQuerySyntax ignores unmatched opening tails and never links across unmatched closers", () => {
+  expectBooleanTree("(a=1 AND b=2", () => []);
+  expectBooleanTree("a=1 AND (b=2 OR c=3", ([a]) => [a]);
+  expectBooleanTree("a=1 (b=2) (c=3", ([a, b], op, group) => [
+    op("implicitAnd", a, group(4, 9, b)),
+  ]);
+  expectBooleanTree("a=1) AND b=2", ([a, b]) => [a, b]);
+  expectBooleanTree("a=1 AND ) b=2", ([a, b]) => [a, b]);
+});
+
+test("parseQuerySyntax keeps incomplete operators and unknown text as ownership barriers", () => {
+  expectBooleanTree("AND a=1 OR", ([a]) => [a]);
+  expectBooleanTree("a=1 AND OR b=2", ([a, b]) => [a, b]);
+  expectBooleanTree("a=1 ? AND b=2", ([a, b]) => [a, b]);
+  expectBooleanTree('a=1 AND b="unfinished OR c=3', ([a]) => [a]);
+  expectBooleanTree("a=1 AND b= ? c=3", ([a, c]) => [a, c]);
+});
+
+test("parseQuerySyntax bounds nesting while retaining ordinary deep and wide trees", () => {
+  function expectDepth(depth: number, expectedDepth: number) {
+    const source = "(".repeat(depth) + "a=1" + ")".repeat(depth);
+    const parsed = parseQuerySyntax(source);
+    expect(parsed.roots.length).toBe(expectedDepth ? 1 : 0);
+    expect(parsed.parents.size).toBe(expectedDepth);
+  }
+  expectDepth(128, 128);
+  expectDepth(129, 0);
+  expectDepth(10000, 0);
+  const source = Array.from({ length: 10000 }, () => "a=1").join(" AND ");
+  const parsed = parseQuerySyntax(source);
+  expect(parsed.roots.length).toBe(1);
+  expect(parsed.parents.size).toBe(19998);
+  expectRegions("{" + "(".repeat(129) + "a=1" + ")".repeat(129) + "} b=2", [
+    ["tagBlock", "{" + "(".repeat(129) + "a=1" + ")".repeat(129) + "}", []],
+    ["queryExpression", "b=2", ["b=2"]],
+  ]);
 });
 
 test("parseQuerySyntax ignores quoted delimiters when recognizing regions", () => {
