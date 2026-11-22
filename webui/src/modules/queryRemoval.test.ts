@@ -26,7 +26,7 @@ test("removeQueryNode preserves text outside the standalone comparison", () => {
 });
 
 test("removeQueryNode does not remove implicit operands or unsupported nodes", () => {
-  for (const source of ["a=1 b=2", "(a=1)"]) {
+  for (const source of ["a=1 b=2", "(a=1) b=2"]) {
     const syntax = parseQuerySyntax(source);
     expect(removeQueryNode(source, syntax.roots[0])).toBeNull();
     for (const node of syntax.parents.keys()) {
@@ -101,6 +101,41 @@ test("removeQueryNode preserves source outside the operand and operator interval
   expectOperandRemoval('"😀"=1 OR b=2 AND c=3', 10, {
     query: '"😀"=1 OR c=3',
     caret: 10,
+  });
+});
+
+test("removeQueryNode removes singleton groups and redundant nesting with their comparison", () => {
+  expectOperandRemoval("(a=1)", 1, { query: "", caret: 0 });
+  expectOperandRemoval("(((a=1)))", 3, { query: "", caret: 0 });
+  expectOperandRemoval(" \t( ( a=1 ) )\n | count", 6, {
+    query: " \t\n | count",
+    caret: 2,
+  });
+});
+
+test("removeQueryNode promotes siblings when singleton groups become empty", () => {
+  expectOperandRemoval("a=1 AND ((b=2))", 10, { query: "a=1", caret: 3 });
+  expectOperandRemoval("((a=1)) OR b=2", 2, { query: "b=2", caret: 0 });
+  expectOperandRemoval("((a=1) AND (b=2))", 2, { query: "((b=2))", caret: 1 });
+  expectOperandRemoval("((a=1) AND (b=2))", 12, { query: "((a=1))", caret: 6 });
+});
+
+test("removeQueryNode preserves balanced surviving groups and surrounding regions", () => {
+  expectOperandRemoval("a=1 AND (b=2 OR c=3)", 9, {
+    query: "a=1 AND (c=3)",
+    caret: 9,
+  });
+  expectOperandRemoval("a=1 AND (b=2 OR c=3)", 16, {
+    query: "a=1 AND (b=2)",
+    caret: 12,
+  });
+  expectOperandRemoval("((a=1 OR (b=2 AND c=3)))", 10, {
+    query: "((a=1 OR (c=3)))",
+    caret: 10,
+  });
+  expectOperandRemoval("[-15m, now] {(tenant=42)} level=ERROR | count", 14, {
+    query: "[-15m, now] {} level=ERROR | count",
+    caret: 13,
   });
 });
 

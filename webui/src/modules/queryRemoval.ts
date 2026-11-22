@@ -12,16 +12,21 @@ export function removeQueryNode(
   if (target.kind !== "comparison") return null;
 
   const syntax = parseQuerySyntax(source);
-  const node = [...syntax.roots, ...syntax.parents.keys()].find(
+  let node = [...syntax.roots, ...syntax.parents.keys()].find(
     (node) => node.start === target.start && node.end === target.end && node.kind === target.kind,
   );
   if (!node) return null;
 
+  let parent = syntax.parents.get(node);
+  while (parent?.kind === "group") {
+    node = parent;
+    parent = syntax.parents.get(node);
+  }
+
   let start = node.start;
   let end = node.end;
-  const parent = syntax.parents.get(node);
   if (parent) {
-    if (parent.kind === "group" || !parent.operator) return null;
+    if (!parent.operator) return null;
 
     if (parent.left === node) {
       end = parent.right.start;
