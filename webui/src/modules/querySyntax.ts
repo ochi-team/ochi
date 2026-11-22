@@ -59,70 +59,124 @@ export interface QueryBooleanNode extends QuerySourceRange {
   right: QueryExpressionNode;
 }
 
-export type QueryExpressionNode = QueryComparisonNode | QueryBooleanNode;
+export interface QueryGroupNode extends QuerySourceRange {
+  kind: "group";
+  open: QuerySourceRange;
+  close: QuerySourceRange;
+  expression: QueryExpressionNode;
+}
+
+export type QueryExpressionNode = QueryComparisonNode | QueryBooleanNode | QueryGroupNode;
 
 export interface QuerySyntax {
   roots: QueryExpressionNode[];
-  parents: Map<QueryExpressionNode, QueryBooleanNode>;
+  parents: Map<QueryExpressionNode, QueryBooleanNode | QueryGroupNode>;
 }
 
 export function parseQuerySyntax(source: string): QuerySyntax {
   const tokens = scanQuery(source).filter((token) => token.kind !== "whitespace");
   const comparisons = new Map(recognizeQueryComparisons(source).map((node) => [node.start, node]));
 
-  const roots: QueryExpressionNode[] = [];
-  const parents = new Map<QueryExpressionNode, QueryBooleanNode>();
+  const groups = new Map<number, QueryGroupNode>();
 
-  let index = 0;
-  while (index < tokens.length) {
-    const first = comparisons.get(tokens[index].start);
-    if (!first) {
-      index++;
+  const parseRange = (start: number, end: number): QueryExpressionNode[] => {
+    const roots: QueryExpressionNode[] = [];
+    const operandAt = (index: number) => groups.get(index) ?? comparisons.get(tokens[index]?.start);
+    let index = start;
+    while (index < end) {
+      const first = operandAt(index);
+      if (!first) {
+        index++;
+        continue;
+      }
+      const operands: QueryExpressionNode[] = [first];
+      const operators: QueryToken[] = [];
+      while (index < end && tokens[index].end <= first.end) index++;
+
+      const reduce = () => {
+        const operator = operators.pop()!;
+        const right = operands.pop()!;
+        const left = operands.pop()!;
+        const node: QueryBooleanNode = {
+          kind: operator.kind as "and" | "or",
+          start: left.start,
+          end: right.end,
+          operator: { start: operator.start, end: operator.end },
+          left,
+          right,
+        };
+        operands.push(node);
+      };
+
+      while (index + 1 < end) {
+        const operator = tokens[index];
+        if (operator.kind !== "and" && operator.kind !== "or") break;
+
+        const right = operandAt(index + 1);
+        if (!right) break;
+
+        // Reduce equal precedence for left associativity; AND binds tighter than OR.
+        while (
+          operators.length &&
+          (operators[operators.length - 1].kind === "and" || operator.kind === "or")
+        ) {
+          reduce();
+        }
+
+        operators.push(operator);
+        operands.push(right);
+        index++;
+        while (index < end && tokens[index].end <= right.end) index++;
+      }
+
+      while (operators.length) reduce();
+      roots.push(operands[0]);
+    }
+    return roots;
+  };
+
+  const openings: number[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index].kind === "leftParenthesis") {
+      openings.push(index);
       continue;
     }
-    const operands: QueryExpressionNode[] = [first];
-    const operators: QueryToken[] = [];
-    while (index < tokens.length && tokens[index].end <= first.end) index++;
 
-    const reduce = () => {
-      const operator = operators.pop()!;
-      const right = operands.pop()!;
-      const left = operands.pop()!;
-      const node: QueryBooleanNode = {
-        kind: operator.kind as "and" | "or",
-        start: left.start,
-        end: right.end,
-        operator: { start: operator.start, end: operator.end },
-        left,
-        right,
-      };
-      parents.set(left, node);
-      parents.set(right, node);
-      operands.push(node);
-    };
-
-    while (index + 1 < tokens.length) {
-      const operator = tokens[index];
-      if (operator.kind !== "and" && operator.kind !== "or") break;
-
-      const right = comparisons.get(tokens[index + 1].start);
-      if (!right) break;
-
-      // Reduce equal precedence for left associativity; AND binds tighter than OR.
-      while (
-        operators.length &&
-        (operators[operators.length - 1].kind === "and" || operator.kind === "or")
-      ) {
-        reduce();
-      }
-      operators.push(operator);
-      operands.push(right);
-      index++;
-      while (index < tokens.length && tokens[index].end <= right.end) index++;
+    if (tokens[index].kind === "rightParenthesis" && openings.length) {
+      const start = openings.pop()!;
+      const expressions = parseRange(start + 1, index);
+      const expression = expressions[0];
+      // skip this group unless its inner is exactly one expression
+      if (
+        expressions.length !== 1 ||
+        expression.start !== tokens[start + 1].start ||
+        expression.end !== tokens[index - 1].end
+      )
+        continue;
+      const open = tokens[start];
+      const close = tokens[index];
+      groups.set(start, {
+        kind: "group",
+        start: open.start,
+        end: close.end,
+        open: { start: open.start, end: open.end },
+        close: { start: close.start, end: close.end },
+        expression,
+      });
     }
+  }
 
-    while (operators.length) reduce();
-    roots.push(operands[0]);
+  const roots = parseRange(0, tokens.length);
+  const parents = new Map<QueryExpressionNode, QueryBooleanNode | QueryGroupNode>();
+  const pending = [...roots];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (node.kind === "comparison") continue;
+    const children = node.kind === "group" ? [node.expression] : [node.left, node.right];
+    for (const child of children) {
+      parents.set(child, node);
+      pending.push(child);
+    }
   }
   return { roots, parents };
 }

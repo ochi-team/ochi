@@ -1,6 +1,22 @@
-# validation
+# Validation
 
 Run tests using `pnpm test:a` or `pnpm test:a:verbose`.
+
+# Code style
+
+Prefer external functions when possible:
+
+```ts
+// BAD
+const operandAt = (index: number) => groups.get(index) ?? comparisons.get(tokens[index]?.start);
+const first = operandAt(index);
+// GOOD
+function operandAt(index: number) {
+  return groups.get(index) ?? comparisons.get(tokens[index]?.start);
+}
+...
+const first = operandAt(index);
+```
 
 # Style
 

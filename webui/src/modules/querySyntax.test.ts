@@ -200,19 +200,31 @@ function expectBooleanTree(
       left: QueryExpressionNode,
       right: QueryExpressionNode,
     ) => QueryExpressionNode,
+    group: (start: number, end: number, expression: QueryExpressionNode) => QueryExpressionNode,
   ) => QueryExpressionNode[],
 ) {
-  const expected = build(recognizeQueryComparisons(source), (kind, left, right) => {
-    const operatorStart = source.toLowerCase().indexOf(kind, left.end);
-    return {
-      kind,
-      start: left.start,
-      end: right.end,
-      operator: { start: operatorStart, end: operatorStart + kind.length },
-      left,
-      right,
-    };
-  });
+  const expected = build(
+    recognizeQueryComparisons(source),
+    (kind, left, right) => {
+      const operatorStart = source.toLowerCase().indexOf(kind, left.end);
+      return {
+        kind,
+        start: left.start,
+        end: right.end,
+        operator: { start: operatorStart, end: operatorStart + kind.length },
+        left,
+        right,
+      };
+    },
+    (start, end, expression) => ({
+      kind: "group",
+      start,
+      end,
+      open: { start, end: start + 1 },
+      close: { start: end - 1, end },
+      expression,
+    }),
+  );
   const parsed = parseQuerySyntax(source);
   expect(parsed.roots).toEqual(expected);
 
@@ -221,6 +233,11 @@ function expectBooleanTree(
   while (pending.length) {
     const node = pending.pop()!;
     if (node.kind === "comparison") continue;
+    if (node.kind === "group") {
+      parents.set(node.expression, node);
+      pending.push(node.expression);
+      continue;
+    }
     parents.set(node.left, node);
     parents.set(node.right, node);
     pending.push(node.left, node.right);
@@ -278,3 +295,34 @@ test("recognizeQueryComparisons leaves incomplete and nonliteral comparisons raw
   }
   expectComparisons("tenant= AND level=ERROR", [["level=ERROR", "level", "=", "ERROR"]]);
 });
+
+test("parseQuerySyntax lets groups override Boolean precedence", () => {
+  expectBooleanTree("(a=1 OR b=2) AND c=3", ([a, b, c], op, group) => [
+    op("and", group(0, 12, op("or", a, b)), c),
+  ]);
+  expectBooleanTree("a=1 AND (b=2 OR c=3)", ([a, b, c], op, group) => [
+    op("and", a, group(8, 20, op("or", b, c))),
+  ]);
+  expectBooleanTree("(a=1) OR (b=2)", ([a, b], op, group) => [
+    op("or", group(0, 5, a), group(9, 14, b)),
+  ]);
+});
+
+test("parseQuerySyntax retains nested and redundant group ownership", () => {
+  expectBooleanTree("((a=1))", ([a], _op, group) => [group(0, 7, group(1, 6, a))]);
+  expectBooleanTree("(a=1 AND (b=2 OR c=3))", ([a, b, c], op, group) => [
+    group(0, 22, op("and", a, group(9, 21, op("or", b, c)))),
+  ]);
+});
+
+test("parseQuerySyntax preserves group delimiters, trivia, and UTF-16 ranges", () => {
+  expectBooleanTree(' \t( "😀"=1\n)  ', ([a], _op, group) => [group(2, 12, a)]);
+  expectBooleanTree("( a=1 ) ( a=1 )", ([a, b], _op, group) => [group(0, 7, a), group(8, 15, b)]);
+});
+
+test("parseQuerySyntax does not invent expressions for empty or unsupported groups", () => {
+  expectBooleanTree("() ( )", () => []);
+  expectBooleanTree("(a=1 ? b=2)", ([a, b]) => [a, b]);
+  expectBooleanTree("(a=1 b=2)", ([a, b]) => [a, b]);
+});
+
