@@ -196,7 +196,7 @@ function expectBooleanTree(
   build: (
     comparisons: ReturnType<typeof recognizeQueryComparisons>,
     boolean: (
-      kind: "and" | "or",
+      kind: "and" | "or" | "implicitAnd",
       left: QueryExpressionNode,
       right: QueryExpressionNode,
     ) => QueryExpressionNode,
@@ -208,10 +208,13 @@ function expectBooleanTree(
     (kind, left, right) => {
       const operatorStart = source.toLowerCase().indexOf(kind, left.end);
       return {
-        kind,
+        kind: kind === "implicitAnd" ? "and" : kind,
         start: left.start,
         end: right.end,
-        operator: { start: operatorStart, end: operatorStart + kind.length },
+        operator:
+          kind === "implicitAnd"
+            ? null
+            : { start: operatorStart, end: operatorStart + kind.length },
         left,
         right,
       };
@@ -266,10 +269,9 @@ test("parseQuerySyntax preserves distinct operands, roles, and UTF-16 source ran
   expectBooleanTree(` \t"😀" != 'AND'\nOr\tpath !~ "OR =" `, ([a, b], op) => [op("or", a, b)]);
 });
 
-test("parseQuerySyntax only links comparisons separated by one explicit Boolean operator", () => {
+test("parseQuerySyntax leaves unsupported gaps and incomplete operators unlinked", () => {
   expectBooleanTree("", () => []);
   expectBooleanTree(" a=1 ", ([a]) => [a]);
-  expectBooleanTree("a=1 b=2", ([a, b]) => [a, b]);
   expectBooleanTree("a=1 AND ? b=2 OR c=3", ([a, b, c], op) => [a, op("or", b, c)]);
   expectBooleanTree("a=1 OR AND b=2", ([a, b]) => [a, b]);
   expectBooleanTree("a=1 AND", ([a]) => [a]);
@@ -317,12 +319,55 @@ test("parseQuerySyntax retains nested and redundant group ownership", () => {
 
 test("parseQuerySyntax preserves group delimiters, trivia, and UTF-16 ranges", () => {
   expectBooleanTree(' \t( "😀"=1\n)  ', ([a], _op, group) => [group(2, 12, a)]);
-  expectBooleanTree("( a=1 ) ( a=1 )", ([a, b], _op, group) => [group(0, 7, a), group(8, 15, b)]);
+  expectBooleanTree("( a=1 ) ( a=1 )", ([a, b], op, group) => [
+    op("implicitAnd", group(0, 7, a), group(8, 15, b)),
+  ]);
 });
 
 test("parseQuerySyntax does not invent expressions for empty or unsupported groups", () => {
   expectBooleanTree("() ( )", () => []);
   expectBooleanTree("(a=1 ? b=2)", ([a, b]) => [a, b]);
-  expectBooleanTree("(a=1 b=2)", ([a, b]) => [a, b]);
+  expectBooleanTree("(a=1 raw b=2)", ([a, b]) => [a, b]);
+});
+
+test("parseQuerySyntax gives adjacent comparisons implicit conjunction ownership without operator text", () => {
+  expectBooleanTree("a=1 b=2", ([a, b], op) => [op("implicitAnd", a, b)]);
+  expectBooleanTree(" \ta=1\n a=1\t a=1 ", ([a, b, c], op) => [
+    op("implicitAnd", op("implicitAnd", a, b), c),
+  ]);
+  expectBooleanTree(
+    `"😀"='AND OR =' level!=ERROR path~/health service!~api`,
+    ([a, b, c, d], op) => [op("implicitAnd", op("implicitAnd", op("implicitAnd", a, b), c), d)],
+  );
+});
+
+test("parseQuerySyntax gives implicit AND the same precedence and associativity as explicit AND", () => {
+  expectBooleanTree("a=1 OR b=2 c=3", ([a, b, c], op) => [op("or", a, op("implicitAnd", b, c))]);
+  expectBooleanTree("a=1 b=2 OR c=3", ([a, b, c], op) => [op("or", op("implicitAnd", a, b), c)]);
+  expectBooleanTree("a=1 AND b=2 c=3", ([a, b, c], op) => [op("implicitAnd", op("and", a, b), c)]);
+  expectBooleanTree("a=1 b=2 AND c=3", ([a, b, c], op) => [op("and", op("implicitAnd", a, b), c)]);
+});
+
+test("parseQuerySyntax links adjacent grouped operands with implicit AND", () => {
+  expectBooleanTree("a=1(b=2 OR c=3)", ([a, b, c], op, group) => [
+    op("implicitAnd", a, group(3, 15, op("or", b, c))),
+  ]);
+  expectBooleanTree("(a=1)b=2", ([a, b], op, group) => [op("implicitAnd", group(0, 5, a), b)]);
+});
+
+test("parseQuerySyntax does not infer conjunctions through quoted words or unsupported adjacent text", () => {
+  for (const source of [
+    'a=1 "AND" b=2',
+    "a=1 'OR' b=2",
+    "a=1 raw b=2",
+    "a=1 ? b=2",
+    "a=1 | b=2",
+    "a=1 incomplete= ? b=2",
+    "a=1, b=2",
+  ]) {
+    expectBooleanTree(source, ([a, b]) => [a, b]);
+  }
+
+  expectBooleanTree(`a="b=2 AND c=3"`, ([a]) => [a]);
 });
 

@@ -1,3 +1,6 @@
+// TODO: revisit the module if the parsing could be repeated using a grammar file,
+// so we don't duplicate the language implementation in both js and zig,
+// but rather apply a simpelr algorithm walking through the query and its grammar
 export type TokenKind =
   | "literal"
   | "unterminatedLiteral"
@@ -54,7 +57,8 @@ export interface QueryComparisonNode extends QuerySourceRange {
 
 export interface QueryBooleanNode extends QuerySourceRange {
   kind: "and" | "or";
-  operator: QuerySourceRange;
+  // null is implicit conjunctions
+  operator: QuerySourceRange | null;
   left: QueryExpressionNode;
   right: QueryExpressionNode;
 }
@@ -82,15 +86,20 @@ function operandAt(
   return groups.get(index) ?? comparisons.get(tokens[index]?.start);
 }
 
-function reduce(operators: QueryToken[], operands: QueryExpressionNode[]): void {
+interface BooleanOperator {
+  kind: "and" | "or";
+  range: QuerySourceRange | null;
+}
+
+function reduce(operators: BooleanOperator[], operands: QueryExpressionNode[]): void {
   const operator = operators.pop()!;
   const right = operands.pop()!;
   const left = operands.pop()!;
   const node: QueryBooleanNode = {
-    kind: operator.kind as "and" | "or",
+    kind: operator.kind,
     start: left.start,
     end: right.end,
-    operator: { start: operator.start, end: operator.end },
+    operator: operator.range,
     left,
     right,
   };
@@ -113,15 +122,22 @@ function parseRange(
       continue;
     }
     const operands: QueryExpressionNode[] = [first];
-    const operators: QueryToken[] = [];
+    const operators: BooleanOperator[] = [];
     while (index < end && tokens[index].end <= first.end) index++;
 
-    while (index + 1 < end) {
-      const operator = tokens[index];
-      if (operator.kind !== "and" && operator.kind !== "or") break;
-
-      const right = operandAt(index + 1, tokens, groups, comparisons);
+    while (index < end) {
+      const token = tokens[index];
+      const explicit = token.kind === "and" || token.kind === "or";
+      const rightIndex = explicit ? index + 1 : index;
+      const right =
+        rightIndex < end ? operandAt(rightIndex, tokens, groups, comparisons) : undefined;
       if (!right) break;
+
+      // rhs of implicit is "and"
+      const operator: BooleanOperator = {
+        kind: token.kind === "or" ? "or" : "and",
+        range: explicit ? { start: token.start, end: token.end } : null,
+      };
 
       // Reduce equal precedence for left associativity; AND binds tighter than OR.
       while (
@@ -133,7 +149,7 @@ function parseRange(
 
       operators.push(operator);
       operands.push(right);
-      index++;
+      index = rightIndex;
       while (index < end && tokens[index].end <= right.end) index++;
     }
 
