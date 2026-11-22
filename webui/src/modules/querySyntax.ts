@@ -282,7 +282,7 @@ function recognizeRegions(
 
   if (prefix[index]?.kind === "leftSquareBracket") {
     const end = blockEnd(prefix, index, "rightSquareBracket");
-    if (end < 0) index = prefix.length;
+    if (end < 0) return regions;
     else {
       const open = { start: prefix[index].start, end: prefix[index].end };
       const close = { start: prefix[end].start, end: prefix[end].end };
@@ -293,7 +293,7 @@ function recognizeRegions(
 
   if (prefix[index]?.kind === "leftCurlyBracket") {
     const end = blockEnd(prefix, index, "rightCurlyBracket");
-    if (end < 0) index = prefix.length;
+    if (end < 0) return regions;
     else {
       const open = { start: prefix[index].start, end: prefix[index].end };
       const close = { start: prefix[end].start, end: prefix[end].end };
@@ -321,7 +321,8 @@ function recognizeRegions(
     });
   }
 
-  if (pipeIndex >= 0) {
+  // Invalid structural tails cannot establish a subsequent pipe region either.
+  if (pipeIndex >= 0 && index === prefix.length) {
     regions.push({ kind: "pipeSuffix", start: tokens[pipeIndex].start, end: sourceEnd });
   }
   return regions;

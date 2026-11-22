@@ -469,7 +469,7 @@ test("parseQuerySyntax retains the entire first-pipe suffix opaquely", () => {
     ]);
   }
   expectRegions(" | a=1 | {b=2} ", [["pipeSuffix", "| a=1 | {b=2} "]]);
-  expectRegions("[now | a=1] {b=2}", [["pipeSuffix", "| a=1] {b=2}"]]);
+  expectRegions("[now | a=1] {b=2}", []);
 });
 
 test("parseQuerySyntax ignores malformed structural tails without resuming recognition", () => {
@@ -482,7 +482,9 @@ test("parseQuerySyntax ignores malformed structural tails without resuming recog
     expectRegions(source, []);
   }
   expectRegions("a=1 } b=2", [["queryExpression", "a=1", ["a=1"]]]);
-  expectRegions("{a=1 | b=2} [now] c=3 | d=4", [["pipeSuffix", "| b=2} [now] c=3 | d=4"]]);
+  expectRegions("{a=1 | b=2} [now] c=3 | d=4", []);
+  expectRegions("[now] {a=1 | b=2} | more", [["timeRange", "[now]"]]);
+  expectRegions("a=1 {b=2 | c=3} | more", [["queryExpression", "a=1", ["a=1"]]]);
 });
 
 test("parseQuerySyntax ignores unmatched opening tails and never links across unmatched closers", () => {
@@ -501,6 +503,9 @@ test("parseQuerySyntax keeps incomplete operators and unknown text as ownership 
   expectBooleanTree("a=1 ? AND b=2", ([a, b]) => [a, b]);
   expectBooleanTree('a=1 AND b="unfinished OR c=3', ([a]) => [a]);
   expectBooleanTree("a=1 AND b= ? c=3", ([a, c]) => [a, c]);
+  expectBooleanTree("a=1 AND b= xx c=3", ([a, b, c], op) => [
+        op("implicitAnd", op("and", a, b), c)
+    ]);
 });
 
 test("parseQuerySyntax bounds nesting while retaining ordinary deep and wide trees", () => {
