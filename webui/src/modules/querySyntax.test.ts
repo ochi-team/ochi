@@ -275,7 +275,7 @@ test("parseQuerySyntax leaves unsupported gaps and incomplete operators unlinked
   expectBooleanTree("a=1 AND ? b=2 OR c=3", ([a, b, c], op) => [a, op("or", b, c)]);
   expectBooleanTree("a=1 OR AND b=2", ([a, b]) => [a, b]);
   expectBooleanTree("a=1 AND", ([a]) => [a]);
-  expectBooleanTree("a=1 | b=2", ([a, b]) => [a, b]);
+  expectBooleanTree("a=1 | b=2", ([a]) => [a]);
 });
 
 test("recognizeQueryComparisons leaves incomplete and nonliteral comparisons raw", () => {
@@ -361,7 +361,6 @@ test("parseQuerySyntax does not infer conjunctions through quoted words or unsup
     "a=1 'OR' b=2",
     "a=1 raw b=2",
     "a=1 ? b=2",
-    "a=1 | b=2",
     "a=1 incomplete= ? b=2",
     "a=1, b=2",
   ]) {
@@ -371,3 +370,123 @@ test("parseQuerySyntax does not infer conjunctions through quoted words or unsup
   expectBooleanTree(`a="b=2 AND c=3"`, ([a]) => [a]);
 });
 
+function expectRegions(source: string, expected: [string, string, string[]?][]) {
+  const parsed = parseQuerySyntax(source);
+  let offset = 0;
+  const regions = expected.map(([kind, text, expressions]) => {
+    const start = source.indexOf(text, offset);
+    expect(start).toBeGreaterThanOrEqual(offset);
+    const end = start + text.length;
+    offset = end;
+    const range = { kind, start, end };
+    if (kind === "timeRange" || kind === "tagBlock") {
+      return {
+        ...range,
+        open: { start, end: start + 1 },
+        close: { start: end - 1, end },
+        ...(kind === "tagBlock" ? { roots: expressions } : {}),
+      };
+    }
+    return kind === "queryExpression" ? { ...range, roots: expressions } : range;
+  });
+  expect(
+    parsed.regions.map((region) =>
+      "roots" in region
+        ? { ...region, roots: region.roots.map((root) => source.slice(root.start, root.end)) }
+        : region,
+    ),
+  ).toEqual(regions);
+
+  const roots = parsed.regions.flatMap((region) => ("roots" in region ? region.roots : []));
+  expect(parsed.roots).toEqual(roots);
+  roots.forEach((root, index) => {
+    expect(parsed.roots[index]).toBe(root);
+    expect(parsed.parents.has(root)).toBe(false);
+  });
+}
+
+test("parseQuerySyntax exposes ordered time, tag, and query regions with exact ranges", () => {
+  expectRegions(" \t[-15m, now] {tenant=42} level=ERROR  ", [
+    ["timeRange", "[-15m, now]"],
+    ["tagBlock", "{tenant=42}", ["tenant=42"]],
+    ["queryExpression", "level=ERROR", ["level=ERROR"]],
+  ]);
+  expectRegions("{tenant=42} level=ERROR", [
+    ["tagBlock", "{tenant=42}", ["tenant=42"]],
+    ["queryExpression", "level=ERROR", ["level=ERROR"]],
+  ]);
+  expectRegions("[-15m, now] {} level=ERROR", [
+    ["timeRange", "[-15m, now]"],
+    ["tagBlock", "{}", []],
+    ["queryExpression", "level=ERROR", ["level=ERROR"]],
+  ]);
+  expectRegions("{}", [["tagBlock", "{}", []]]);
+  expectRegions("[-15m, now]", [["timeRange", "[-15m, now]"]]);
+  expectRegions(" \t\n", []);
+});
+
+test("parseQuerySyntax keeps time-range contents opaque", () => {
+  expectRegions("[a=1, b=2] {tenant=42} level=ERROR", [
+    ["timeRange", "[a=1, b=2]"],
+    ["tagBlock", "{tenant=42}", ["tenant=42"]],
+    ["queryExpression", "level=ERROR", ["level=ERROR"]],
+  ]);
+  expectRegions("[a=1 AND b=2] ", [
+    ["timeRange", "[a=1 AND b=2]"],
+  ]);
+});
+
+test("parseQuerySyntax retains Boolean and group ownership only within structural regions", () => {
+  expectRegions("{a=1 OR b=2} c=3 d=4", [
+    ["tagBlock", "{a=1 OR b=2}", ["a=1 OR b=2"]],
+    ["queryExpression", "c=3 d=4", ["c=3 d=4"]],
+  ]);
+  expectBooleanTree("{a=1 OR b=2} c=3 d=4", ([a, b, c, d], op) => [
+    op("or", a, b),
+    op("implicitAnd", c, d),
+  ]);
+  expectBooleanTree("{(a=1)}(b=2)", ([a, b], _op, group) => [group(1, 6, a), group(7, 12, b)]);
+});
+
+test("parseQuerySyntax does not promote late or repeated structural blocks to regions", () => {
+  expectRegions("a=1 [now, now] b=2", [["queryExpression", "a=1", ["a=1"]]]);
+  expectRegions("a=1 {b=2} c=3", [["queryExpression", "a=1", ["a=1"]]]);
+  expectRegions("[now, now] [now, now] {a=1}", [["timeRange", "[now, now]"]]);
+  expectRegions("{a=1} {b=2} c=3", [["tagBlock", "{a=1}", ["a=1"]]]);
+  expectRegions("{a=1} [now, now] b=2", [["tagBlock", "{a=1}", ["a=1"]]]);
+});
+
+test("parseQuerySyntax retains the entire first-pipe suffix opaquely", () => {
+  for (const suffix of [
+    "| b=2 AND c=3",
+    "| {b=2} (c=3)",
+    "| stats count() | d=4  ",
+    "| stats | [now, now] {b=2} c=3 | more",
+  ]) {
+    const source = "[-15m, now] {tenant=42} level=ERROR " + suffix;
+    expectRegions(source, [
+      ["timeRange", "[-15m, now]"],
+      ["tagBlock", "{tenant=42}", ["tenant=42"]],
+      ["queryExpression", "level=ERROR", ["level=ERROR"]],
+      ["pipeSuffix", suffix],
+    ]);
+  }
+  expectRegions(" | a=1 | {b=2} ", [["pipeSuffix", "| a=1 | {b=2} "]]);
+  expectRegions("[now | a=1] {b=2}", [["pipeSuffix", "| a=1] {b=2}"]]);
+});
+
+test("parseQuerySyntax ignores quoted delimiters when recognizing regions", () => {
+  expectRegions(`["a=1 | {}", now] {tag=1} key=2`, [
+    ["timeRange", `["a=1 | {}", now]`],
+    ["tagBlock", "{tag=1}", ["tag=1"]],
+    ["queryExpression", "key=2", ["key=2"]],
+  ]);
+  expectRegions(`{tag="[now] | {x}"} key='{} | []' AND other=1`, [
+    ["tagBlock", `{tag="[now] | {x}"}`, [`tag="[now] | {x}"`]],
+    ["queryExpression", `key='{} | []' AND other=1`, [`key='{} | []' AND other=1`]],
+  ]);
+  expectBooleanTree(`{tag="[now] | {x}"} key='{} | []' AND other=1`, ([a, b, c], op) => [
+    a,
+    op("and", b, c),
+  ]);
+});

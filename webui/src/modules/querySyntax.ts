@@ -72,7 +72,36 @@ export interface QueryGroupNode extends QuerySourceRange {
 
 export type QueryExpressionNode = QueryComparisonNode | QueryBooleanNode | QueryGroupNode;
 
+export interface QueryTimeRangeRegion extends QuerySourceRange {
+  kind: "timeRange";
+  open: QuerySourceRange;
+  close: QuerySourceRange;
+}
+
+export interface QueryTagBlockRegion extends QuerySourceRange {
+  kind: "tagBlock";
+  open: QuerySourceRange;
+  close: QuerySourceRange;
+  roots: QueryExpressionNode[];
+}
+
+export interface QueryExpressionRegion extends QuerySourceRange {
+  kind: "queryExpression";
+  roots: QueryExpressionNode[];
+}
+
+export interface QueryPipeSuffixRegion extends QuerySourceRange {
+  kind: "pipeSuffix";
+}
+
+export type QueryRegion =
+  | QueryTimeRangeRegion
+  | QueryTagBlockRegion
+  | QueryExpressionRegion
+  | QueryPipeSuffixRegion;
+
 export interface QuerySyntax {
+  regions: QueryRegion[];
   roots: QueryExpressionNode[];
   parents: Map<QueryExpressionNode, QueryBooleanNode | QueryGroupNode>;
 }
@@ -162,41 +191,8 @@ function parseRange(
 export function parseQuerySyntax(source: string): QuerySyntax {
   const tokens = scanQuery(source).filter((it) => it.kind !== "whitespace");
   const comparisons = new Map(recognizeQueryComparisons(source).map((node) => [node.start, node]));
-
-  const groups = new Map<number, QueryGroupNode>();
-
-  const openings: number[] = [];
-  for (let index = 0; index < tokens.length; index++) {
-    if (tokens[index].kind === "leftParenthesis") {
-      openings.push(index);
-      continue;
-    }
-
-    if (tokens[index].kind === "rightParenthesis" && openings.length) {
-      const start = openings.pop()!;
-      const expressions = parseRange(start + 1, index, tokens, groups, comparisons);
-      const expression = expressions[0];
-      // skip this group unless its inner is exactly one expression
-      if (
-        expressions.length !== 1 ||
-        expression.start !== tokens[start + 1].start ||
-        expression.end !== tokens[index - 1].end
-      )
-        continue;
-      const open = tokens[start];
-      const close = tokens[index];
-      groups.set(start, {
-        kind: "group",
-        start: open.start,
-        end: close.end,
-        open: { start: open.start, end: open.end },
-        close: { start: close.start, end: close.end },
-        expression,
-      });
-    }
-  }
-
-  const roots = parseRange(0, tokens.length, tokens, groups, comparisons);
+  const regions = recognizeRegions(tokens, comparisons, source.length);
+  const roots = regions.flatMap((region) => ("roots" in region ? region.roots : []));
   const parents = new Map<QueryExpressionNode, QueryBooleanNode | QueryGroupNode>();
   const pending = [...roots];
   while (pending.length) {
@@ -208,7 +204,7 @@ export function parseQuerySyntax(source: string): QuerySyntax {
       pending.push(child);
     }
   }
-  return { roots, parents };
+  return { regions, roots, parents };
 }
 
 export function scanQuery(source: string): QueryToken[] {
@@ -251,6 +247,122 @@ export function scanQuery(source: string): QueryToken[] {
     tokens.push({ kind, start, end: offset });
   }
   return tokens;
+}
+
+function isStructuralDelimiter(kind: TokenKind): boolean {
+  return (
+    kind === "leftSquareBracket" ||
+    kind === "rightSquareBracket" ||
+    kind === "leftCurlyBracket" ||
+    kind === "rightCurlyBracket"
+  );
+}
+
+function blockEnd(tokens: QueryToken[], start: number, close: TokenKind): number {
+  for (let index = start + 1; index < tokens.length; index++) {
+    const kind = tokens[index].kind;
+    if (kind === close) return index;
+    // fast path: if it's not close, but another block - query is invalid
+    if (isStructuralDelimiter(kind)) return -1;
+  }
+  return -1;
+}
+
+function recognizeRegions(
+  tokens: QueryToken[],
+  comparisons: Map<number, QueryComparisonNode>,
+  sourceEnd: number,
+): QueryRegion[] {
+  const regions: QueryRegion[] = [];
+  const pipeIndex = tokens.findIndex((token) => token.kind === "pipe");
+  const prefix = pipeIndex < 0 ? tokens : tokens.slice(0, pipeIndex);
+  let index = 0;
+
+  if (prefix[index]?.kind === "leftSquareBracket") {
+    const end = blockEnd(prefix, index, "rightSquareBracket");
+    if (end < 0) index = prefix.length;
+    else {
+      const open = { start: prefix[index].start, end: prefix[index].end };
+      const close = { start: prefix[end].start, end: prefix[end].end };
+      regions.push({ kind: "timeRange", start: open.start, end: close.end, open, close });
+      index = end + 1;
+    }
+  }
+
+  if (prefix[index]?.kind === "leftCurlyBracket") {
+    const end = blockEnd(prefix, index, "rightCurlyBracket");
+    if (end < 0) index = prefix.length;
+    else {
+      const open = { start: prefix[index].start, end: prefix[index].end };
+      const close = { start: prefix[end].start, end: prefix[end].end };
+      regions.push({
+        kind: "tagBlock",
+        start: open.start,
+        end: close.end,
+        open,
+        close,
+        roots: parseRegion(prefix.slice(index + 1, end), comparisons),
+      });
+      index = end + 1;
+    }
+  }
+
+  const start = index;
+  // A late/repeated block is not another region; do not resume expression ownership beyond it.
+  while (index < prefix.length && !isStructuralDelimiter(prefix[index].kind)) index++;
+  if (index > start) {
+    regions.push({
+      kind: "queryExpression",
+      start: prefix[start].start,
+      end: prefix[index - 1].end,
+      roots: parseRegion(prefix.slice(start, index), comparisons),
+    });
+  }
+
+  if (pipeIndex >= 0) {
+    regions.push({ kind: "pipeSuffix", start: tokens[pipeIndex].start, end: sourceEnd });
+  }
+  return regions;
+}
+
+function parseRegion(
+  tokens: QueryToken[],
+  comparisons: Map<number, QueryComparisonNode>,
+): QueryExpressionNode[] {
+  const groups = new Map<number, QueryGroupNode>();
+
+  const openings: number[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index].kind === "leftParenthesis") {
+      openings.push(index);
+      continue;
+    }
+
+    if (tokens[index].kind === "rightParenthesis" && openings.length) {
+      const start = openings.pop()!;
+      const expressions = parseRange(start + 1, index, tokens, groups, comparisons);
+      const expression = expressions[0];
+      // skip this group unless its inner is exactly one expression
+      if (
+        expressions.length !== 1 ||
+        expression.start !== tokens[start + 1].start ||
+        expression.end !== tokens[index - 1].end
+      )
+        continue;
+      const open = tokens[start];
+      const close = tokens[index];
+      groups.set(start, {
+        kind: "group",
+        start: open.start,
+        end: close.end,
+        open: { start: open.start, end: open.end },
+        close: { start: close.start, end: close.end },
+        expression,
+      });
+    }
+  }
+
+  return parseRange(0, tokens.length, tokens, groups, comparisons);
 }
 
 export function recognizeQueryComparisons(source: string): QueryComparisonNode[] {
