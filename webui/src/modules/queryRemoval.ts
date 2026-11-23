@@ -9,7 +9,7 @@ export function removeQueryNode(
   source: string,
   target: QueryExpressionNode,
 ): QueryRemovalResult | null {
-  if (target.kind !== "comparison") return null;
+  if (target.kind === "and" || target.kind === "or") return null;
 
   const syntax = parseQuerySyntax(source);
   let node = [...syntax.roots, ...syntax.parents.keys()].find(

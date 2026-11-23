@@ -139,14 +139,72 @@ test("removeQueryNode preserves balanced surviving groups and surrounding region
   });
 });
 
-test("removeQueryNode keeps conjunction subtree removal deferred", () => {
-  for (const source of ["a=1 AND b=2", "a=1 OR b=2 AND c=3"]) {
+function expectGroupRemoval(
+  source: string,
+  expression: string,
+  expected: { query: string; caret: number },
+) {
+  const syntax = parseQuerySyntax(source);
+  const start = source.indexOf(expression);
+  const node = [...syntax.roots, ...syntax.parents.keys()].find(
+    (node) =>
+      node.kind === "group" && node.start === start && node.end === start + expression.length,
+  );
+  expect(node).toBeDefined();
+  expect(removeQueryNode(source, node!)).toEqual(expected);
+}
+
+test("removeQueryNode rejects Boolean nodes, including inside groups", () => {
+  for (const source of ["a=1 AND b=2", "a=1 OR b=2 AND c=3", "(a=1 OR b=2)", "a=1 b=2"]) {
     const syntax = parseQuerySyntax(source);
-    expect(removeQueryNode(source, syntax.roots[0])).toBeNull();
-    for (const node of syntax.parents.keys()) {
-      if (node.kind !== "comparison") expect(removeQueryNode(source, node)).toBeNull();
+    for (const node of [...syntax.roots, ...syntax.parents.keys()]) {
+      if (node.kind === "and" || node.kind === "or") {
+        expect(removeQueryNode(source, node)).toBeNull();
+      }
     }
   }
+});
+
+test("removeQueryNode removes complete parenthesized groups", () => {
+  for (const expression of ["a=1", "a=1 AND b=2", "a=1 OR b=2 AND c=3"]) {
+    const group = `(${expression})`;
+    expectGroupRemoval(group, group, { query: "", caret: 0 });
+    expectGroupRemoval(` \t${group}\n | count`, group, {
+      query: " \t\n | count",
+      caret: 2,
+    });
+    expectGroupRemoval(`(${group})`, group, { query: "", caret: 0 });
+  }
+});
+
+test("removeQueryNode promotes siblings when deleting a group operand", () => {
+  expectGroupRemoval("a=1 AND ((b=2 OR c=3))", "(b=2 OR c=3)", {
+    query: "a=1",
+    caret: 3,
+  });
+  expectGroupRemoval("((a=1 OR b=2)) AND c=3", "(a=1 OR b=2)", {
+    query: "c=3",
+    caret: 0,
+  });
+  expectGroupRemoval("(a=1 OR (b=2 AND c=3))", "(b=2 AND c=3)", {
+    query: "(a=1)",
+    caret: 4,
+  });
+  expectOperandRemoval("a=1 OR b=2 AND c=3", 0, {
+    query: "b=2 AND c=3",
+    caret: 0,
+  });
+});
+
+test("removeQueryNode preserves regions and trivia outside group removal", () => {
+  expectGroupRemoval("[-15m, now] {(a=1 AND b=2)} level=ERROR | count", "(a=1 AND b=2)", {
+    query: "[-15m, now] {} level=ERROR | count",
+    caret: 13,
+  });
+  expectGroupRemoval(' \t"😀"=1 OR (b=2 AND c=3)\n | count', "(b=2 AND c=3)", {
+    query: ' \t"😀"=1\n | count',
+    caret: 8,
+  });
 });
 
 test("removeQueryNode rejects targets absent from the parsed source", () => {
