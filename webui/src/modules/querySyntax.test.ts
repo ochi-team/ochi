@@ -303,11 +303,19 @@ test("recognizeQueryComparisons rejects ambiguous chained comparison fragments",
     expectComparisons(source, []);
     expect(parseQuerySyntax(source).roots).toEqual([]);
   }
-  expectComparisons("=a=1", []);
   expectComparisons("!=a=1=2", []);
   expectComparisons("a=1=2=3 AND safe=4", [["safe=4", "safe", "=", "4"]]);
   expectComparisons("a=1=2 ? safe=3", [["safe=3", "safe", "=", "3"]]);
   expectComparisons("a==b=2 AND safe=3", [["safe=3", "safe", "=", "3"]]);
+});
+
+test("recognizeQueryComparisons skips invalid leading tokens until the next key", () => {
+  expectComparisons("=a=1", [["a=1", "a", "=", "1"]]);
+  expectComparisons("!= ? safe=3", [["safe=3", "safe", "=", "3"]]);
+  expectComparisons("== a=1 AND b=2", [
+    ["a=1", "a", "=", "1"],
+    ["b=2", "b", "=", "2"],
+  ]);
 });
 
 test("parseQuerySyntax lets groups override Boolean precedence", () => {
@@ -338,7 +346,7 @@ test("parseQuerySyntax preserves group delimiters, trivia, and UTF-16 ranges", (
 
 test("parseQuerySyntax does not invent expressions for empty or unsupported groups", () => {
   expectBooleanTree("() ( )", () => []);
-  expectBooleanTree("(a=1 ? b=2)", ([a, b]) => [a, b]);
+  expectBooleanTree("(a=1 ? b=2)", ([b]) => [b]);
   expectBooleanTree("(a=1 raw b=2)", ([a, b]) => [a, b]);
 });
 
@@ -368,17 +376,12 @@ test("parseQuerySyntax links adjacent grouped operands with implicit AND", () =>
 });
 
 test("parseQuerySyntax does not infer conjunctions through quoted words or unsupported adjacent text", () => {
-  for (const source of [
-    'a=1 "AND" b=2',
-    "a=1 'OR' b=2",
-    "a=1 raw b=2",
-    "a=1 ? b=2",
-    "a=1 incomplete= ? b=2",
-    "a=1, b=2",
-  ]) {
+  for (const source of ['a=1 "AND" b=2', "a=1 'OR' b=2", "a=1 raw b=2", "a=1 incomplete= ? b=2"]) {
     expectBooleanTree(source, ([a, b]) => [a, b]);
   }
 
+  expectBooleanTree("a=1 ? b=2", ([b]) => [b]);
+  expectBooleanTree("a=1, b=2", ([b]) => [b]);
   expectBooleanTree(`a="b=2 AND c=3"`, ([a]) => [a]);
 });
 
@@ -512,7 +515,7 @@ test("parseQuerySyntax ignores unmatched opening tails and never links across un
 test("parseQuerySyntax keeps incomplete operators and unknown text as ownership barriers", () => {
   expectBooleanTree("AND a=1 OR", ([a]) => [a]);
   expectBooleanTree("a=1 AND OR b=2", ([a, b]) => [a, b]);
-  expectBooleanTree("a=1 ? AND b=2", ([a, b]) => [a, b]);
+  expectBooleanTree("a=1 ? AND b=2", ([b]) => [b]);
   expectBooleanTree('a=1 AND b="unfinished OR c=3', ([a]) => [a]);
   expectBooleanTree("a=1 AND b= ? c=3", ([a, c]) => [a, c]);
   expectBooleanTree("a=1 AND b= xx c=3", ([a, b, c], op) => [

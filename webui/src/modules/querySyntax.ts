@@ -25,6 +25,19 @@ const maxGroupDepth = 128;
 
 const comparisonTokens: TokenKind[] = ["equal", "notEqual", "matchRegex", "notMatchRegex"];
 
+const comparisonContinuations: TokenKind[] = [
+  "literal",
+  "and",
+  "or",
+  "leftParenthesis",
+  "rightParenthesis",
+  "leftSquareBracket",
+  "rightSquareBracket",
+  "leftCurlyBracket",
+  "rightCurlyBracket",
+  "pipe",
+];
+
 const punctuation = new Map<string, TokenKind>([
   ["[", "leftSquareBracket"],
   ["]", "rightSquareBracket"],
@@ -395,6 +408,38 @@ class TokenCursor {
     if (!this.match(...kinds)) return undefined;
     return this.tokens[this.current++];
   }
+
+  skipInvalidComparisonTail(): void {
+    while (this.current < this.tokens.length && !this.match(...comparisonContinuations)) {
+      if (this.consume(...comparisonTokens)) this.consume("literal");
+      else this.current++;
+    }
+  }
+
+  expectComparison(): QueryComparisonNode | undefined {
+    const key = this.consume("literal");
+    if (!key) {
+      this.current++;
+      return;
+    }
+
+    const operator = this.consume(...comparisonTokens);
+    if (!operator) return;
+    const value = this.consume("literal");
+    if (!value || (this.current < this.tokens.length && !this.match(...comparisonContinuations))) {
+      this.skipInvalidComparisonTail();
+      return;
+    }
+
+    return {
+      kind: "comparison",
+      start: key.start,
+      end: value.end,
+      key: { start: key.start, end: key.end },
+      operator: { start: operator.start, end: operator.end },
+      value: { start: value.start, end: value.end },
+    };
+  }
 }
 
 export function recognizeQueryComparisons(source: string): QueryComparisonNode[] {
@@ -402,31 +447,10 @@ export function recognizeQueryComparisons(source: string): QueryComparisonNode[]
   const nodes: QueryComparisonNode[] = [];
 
   while (cursor.current < cursor.tokens.length) {
-    const key = cursor.consume("literal");
-    if (!key && !cursor.match(...comparisonTokens)) {
-      cursor.current++;
-      continue;
-    }
+    const cmpNode = cursor.expectComparison();
+    if (!cmpNode) continue;
 
-    let operator: QueryToken | undefined;
-    let value: QueryToken | undefined;
-    let valid = key !== undefined;
-    while (cursor.match(...comparisonTokens)) {
-      if (operator) valid = false;
-      operator = cursor.consume(...comparisonTokens);
-      value = cursor.consume("literal");
-      if (!value) valid = false;
-    }
-    if (!valid || !key || !operator || !value) continue;
-
-    nodes.push({
-      kind: "comparison",
-      start: key.start,
-      end: value.end,
-      key: { start: key.start, end: key.end },
-      operator: { start: operator.start, end: operator.end },
-      value: { start: value.start, end: value.end },
-    });
+    nodes.push(cmpNode);
   }
   return nodes;
 }

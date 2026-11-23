@@ -268,8 +268,8 @@ test("removeQueryNode uses only proven local ownership in malformed input", () =
   expectRemovalFirstRoot("a=1 AND (b=2", { query: " AND (b=2", caret: 0 });
   expectRemovalFirstRoot("a=1) AND b=2", { query: ") AND b=2", caret: 0 });
   expectRemovalFirstRoot("a=1 ? b=2 | opaque {c=3}", {
-    query: " ? b=2 | opaque {c=3}",
-    caret: 0,
+    query: "a=1 ?  | opaque {c=3}",
+    caret: 6,
   });
   expectRemovalFirstRoot("a=1 [invalid] b=2", {
     query: " [invalid] b=2",
