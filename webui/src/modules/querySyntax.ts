@@ -381,16 +381,43 @@ function parseRegion(
   return parseRange(0, tokens.length, tokens, groups, comparisons);
 }
 
+class TokenCursor {
+  current = 0;
+
+  constructor(readonly tokens: QueryToken[]) {}
+
+  match(...kinds: TokenKind[]): boolean {
+    const token = this.tokens[this.current];
+    return token !== undefined && kinds.includes(token.kind);
+  }
+
+  consume(...kinds: TokenKind[]): QueryToken | undefined {
+    if (!this.match(...kinds)) return undefined;
+    return this.tokens[this.current++];
+  }
+}
+
 export function recognizeQueryComparisons(source: string): QueryComparisonNode[] {
-  const tokens = scanQuery(source).filter((token) => token.kind !== "whitespace");
+  const cursor = new TokenCursor(scanQuery(source).filter((token) => token.kind !== "whitespace"));
   const nodes: QueryComparisonNode[] = [];
 
-  for (let index = 0; index + 2 < tokens.length; index++) {
-    const key = tokens[index];
-    const operator = tokens[index + 1];
-    const value = tokens[index + 2];
-    if (key.kind !== "literal" || value.kind !== "literal") continue;
-    if (!comparisonTokens.includes(operator.kind)) continue;
+  while (cursor.current < cursor.tokens.length) {
+    const key = cursor.consume("literal");
+    if (!key && !cursor.match(...comparisonTokens)) {
+      cursor.current++;
+      continue;
+    }
+
+    let operator: QueryToken | undefined;
+    let value: QueryToken | undefined;
+    let valid = key !== undefined;
+    while (cursor.match(...comparisonTokens)) {
+      if (operator) valid = false;
+      operator = cursor.consume(...comparisonTokens);
+      value = cursor.consume("literal");
+      if (!value) valid = false;
+    }
+    if (!valid || !key || !operator || !value) continue;
 
     nodes.push({
       kind: "comparison",
@@ -400,7 +427,6 @@ export function recognizeQueryComparisons(source: string): QueryComparisonNode[]
       operator: { start: operator.start, end: operator.end },
       value: { start: value.start, end: value.end },
     });
-    index += 2;
   }
   return nodes;
 }

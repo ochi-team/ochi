@@ -298,6 +298,18 @@ test("recognizeQueryComparisons leaves incomplete and nonliteral comparisons raw
   expectComparisons("tenant= AND level=ERROR", [["level=ERROR", "level", "=", "ERROR"]]);
 });
 
+test("recognizeQueryComparisons rejects ambiguous chained comparison fragments", () => {
+  for (const source of ["a=1=2", "a=1!=2", "a~=1", "a==b=2", "a=1=", "a=1 !~"]) {
+    expectComparisons(source, []);
+    expect(parseQuerySyntax(source).roots).toEqual([]);
+  }
+  expectComparisons("=a=1", []);
+  expectComparisons("!=a=1=2", []);
+  expectComparisons("a=1=2=3 AND safe=4", [["safe=4", "safe", "=", "4"]]);
+  expectComparisons("a=1=2 ? safe=3", [["safe=3", "safe", "=", "3"]]);
+  expectComparisons("a==b=2 AND safe=3", [["safe=3", "safe", "=", "3"]]);
+});
+
 test("parseQuerySyntax lets groups override Boolean precedence", () => {
   expectBooleanTree("(a=1 OR b=2) AND c=3", ([a, b, c], op, group) => [
     op("and", group(0, 12, op("or", a, b)), c),
@@ -504,8 +516,8 @@ test("parseQuerySyntax keeps incomplete operators and unknown text as ownership 
   expectBooleanTree('a=1 AND b="unfinished OR c=3', ([a]) => [a]);
   expectBooleanTree("a=1 AND b= ? c=3", ([a, c]) => [a, c]);
   expectBooleanTree("a=1 AND b= xx c=3", ([a, b, c], op) => [
-        op("implicitAnd", op("and", a, b), c)
-    ]);
+    op("implicitAnd", op("and", a, b), c),
+  ]);
 });
 
 test("parseQuerySyntax bounds nesting while retaining ordinary deep and wide trees", () => {

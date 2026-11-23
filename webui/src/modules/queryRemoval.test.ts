@@ -244,6 +244,46 @@ test("removeQueryNode preserves regions and trivia outside group removal", () =>
   });
 });
 
+test("removeQueryNode preserves adjacent raw comments and standalone trivia", () => {
+  expectRemovalFirstRoot("// before\n\ta=1\t// after\n", {
+    query: "// before\n\t\t// after\n",
+    caret: 11,
+  });
+  expectOperandRemoval("a=1\tAND\nb=2 // trailing\n | count", 0, {
+    query: "b=2 // trailing\n | count",
+    caret: 0,
+  });
+  expectOperandRemoval("a=1\tAND\nb=2 // trailing\n | count", 8, {
+    query: "a=1 // trailing\n | count",
+    caret: 3,
+  });
+  expectRemovalFirstRoot("a=1 // note\n AND b=2", {
+    query: " // note\n AND b=2",
+    caret: 0,
+  });
+});
+
+test("removeQueryNode uses only proven local ownership in malformed input", () => {
+  expectRemovalFirstRoot("a=1 AND b=", { query: " AND b=", caret: 0 });
+  expectRemovalFirstRoot("a=1 AND (b=2", { query: " AND (b=2", caret: 0 });
+  expectRemovalFirstRoot("a=1) AND b=2", { query: ") AND b=2", caret: 0 });
+  expectRemovalFirstRoot("a=1 ? b=2 | opaque {c=3}", {
+    query: " ? b=2 | opaque {c=3}",
+    caret: 0,
+  });
+  expectRemovalFirstRoot("a=1 [invalid] b=2", {
+    query: " [invalid] b=2",
+    caret: 0,
+  });
+});
+
+test("removeQueryNode rejects ambiguous comparison fragments", () => {
+  const node = parseQuerySyntax("a=1").roots[0];
+  for (const source of ["a=1=2", "a=1!=2", "a=1=", "a=1 !~", "(a=1"]) {
+    expect(removeQueryNode(source, node)).toBeNull();
+  }
+});
+
 test("removeQueryNode rejects targets absent from the parsed source", () => {
   const node = parseQuerySyntax("tenant=42").roots[0] as QueryComparisonNode;
   expect(removeQueryNode("", node)).toBeNull();
