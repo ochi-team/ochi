@@ -26,8 +26,6 @@ export function removeQueryNode(
   let start = node.start;
   let end = node.end;
   if (parent) {
-    if (!parent.operator) return null;
-
     if (parent.left === node) {
       end = parent.right.start;
     } else {

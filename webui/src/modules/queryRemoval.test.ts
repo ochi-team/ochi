@@ -25,14 +25,51 @@ test("removeQueryNode preserves text outside the standalone comparison", () => {
   });
 });
 
-test("removeQueryNode does not remove implicit operands or unsupported nodes", () => {
-  for (const source of ["a=1 b=2", "(a=1) b=2"]) {
-    const syntax = parseQuerySyntax(source);
-    expect(removeQueryNode(source, syntax.roots[0])).toBeNull();
-    for (const node of syntax.parents.keys()) {
-      expect(removeQueryNode(source, node)).toBeNull();
-    }
-  }
+test("removeQueryNode removes either implicit operand and all chain positions", () => {
+  expectOperandRemoval("tenant=42 level=ERROR", 0, { query: "level=ERROR", caret: 0 });
+  expectOperandRemoval("tenant=42 level=ERROR", 10, { query: "tenant=42", caret: 9 });
+  expectOperandRemoval("a=1 b=2 c=3", 0, { query: "b=2 c=3", caret: 0 });
+  expectOperandRemoval("a=1 b=2 c=3", 4, { query: "a=1 c=3", caret: 3 });
+  expectOperandRemoval("a=1 b=2 c=3", 8, { query: "a=1 b=2", caret: 7 });
+  expectOperandRemoval("a=1 a=1 a=1", 4, { query: "a=1 a=1", caret: 3 });
+});
+
+test("removeQueryNode follows implicit ownership through groups and mixed operators", () => {
+  expectOperandRemoval("a=1 OR b=2 c=3", 7, { query: "a=1 OR c=3", caret: 7 });
+  expectOperandRemoval("a=1 OR b=2 c=3", 0, { query: "b=2 c=3", caret: 0 });
+  expectOperandRemoval("a=1 b=2 OR c=3", 4, { query: "a=1 OR c=3", caret: 3 });
+  expectOperandRemoval("a=1 (b=2 c=3)", 5, { query: "a=1 (c=3)", caret: 5 });
+  expectOperandRemoval("((a=1)) b=2", 2, { query: "b=2", caret: 0 });
+  expectGroupRemoval("(a=1 OR b=2) c=3", "(a=1 OR b=2)", { query: "c=3", caret: 0 });
+  expectGroupRemoval("a=1 (b=2 OR c=3)", "(b=2 OR c=3)", { query: "a=1", caret: 3 });
+});
+
+test("removeQueryNode keeps implicit removal within structural regions", () => {
+  const source = "[-15m, now] {tenant=42 env=prod} level=ERROR service=api | count";
+  expectOperandRemoval(source, source.indexOf("tenant"), {
+    query: "[-15m, now] {env=prod} level=ERROR service=api | count",
+    caret: 13,
+  });
+  expectOperandRemoval(source, source.indexOf("env"), {
+    query: "[-15m, now] {tenant=42} level=ERROR service=api | count",
+    caret: 22,
+  });
+  expectOperandRemoval(source, source.indexOf("level"), {
+    query: "[-15m, now] {tenant=42 env=prod} service=api | count",
+    caret: 33,
+  });
+  expectOperandRemoval(source, source.indexOf("service"), {
+    query: "[-15m, now] {tenant=42 env=prod} level=ERROR | count",
+    caret: 44,
+  });
+  expectRemovalFirstRoot("[-15m, now] {tenant=42} level=ERROR", {
+    query: "[-15m, now] {} level=ERROR",
+    caret: 13,
+  });
+  expectRemovalFirstRoot("{tenant=42} level=ERROR | count", {
+    query: "{} level=ERROR | count",
+    caret: 1,
+  });
 });
 
 function expectOperandRemoval(
